@@ -106,8 +106,6 @@ The surfaces' own tests — the Fireflies setup, the inbound-webhook dialog, the
 invite link, the inspector rail, the run-failure notice, the site detail, the
 code block — assert on the control by its accessible name.
 
-## Changelog
-
 ### 2026-09-13 — One icon control for every copy affordance
 
 **What changed:** `useCopy` and `CopyButton` were added, with `CopyField` for a

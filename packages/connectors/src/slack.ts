@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
@@ -536,7 +537,7 @@ export function normalizeSlackActivity(
 
   return {
     workspaceId: connection.workspaceId,
-    region: connection.config.region === "eu" ? "eu" : "global",
+    region: RegionSchema.parse(connection.config.region ?? "global"),
     connectionId: connection.id,
     connectionScope: connection.scope,
     connectionOwnerUserId: connection.ownerUserId,

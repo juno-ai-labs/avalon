@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -333,10 +334,10 @@ describe('SessionGate identity-first ordering', () => {
     sessionState.session = identitySession;
     sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
       workspace: {
-        id: 'workspace-eu',
+        id: 'workspace-enterprise',
         name: 'European Research',
         slug: 'european-research',
-        region: 'eu',
+        region: 'enterprise',
         role: 'member',
         createdAt: '2026-08-01T00:00:00.000Z',
       },
@@ -346,8 +347,8 @@ describe('SessionGate identity-first ordering', () => {
 
     expect(await screen.findByText('Opening European Research…')).toBeVisible();
     await vi.waitFor(() => expect(sessionState.activateWorkspace).toHaveBeenCalledWith(
-      'eu',
-      'workspace-eu',
+      'enterprise',
+      'workspace-enterprise',
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
       { onSignInRequired: expect.any(Function) },
     ));
@@ -357,10 +358,10 @@ describe('SessionGate identity-first ordering', () => {
     sessionState.session = identitySession;
     sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
       workspace: {
-        id: 'workspace-eu',
+        id: 'workspace-enterprise',
         name: 'European Research',
         slug: 'european-research',
-        region: 'eu',
+        region: 'enterprise',
         role: 'member',
         createdAt: '2026-08-01T00:00:00.000Z',
       },

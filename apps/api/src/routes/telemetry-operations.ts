@@ -7,8 +7,6 @@ import { getOperator, requireOperatorRole, requireTelemetryOperator } from '../t
 import { readTelemetryOperationalSnapshot } from '../telemetry/operations';
 import { replayTelemetryEvent } from '../telemetry/replay';
 import {
-  queryEuCrashFreeLaunches,
-  queryEuCrashIssues,
   readRawCrashForSupport,
 } from '../telemetry/crash-operations';
 
@@ -20,13 +18,6 @@ const ReplaySchema = z.strictObject({
 const CrashIdSchema = z.strictObject({ crashId: UuidV7Schema });
 const CrashAccessQuerySchema = z.strictObject({
   reason: z.enum(['customer_support', 'incident_response']),
-});
-const EuIssueQuerySchema = z.strictObject({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const CrashFreeSchema = z.strictObject({
-  from: z.string().datetime({ offset: true }),
-  to: z.string().datetime({ offset: true }),
 });
 const TelemetryOperationalSnapshotSchema = z.strictObject({
   acceptedPending: z.number().int().nonnegative(),
@@ -52,29 +43,6 @@ const ReplayResponseSchema = z.strictObject({
     'invalid_state',
   ]),
   eventId: UuidV7Schema,
-});
-const EuCrashIssueSchema = z.strictObject({
-  fingerprint: z.string().min(1),
-  firstSeen: z.string().datetime({ offset: true }),
-  lastSeen: z.string().datetime({ offset: true }),
-  count: z.number().int().nonnegative(),
-  releases: z.array(z.string()),
-});
-const EuCrashIssuesResponseSchema = z.strictObject({
-  issues: z.array(EuCrashIssueSchema),
-});
-const EuCrashFreeSegmentSchema = z.strictObject({
-  release: z.string(),
-  platform: z.string(),
-  architecture: z.string(),
-  channel: z.string(),
-  eligibleLaunches: z.number().int().nonnegative(),
-  crashedLaunches: z.number().int().nonnegative(),
-  crashFreeLaunches: z.number().int().nonnegative(),
-  uncorrelatedCrashes: z.number().int().nonnegative(),
-});
-const EuCrashFreeResponseSchema = z.strictObject({
-  segments: z.array(EuCrashFreeSegmentSchema),
 });
 
 export const telemetryOperatorRoutes = new Hono<HonoAppEnv>();
@@ -119,23 +87,3 @@ telemetryOperatorRoutes.get(
     return new Response(object.body, { headers });
   },
 );
-
-telemetryOperatorRoutes.get('/eu/crash-issues', zValidator('query', EuIssueQuerySchema), async (c) => {
-  if (c.env.AVALON_REGION !== 'eu') {
-    throw new ApiError(404, 'not_found', 'The requested API route does not exist');
-  }
-  c.header('Cache-Control', 'no-store');
-  return c.json(EuCrashIssuesResponseSchema.parse({
-    issues: await queryEuCrashIssues(c.env, c.req.valid('query')),
-  }));
-});
-
-telemetryOperatorRoutes.post('/eu/crash-free-launches', zValidator('json', CrashFreeSchema), async (c) => {
-  if (c.env.AVALON_REGION !== 'eu') {
-    throw new ApiError(404, 'not_found', 'The requested API route does not exist');
-  }
-  c.header('Cache-Control', 'no-store');
-  return c.json(EuCrashFreeResponseSchema.parse({
-    segments: await queryEuCrashFreeLaunches(c.env, c.req.valid('json')),
-  }));
-});

@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
 import { workspaceFromSession } from './session-workspace';
@@ -15,7 +16,7 @@ const session: DesktopSession = {
   workspace: {
     id: '00000000-0000-7000-8000-000000000002',
     name: 'Rally Studio',
-    region: 'eu',
+    region: 'enterprise',
     role: 'admin',
     timezone: 'Europe/London',
   },
@@ -26,7 +27,7 @@ describe('workspaceFromSession', () => {
     expect(workspaceFromSession(session)).toEqual({
       id: '00000000-0000-7000-8000-000000000002',
       name: 'Rally Studio',
-      region: 'eu',
+      region: 'enterprise',
       timezone: 'Europe/London',
       currentUser: {
         id: '00000000-0000-7000-8000-000000000001',

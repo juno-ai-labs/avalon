@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import type { HarnessOutcome } from "@rally/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -35,7 +36,7 @@ function observationEnv(writeDataPoint: AnalyticsEngineDataset["writeDataPoint"]
   return createTestEnv({
     RUN_ANALYTICS: { writeDataPoint },
     LOG_LEVEL: "info",
-    AVALON_REGION: "eu",
+    AVALON_REGION: "enterprise",
     APP_VERSION: "1.2.3",
     BUILD_SHA: "abc123",
   });
@@ -61,14 +62,14 @@ describe("harness run observability", () => {
 
     expect(writeDataPoint).toHaveBeenCalledOnce();
     expect(writeDataPoint).toHaveBeenCalledWith({
-      indexes: ["workstream:eu"],
+      indexes: ["workstream:enterprise"],
       blobs: [
         "harness_run_v1",
         "workstream",
         "completed",
         "provider/model",
         "none",
-        "eu",
+        "enterprise",
         "1.2.3",
         "abc123",
       ],

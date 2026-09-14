@@ -1,3 +1,4 @@
+import { configuredRegions } from "@rally/contracts/regions";
 /**
  * The operator site's HTML.
  *
@@ -382,7 +383,7 @@ export function objectsPage(
         <label>Region
           <select name="region">
             <option value="">any</option>
-            ${["global", "eu"].map((region) => html`
+            ${configuredRegions.map((region) => html`
               <option value="${region}" ${query.region === region ? raw("selected") : ""}>
                 ${region}
               </option>`)}
@@ -487,7 +488,7 @@ export function migrationsPage(
   problem?: string,
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
   const classes = [...new Set(overview.components.map((component) => component.className))].sort();
-  const unreachable = (["global", "eu"] as const)
+  const unreachable = configuredRegions
     .filter((region) => !overview.dispatchableRegions.includes(region));
   return html`
     ${problem ? html`<div class="banner banner-bad">${problem}</div>` : ""}

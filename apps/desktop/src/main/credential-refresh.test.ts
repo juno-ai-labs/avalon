@@ -1,10 +1,11 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it, vi } from 'vitest';
 import { CredentialRefreshRegistry, credentialRefreshKey } from './credential-refresh';
 
 const identity = { refreshToken: 'identity-refresh-token', binding: { workspaceId: null, region: 'global' } };
 const workspace = {
   refreshToken: 'workspace-refresh-token',
-  binding: { workspaceId: '00000000-0000-7000-8000-000000000002', region: 'eu' },
+  binding: { workspaceId: '00000000-0000-7000-8000-000000000002', region: 'enterprise' },
 };
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
@@ -64,7 +65,7 @@ describe('credential refresh registry', () => {
     await expect(workspaceResult).resolves.toBe('workspace');
     await expect(replacedResult).resolves.toBe('replaced');
     expect(credentialRefreshKey(identity)).not.toBe(credentialRefreshKey(replacedIdentity));
-    expect(credentialRefreshKey(workspace)).toBe(`eu:${workspace.binding.workspaceId}:${workspace.refreshToken}`);
+    expect(credentialRefreshKey(workspace)).toBe(`enterprise:${workspace.binding.workspaceId}:${workspace.refreshToken}`);
   });
 
   it('fails every sharer with the one failure and frees the token for a later attempt', async () => {

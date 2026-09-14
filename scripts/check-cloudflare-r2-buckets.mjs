@@ -1,3 +1,4 @@
+import { configuredRegions } from "./regions.mjs";
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,16 +7,9 @@ import { isEntryPoint } from './entry-point.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
-const regionalConfigs = [
-  { region: 'global', path: join(repositoryDirectory, 'apps/api/wrangler.global.jsonc') },
-  { region: 'eu', path: join(repositoryDirectory, 'apps/api/wrangler.eu.jsonc') },
-  // The artifact serving Workers bind the same buckets from their own configs.
-  // Left out of this list, an EU binding that forgot `jurisdiction` reaches a
-  // different bucket in the default namespace and nothing here notices — which
-  // is exactly how one shipped.
-  { region: 'global', path: join(repositoryDirectory, 'apps/api/wrangler.artifacts.global.jsonc') },
-  { region: 'eu', path: join(repositoryDirectory, 'apps/api/wrangler.artifacts.eu.jsonc') },
-];
+const regionalConfigs = configuredRegions.flatMap((region) => ['', 'artifacts.'].map((service) => ({
+  region, path: join(repositoryDirectory, `apps/api/wrangler.${service}${region}.jsonc`),
+})));
 
 function required(name, environment) {
   const value = environment[name]?.trim();

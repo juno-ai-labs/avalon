@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import type {
   InferenceAttemptEvent,
   InferenceRequestEvent,
@@ -16,7 +17,7 @@ const InferenceLakehouseRecordSchema = z.object({
   event_id: z.string().min(1),
   event_type: z.enum(["request", "attempt"]),
   captured_at: z.string().datetime(),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   invocation_type: z.enum(["streaming", "structured"]),
   source: z.string().min(1),
   environment: z.string().min(1),
@@ -61,7 +62,7 @@ export type InferenceLakehouseRecord = z.infer<typeof InferenceLakehouseRecordSc
 export const InferenceLakehousePointerSchema = z.object({
   schemaVersion: z.literal(INFERENCE_LAKEHOUSE_SCHEMA_VERSION),
   eventId: z.string().min(1),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   objectKey: z.string().min(1),
   payloadSha256: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   payloadBytes: z.number().int().nonnegative(),
@@ -190,11 +191,7 @@ export async function stageInferenceLakehouseRecord(
 }
 
 async function captureBestEffort(env: Env, record: InferenceLakehouseRecord): Promise<void> {
-  // EU inference analytics are intentionally deferred: Cloudflare Data Catalog
-  // cannot use an EU-jurisdiction bucket, and we are not exporting EU workspace
-  // content into Global. Keep this explicit even if a stray binding appears.
-  if (env.AVALON_REGION === "eu") return;
-  // Local Wrangler cannot emulate Pipeline bindings. Hosted Global requires
+  // Local Wrangler cannot emulate Pipeline bindings. Hosted deployments require
   // both bindings in `withEnvContract`; local/test environments omit them and
   // deliberately skip lakehouse capture instead of creating R2 orphans.
   if (!env.INFERENCE_LAKEHOUSE || !env.INFERENCE_LAKEHOUSE_QUEUE) return;

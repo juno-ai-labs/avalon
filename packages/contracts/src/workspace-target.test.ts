@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,7 +8,7 @@ import {
 } from './workspace-target';
 
 const TARGET = {
-  region: 'eu' as const,
+  region: 'enterprise' as const,
   workspaceId: '00000000-0000-7000-8000-000000000009',
 };
 
@@ -16,18 +17,18 @@ describe('workspace-addressed links', () => {
     const url = addWorkspaceTarget(new URL('rallywithai://auth/complete?provider=slack'), TARGET);
 
     expect(url.toString()).toBe(
-      `rallywithai://workspace/eu/${TARGET.workspaceId}/auth/complete?provider=slack`,
+      `rallywithai://workspace/enterprise/${TARGET.workspaceId}/auth/complete?provider=slack`,
     );
     expect(parseWorkspaceTarget(url)).toEqual(TARGET);
   });
 
   it('rejects missing, duplicated, malformed, and query-addressed coordinates', () => {
     for (const rawUrl of [
-      'rallywithai://workspace/eu',
-      'rallywithai://workspace/eu/not-a-uuid/settings/connections',
-      `rallywithai://workspace/us/${TARGET.workspaceId}/settings/connections`,
-      `rallywithai://workspace/eu/${TARGET.workspaceId}`,
-      `rallywithai://settings/connections?region=eu&workspace=${TARGET.workspaceId}`,
+      'rallywithai://workspace/enterprise',
+      'rallywithai://workspace/enterprise/not-a-uuid/settings/connections',
+      `rallywithai://workspace/not%20a%20region/${TARGET.workspaceId}/settings/connections`,
+      `rallywithai://workspace/enterprise/${TARGET.workspaceId}`,
+      `rallywithai://settings/connections?region=enterprise&workspace=${TARGET.workspaceId}`,
     ]) {
       expect(parseWorkspaceTarget(new URL(rawUrl)), rawUrl).toBeNull();
     }

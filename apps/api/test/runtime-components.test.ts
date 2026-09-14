@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@rally/contracts";
@@ -535,8 +536,8 @@ describe("runtime component invariants", () => {
   it.each([
     ["global", "-122.4194", "wnam"],
     ["global", "-73.9857", "enam"],
-    ["eu", "-0.1276", "weur"],
-    ["eu", "30.5234", "eeur"],
+    ["enterprise", "-0.1276", "weur"],
+    ["enterprise", "30.5234", "eeur"],
   ] as const)("derives %s workspace affinity from request longitude %s", (region, longitude, expected) => {
     expect(deriveWorkspacePlacementAffinity(region, { longitude })).toEqual({
       affinity: expected,
@@ -546,7 +547,7 @@ describe("runtime component invariants", () => {
 
   it.each([
     ["global", undefined, "wnam"],
-    ["eu", { longitude: "not-a-coordinate" }, "weur"],
+    ["enterprise", { longitude: "not-a-coordinate" }, "weur"],
   ] as const)("uses the %s migration/background fallback when request metadata is absent", (
     region,
     metadata,
@@ -666,33 +667,33 @@ describe("runtime component invariants", () => {
 
   it("uses a region/workspace/work-stream stable room name", () => {
     expect(conversationObjectName(
-      "eu",
+      "enterprise",
       asWorkspaceId("00000000-0000-4000-8000-00000000000a"),
       asWorkstreamId("00000000-0000-4000-8000-00000000000b"),
     )).toBe(
-      "eu:00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-00000000000b"
+      "enterprise:00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-00000000000b"
     );
   });
 
   it("locks Durable Object IDs and first placement to the product region", () => {
     const usStub = {};
-    const euStub = {};
+    const enterpriseStub = {};
     const usId = createTestDurableObjectId("us-id");
-    const euId = createTestDurableObjectId("eu-id");
+    const enterpriseId = createTestDurableObjectId("enterprise-id");
     const usGet = vi.fn(() => usStub);
-    const euGet = vi.fn(() => euStub);
+    const enterpriseGet = vi.fn(() => enterpriseStub);
     const usIdFromName = vi.fn(() => usId);
-    const euIdFromName = vi.fn(() => euId);
+    const enterpriseIdFromName = vi.fn(() => enterpriseId);
     const usNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
       get: usGet,
       idFromName: usIdFromName,
     });
-    const euNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
-      get: euGet,
-      idFromName: euIdFromName,
+    const enterpriseNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
+      get: enterpriseGet,
+      idFromName: enterpriseIdFromName,
     });
     const jurisdiction = vi.fn((value: DurableObjectJurisdiction) => (
-      value === "us" ? usNamespace : euNamespace
+      value === "us" ? usNamespace : enterpriseNamespace
     ));
     const namespace = createCloudflareTestBinding<DurableObjectNamespace>({ jurisdiction });
 
@@ -704,17 +705,17 @@ describe("runtime component invariants", () => {
       "wnam",
     )).toBe(usStub);
     expect(durableObjectStubForRegion(
-      { AVALON_REGION: "eu", APP_ENV: "production" },
+      { AVALON_REGION: "enterprise", APP_ENV: "production" },
       namespace,
-      "eu",
+      "enterprise",
       "workspace-two",
       "weur",
-    )).toBe(euStub);
+    )).toBe(enterpriseStub);
     expect(jurisdiction.mock.calls).toEqual([["us"], ["eu"]]);
     expect(usIdFromName).toHaveBeenCalledWith("workspace-one");
-    expect(euIdFromName).toHaveBeenCalledWith("workspace-two");
+    expect(enterpriseIdFromName).toHaveBeenCalledWith("workspace-two");
     expect(usGet).toHaveBeenCalledWith(usId, { locationHint: "wnam" });
-    expect(euGet).toHaveBeenCalledWith(euId, { locationHint: "weur" });
+    expect(enterpriseGet).toHaveBeenCalledWith(enterpriseId, { locationHint: "weur" });
   });
 
   it("uses one persisted workspace affinity for every child lookup", async () => {
@@ -761,9 +762,9 @@ describe("runtime component invariants", () => {
     });
 
     expect(durableObjectStubForRegion(
-      { AVALON_REGION: "eu", APP_ENV: "test" },
+      { AVALON_REGION: "enterprise", APP_ENV: "test" },
       namespace,
-      "eu",
+      "enterprise",
       "local",
       "eeur",
     )).toBe(stub);
@@ -778,7 +779,7 @@ describe("runtime component invariants", () => {
       "production",
     )).not.toThrow();
     expect(() => assertDurableObjectJurisdiction(
-      createTestJurisdictionalDurableObjectId("eu-object", "eu"),
+      createTestJurisdictionalDurableObjectId("other-object", "eu"),
       "global",
       "production",
     )).toThrow("durable_object_jurisdiction_mismatch:us:eu");

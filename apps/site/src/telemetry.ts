@@ -20,7 +20,6 @@ interface CapabilityState extends TelemetryBootstrapResponse {
 }
 
 const sessionId = uuidV7();
-const transientAnonymousEpochId = uuidV7();
 const pageVisibleAt = Date.now();
 const pending: TelemetryEnvelope[] = [];
 let capabilityPromise: Promise<CapabilityState> | null = null;
@@ -75,7 +74,7 @@ async function coarseRoute(): Promise<TelemetryRouteResponse> {
   const response = await fetch(`${apiBaseUrl()}/telemetry/route`, { cache: 'no-store' });
   if (!response.ok) throw new Error('site_telemetry_route_failed');
   const value = await response.json() as Record<string, unknown>;
-  if ((value.route !== 'global' && value.route !== 'eu')
+  if (value.route !== 'global'
     || (value.routingBasis !== 'ip_geolocation' && value.routingBasis !== 'geolocation_fallback')
     || typeof value.routeToken !== 'string'
     || value.routeToken.length < 32
@@ -87,10 +86,8 @@ async function coarseRoute(): Promise<TelemetryRouteResponse> {
 
 async function capability(): Promise<CapabilityState> {
   const route = await coarseRoute();
-  // EU public-site measurement remains page-scoped and never reads or writes a
-  // browser identifier. Global may retain one first-party anonymous epoch so
-  // acquisition and handoff steps can form a truthful multi-page funnel.
-  const epochId = route.route === 'global' ? globalAnonymousEpochId() : transientAnonymousEpochId;
+  // A first-party anonymous epoch connects acquisition and handoff steps.
+  const epochId = globalAnonymousEpochId();
   const response = await fetch(`${apiBaseUrl()}/telemetry/bootstrap`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

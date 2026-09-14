@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearAllLocalCache,
@@ -23,7 +24,7 @@ const strictNotes = defineLocalCacheSlice<Note>({ kind: 'test-notes', version: 1
 const USER = '00000000-0000-7000-8000-0000000000aa';
 const OTHER_USER = '00000000-0000-7000-8000-0000000000bb';
 const global1 = localCacheScope(USER, 'global', '00000000-0000-7000-8000-000000000001');
-const eu1 = localCacheScope(USER, 'eu', '00000000-0000-7000-8000-000000000001');
+const eu1 = localCacheScope(USER, 'enterprise', '00000000-0000-7000-8000-000000000001');
 
 async function settle(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -69,12 +70,12 @@ describe('local cache store', () => {
 
   it('clears one workspace and leaves the others', async () => {
     await notes.write(global1, 'a', { text: 'global' });
-    await notes.write(eu1, 'a', { text: 'eu' });
+    await notes.write(eu1, 'a', { text: 'enterprise' });
 
     await clearWorkspaceLocalCache(USER, 'global', '00000000-0000-7000-8000-000000000001');
 
     expect(await notes.read(global1, 'a')).toBeNull();
-    expect(await notes.read(eu1, 'a')).toEqual({ text: 'eu' });
+    expect(await notes.read(eu1, 'a')).toEqual({ text: 'enterprise' });
   });
 
   it('keeps two accounts\' rows for one workspace apart, and clears only the leaving account\'s', async () => {
@@ -95,7 +96,7 @@ describe('local cache store', () => {
     await notes.write(global1, 'p:0', { text: 'main' }, 'p');
     await notes.write(global1, 'p:child', { text: 'child' }, 'p');
     await notes.write(global1, 'q:0', { text: 'other' }, 'q');
-    await notes.write(eu1, 'p:0', { text: 'main in eu' }, 'p');
+    await notes.write(eu1, 'p:0', { text: 'main in enterprise' }, 'p');
 
     expect((await notes.entries(global1)).map((entry) => `${entry.subject}/${entry.key}`).sort())
       .toEqual(['p/p:0', 'p/p:child', 'q/q:0']);
@@ -104,7 +105,7 @@ describe('local cache store', () => {
     expect((await notes.entries(global1)).map((entry) => entry.key)).toEqual(['q:0']);
     expect(await notes.read(eu1, 'p:0')).toBeNull();
 
-    await notes.write(eu1, 'q:0', { text: 'other in eu' }, 'q');
+    await notes.write(eu1, 'q:0', { text: 'other in enterprise' }, 'q');
     await notes.removeKey('q:0');
     expect(await notes.entries(global1)).toEqual([]);
     expect(await notes.entries(eu1)).toEqual([]);
@@ -114,7 +115,7 @@ describe('local cache store', () => {
     await notes.write(global1, 'p:0', { text: 'main' }, 'p');
     await notes.write(global1, 'p:child', { text: 'child' }, 'p');
     await notes.write(global1, 'q:0', { text: 'other' }, 'q');
-    await notes.write(eu1, 'p:0', { text: 'main in eu' }, 'p');
+    await notes.write(eu1, 'p:0', { text: 'main in enterprise' }, 'p');
 
     expect((await notes.entriesForSubject(global1, 'p')).map((entry) => entry.key).sort()).toEqual(['p:0', 'p:child']);
     expect((await notes.entriesForSubject(eu1, 'p')).map((entry) => entry.key)).toEqual(['p:0']);

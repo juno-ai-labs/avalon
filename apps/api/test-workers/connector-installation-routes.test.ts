@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { createExecutionContext, createMessageBatch, getQueueResult, reset, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
@@ -263,7 +264,7 @@ describe('public connector installation boundaries', () => {
     const lookup = vi.spyOn(router, 'lookupRoute');
     const admission = vi.spyOn(regional, 'ingest');
     const worker = new AshbyIngressWorker(createExecutionContext(), { PROVIDER_WEBHOOK_MAX_BYTES: '32',
-      GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: regional, EU_ASHBY_BRIDGE: regional });
+      GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: regional, ENTERPRISE_ASHBY_BRIDGE: regional });
     const body = new ReadableStream<Uint8Array>({ start(controller) {
       controller.enqueue(new Uint8Array(16)); controller.enqueue(new Uint8Array(17)); controller.close();
     } });

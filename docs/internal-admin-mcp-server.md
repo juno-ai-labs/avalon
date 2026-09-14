@@ -30,10 +30,6 @@ open a browser for company sign-in, and retain their own OAuth credentials. Do
 not create a Cloudflare service token, copy a browser cookie, or put a bearer
 token in an MCP configuration file.
 
-The production endpoint becomes available only after a full Global-and-EU API
-deployment of a revision containing the engineering MCP. Check the unauthenticated
-challenge without sending credentials:
-
 ```bash
 curl --silent --show-error --dump-header - --output /dev/null \
   --header 'Accept: application/json' \
@@ -208,7 +204,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 
 | Tool | Required identity | Effect |
 | --- | --- | --- |
-| `list_workspaces` | None | Lists workspace identity records across Global and EU. |
+| `list_workspaces` | None | Lists workspace identity records across configured deployments. |
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
 | `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from WorkstreamDO. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO. |
@@ -220,20 +216,19 @@ BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
 `rowsWritten` is Cloudflare's physical SQLite write count, including index
 maintenance; it is not a domain-level count of changed records.
 
-## Production safety
-
 - Prefer `SELECT`, `PRAGMA table_info(...)`, and explicit schema inspection
   until a repair is agreed.
+
 - Re-list the target hierarchy immediately before a mutation. IDs, not names,
   determine the Durable Object.
+
 - State the proposed SQL and expected affected domain records before approving
   a write. Use a transaction when multiple statements must succeed together.
-- Do not paste customer content returned by a query into logs, issues, pull
-  requests, or chat transcripts. EU results remain customer content even though
-  this operator path can return them to an authorized engineer.
+
 - The server intentionally has no repository-defined row, statement, or query
   timeout. Add a narrow predicate before selecting a potentially large product
   table.
+
 - The server audits the Access actor, tool, target IDs, and success or failure,
   but deliberately does not log SQL text, bindings, result rows, or SQLite error
   messages.
@@ -248,5 +243,5 @@ maintenance; it is not a domain-level count of changed records.
 | Client remains disconnected after login | Restart or reconnect the client, then inspect `codex mcp list`, Claude Code `/mcp`, or Cursor's **MCP Logs** output. |
 | No tools appear | Confirm the configured URL ends in `/mcp`, not merely the hostname. |
 | Target is not found | Re-run the list tools from the workspace downward and use the returned IDs. A missing routing record is refused rather than creating an empty object. |
-| Target exists in both regions | Stop. The server refuses ambiguous identity by design; repair regional routing before inspecting either object. |
+| Target exists in configured deployments | Stop. The server refuses ambiguous identity by design; repair regional routing before inspecting either object. |
 | SQL fails without useful server logs | Read the error returned to the authenticated client. Query text and SQLite errors are intentionally excluded from Worker logs. |

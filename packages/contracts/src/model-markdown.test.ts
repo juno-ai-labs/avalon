@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import { normalizeModelMarkdown, normalizeModelText } from "./model-markdown";
 
@@ -149,7 +150,7 @@ describe("normalizeModelText", () => {
   });
 
   it("returns text with no TeX in it untouched", () => {
-    expect(normalizeModelText("Q3 planning for the EU region")).toBe("Q3 planning for the EU region");
+    expect(normalizeModelText("Q3 planning for the enterprise region")).toBe("Q3 planning for the enterprise region");
   });
 
   // This surface is one of the two that *store* the result, so a false

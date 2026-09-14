@@ -1,3 +1,5 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { newId } from "@rally/db";
 import {
   TelemetryBootstrapResponseSchema,
@@ -12,10 +14,6 @@ import { hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector";
 import type { AnonymousTelemetryProjection } from "./regional-bridge";
 
-const EU_COUNTRIES = new Set([
-  "AT", "BE", "BG", "HR", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR",
-  "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK",
-]);
 const CAPABILITY_LIFETIME_MS = 60 * 60 * 1_000;
 const ROUTE_DECISION_LIFETIME_MS = 5 * 60 * 1_000;
 const CONTROL_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -34,7 +32,7 @@ interface CapabilityClaims {
   version: 1;
   journeyId: string;
   anonymousEpochId: string;
-  route: "global" | "eu";
+  route: Region;
   routingBasis: "ip_geolocation" | "geolocation_fallback";
   expiresAt: number;
 }
@@ -42,7 +40,7 @@ interface CapabilityClaims {
 interface RouteDecisionClaims {
   version: 1;
   purpose: "telemetry_route";
-  route: "global" | "eu";
+  route: Region;
   routingBasis: "ip_geolocation" | "geolocation_fallback";
   expiresAt: number;
 }
@@ -76,7 +74,7 @@ async function verifyCapability(secret: string, token: string): Promise<Capabili
       claims.version !== 1
       || !claims.journeyId
       || !claims.anonymousEpochId
-      || (claims.route !== "global" && claims.route !== "eu")
+      || !isConfiguredRegion(claims.route)
       || (claims.routingBasis !== "ip_geolocation" && claims.routingBasis !== "geolocation_fallback")
       || !Number.isSafeInteger(claims.expiresAt)
     ) throw new Error("invalid");
@@ -105,7 +103,7 @@ async function verifyRouteDecision(secret: string, token: string): Promise<Route
   if (
     claims.version !== 1
     || claims.purpose !== "telemetry_route"
-    || (claims.route !== "global" && claims.route !== "eu")
+    || !isConfiguredRegion(claims.route)
     || (claims.routingBasis !== "ip_geolocation" && claims.routingBasis !== "geolocation_fallback")
     || !Number.isSafeInteger(claims.expiresAt)
   ) throw new Error("telemetry_route_decision_invalid");
@@ -113,26 +111,10 @@ async function verifyRouteDecision(secret: string, token: string): Promise<Route
   return claims;
 }
 
-export function coarseTelemetryRoute(
-  country: string | undefined,
-  isEUCountry?: string | boolean | null,
-): {
-  route: "global" | "eu";
-  routingBasis: "ip_geolocation" | "geolocation_fallback";
+export function coarseTelemetryRoute(): {
+  route: Region;
+  routingBasis: "geolocation_fallback";
 } {
-  // Prefer Cloudflare's maintained EU classification when it is affirmative.
-  // The country-code set remains a conservative fallback for local tests,
-  // older request objects, and any edge request where the boolean is omitted.
-  if (isEUCountry === "1" || isEUCountry === true) {
-    return { route: "eu", routingBasis: "ip_geolocation" };
-  }
-  const normalized = country?.toUpperCase();
-  if (normalized && /^[A-Z]{2}$/u.test(normalized) && normalized !== "XX") {
-    return {
-      route: EU_COUNTRIES.has(normalized) ? "eu" : "global",
-      routingBasis: "ip_geolocation",
-    };
-  }
   return { route: "global", routingBasis: "geolocation_fallback" };
 }
 
@@ -160,12 +142,9 @@ export class TelemetryBootstrapService {
     return this.env.TELEMETRY_CAPABILITY_SIGNING_KEY ?? this.env.SESSION_SIGNING_KEY;
   }
 
-  async route(
-    country: string | undefined,
-    isEUCountry?: string | boolean | null,
-  ): Promise<TelemetryRouteResponse> {
+  async route(): Promise<TelemetryRouteResponse> {
     if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
-    const route = coarseTelemetryRoute(country, isEUCountry);
+    const route = coarseTelemetryRoute();
     const claims: RouteDecisionClaims = {
       version: 1,
       purpose: "telemetry_route",
@@ -180,15 +159,13 @@ export class TelemetryBootstrapService {
 
   async bootstrap(
     anonymousEpochId: string,
-    country: string | undefined,
     routeToken?: string,
-    isEUCountry?: string | boolean | null,
   ): Promise<TelemetryBootstrapResponse> {
     if (this.env.AVALON_REGION !== "global") throw new Error("telemetry_bootstrap_global_only");
     const now = new Date();
     const verifiedRoute = routeToken
       ? await verifyRouteDecision(this.signingKey(), routeToken)
-      : coarseTelemetryRoute(country, isEUCountry);
+      : coarseTelemetryRoute();
     const requestedRoute = {
       route: verifiedRoute.route,
       routingBasis: verifiedRoute.routingBasis,
@@ -198,7 +175,7 @@ export class TelemetryBootstrapService {
        FROM telemetry_onboarding_journeys WHERE anonymous_epoch_id = ?`,
     ).bind(anonymousEpochId).first<{
       journey_id: string;
-      route: 'global' | 'eu';
+      route: Region;
       routing_basis: 'ip_geolocation' | 'geolocation_fallback';
       closed_at: string | null;
       delete_at: string;
@@ -260,7 +237,7 @@ export class TelemetryBootstrapService {
       // A concurrent bootstrap won the anonymous-epoch uniqueness race. Reuse
       // its fixed route rather than returning a capability for an unpersisted
       // journey or replacing its coarse-location decision.
-      return this.bootstrap(anonymousEpochId, country, routeToken, isEUCountry);
+      return this.bootstrap(anonymousEpochId, routeToken);
     }
     const claims: CapabilityClaims = {
       version: 1,
@@ -291,7 +268,7 @@ export class TelemetryBootstrapService {
        FROM telemetry_onboarding_journeys WHERE journey_id = ?`,
     ).bind(claims.journeyId).first<{
       anonymous_epoch_id: string;
-      route: "global" | "eu";
+      route: Region;
       routing_basis: "ip_geolocation" | "geolocation_fallback";
       expires_at: string;
       closed_at: string | null;
@@ -316,12 +293,6 @@ export class TelemetryBootstrapService {
       if (!anonymousProduct && !installationHealth) throw new Error("telemetry_anonymous_event_forbidden");
       return TelemetryEnvelopeSchema.parse(candidate) as TelemetryEnvelope;
     });
-    if (claims.route === "eu") {
-      if (!this.env.EU_TELEMETRY_BRIDGE) throw new Error("telemetry_eu_bridge_unavailable");
-      return Promise.all(events.map((event) => this.env.EU_TELEMETRY_BRIDGE!.acceptAnonymous(
-        projectionFor(event, claims, installationId),
-      )));
-    }
     const collector = new TelemetryCollector(this.env);
     return Promise.all(events.map((event) => collector.accept(
       event,
@@ -337,16 +308,13 @@ export class TelemetryBootstrapService {
     if (this.env.AVALON_REGION !== 'global') throw new Error('telemetry_bootstrap_global_only');
     const claims = await verifyCapability(this.signingKey(), capability);
     if (Date.now() > claims.expiresAt) throw new Error('telemetry_capability_expired');
-    // An affirmative EU coarse result never starts Crashpad. Refusing it here
-    // is defense in depth against a modified client moving a dump to Global or
-    // creating an EU onboarding dump the product promised not to save.
     if (claims.route !== 'global') throw new Error('crash_route_forbidden');
     const journey = await this.env.DB.prepare(
       `SELECT anonymous_epoch_id, route, expires_at, closed_at
        FROM telemetry_onboarding_journeys WHERE journey_id = ?`,
     ).bind(claims.journeyId).first<{
       anonymous_epoch_id: string;
-      route: 'global' | 'eu';
+      route: Region;
       expires_at: string;
       closed_at: string | null;
     }>();
@@ -364,8 +332,8 @@ export class TelemetryBootstrapService {
 
   async authorizeLink(
     capability: string,
-    expectedRoute: 'global' | 'eu',
-  ): Promise<{ route: 'global' | 'eu'; anonymousEpochId: string; closed: boolean }> {
+    expectedRoute: Region,
+  ): Promise<{ route: Region; anonymousEpochId: string; closed: boolean }> {
     if (this.env.AVALON_REGION !== 'global') throw new Error('telemetry_link_global_verifier_required');
     const claims = await verifyCapability(this.signingKey(), capability);
     if (Date.now() > claims.expiresAt) throw new Error('telemetry_capability_expired');
@@ -377,7 +345,7 @@ export class TelemetryBootstrapService {
        FROM telemetry_onboarding_journeys WHERE journey_id = ?`,
     ).bind(claims.journeyId).first<{
       anonymous_epoch_id: string;
-      route: 'global' | 'eu';
+      route: Region;
       expires_at: string;
       closed_at: string | null;
     }>();
@@ -392,7 +360,7 @@ export class TelemetryBootstrapService {
     };
   }
 
-  async closeJourney(capability: string, expectedRoute: 'global' | 'eu'): Promise<void> {
+  async closeJourney(capability: string, expectedRoute: Region): Promise<void> {
     const claims = await this.authorizeLink(capability, expectedRoute);
     if (claims.closed) return;
     await this.env.DB.prepare(

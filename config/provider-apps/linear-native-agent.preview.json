@@ -14,9 +14,7 @@
     "client_uri": "https://rallywith.ai",
     "redirect_uris": [
       "https://api.rallywith.ai/connections/linear/callback",
-      "https://eu.api.rallywith.ai/connections/linear/callback",
-      "https://api.with-avalon.com/connections/linear/callback",
-      "https://eu.api.with-avalon.com/connections/linear/callback"
+      "https://api.with-avalon.com/connections/linear/callback"
     ],
     "grant_types": [
       "authorization_code"

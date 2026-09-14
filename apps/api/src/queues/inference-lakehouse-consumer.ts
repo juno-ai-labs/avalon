@@ -1,3 +1,4 @@
+import { configuredRegions } from "@rally/contracts/regions";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { logStructuredEvent } from "../observability/logger";
@@ -7,9 +8,7 @@ import {
   type InferenceLakehouseRecord,
 } from "../services/inference-lakehouse";
 
-export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set([
-  "avalon-global-inference-lakehouse",
-]);
+export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-inference-lakehouse`));
 
 /** Published Cloudflare Pipelines ingestion-request limit, checked 2026-08-24. */
 export const PIPELINE_INGEST_REQUEST_BYTES = 5_000_000;

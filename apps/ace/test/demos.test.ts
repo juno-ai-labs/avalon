@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/env';
@@ -22,9 +23,9 @@ function env(overrides: Partial<Env> = {}): Env {
     APP_VERSION: 'test',
     ASSETS: { fetch: vi.fn(async () => new Response('asset')) },
     RALLY_API_BASE_URL: 'https://api.rally.test',
-    RALLY_EU_API_BASE_URL: 'https://eu.api.rally.test',
+    RALLY_ENTERPRISE_API_BASE_URL: 'https://enterprise.api.rally.test',
     RALLY_OPERATOR_TOKEN: 'operator-token-for-tests',
-    RALLY_EU_OPERATOR_TOKEN: 'eu-operator-token-for-tests',
+    RALLY_ENTERPRISE_OPERATOR_TOKEN: 'enterprise-operator-token-for-tests',
     ...overrides,
   });
 }

@@ -51,8 +51,6 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
-## How it works
-
 ### Exact Bind-loop durability
 
 The host mirrors Bind's accepted message state as an append/replacement ledger,
@@ -612,20 +610,6 @@ resolve the setting after the actual primary or fallback model is selected.
 Tool-bearing Chat Completions requests also opt in to parallel tool calls on
 both OpenRouter and Azure; requests with no tools omit the field.
 
-The Azure transport is enabled only when its dedicated endpoint and API key are
-both present. Those values are separate from realtime-dictation configuration,
-so configuring an EU dictation resource cannot accidentally send an EU work
-stream to the Global Monad production inference resource. A shared contract
-accepts only an HTTPS resource root or `/openai/v1` base, so an endpoint the
-transport cannot address fails Worker startup rather than the first model turn.
-Azure receives the
-deployment name as `model`, the standard OpenAI-compatible message/tool body,
-and `reasoning_effort` only for a binding that declares it. OpenRouter-only
-Broadcast fields, plugins, routing metadata, and headers never cross that
-boundary. Canonical `x-ai/...` identity remains in Rally's transcript and
-ledger; the Azure deployment name is recorded separately as the provider
-invocation model.
-
 The checked-in Monad production bindings were verified against the live
 `monad-prod-resource` deployment details on 2026-08-30 for Grok and on
 2026-09-02 for Sol:
@@ -704,66 +688,6 @@ mapped to Rally's wire types, unsupported tool variants fail at the boundary,
 and input audio admits only the `wav` and `mp3` formats the OpenRouter SDK
 contract supports. This keeps an SDK union or return-shape change visible to the
 compiler instead of letting it emerge later in a provider request.
-
-Every OpenRouter request opts into router metadata and carries a Broadcast trace
-envelope. One harness loop has one `trace_id`, fixed to its durable request/run
-ID across every model turn, including tool call, tool result, and final-answer
-turns. Every model turn has its own `span_name`; the OpenRouter request is the
-generation inside that span. `turn_id`, inference request, and route cursor
-fields distinguish the individual generations and retries.
-Every request also sends `HTTP-Referer: https://rallywith.ai`, independently of
-the regional API origin that initiated it, so OpenRouter attributes Global, EU,
-structured, and routed traffic to the Rally product rather than to a transport
-hostname.
-For work-stream inference, `session_id` is exactly
-`<workstream_id>-<substream_id>`. Both OpenRouter's top-level `user` and trace
-`user_id` are the opaque Rally workspace ID, giving Broadcast and PostHog one
-stable tenant identity for user- and system-initiated runs. A relevant person,
-when one exists, is kept separately as `context_user_id`. The trace also carries
-source, workspace, work-stream, substream, request, parent request, harness run,
-draft, region, environment, build, principal, invocation type, provider/model,
-inference-request, and route-cursor metadata when each value exists. `feature`
-is the authoritative Flagship model-category key (for example,
-`agent-model-workstream`), `source` is the inference surface, and `product` is
-`rally`. `intended_model` is the primary model Rally selected before route
-traversal; `model` is the candidate used for that request, so a mismatch (or a
-nonzero `route_stage_index`) identifies application-level fallback.
-OpenRouter's PostHog Broadcast
-mapping therefore receives the workspace as `distinct_id`, the work-stream
-session as `$ai_session_id`, the loop trace as `$ai_trace_id`, the turn
-generation name as `$ai_span_name`, and the remaining fields as `metadata_*`
-properties. One-shot structured calls use one call-scoped trace ID across
-retries, repairs, and fallback models, and use their schema name as the
-generation name.
-OpenRouter's returned
-`openrouter_metadata` is retained with successful streaming attempts so routing
-and pipeline decisions join the same lakehouse evidence. Broadcast destination
-enablement and content/privacy policy remain OpenRouter account configuration;
-the request path supplies trace data but does not silently alter that account
-setting.
-
-Every classified provider attempt appends an immutable operational
-`inference_attempts` row in the owning `SubstreamAgent`, with its turn/route cursor, provider and model, routing
-decision, outcome, latency, available token/cache/cost counters, and hashed
-credential/workspace identities. Harness-run usage also stores turn/tool
-timings and counts. Provider error bodies and credentials are not retained in
-that recovery ledger. For Global workspaces, the Global lakehouse separately
-uses the closed source vocabulary `workstream`, `inline_child`, and
-`meeting_notes` for analytical capture; an automation run is a `workstream`
-source with its automation and run ids beside it.
-EU workspaces intentionally have no analytical inference capture.
-
-The harness also emits lossless events that the Global host sends to the
-[`inference lakehouse`](inference-lakehouse.md). A streaming call exposes the
-exact outbound body before inference and its complete normalized response or
-provider error at the terminal attempt. A structured call assigns one request
-ID before each provider fetch and carries its exact outbound body, complete
-successful JSON provider envelope, bounded failure classification, usage,
-latency, response size, repair position, and validation outcome through
-completion. These are explicit host hooks: the portable harness
-does not know about R2, Queue, Pipeline, or residency, and a host's capture
-failure or the EU host's intentional no-op never changes provider routing or run
-outcome.
 
 ### Streaming stability
 
@@ -957,7 +881,6 @@ inference ledger, tool receipts, and scoped memory remain distinct durable
 records. Nested child delegation, personas, roles, and general child
 participants remain deferred product work.
 
-
 ## Invariants
 
 - **One predicate decides both the transport retry and the failure code**, so the
@@ -1135,8 +1058,6 @@ A published document is readable in the desktop client, and was not until 2026-0
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
-When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs, the object-local operational inference ledger, or the Global inference lakehouse: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. EU inference likewise does not retain it for later analysis.
-
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
 The same derivative backs `workstream_view_resource`, including after replay or
@@ -1174,8 +1095,6 @@ terminates the run without retry guidance, because the provider may have applied
 the mutation before its response failed validation.
 
 The harness reads that half by shape through `readStructuredFailure` in `@rally/contracts`, rather than importing any provider package's error class. What it forwards is an allowlist — `reason`, `field`, `expected`, `available`, `resourceId`, `reconnectRequired`, `retryAfterMs`, `actualMimeType`, `attachmentKind`, and `suggestedCall` — under a total size bound, not whatever an adapter chose to attach. Several adapters already pass a whole parsed provider error body as their details, and forwarding those would put raw provider JSON into the transcript and from there into every later lossless inference request record. A connector wanting a new key in front of the model adds it here, where the decision is reviewable.
-
-Hosted inference capture has one path for Global workspaces: the always-on Global lakehouse. It records exact request and terminal-attempt events through Global R2, Queue, Pipeline, and Data Catalog; the workspace preference, request-only `agent-inference/` writer, and regional D1 index no longer exist. EU inference analytics are intentionally deferred, so EU provider calls have no lakehouse archive or cross-region fallback. Capture remains best-effort and cannot fail an agent run. Reading a captured Global record back is [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference).
 
 Separately, Product analytics records a content-free `agent_tool_started` only
 after the execution plan is durable and replay/ambiguity checks permit a new
@@ -1272,8 +1191,6 @@ the transport-retry tests do, and one of them depends on a sibling having opened
 the breaker first, which is stated in the test rather than left to be inferred.
 Nothing pins `breakerScope`, so deleting that one property from `routePlan` would
 silently return every test to the shared key while each still passes alone.
-
-## Changelog
 
 ### 2026-09-14 — The queue, not Bind, decides what an open question may be followed by
 
@@ -1876,33 +1793,10 @@ would otherwise have left as it found it. It now carries `providerError` like th
 streaming and structured paths, and `embedding_inference` logs the same three
 fields the other two events do.
 
-**Both regions, not identically.** The reason travels on the regional structured
-log rather than only in the Global archive, so EU — whose inference is
-[never archived](inference-lakehouse.md) — gets a refusal's body in the same
-field, from the same code, truncated at the logger's 2,000-character field limit
-and with no archived copy behind it. Global has both: the clipped log row and
-the whole body in the archive. A test in `agent-inference-logging.test.ts` pins
-the EU half — the EU-shaped environment archives nothing and still logs the body
-— and anything that later moves this reasoning back into a Global-only surface
-takes EU's only copy with it.
-
 The cut lands with an irony worth stating: the rejection that motivated this is
 a few hundred characters and survives whole, while the bodies long enough to
 reach 2,000 are the ones quoting our request back — so the case the old
 exclusion existed for is now cut mid-echo rather than excluded.
-
-**What a reader has to keep true:** the body is provider-controlled text that
-quotes our own request back often enough to be assumed to. It is evidence,
-never instruction — the same rule tool output and fetched pages already carry —
-and the prompts, attachments, and model context that Workers Logs excludes stay
-excluded. Two consequences follow and are easy to miss. `redact` masks by key,
-so it does not reach inside this string: a provider that quotes the request
-inside its own prose reaches Workers Logs with it, which is the trade being made
-rather than a gap to close later. And a log row holds only the first 2,000
-characters of it, so a long body is complete in the Global archive and clipped
-in the log — which is the one place EU sees it. Widening `detail` into a general
-dump of the response is how the distinction between "what the provider said
-about our request" and "our request" would be lost.
 
 Shipped in #541.
 
@@ -2428,7 +2322,7 @@ flags. Provider invocation names remain separate from canonical model identity
 in the inference ledger. The host resolves an unweighted average of all
 OpenRouter endpoints for each bound Grok model and gives those rates to Bind.
 One public-metadata record per canonical OpenRouter model ID is cached in a
-Cloudflare KV namespace shared by the Global and EU Workers. A dedicated Global
+Cloudflare KV namespace shared by the configured deployments Workers. A dedicated Global
 cron refreshes the developer-selector and Azure-deployment union hourly; base
 and prompt-threshold override costs remain decimal strings in KV and are
 converted only at Bind's billing boundary. Startup now validates the Azure
@@ -2451,15 +2345,6 @@ headline price was rejected because it would systematically understate the
 intended market-average fallback. Keeping those rates as dated source constants
 was also rejected because endpoint inventory changes independently of a Rally
 release.
-
-**Considered and rejected:** Encoding Azure as another fallback model. That
-would lose the difference between the product model and its provider endpoint,
-mislabel same-model traversal in telemetry, and bypass Bind's capability and
-circuit-breaker semantics. Reusing the realtime-dictation Azure variables was
-also rejected: those are regional and may be configured in EU, while the Monad
-production inference resource is a distinct routing authority. A missing Azure
-pair therefore omits that provider and leaves the existing OpenRouter route
-unchanged.
 
 **Consequences:** A new Azure model needs a checked-in canonical-to-deployment
 binding with proved capabilities and a canonical OpenRouter identity in the
@@ -2694,7 +2579,6 @@ invert the order a member had already seen.
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
-
 #### Active stream recovery retains its canonical reservation
 
 **What changed:** Workstream active-output checkpoints now persist and reload
@@ -2888,7 +2772,6 @@ waits for the terminal boundary that makes the loop idle, while steer delivery
 can still commit at the safe step. Any failure after observable work closes that
 step without a transparent provider retry.
 
-
 #### Substreams own persistent loops; runs are activation receipts
 
 **What changed:** `loopId` is stable for each work-stream substream and each
@@ -2961,7 +2844,6 @@ tool-bearing assistant turn was already sanitized, including on stopped and
 needs-input exits.
 The fail-closed settlement diagnostic names only the divergent invariant —
 `actor`, `run_id`, `role`, or `content` — and never includes either payload.
-
 
 #### Work-stream settlement adopts the final accepted turn
 
@@ -3062,13 +2944,6 @@ grants no capability and moves no authority — eligible capabilities and the to
 surface hash are unchanged — and its flag derives from environment and run input
 already frozen for the run, so a resumed attempt's scope is the same scope. A
 prompt change that did move authority would still need the bump.
-
-Slack is the one excluded origin the PRD does not name, and it is excluded on
-the reason the PRD gives for the others: Slack delivery cannot yet carry a
-reference to a resource, so a Slack participant would be told a document exists
-and given no way to open it. EU workspaces get nothing from this until Terminal
-is regionally supported there; the gate is the plugin's own regional rule, so
-that follows automatically rather than needing its own condition.
 
 **A published document currently has no reading surface in the desktop client,
 and the PRD assumed it had one.** Verified in a real window: a generated
@@ -3495,24 +3370,6 @@ same predicate at the same time: naming "the zone that applies" asked the model
 to pick by a scope chosen after it writes, so an unnamed zone now gets a summary
 with no zone in it rather than a guess in the one sentence a person reads.
 
-### 2026-08-24 — EU hosts intentionally discard analytical inference events
-
-**What changed:** The harness still emits the same host-neutral lossless event,
-but only the Global API host persists and transports it. The EU host returns
-before archive staging and has no Queue or Pipeline binding.
-
-**Why:** Cloudflare cannot put Data Catalog in the EU jurisdiction, and the
-direct R2 Pipeline alternative would require a separately bootstrapped
-interactive credential. Product direction is to defer EU inference analytics.
-
-**Considered and rejected:** Teaching the portable harness about region, which
-would couple provider execution to deployment topology; and forwarding EU
-events to Global, which would cross the workspace content boundary.
-
-**Consequences:** Provider execution behavior remains identical in both regions.
-Global retains maximal request and terminal-attempt evidence; EU has no raw
-lakehouse evidence for production debugging.
-
 ### 2026-08-24 — Every terminal run closes its residual receipts, not only a stopped one
 
 **What changed:** `terminalizeHarnessAttempt` settles residual tool receipts on
@@ -3812,7 +3669,6 @@ run's card spinning forever, and the replay dedup the unique index carries. And
 a statement moved off a view reports `rowsWritten` rather than a trigger's
 counter, which counts index writes — an `=== 1` check that survives such a move
 will be wrong.
-
 
 ### 2026-08-22 — Production refusals, cancelled receipts, and inference logs become honest
 
@@ -4931,10 +4787,10 @@ the enum is enforced by trigger rather than by rebuilding `messages`, so a write
 that tries one aborts loudly.
 
 **The retirement is unfinished on purpose, and owes two more steps.** The deploy
-job migrates both regions before it deploys either Worker, so the Worker still
+job migrates configured deployments before it deploys either Worker, so the Worker still
 live during a migration is the *previous* one — and it calls `loadArtifacts` on
 every `GET /workstreams/:id/context`. Dropping the table alongside this code
-removal would fail every context request in both regions for the length of the
+removal would fail every context request in configured deployments for the length of the
 rollout, and indefinitely if the deploy failed after the migration step. So
 `0069_retire_artifact_messages.sql` retires only the message type, a later
 release owes the `DROP TABLE`, and the R2 objects under
@@ -5071,7 +4927,7 @@ of the path was already built and unused: `AutomationDraftStreamEventSchema` has
 carried a `delta` variant, the desktop client has parsed it, and the composer
 has rendered a streaming bubble from it, all with tests. Nothing upstream was
 muting the model — the provider payload sends `tool_choice: "auto"` with no
-token cap, and the deployed `OPENROUTER_AUTOMATION_MODEL` in both regions is a
+token cap, and the deployed `OPENROUTER_AUTOMATION_MODEL` in configured deployments is a
 model that interleaves text with tool calls.
 
 The original ban was not wrong about the case it was written for. Prose on the

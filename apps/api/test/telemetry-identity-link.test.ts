@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryBootstrapService } from '../src/telemetry/bootstrap';
@@ -28,11 +29,11 @@ describe('anonymous telemetry identity linking', () => {
       DB: sqliteD1(database), AVALON_REGION: 'global', SESSION_SIGNING_KEY: 'shared-test-key',
     });
     const bootstrapService = new TelemetryBootstrapService(env);
-    const capability = (await bootstrapService.bootstrap(anonymousEpochId, 'US')).capability;
+    const capability = (await bootstrapService.bootstrap(anonymousEpochId)).capability;
     const auth = { userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'global' as const };
     await expect(linkAnonymousTelemetry(env, auth, capability)).resolves.toMatchObject({ result: 'linked' });
     await expect(linkAnonymousTelemetry(env, auth, capability)).resolves.toMatchObject({ result: 'duplicate' });
-    await expect(bootstrapService.bootstrap(anonymousEpochId, 'US')).rejects.toThrow('telemetry_journey_closed');
+    await expect(bootstrapService.bootstrap(anonymousEpochId)).rejects.toThrow('telemetry_journey_closed');
 
     expect(database.prepare('SELECT anonymous_epoch_id, route FROM telemetry_identity_links').all()).toEqual([
       { anonymous_epoch_id: anonymousEpochId, route: 'global' },
@@ -45,34 +46,34 @@ describe('anonymous telemetry identity linking', () => {
     database.close();
   });
 
-  it('links an EU epoch through the narrow Global control RPC without sharing its signing key', async () => {
+  it('links an configured deployment epoch through the narrow Global control RPC without sharing its signing key', async () => {
     const globalDatabase = migratedSqliteDatabase();
     const globalEnv = createTestEnv({
       DB: sqliteD1(globalDatabase), AVALON_REGION: 'global', SESSION_SIGNING_KEY: 'global-session-key',
       TELEMETRY_CAPABILITY_SIGNING_KEY: 'shared-telemetry-key',
     });
-    const capability = (await new TelemetryBootstrapService(globalEnv).bootstrap(anonymousEpochId, 'DE')).capability;
+    const capability = (await new TelemetryBootstrapService(globalEnv).bootstrap(anonymousEpochId)).capability;
 
-    const euDatabase = migratedSqliteDatabase();
-    seedUser(euDatabase);
-    const euEnv = createTestEnv({
-      DB: sqliteD1(euDatabase), AVALON_REGION: 'eu', SESSION_SIGNING_KEY: 'eu-session-key',
+    const enterpriseDatabase = migratedSqliteDatabase();
+    seedUser(enterpriseDatabase);
+    const enterpriseEnv = createTestEnv({
+      DB: sqliteD1(enterpriseDatabase), AVALON_REGION: 'enterprise', SESSION_SIGNING_KEY: 'enterprise-session-key',
       GLOBAL_TELEMETRY_CONTROL: {
-        authorizeJourneyLink: (input: { capability: string; expectedRoute: 'eu' }) =>
+        authorizeJourneyLink: (input: { capability: string; expectedRoute: 'global' }) =>
           new TelemetryBootstrapService(globalEnv).authorizeLink(input.capability, input.expectedRoute),
-        closeJourney: (input: { capability: string; expectedRoute: 'eu' }) =>
+        closeJourney: (input: { capability: string; expectedRoute: 'global' }) =>
           new TelemetryBootstrapService(globalEnv).closeJourney(input.capability, input.expectedRoute),
       },
     });
-    await expect(linkAnonymousTelemetry(euEnv, {
-      userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'eu',
+    await expect(linkAnonymousTelemetry(enterpriseEnv, {
+      userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'enterprise',
     }, capability)).resolves.toMatchObject({ result: 'linked' });
-    expect(euDatabase.prepare('SELECT route FROM telemetry_identity_links').get()).toEqual({ route: 'eu' });
-    expect(euDatabase.prepare('SELECT COUNT(*) AS count FROM telemetry_profile_jobs').get()).toEqual({ count: 0 });
+    expect(enterpriseDatabase.prepare('SELECT route FROM telemetry_identity_links').get()).toEqual({ route: 'enterprise' });
+    expect(enterpriseDatabase.prepare('SELECT COUNT(*) AS count FROM telemetry_profile_jobs').get()).toEqual({ count: 1 });
     expect(globalDatabase.prepare(
       'SELECT closed_at IS NOT NULL AS closed FROM telemetry_onboarding_journeys',
     ).get()).toEqual({ closed: 1 });
     globalDatabase.close();
-    euDatabase.close();
+    enterpriseDatabase.close();
   });
 });

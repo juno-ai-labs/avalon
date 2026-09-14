@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,7 +17,7 @@ import { clearAllLocalCache, closeLocalCache, defineLocalCacheSlice, localCacheS
 import type { WorkstreamDetail } from './types';
 
 const scope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'global', '00000000-0000-7000-8000-000000000001');
-const otherScope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'eu', '00000000-0000-7000-8000-000000000001');
+const otherScope = localCacheScope('00000000-0000-7000-8000-0000000000aa', 'enterprise', '00000000-0000-7000-8000-000000000001');
 const parentId = '00000000-0000-7000-8000-000000000010';
 const childId = '00000000-0000-7000-8000-000000000011';
 

@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 /**
  * Turning a published directory into a **live artifact**: a resource Rally also
  * serves.
@@ -48,7 +49,7 @@ export interface SitePublishFile {
 export interface SitePublishInput {
   workspaceId: string;
   workstreamId: string;
-  region: "global" | "eu";
+  region: Region;
   /** The artifact this path already published as, or `null` for the first one. */
   artifactId: string | null;
   resourceId: string;
@@ -181,7 +182,7 @@ export async function pointArtifactAtVersion(
     workspaceId: string;
     workstreamId: string;
     resourceId: string;
-    region: "global" | "eu";
+    region: Region;
     manifest: ArtifactManifest;
   },
 ): Promise<void> {

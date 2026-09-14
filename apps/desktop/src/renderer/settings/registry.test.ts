@@ -48,7 +48,7 @@ describe('settings registry', () => {
   });
   it('preserves legacy vocabulary and English casing independent of host locale', () => {
     const entries = collectSettings([coreSettingsProvider], context);
-    for (const query of ['startup', 'data residency', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'summary', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
+    for (const query of ['startup', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'summary', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
       expect(searchSettings(entries, query).length, query).toBeGreaterThan(0);
     }
     expect(new Set(coreSettingsProvider.entries.map((entry) => entry.key)).size).toBe(coreSettingsProvider.entries.length);

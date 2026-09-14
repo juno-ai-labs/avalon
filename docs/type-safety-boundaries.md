@@ -103,8 +103,6 @@ builder example to `scripts/type-assertion-boundaries.test.mjs`. Do not silence
 the rule at a call site; extend the centralized helper only when the missing
 surface is genuinely a platform-runtime gap.
 
-## Changelog
-
 ### 2026-08-12 — Type escapes became explicit boundaries
 
 **What changed:** Production double assertions are lint errors, application

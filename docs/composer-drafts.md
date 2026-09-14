@@ -21,8 +21,6 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/new-workstream.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a work stream's or an automation's, keyed by the parent id) and the **New work stream** launcher. |
 
-## How it works
-
 ### Which surfaces cache a draft
 
 Two surfaces cache a draft, and they are the only ones that do:
@@ -35,7 +33,7 @@ Two surfaces cache a draft, and they are the only ones that do:
 `lib/draft-keys.ts` is the single place those strings are built. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
 apart, and the launchers are scoped by regional workspace identity so switching
-workspaces does not surface another workspace's words even if Global and EU hold
+workspaces does not surface another workspace's words even if configured deployments hold
 the same workspace UUID.
 
 **New automation** caches nothing: `/automations/new` calls `POST /automations`
@@ -253,8 +251,6 @@ under Electron's `userData` directory. That is deliberate and bounded: nothing e
 is written there, no credential ever is, every draft expires after 12 hours, and
 signing out deletes all of them. [`security.md`](security.md) owns the boundary this
 sits inside.
-
-## Changelog
 
 ### 2026-09-10 — The store beneath the drafts is shared with the local cache
 

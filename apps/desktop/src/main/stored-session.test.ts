@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 import { normalizeLegacyStoredSession, parseLegacyStoredSession } from './stored-session';
 
@@ -36,13 +37,13 @@ describe('legacy encrypted desktop sessions', () => {
     });
   });
 
-  it('adds the London default to an EU workspace without replacing stored values', () => {
+  it('adds the default timezone to an enterprise workspace without replacing stored values', () => {
     expect(normalizeLegacyStoredSession({
       user: { timezone: 'Asia/Tokyo' },
-      workspace: { region: 'eu' },
+      workspace: { region: 'enterprise' },
     })).toMatchObject({
       user: { timezone: 'Asia/Tokyo' },
-      workspace: { timezone: 'Europe/London' },
+      workspace: { timezone: 'America/Los_Angeles' },
     });
   });
 

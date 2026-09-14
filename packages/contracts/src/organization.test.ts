@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import {
   AcceptWorkspaceInvitationRequestSchema,
@@ -28,11 +29,11 @@ describe("organization invitation contracts", () => {
     }).success).toBe(false);
   });
 
-  it("carries the immutable Global or EU region in invitation previews", () => {
+  it("carries the immutable Global or enterprise region in invitation previews", () => {
     const preview = {
       workspaceId,
       workspaceName: "Europe Research",
-      region: "eu",
+      region: "enterprise",
       email: "invitee@example.com",
       role: "member",
       expiresAt: "2026-08-08T01:00:00.000Z",
@@ -40,7 +41,7 @@ describe("organization invitation contracts", () => {
     expect(WorkspaceInvitationPreviewSchema.parse(preview)).toEqual(preview);
     expect(WorkspaceInvitationPreviewSchema.safeParse({
       ...preview,
-      region: "us",
+      region: "not a region",
     }).success).toBe(false);
   });
 
@@ -85,23 +86,23 @@ describe("organization invitation contracts", () => {
       timezone: "America/Los_Angeles",
       createdAt: "2026-08-01T00:00:00.000Z",
     };
-    const euWorkspace = {
+    const enterpriseWorkspace = {
       ...globalWorkspace,
       id: "00000000-0000-7000-8000-000000000099",
       name: "Europe Research",
       slug: "europe-research",
-      region: "eu" as const,
+      region: "enterprise" as const,
       role: "member" as const,
       timezone: "Europe/London",
     };
 
     expect(WorkspaceOnboardingStateSchema.parse({
       workspace: globalWorkspace,
-      workspaces: [globalWorkspace, euWorkspace],
+      workspaces: [globalWorkspace, enterpriseWorkspace],
       invitations: [],
     })).toEqual({
       workspace: globalWorkspace,
-      workspaces: [globalWorkspace, euWorkspace],
+      workspaces: [globalWorkspace, enterpriseWorkspace],
       invitations: [],
     });
 

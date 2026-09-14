@@ -29,8 +29,6 @@ token and which state wins.
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v18: the column, its backfill, and the rebuilt `_runtime_workstream_participants` triggers that keep a re-add through the compatibility views unseen. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |
 
-## How it works
-
 ### The three personal states
 
 **Unread** and **mentioned** are derived from attention ordinals: the work
@@ -299,8 +297,6 @@ paths set it.
 
 Schema migrations: work-stream object v18, WorkspaceDO v10. Both backfill
 existing rows as seen.
-
-## Changelog
 
 ### 2026-09-10 — Needs attention is retired, and the rule it carried is unhoused
 

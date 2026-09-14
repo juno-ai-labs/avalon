@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import {
   CreateProjectRequestSchema,
   IdSchema,
@@ -142,7 +143,7 @@ export type WorkspaceProjectDefaultResult = z.infer<typeof WorkspaceProjectDefau
 
 export const ProjectDefaultResourceQueueMessageSchema = WorkspaceProjectDefaultTargetSchema.extend({
   type: z.literal("project_default_resource"),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   requestedByUserId: UserIdSchema,
 }).strict();

@@ -67,7 +67,7 @@ they do not.
   mode to actually watch for, not a hypothetical one. Call out any merge-time
   renumber hazard under **Reviewer notes**. A migration is applied to both
   regions; say so if the two diverge.
-- **Regional impact** — What changes in Global, in the European Union, or in the
+- **Regional impact** — What changes in configured deployments or in the
   routing between them. **Required in spirit** for anything touching identity,
   the Global registry, cross-region bridges, provider ingress routing, or data
   residency. Read [Regionalization](regionalization.md) first.

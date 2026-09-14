@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -438,7 +439,7 @@ describe("boundary contracts", () => {
 
   it("keeps Queue payloads opaque", () => {
     const value = ActivityQueueMessageSchema.parse({
-      region: "eu",
+      region: "enterprise",
       workspaceId: id,
       activityId: id
     });

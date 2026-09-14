@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import {
   asArtifactId,
   asAutomationId,
@@ -30,7 +31,7 @@ const ARTIFACT = asArtifactId("3f2504e0-4f89-41d3-9a0c-0305e82c3306");
  * at the migration tracker with `objectName: null`, which is how `automation`
  * went unnoticed for the life of that name.
  */
-const EVERY_MINTED_NAME = (["global", "eu"] as const).flatMap((region) => [
+const EVERY_MINTED_NAME = (["global", "enterprise"] as const).flatMap((region) => [
   workspaceDOName(region, WORKSPACE),
   workstreamDOName(region, WORKSPACE, WORKSTREAM),
   conversationObjectName(region, WORKSPACE, WORKSTREAM),
@@ -50,18 +51,18 @@ describe("durable object names", () => {
     // The serving Worker holds no D1 and sees only a Host header, so every
     // segment of this name has to be derivable from the hostname alone.
     expect(artifactHostDOName("global", ARTIFACT)).toBe(`global:artifact:${ARTIFACT}`);
-    expect(artifactHostDOName("eu", ARTIFACT)).toBe(`eu:artifact:${ARTIFACT}`);
+    expect(artifactHostDOName("enterprise", ARTIFACT)).toBe(`enterprise:artifact:${ARTIFACT}`);
     expect(artifactHostDOName("global", ARTIFACT)).not.toContain(WORKSPACE);
   });
 
   it("separates the two regions, so one name never addresses both objects", () => {
-    expect(artifactHostDOName("global", ARTIFACT)).not.toBe(artifactHostDOName("eu", ARTIFACT));
+    expect(artifactHostDOName("global", ARTIFACT)).not.toBe(artifactHostDOName("enterprise", ARTIFACT));
   });
 
   it("keeps an artifact name distinct from every other object's", () => {
     const artifact = artifactHostDOName("global", ARTIFACT);
     const others = EVERY_MINTED_NAME.filter((name) => name !== artifact
-      && name !== artifactHostDOName("eu", ARTIFACT));
+      && name !== artifactHostDOName("enterprise", ARTIFACT));
     expect(others).not.toContain(artifact);
   });
 });

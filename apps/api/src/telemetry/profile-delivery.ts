@@ -31,8 +31,7 @@ export async function processProfileOutbox(env: Env): Promise<ProfileDeliverySum
   const telemetryDelivery = env.TELEMETRY_DELIVERY;
   const postHogHost = env.POSTHOG_HOST;
   const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
-  if (env.AVALON_REGION !== 'global'
-    || !postHogHost
+  if (!postHogHost
     || !postHogProjectToken
     || !telemetryDelivery) return summary;
   const now = new Date();

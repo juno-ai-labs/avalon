@@ -26,13 +26,10 @@ beyond a dashboard.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability` — the only place logs and traces are turned on. Both regions carry `enabled: true`, `head_sampling_rate: 1`, and `traces: { enabled: true, head_sampling_rate: 1 }`. |
 | `apps/api/src/observability/logger.ts` | Every `console` call either Worker makes. `no-console` is an ESLint error everywhere else. |
 | `apps/api/src/observability/tracing.ts` | Every custom span, over `tracing` from `cloudflare:workers`. |
 | `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `cloudflare:workers`, including `tracing`. |
 | `apps/release-retention/src/logger.ts` | The retention Worker's equivalent logger. |
-
-## How it works
 
 ### Tracing is automatic, and it is already on
 
@@ -109,21 +106,6 @@ them somewhere else, and the two halves of that live in different places: the
 while the **attachment** is per Worker — `observability.<signal>.destinations` in
 one `wrangler.*.jsonc`. Creating a destination sends nothing on its own. A
 Worker exports when, and only when, its own config names one.
-
-That is what protects the EU boundary, and it is a weaker protection than it
-sounds: it is the absence of a line in one file. The EU Worker holds no
-destination credential and [`telemetry.md`](telemetry.md) records that an EU
-PostHog project would require a new decision, but neither of those stops an
-attachment being added by someone copying the Global config. Note too that
-`persist: false` makes this worse rather than better: it removes the Cloudflare
-copy and leaves the third party holding the only one.
-
-**This was decided on 2026-08-20, and only for Global.** That Worker now exports
-logs and traces to the US PostHog project, message content in the Durable Object
-SQL spans included, with the reasoning and the accepted cost recorded in
-[`telemetry.md`](telemetry.md#changelog). The EU Worker still names no
-destination. Read the section above as the standing description of what those
-traces carry, not as a warning about something that has not happened.
 
 The identity half of the same decision is in
 [`performance-tracing.md`](performance-tracing.md#operations) — PostHog is keyed
@@ -255,12 +237,6 @@ export the same way and share the trace id, so a destination correlates them
 without configuration. `persist: false` exports without also storing the trace in
 Cloudflare's dashboard.
 
-A destination is account configuration and its credential lives there, but the
-**opt-in is per Worker**: `observability.logs.destinations` and
-`observability.traces.destinations` in each `wrangler.*.jsonc` decide which
-Worker sends to it. That distinction is load-bearing here — it is what lets the
-Global Worker export while the EU Worker does not, from one account.
-
 ## Invariants
 
 - **No OpenTelemetry package is installed, and no trace id is minted here.** The
@@ -322,8 +298,6 @@ call site depends on but nests nothing and exports nothing, so anything
 depending on real nesting or export belongs in `apps/api/test-workers/` — see
 [`testing.md`](testing.md).
 
-## Changelog
-
 ### 2026-09-08 — A Durable Object invocation's wall time includes its activation
 
 **What changed:** Recorded, dated, that a Durable Object invocation log's
@@ -351,22 +325,8 @@ the opt-in is per Worker, through `observability.<signal>.destinations` in each
 where telemetry is sent", which was wrong in the way that mattered — and, in a
 first pass at this entry, said so in a new section while two earlier passages
 here and in [`performance-tracing.md`](performance-tracing.md) still claimed a
-destination "covers both regional Workers at once". Review caught the
+destination "covers configured regional Workers at once". Review caught the
 contradiction; both passages now describe the split.
-
-**Why:** Pointing Global at PostHog while leaving EU alone depends entirely on
-that distinction. Read the old sentence and the only conclusions available were
-that an export is all-or-nothing across regions, or that the repository has no
-say — either of which turns a per-region decision into an account-wide one.
-
-**Consequences:** The warnings on this page about an export crossing the EU
-boundary now describe a thing that has to be done deliberately in
-`wrangler.eu.jsonc`, rather than something that could happen as a side effect of
-account configuration. That cuts both ways, and the weaker half is the one worth
-holding on to: what keeps EU telemetry in the EU is the absence of one line in
-one file, which a copy-paste from the Global config would supply. The assertion
-in `apps/api/test/telemetry-export-destinations.test.ts` exists because prose
-cannot fail a build.
 
 Shipped in #207.
 
@@ -404,7 +364,7 @@ we install an OpenTelemetry SDK" is no, and the reason is in **How it works**.
 
 It also records one thing nobody had looked for: automatic tracing puts
 `cloudflare.durable_object.query.bindings` on every embedded-SQL span, which
-means member message content is in the traces of both regional Workers today,
+means member message content is in the traces of configured regional Workers today,
 below the level `redact` operates at. That is tolerable while the traces stay in
 Cloudflare's own storage and intolerable to assume through an OTLP export
 without deciding it deliberately, so

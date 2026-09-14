@@ -1,3 +1,4 @@
+import { regionConfiguration } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts";
 import type { DurableObject as RpcDurableObject } from "cloudflare:workers";
 
@@ -7,48 +8,20 @@ import { durableObjectSelfForId, selfAddressedOverRpc } from "./durable-object-s
 
 type AvalonEnvironment = "development" | "test" | "staging" | "production";
 
-const JURISDICTION_BY_REGION = {
-  global: "us",
-  eu: "eu",
-} as const satisfies Record<Region, DurableObjectJurisdiction>;
-
-/**
- * These are first-placement defaults, not residency guarantees. The
- * jurisdiction above is the guarantee; the hint only keeps a background job
- * from accidentally placing a new object near the job's execution location.
- */
-const FALLBACK_LOCATION_HINT_BY_REGION = {
-  global: "wnam",
-  eu: "weur",
-} as const satisfies Record<Region, DurableObjectLocationHint>;
-
 export const WORKSPACE_PLACEMENT_AFFINITIES = ["wnam", "enam", "weur", "eeur"] as const;
 export type WorkspacePlacementAffinity = (typeof WORKSPACE_PLACEMENT_AFFINITIES)[number];
-
 export interface WorkspacePlacementDecision {
   affinity: WorkspacePlacementAffinity;
   source: "request_longitude" | "missing_request_metadata";
 }
 
-const WEST_EAST_LONGITUDE_SPLIT = {
-  // The 100th meridian is the conventional coarse split between western and
-  // eastern North America for a two-cell latency affinity.
-  global: -100,
-  // 15°E keeps the UK, Ireland, France, Benelux, Iberia, Italy, and most of
-  // Germany in WEUR while routing the eastern half of Europe toward EEUR.
-  eu: 15,
-} as const satisfies Record<Region, number>;
-
-const AFFINITIES_BY_REGION = {
-  global: ["wnam", "enam"],
-  eu: ["weur", "eeur"],
-} as const satisfies Record<Region, readonly WorkspacePlacementAffinity[]>;
-
 const placementCache = new WeakMap<D1Database, Map<string, Promise<WorkspacePlacementAffinity>>>();
 const WORKSPACE_PLACEMENT_CACHE_LIMIT = 1_024;
 
 export function fallbackWorkspacePlacementAffinity(region: Region): WorkspacePlacementAffinity {
-  return FALLBACK_LOCATION_HINT_BY_REGION[region];
+  const affinity = regionConfiguration(region).affinities[0];
+  if (!isWorkspacePlacementAffinity(affinity)) throw new Error("Invalid configured placement affinity");
+  return affinity;
 }
 
 export function isWorkspacePlacementAffinity(value: unknown): value is WorkspacePlacementAffinity {
@@ -61,7 +34,7 @@ export function isWorkspacePlacementAffinityForRegion(
   value: unknown,
 ): value is WorkspacePlacementAffinity {
   return isWorkspacePlacementAffinity(value)
-    && (AFFINITIES_BY_REGION[region] as readonly string[]).includes(value);
+    && regionConfiguration(region).affinities.includes(value);
 }
 
 /** Select the immutable workspace affinity once, from the initiating request. */
@@ -83,16 +56,10 @@ export function deriveWorkspacePlacementAffinity(
       source: "missing_request_metadata",
     };
   }
-  if (region === "global") {
-    return {
-      affinity: longitude < WEST_EAST_LONGITUDE_SPLIT.global ? "wnam" : "enam",
-      source: "request_longitude",
-    };
-  }
-  return {
-    affinity: longitude < WEST_EAST_LONGITUDE_SPLIT.eu ? "weur" : "eeur",
-    source: "request_longitude",
-  };
+  const configuration = regionConfiguration(region);
+  const affinity = configuration.affinities[longitude < configuration.longitudeSplit ? 0 : 1];
+  if (!isWorkspacePlacementAffinity(affinity)) throw new Error("Invalid configured placement affinity");
+  return { affinity, source: "request_longitude" };
 }
 
 function isLocalEnvironment(environment: AvalonEnvironment | undefined): boolean {
@@ -111,7 +78,7 @@ function durableObjectNamespaceForRegion<T extends RpcDurableObject | undefined 
   // not implemented locally. Production and staging always resolve IDs through
   // a jurisdiction-constrained namespace for both product regions.
   if (isLocalEnvironment(environment)) return namespace;
-  return namespace.jurisdiction(JURISDICTION_BY_REGION[region]);
+  return namespace.jurisdiction(regionConfiguration(region).jurisdiction);
 }
 
 /**
@@ -204,7 +171,7 @@ function durableObjectIdForRegion<T extends RpcDurableObject | undefined>(
  * The only supported resolver for Avalon product Durable Objects.
  *
  * Jurisdiction must be selected before deriving the name-based ID because the
- * same name identifies different objects in unrestricted, US, and EU
+ * same name identifies different objects in unrestricted, US, and regional
  * namespaces. Every possible first `get()` also carries a location hint;
  * Cloudflare only considers that option on the first lookup for an object.
  */
@@ -239,7 +206,7 @@ export function durableObjectStubForRegion<T extends RpcDurableObject | undefine
  *
  * The ID is parsed through the same jurisdiction-restricted namespace that
  * minted it. `idFromString` validates the ID against the namespace it is called
- * on, so parsing an EU object's ID through the unrestricted namespace is the
+ * on, so parsing a regional object's ID through the unrestricted namespace is the
  * kind of mistake that surfaces as a confusing throw at `get()` rather than
  * here — and in production `assertDurableObjectJurisdiction` inside the object
  * would refuse it anyway.
@@ -436,7 +403,7 @@ export function assertDurableObjectJurisdiction(
   environment: AvalonEnvironment | undefined,
 ): void {
   if (environment !== "production" && environment !== "staging") return;
-  const expected = JURISDICTION_BY_REGION[region];
+  const expected = regionConfiguration(region).jurisdiction;
   if (id.jurisdiction !== expected) {
     throw new Error(`durable_object_jurisdiction_mismatch:${expected}:${id.jurisdiction ?? "none"}`);
   }

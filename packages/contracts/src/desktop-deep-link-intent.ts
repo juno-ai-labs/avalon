@@ -82,7 +82,7 @@ function parseConnectorResult(
   const provider = connectorProvider(providerValue);
   if (!provider || (status !== "connected" && status !== "denied" && status !== "failed")) return null;
   const callbackRegion = target?.region ?? url.searchParams.get("region");
-  if (callbackRegion !== "global" && callbackRegion !== "eu") return null;
+  if (!callbackRegion || !/^[a-z][a-z0-9-]*$/u.test(callbackRegion)) return null;
   const attemptId = url.searchParams.get("attempt");
   if (attemptId !== null && !ATTEMPT_PATTERN.test(attemptId)) return null;
   const routingKeys = target ? [] : ["region"];
@@ -193,7 +193,7 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   if (url.hostname === "invitations" && url.pathname === "/accept" && !target) {
     const token = url.searchParams.get("token");
     const region = url.searchParams.get("region");
-    return token && TOKEN_PATTERN.test(token) && (region === "global" || region === "eu")
+    return token && TOKEN_PATTERN.test(token) && (region !== null && /^[a-z][a-z0-9-]*$/u.test(region))
       && exactKeys(url.searchParams, ["token", "region"])
       ? { kind: "invitation", token, region }
       : null;

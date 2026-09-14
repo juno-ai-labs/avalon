@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema } from '@rally/contracts';
@@ -70,10 +71,10 @@ vi.mock('../lib/app-session', () => ({
         appVersion: '0.1.0',
         isPackaged: false,
         platform: 'darwin',
-        api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+        api: { global: 'https://api.rallywith.ai', enterprise: 'https://enterprise.api.rallywith.ai' },
         devAuthEnabled: true,
       },
-      session: { apiBaseUrl: 'https://eu.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' } },
+      session: { apiBaseUrl: 'https://enterprise.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' } },
       leaveWorkspace,
       signOut,
       pendingConnectorOAuth,
@@ -114,7 +115,7 @@ const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Rally Studio',
-  region: 'eu',
+  region: 'enterprise',
   timezone: 'Europe/London',
   currentUser: owner,
 };
@@ -128,7 +129,7 @@ const invitation: WorkspaceInvitation = {
   acceptedAt: null,
   createdAt: '2026-08-01T00:00:00.000Z',
 };
-const inviteUrl = 'https://rallywith.ai/invite/#region=eu&token=private-token-value-long-enough';
+const inviteUrl = 'https://rallywith.ai/invite/#region=enterprise&token=private-token-value-long-enough';
 
 function createTestQueryClient(): QueryClient {
   return new QueryClient({
@@ -332,12 +333,12 @@ describe('Workspace settings', () => {
         capabilities: [],
         status: 'healthy',
       },
-      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
       signingSecret: 'whsec_one-time-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
     api.rotateWebhookSecret.mockResolvedValue({
-      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
       signingSecret: 'whsec_rotated-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
@@ -510,7 +511,7 @@ describe('Workspace settings', () => {
     ) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
     openSettingsSection('Workspace');
-    expect(await screen.findByText('Data region', undefined, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     // The destructive review-and-confirm flow is not sitting in the middle of
     // the preferences list, and Workspace does not pay for its read.
     expect(screen.queryByText('Terminal network access')).not.toBeInTheDocument();
@@ -1451,7 +1452,7 @@ describe('Workspace settings', () => {
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
     ));
     expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
     );
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveAttribute('type', 'password');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Copy secret' }));
@@ -1798,12 +1799,12 @@ describe('Workspace settings', () => {
     expect(dialog).toBeVisible();
 
     await act(async () => resolveRotation({
-      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
       signingSecret: 'whsec_rotated-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     }));
     expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
     );
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
@@ -1863,13 +1864,11 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
 
-  it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
+  it('lets an owner create, copy, and revoke an invite', async () => {
     renderSettings();
     openSettingsSection('Workspace');
 
-    expect(await screen.findByText('Data region', undefined, { timeout: 10_000 })).toBeVisible();
-    expect(screen.getByText('European Union')).toBeVisible();
-    expect(screen.getByText('Locked')).toBeVisible();
+    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Email address' }), {
@@ -1936,10 +1935,10 @@ describe('Workspace settings', () => {
   it('searches individual settings without switching panes until a result is selected', async () => {
     renderSettings();
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    fireEvent.change(search, { target: { value: 'region' } });
+    fireEvent.change(search, { target: { value: 'organization' } });
     expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Data region Workspace' }));
-    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', 'workspaceRegion'));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace Workspace' }));
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', 'workspaceIdentity'));
     expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
     fireEvent.change(search, { target: { value: 'does not exist' } });
     expect(screen.getByText('No settings found')).toBeVisible();
@@ -2080,7 +2079,6 @@ describe('Workspace settings', () => {
 
     const toggle = await screen.findByRole('switch', { name: 'Product analytics' });
     expect(toggle).toBeChecked();
-    expect(screen.getByText(/EU telemetry stays in Rally’s EU platform/u)).toBeVisible();
 
     fireEvent.click(toggle);
     await waitFor(() => expect(setProductAnalyticsEnabled).toHaveBeenCalledWith(false));
@@ -2102,7 +2100,7 @@ describe('Workspace settings', () => {
     for (const retired of ['Build', 'Platform', 'Regional API', 'Realtime']) {
       expect(screen.queryByText(retired), retired).not.toBeInTheDocument();
     }
-    expect(screen.queryByText('https://eu.api.rallywith.ai')).not.toBeInTheDocument();
+    expect(screen.queryByText('https://enterprise.api.rallywith.ai')).not.toBeInTheDocument();
   });
 
   it('offers no telemetry inspector in the staff-only Developer section', async () => {

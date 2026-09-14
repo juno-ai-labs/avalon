@@ -51,13 +51,13 @@ test('uses a direct deployment while active regional revisions are unknown or di
 
 test('uses Wrangler direct deployment for platform state its Versions API cannot apply', () => {
   for (const changedPath of [
-    'apps/api/wrangler.eu.jsonc',
     'apps/api/wrangler.global.jsonc',
-    'apps/api/wrangler.documents.eu.jsonc',
+    'apps/api/wrangler.global.jsonc',
+    'apps/api/wrangler.documents.global.jsonc',
     'apps/api/wrangler.documents.global.jsonc',
     'apps/api/wrangler.telemetry.global.jsonc',
     'apps/api/wrangler.pricing.global.jsonc',
-    'apps/api/wrangler.terminal.eu.jsonc',
+    'apps/api/wrangler.terminal.global.jsonc',
     'apps/api/wrangler.terminal.global.jsonc',
     'apps/api/crash-symbolicator/src/index.js',
   ]) {
@@ -97,7 +97,7 @@ test('a divergent target sees platform state changed only on the deployed side',
     await execFile('git', ['checkout', '-b', 'deployed'], { cwd: directory });
     const deployedSha = await commitFile(
       directory,
-      'apps/api/wrangler.terminal.eu.jsonc',
+      'apps/api/wrangler.terminal.global.jsonc',
       '{ "name": "deployed" }\n',
       'deployed platform state',
     );
@@ -105,7 +105,7 @@ test('a divergent target sees platform state changed only on the deployed side',
     await commitFile(directory, 'apps/api/src/index.ts', 'export default {};\n', 'target code');
 
     const changedPaths = await changedPathsSince(directory, deployedSha);
-    assert.ok(changedPaths.includes('apps/api/wrangler.terminal.eu.jsonc'));
+    assert.ok(changedPaths.includes('apps/api/wrangler.terminal.global.jsonc'));
     assert.equal(selectApiDeployMode({
       deployedShas: [deployedSha],
       changedPaths,

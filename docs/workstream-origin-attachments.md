@@ -374,8 +374,6 @@ runs through `withAuthorizedConnection` like every other provider-calling adapte
 entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
-## Changelog
-
 ### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
 
 **What changed:** The inspector's **Versions** control opens the standard header

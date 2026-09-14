@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import type { Env } from '../env';
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { z } from 'zod';
@@ -5,7 +6,7 @@ import { SubstreamIdSchema, WorkspaceIdSchema, IdSchema } from '@rally/contracts
 
 export const SearchProjectionMessageSchema = z.strictObject({
   type: z.literal('search_projection_v1'),
-  region: z.enum(['global', 'eu']),
+  region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
@@ -20,7 +21,7 @@ export const SearchProjectionMessageSchema = z.strictObject({
  */
 export const SearchConversationProjectionMessageSchema = z.strictObject({
   type: z.literal('search_conversation_projection_v1'),
-  region: z.enum(['global', 'eu']),
+  region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,

@@ -314,8 +314,6 @@ tables, and let the post-merge system have exactly one canonical writer.
     generated-run controls. Those are Workstream product policy, not reusable
     conversation UI.
 
-## Product behavior
-
 ### Starting and returning to a draft
 
 Selecting **New automation** continues to do only what it does today: it opens
@@ -2399,32 +2397,11 @@ hide a broken object-local transaction or port adapter.
 
 ## Regional impact
 
-AutomationAgent is a workspace-scoped product object. It is resolved only
-through the repository's workspace Durable Object resolver, using the
-workspace's immutable region and jurisdiction: US jurisdiction for Global,
-European Union jurisdiction for EU. The object asserts its own jurisdiction at
-construction. A request-controlled automation ID can never select a region.
-
-Draft conversations, Bind ledgers, definitions, schedules, run history,
-connector references, and delivery receipts remain in the workspace's region.
-EU data has no Global fallback. Shared provider ingress may receive bytes at its
-existing endpoint, but carries only the verified routing envelope to the owning
-regional object under the current regionalization contract.
-
 The Global inbound-email registry remains the sole cross-region authority. It
 stores only the permanent address and opaque owner route needed to select the
 regional object, not lifecycle, conversation, definition, or run content. A
 draft receives no address. Activation and deletion preserve the existing
 never-reuse/tombstone rules.
-
-The merge deployment preserves the repository's EU-then-Global order because
-Global binds the existing EU entrypoints. This change does not add or rename a
-cross-region bridge entrypoint; the Global email bridge keeps its current wire
-contract. The automation cutover step starts only after both regional deploys
-succeed and pass their first health check, and it runs each workspace in its
-immutable region. If implementation
-does require a new bridge entrypoint, the one-merge rollout is invalid and must
-be replaced by the documented three-stage bootstrap before shipping.
 
 ## Security and trust model
 
@@ -2571,6 +2548,7 @@ deleted code—after the workspace completion receipt.
    precondition. Do not merge this implementation while that `state.md` remains
    incomplete. Build AutomationAgent only against the installed ordered-turn
    substrate and exact Bind projection.
+
 2. The implementation PR adds the evaluator/descriptor/resolver contracts,
    AutomationAgent, shared transcript/Bind capabilities, destination engine,
    generated-run context/projections, migration RPCs, and shared desktop
@@ -2579,22 +2557,8 @@ deleted code—after the workspace completion receipt.
    `packages/db/src/index.ts`, seed data, dev routes, telemetry attribution,
    Slack services, inspector provenance, and tests. No generic SQL compatibility
    reader may reach a removed table after cutover.
-3. The deployment preserves EU-then-Global order. Before the EU deploy, a
-   read-only preflight enumerates regional D1
-   workspaces and uses the existing migration-command Queue to wake each one on
-   the old build; it refuses deployment unless every pre-existing WorkspaceDO
-   has a historical migration ledger. This makes “no ledger” an unambiguous
-   fresh-object signal for the new current-schema bootstrap. After both Workers deploy,
-   the existing `Verify regional health` step runs against the new build. A
-   later step in that same `deploy` job—not a separate job interleaved between
-   deploy steps—runs a checked-in cutover script. The script enumerates each
-   region's workspaces from regional D1 and submits idempotent commands through
-   the existing regional migration-command Queue to a new typed WorkspaceDO
-   cutover RPC. It adds no public or Access-gated one-time HTTP route. The
-   per-workspace ledger records audit, fence, snapshot, imported IDs/hashes,
-   cleanup, and completion. `deploy-api-workflow.test.mjs` pins health before
-   cutover and final post-cutover health after it.
-4. Before fencing a workspace, the deploy step records a run-time Global/EU
+
+4. Before fencing a workspace, the deploy step records a run-time configured deployment
    source witness containing the exact draft, `error`, unsupported-trigger,
    active-lease, and accepted-automation IDs and canonical hash. Draft count is
    not a checked-in defensive limit: every witnessed draft is intentionally
@@ -2613,6 +2577,7 @@ deleted code—after the workspace completion receipt.
    and re-derives the alarm, waits for existing compiler/run/email leases to
    settle, and stores new trigger IDs as deferred evidence. No Queue timing can
    create a legacy run after the fence.
+
 5. WorkspaceDO emits one versioned source snapshot for every accepted
    subscription. AutomationAgent imports idempotently and returns canonical
    hashes and registration receipts. Import preserves IDs, lifecycle, resolved
@@ -2621,16 +2586,18 @@ deleted code—after the workspace completion receipt.
    deduplication receipts. Unrepresentable triggers become paused attention,
    never broadened. Drafts are not imported; their audited IDs and any permanent
    address tombstones are recorded before deletion.
+
 6. After every destination hash and registration agrees, the step invokes
    `finalizeAutomationCutover`. That explicit RPC deletes audited drafts and
    descendants, removes imported memory source rows, rebuilds `schedules`, and
    drops legacy child tables before parent tables. It records completion outside
    the removed schema. Ordinary WorkspaceDO construction never performs this
    cleanup.
+
 7. The step activates final AutomationAgent routing, reconciles timers,
    evaluators, watches, email routes, occurrence keys, attention, reader and
    directory projections, then replays deferred trigger evidence through the
-   new authority. It verifies both regions and only then runs the normal health
+   new authority. It verifies configured deployments and only then runs the normal health
    check. A legacy draft cannot reappear because its rows are gone and the
    completed campaign refuses legacy readers/writers.
 
@@ -2657,15 +2624,18 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    result without duplicate tool effects. At each provider boundary, the
    AutomationAgent substrate reconstruction equals Bind's exact post-healing
    message state.
+
 2. Force the first provider attempt to fail before valid draft submission. The
    Automations sidebar still contains one resumable draft with the original
    human turn and a retryable failure; retry does not create another draft.
+
 3. Evict an object between run admission, a planned local write, its atomic
    state/terminal-receipt commit, an elicitation, output checkpointing, and
    terminal settlement. Each case recovers from the last committed boundary and
    reaches one coherent terminal state. Separately press **Stop** during an
    active compiler run; late provider output is fenced, committed receipts stay,
    and a new turn can start.
+
 4. Submit turns simultaneously from two windows. Exactly one compiler run is
    admitted; the other submission is refused as busy before inference or tool
    execution and its composer text is preserved. After the first turn settles,
@@ -2673,10 +2643,12 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    against the complete current conversation. No whole-conversation write or
    stale window can erase either turn. Stop the busy run from either window and
    verify the preserved second composer can then submit.
+
 5. Accept one draft concurrently from two clients. The automation keeps its ID,
    creates each schedule, address claim, table/memory definition, relationship,
    and delivery target once, and becomes active only after required routes are
    acknowledged.
+
 6. Fail each first-activation side effect in turn. The UI keeps the automation in
    non-runnable `activating`, shows the safe error and retry action, and retry
    reconciles the recorded receipt. Deleting the failed activation cleans up
@@ -2685,11 +2657,13 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    first activation and prove held receipts are refused. Repeat from resume:
    failure returns it to `paused` with the last working definition and run
    history, never delete-only.
+
 7. Exercise calendar, interval, manual, activity, and inbound-email triggers
    through alarm retry, object eviction, Queue/provider redelivery, pause,
    resume, and deletion. Each logical trigger resolves to exactly one run and
    one generated work stream. Crash after occurrence admission but before child
    creation; the stored `run_provisioning` wake completes that same child.
+
 8. Put multiple schedules, a due Bind recovery, an activation/projection retry,
    and maintenance work on one AutomationAgent. Verify the inherited
    multi-alarm base runs them in effective-time order, isolates one entry's
@@ -2701,6 +2675,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    derives from durable dispatch rows, that an in-flight
    compiler dispatch is not reclaimed by the same alarm drain and that a
    cancelled drain is rediscovered by the base's recovery arm.
+
 9. Accept connector events into WorkspaceDO, leave their ID-only messages in an
    ingress backlog, then install an evaluator generation. Events accepted at or
    below the returned `effectiveAfterEventSequence` never match even when
@@ -2712,6 +2687,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
    exactly once after activation. Queue timing cannot change its outcome, and
    there is no visible-active interval in which the automation is absent from
    routing.
+
 10. Verify every generated run is private by default, absent from the global
     work-stream sidebar/public directory, and present exactly once in the paged history
     on its automation home only for readers admitted by the hidden content-free
@@ -2720,9 +2696,11 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     SubstreamAgent audience authorization even when AutomationAgent or
     WorkspaceDO projection data is stale. A `needs_input` child creates an
     automation item in the workspace **Needs attention** surface.
+
 11. Make WorkspaceDO projection delivery fail. Direct overview, lifecycle, and
     trigger decisions remain correct; projection replay catches up
     monotonically without replacing newer state.
+
 12. Run the ordered transcript substrate conformance suite against
     SubstreamAgent and the draft-state AutomationAgent adapter, including exact
     Bind reconstruction, stable turns/blocks, empty and shortened ranges,
@@ -2732,35 +2710,27 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     receipt replay, ambiguous write, checkpoint recovery, cancellation, and
     terminal repair. Prove BlockDashboardAgent adopts none of these modules and
     its existing dispatch/checkpoint/settlement tests remain unchanged.
-13. Seed visible `active`, `paused`, and `error` subscriptions plus visible and
-    archived drafts, semantic/webhook/non-scalar triggers, memory items/table
-    rows/cells/mutations, email rate windows, and live routes in Global and EU,
-    then run the one merge-triggered cutover.
-    Every accepted automation exists once in its named AutomationAgent with
-    unchanged ID, address, settings, next occurrence, history, and receipts;
-    legacy `error` and unrepresentable triggers are paused with distinct safe
-    attention records and cannot run; effective settings, full memory contents,
-    email budget/lease state, and route tombstones match; every legacy draft and
-    draft-only dependent row is absent; and no content or telemetry crosses the
-    EU boundary. Change a reviewed draft count and prove cleanup fails closed
-    before deletion.
+
 14. Inspect emitted analytics and logs for all flows above and verify that no
     conversation, prompt, elicitation text/answer, attachment content, tool
     argument/result, or generated transcript is present. Verify terminal-run and
     tool telemetry still carries automation ID and trigger type from
     `AutomationRunContextV1`, and client conversation telemetry uses the real
     automation conversation ID rather than a fabricated work-stream ID.
+
 15. Delay, duplicate, reorder, and hash-conflict child run projections. The
     automation home may lag but never regresses, a same-version hash conflict
     returns terminal `rejected`, acknowledges the child outbox, and records
     attention rather than retrying into the DLQ. A terminal projection names only a committed final turn, and
     no child transcript or audience fact appears in AutomationAgent. A normal
     follow-up after terminal does not reopen the occurrence.
+
 16. Prove the ordered-turn companion PRD is completed before this merge and the
     implementation consumes its schema and terminal-turn contract. No AutomationAgent code
     reads or writes the removed run-level aggregate transcript protocol, and
     no migration path imports legacy `draft_conversation_json` or retains it as
     a readable or writable fallback.
+
 17. Parse table-driven legal and illegal evaluator fixtures at every boundary,
     beginning with `automation_set_evaluator_rules`. Reject unknown schema
     versions and keys, empty groups and values, duplicate authoring keys, IDs and
@@ -2768,12 +2738,14 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     operators, undeclared attributes, wrong plugin/connection/event pairs, stale
     projection versions, and same-version hash conflicts. Demonstrate that
     production evaluator APIs cannot receive an unbranded raw object.
+
 18. Evaluate non-recursive DNF predicates for string, number, boolean, string-
     array, person, and presence attributes. Verify case-sensitive comparisons,
     no coercion, and that a missing attribute makes every non-presence positive
     and negative leaf false. `presence.not_exists` alone matches absence. A false
     predicate must return `no_match`, and evaluator processing must never invoke
     model inference.
+
 19. Ingest representative Gmail connector `email.received`,
     `linear.issue.update`, and
     `note.generated` events. WorkspaceDO evaluates only manifest-declared
@@ -2783,24 +2755,28 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     in the same automation match one Linear event and verify the unique
     `(automationId, workspaceEventId)` key still creates one run. A later
     registration generation does not replay the old event implicitly.
+
 20. Prove a weekday 9:00 AM America/Los_Angeles timer across daylight-saving
     transitions is calculated, armed, recovered, and admitted entirely by
     AutomationAgent. No timer evaluator or timer occurrence is written to or
     delivered by WorkspaceDO. Resume after several missed occurrences and
     verify the first due time is strictly after resume with no catch-up run;
     verify no planned work stream is pre-created before its due time.
+
 21. Attach one provider resource to two work streams, enable both watches, and
     configure an automation for the same update. One canonical WorkspaceDO event
     enters one candidate/evaluation engine and creates exactly three typed
     destination receipts: one automation occurrence and one connected-activity
     message in each work stream. No legacy direct-watch scan or second event copy
     participates.
+
 22. Duplicate and reorder the watched-link projection, Queue wake-up, child
     append result, and WorkspaceDO acknowledgement. Each work stream contains
     one update. Disable or detach the watch, archive the work stream, or advance
     its authority generation while a delivery is pending; the destination
     recheck appends nothing and settles a terminal safe refusal rather than
     retrying forever.
+
 23. Route workspace-visible and restricted resource updates into personal and
     workspace-scoped watched work streams. The append succeeds only when the
     canonical event audience contains every current active participant. Prove
@@ -2809,6 +2785,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     the published Queue message contains identifiers and hashes only; the
     regional manual rehearsal inspects DLQ replay because workerd cannot read a
     hosted dead-letter queue.
+
 24. Compile and evaluate table-driven fixtures for every row in the required
     conformance vocabulary: Slack channel messages and `foobar` content; Linear
     project and project-ticket changes; Granola note creation globally, in a
@@ -2817,6 +2794,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     selected-person comment, and selected-page comment. Each accepted intent
     expands to the exact event types, resource selector, and typed predicates
     stated in the table and creates one delivery per logical event.
+
 25. Attempt to accept each conformance trigger with its required event family,
     field, relationship, or external-identity mapping removed from the connector
     manifest/normalizer. Review reports that trigger as unsupported and
@@ -2825,6 +2803,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     not broaden. A newly authored automation may inspect and accept the expanded
     family, but the existing accepted automation remains frozen because active-
     definition editing is outside this PRD.
+
 26. Evaluate a Slack message containing `foobar`, one without it, uppercase
     `Foobar`, and missing `messageText`. Only the exact lowercase substring
     matches. Verify the bounded message text never enters an evaluator
@@ -2832,6 +2811,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     DLQ message, log, or telemetry event. Repeat person and resource fixtures
     across provider renames; canonical IDs continue to match, while unresolved
     or ambiguous people and absent resource relationships fail closed.
+
 27. Inspect each migrated WorkspaceDO after explicit cleanup and one WorkspaceDO
     first created by the new build through the current-schema bootstrap. The former
     subscription,
@@ -2844,15 +2824,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     request can read, write, or recreate the removed schema. Both paths expose
     the same final surviving table, index, constraint, and identity-trigger
     shape, and the fresh object never creates a legacy automation table.
-28. Interrupt the merge workflow before import, during an idempotent import,
-    after all import receipts, and after WorkspaceDO cleanup. Before cleanup it
-    resumes without duplicate AutomationAgents or triggers; after cleanup it
-    rolls forward without reopening legacy authority. At no point does the
-    serving product dual-write or expose a per-automation authority flag, and
-    the completed implementation requires no follow-up cleanup merge. Prove an
-    ordinary object wake before cleanup cannot drop a source table. Prove
-    EU-then-Global deploy ordering and that the cutover step starts only after
-    both succeed and pass health.
+
 29. Run the architect through a timer-only draft, one exact event, one event
     family, DNF predicates, a selected person/resource, and an edit from
     event-driven to timer-only. External-event drafts call
@@ -2883,6 +2855,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     or invoked. Prove that draft tools perform no connector effect or WorkspaceDO
     write and that acceptance, not the model, resolves connections and mints
     canonical evaluator identities and projection metadata.
+
 30. In the Electron client, render equivalent settled, streaming, failed, and
     elicitation transcripts through WorkstreamScreen and the Automation Draft
     Wizard. Verify both use the same feed/block/composer implementations for
@@ -2920,7 +2893,7 @@ cleanup begins, WorkspaceDO can never reopen as automation lifecycle authority.
     fence/import/cleanup RPCs and restart cursors; `pnpm test:scripts` proves
     deploy-step ordering. A checked-in script test injects interruption after
     audit, fence, import, and cleanup receipts and proves restart from each
-    cursor. A named manual Global/EU rehearsal proves regional enumeration,
+    cursor. A named manual configured deployment rehearsal proves regional enumeration,
     residency, Queue/DLQ operation, and health; workerd fixtures add the Queue
     consumers and DLQ bindings needed for destination-delivery cases rather
     than claiming the current producer-only test config proves them.

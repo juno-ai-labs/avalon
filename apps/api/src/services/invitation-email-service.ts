@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { addWorkspaceTarget } from "@rally/contracts";
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
@@ -13,7 +14,7 @@ export interface WorkspaceInvitationEmail {
   workspaceName: string;
   inviterName: string;
   role: "admin" | "member";
-  region: "global" | "eu";
+  region: Region;
   expiresAt: string;
   inviteUrl: string;
   /** A Rally download link, repeatable until the invitation expires, when one was issued. */
@@ -29,7 +30,7 @@ export interface WorkspaceInvitationResolutionEmail {
   inviteeEmail: string;
   inviteeName?: string;
   role: "admin" | "member";
-  region: "global" | "eu";
+  region: Region;
 }
 
 export type InvitationEmailDelivery = "sent" | "skipped";
@@ -40,7 +41,6 @@ export async function sendWorkspaceInvitationEmail(
   request: typeof fetch = fetch,
 ): Promise<InvitationEmailDelivery> {
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
   const expiration = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "long",
@@ -58,14 +58,12 @@ export async function sendWorkspaceInvitationEmail(
     ...(invitation.downloadUrl ? ["", `Don't have Rally yet? Download it for macOS: ${invitation.downloadUrl}`] : []),
     "",
     `This one-time invitation expires ${expiration}.`,
-    `Workspace data region: ${regionLabel}.`,
     "",
     "If you were not expecting this invitation, you can ignore this email.",
   ].join("\n");
   const html = invitationEmailHtml({
     ...invitation,
     roleLabel,
-    regionLabel,
     expiration,
   });
 
@@ -91,7 +89,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const workspaceName = singleLine(invitation.workspaceName);
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
   const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
     region: invitation.region,
     workspaceId: invitation.workspaceId,
@@ -106,7 +103,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
     `${actorWithEmail} ${verb} your invitation to join ${workspaceName}.`,
     "",
     `They were invited as ${roleLabel}.`,
-    `Workspace data region: ${regionLabel}.`,
     "",
     `Open Rally: ${desktopUrl.toString()}`,
   ].join("\n");
@@ -114,7 +110,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
     ...invitation,
     actor,
     roleLabel,
-    regionLabel,
     verb,
     desktopUrl: desktopUrl.toString(),
   });
@@ -135,14 +130,12 @@ export async function sendWorkspaceInvitationResolutionEmail(
 
 function invitationEmailHtml(input: WorkspaceInvitationEmail & {
   roleLabel: string;
-  regionLabel: string;
   expiration: string;
 }): string {
   const workspaceName = escapeHtml(input.workspaceName);
   const inviterName = escapeHtml(input.inviterName);
   const inviteUrl = escapeHtml(input.inviteUrl);
   const roleLabel = escapeHtml(input.roleLabel);
-  const regionLabel = escapeHtml(input.regionLabel);
   const expiration = escapeHtml(input.expiration);
   const downloadRow = input.downloadUrl
     ? `<tr><td style="font-size:14px;line-height:1.6;color:#c9ccc4;padding-bottom:12px">Don't have Rally yet? <a href="${escapeHtml(input.downloadUrl)}" style="color:#CEDC00">Download it for macOS</a>.</td></tr>`
@@ -158,7 +151,7 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
           <tr><td style="font-size:16px;line-height:1.6;color:#c9ccc4">${inviterName} invited you to join <strong style="color:#f2f3ec">${workspaceName}</strong> as ${roleLabel}.</td></tr>
           <tr><td style="padding:28px 0"><a href="${inviteUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Accept invitation</a></td></tr>
           ${downloadRow}
-          <tr><td style="font-size:13px;line-height:1.6;color:#8f948b">This one-time invitation expires ${expiration}.<br>Workspace data region: ${regionLabel}.</td></tr>
+          <tr><td style="font-size:13px;line-height:1.6;color:#8f948b">This one-time invitation expires ${expiration}.</td></tr>
           <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#73786f;border-top:1px solid #2b2f29">If you were not expecting this invitation, you can ignore this email.</td></tr>
         </table>
       </td></tr>
@@ -170,7 +163,6 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
 function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail & {
   actor: string;
   roleLabel: string;
-  regionLabel: string;
   verb: "accepted" | "declined";
   desktopUrl: string;
 }): string {
@@ -178,7 +170,6 @@ function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail
   const inviteeEmail = escapeHtml(input.inviteeEmail);
   const workspaceName = escapeHtml(input.workspaceName);
   const roleLabel = escapeHtml(input.roleLabel);
-  const regionLabel = escapeHtml(input.regionLabel);
   const outcome = input.outcome === "accepted" ? "Invitation accepted" : "Invitation declined";
   const desktopUrl = escapeHtml(input.desktopUrl);
   const accent = input.outcome === "accepted" ? "#CEDC00" : "#47C7FC";
@@ -194,7 +185,7 @@ function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail
           <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${accent}">Avalon</td></tr>
           <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#f2f3ec">${outcome}</h1></td></tr>
           <tr><td style="font-size:16px;line-height:1.6;color:#c9ccc4">${actorDescription} ${input.verb} your invitation to join <strong style="color:#f2f3ec">${workspaceName}</strong>.</td></tr>
-          <tr><td style="padding-top:24px;font-size:13px;line-height:1.6;color:#8f948b;border-top:1px solid #2b2f29">They were invited as ${roleLabel}.<br>Workspace data region: ${regionLabel}.</td></tr>
+          <tr><td style="padding-top:24px;font-size:13px;line-height:1.6;color:#8f948b;border-top:1px solid #2b2f29">They were invited as ${roleLabel}.</td></tr>
           <tr><td style="padding-top:28px"><a href="${desktopUrl}" style="display:inline-block;background:${accent};color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open Avalon</a></td></tr>
         </table>
       </td></tr>

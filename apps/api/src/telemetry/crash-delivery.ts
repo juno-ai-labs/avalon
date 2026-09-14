@@ -45,8 +45,7 @@ export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary
   const telemetryDelivery = env.TELEMETRY_DELIVERY;
   const postHogHost = env.POSTHOG_HOST;
   const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
-  if (env.AVALON_REGION !== 'global'
-    || !postHogHost
+  if (!postHogHost
     || !postHogProjectToken
     || !telemetryDelivery) return summary;
   const now = new Date();
@@ -61,7 +60,7 @@ export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary
      FROM telemetry_crash_reports c
      LEFT JOIN users u ON u.id = c.subject_user_id
      LEFT JOIN workspaces w ON w.id = c.subject_workspace_id
-     WHERE c.route = 'global' AND c.destination_state IN ('pending', 'retrying')
+     WHERE c.destination_state IN ('pending', 'retrying')
        AND (c.destination_next_attempt_at IS NULL OR c.destination_next_attempt_at <= ?)
        AND c.delete_at > ?
      ORDER BY c.received_at LIMIT 5`,

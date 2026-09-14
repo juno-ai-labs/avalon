@@ -15,8 +15,8 @@ test("analytics report arguments are bounded and cannot inject SQL", () => {
     snapshot: null,
   });
   assert.deepEqual(parseTerminalAnalyticsArguments([
-    "--days", "30", "--region", "eu", "--snapshot", "daytona-small",
-  ]), { days: 30, region: "eu", snapshot: "daytona-small" });
+    "--days", "30", "--region", "global", "--snapshot", "daytona-small",
+  ]), { days: 30, region: "global", snapshot: "daytona-small" });
   assert.throws(() => parseTerminalAnalyticsArguments(["--days", "91"]), /between 1 and 90/u);
   assert.throws(() => parseTerminalAnalyticsArguments(["--snapshot", "x' OR 1=1"]), /snapshot/u);
 });

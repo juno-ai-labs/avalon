@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -95,7 +96,7 @@ function ServiceSetupState({
   error: Error;
   onRetry: () => void;
   targetApiBaseUrl?: string;
-  targetRegion?: 'global' | 'eu';
+  targetRegion?: Region;
 }): React.JSX.Element {
   const { api, region, signOut } = useAppSession();
   const displayRegion = targetRegion ?? region;
@@ -108,12 +109,12 @@ function ServiceSetupState({
         <h1>{isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}</h1>
         <p>{error.message}</p>
         <dl>
-          <div><dt>Region</dt><dd>{displayRegion === 'eu' ? 'European Union' : 'United States'}</dd></div>
+          <div><dt>Region</dt><dd>{displayRegion}</dd></div>
           <div><dt>API endpoint</dt><dd className="mono">{targetApiBaseUrl ?? api?.baseUrl}</dd></div>
         </dl>
         <div className="setup-guidance">
           <strong>Local development</strong>
-          <p>Start the Cloudflare API for this region and confirm the safe <code>VITE_API_{displayRegion === 'eu' ? 'EU' : 'GLOBAL'}_URL</code> value in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
+          <p>Start the Cloudflare API for this region and confirm this deployment’s API URL in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
         </div>
         <div className="setup-actions">
           <Button onClick={() => void signOut()}>Return to sign in</Button>

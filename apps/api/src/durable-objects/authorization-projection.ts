@@ -1,8 +1,9 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from '@rally/contracts';
 
 export const AuthorizationProjectionJobSchema = z.strictObject({
-  type: z.literal('authorization_projection_v1'), region: z.enum(['global', 'eu']),
+  type: z.literal('authorization_projection_v1'), region: RegionSchema,
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema.optional(), mutationAt: z.number().int().nonnegative().optional(),
 });
 export type AuthorizationProjectionJob = z.infer<typeof AuthorizationProjectionJobSchema>;

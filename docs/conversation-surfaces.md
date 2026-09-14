@@ -627,8 +627,6 @@ scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
-## Changelog
-
 ### 2026-09-14 — An admitted answer closes its question before the loop promotes it
 
 **What changed:** `pendingTranscriptInputOverlay` projects a pending input whose

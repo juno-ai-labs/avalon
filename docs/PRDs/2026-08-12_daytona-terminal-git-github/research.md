@@ -420,8 +420,6 @@ This is a credible second plugin, but it is not the launch terminal plugin. The
 launch tool family serves open-ended local computation and repository work. A
 single Code Mode tool serves connector composition and context reduction.
 
-## Terminal tool design
-
 ### Common geometry
 
 Across the harnesses, the durable core is:
@@ -693,8 +691,6 @@ logging redaction, and another outage boundary. Daytona already provides the
 launch firewall and HTTPS secret substitution. A proxy should be reconsidered
 only if a required use case cannot be expressed by the native primitive.
 
-## Git and GitHub
-
 ### Why retain the CLIs
 
 Models know `git status`, `git diff`, `git add`, `git commit`, `git log`,
@@ -772,8 +768,6 @@ write permission
 This split preserves model fluency for local Git while making the one external
 write idempotent, auditable, capability-gated, and revocable.
 
-## Resources into and out of the sandbox
-
 ### Publishing a resource
 
 `publish_resource` takes one completed regular file below the sandbox resource
@@ -845,8 +839,6 @@ The current PRD includes this tool. Text-only analysis can still use PR #144's
 existing resource tools without starting a sandbox; import exists when a local
 program needs the original bytes.
 
-## Daytona, Dynamic Workers, and Workers for Platforms
-
 ### Capability comparison
 
 | Dimension | Daytona sandbox | Dynamic Worker | Workers for Platforms user Worker |
@@ -903,8 +895,6 @@ Dynamic Worker should not pretend to preserve an arbitrary repository
 filesystem. A Daytona terminal should not receive connector credentials just to
 imitate Code Mode. Bind can expose both plugins and select the right one from
 their descriptions.
-
-## Cost analysis
 
 ### Rate models
 
@@ -1138,8 +1128,6 @@ The research directly supports these choices:
 Work-stream resource originals cross into Daytona only through
 `import_resource`; generated files cross back only through `publish_resource`.
 Neither direction exposes an R2 or Daytona credential to the model.
-
-## Primary sources
 
 ### Harnesses and tool design
 

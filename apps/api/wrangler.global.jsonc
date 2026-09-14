@@ -16,7 +16,6 @@
     "AVALON_REGION": "global",
     "RALLY_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
-    "EU_PUBLIC_API_BASE_URL": "https://eu.api.rallywith.ai",
     "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
@@ -127,41 +126,6 @@
     {
       "binding": "TELEMETRY_DELIVERY",
       "service": "avalon-api-telemetry-delivery-global"
-    },
-    {
-      "binding": "EU_IDENTITY_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "RegionalIdentityBridge"
-    },
-    {
-      "binding": "EU_GITHUB_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "GitHubRegionalBridge"
-    },
-    {
-      "binding": "EU_INBOUND_EMAIL_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "InboundEmailRegionalBridge"
-    },
-    {
-      "binding": "EU_LINEAR_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "LinearRegionalBridge"
-    },
-    {
-      "binding": "EU_NOTION_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "NotionRegionalBridge"
-    },
-    {
-      "binding": "EU_SLACK_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "SlackRegionalBridge"
-    },
-    {
-      "binding": "EU_TELEMETRY_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "TelemetryRegionalBridge"
     }
   ],
   // These are one-time hosted resources: Wrangler deploy validates the binding
@@ -372,8 +336,7 @@
   //
   // `destinations` names an account-level OTLP destination configured outside
   // this repository; the credential for it lives there, never here. Only the
-  // opt-in is repository configuration, and that is what keeps this Global-only
-  // — the EU Worker's config deliberately names no destination. See
+  // opt-in is repository configuration. See
   // docs/telemetry.md and docs/performance-tracing.md.
   //
   // `persist` is left at its default so the Cloudflare copy stays: an export is

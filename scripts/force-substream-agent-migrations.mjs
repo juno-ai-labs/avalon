@@ -1,3 +1,4 @@
+import { configuredRegions, regions } from "./regions.mjs";
 /**
  * Eagerly wake every stored SubstreamAgent so its constructor applies the
  * currently deployed object-local SQLite schema.
@@ -16,8 +17,8 @@ const QUEUE_BATCH_SIZE = 100;
 const OBJECT_PAGE_SIZE = 1_000;
 const NAMESPACE_PAGE_SIZE = 1_000;
 const QUEUE_DRAIN_POLL_MS = 2_000;
-const REGIONS = ['eu', 'global'];
-const JURISDICTION_BY_REGION = { eu: 'eu', global: 'us' };
+const REGIONS = configuredRegions;
+const JURISDICTION_BY_REGION = Object.fromEntries(Object.entries(regions).map(([region, config]) => [region, config.jurisdiction]));
 
 function required(environment, name) {
   const value = environment[name]?.trim();
@@ -34,7 +35,7 @@ function parseArguments(argv) {
   );
   const region = regionArgument?.slice('--region='.length) ?? 'all';
   if (!['all', ...REGIONS].includes(region)) {
-    throw new Error(`Unsupported region ${region}; expected all, eu, or global`);
+    throw new Error(`Unsupported region ${region}; expected all or a configured region`);
   }
   const unknown = argumentsWithoutDelimiter.filter(
     (argument) => argument !== '--apply'

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -596,7 +597,7 @@ describe("environment guardrails", () => {
     expect(allowedHeaders).toContain("x-avalon-draft-id");
   });
 
-  it.each(['global', 'eu'] as const)(
+  it.each(['global', 'enterprise'] as const)(
     "allows the deployed desktop correlation header on %s mutation preflights",
     async (region) => {
       const response = await createApp().request(
@@ -719,15 +720,15 @@ describe("environment guardrails", () => {
   it("keeps Azure dictation credentials server-side and scopes its socket ticket", async () => {
     const env = createTestEnv({
       SESSION_SIGNING_KEY: "test-signing-key",
-      AVALON_REGION: "eu",
-      AZURE_OPENAI_ENDPOINT: "https://avalon-eu.openai.azure.com/ignored/path",
+      AVALON_REGION: "enterprise",
+      AZURE_OPENAI_ENDPOINT: "https://avalon-enterprise.openai.azure.com/ignored/path",
       AZURE_OPENAI_REALTIME_DEPLOYMENT: "avalon-live-transcription",
     });
     const auth = {
       sessionId: "session",
       userId: asUserId("00000000-0000-7000-8000-000000000001"),
       workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000002"),
-      region: "eu" as const,
+      region: "enterprise" as const,
       role: "owner" as const,
     };
     const ticket = await issueTranscriptionSocketTicket(env, auth);
@@ -735,11 +736,11 @@ describe("environment guardrails", () => {
     await expect(verifyTranscriptionSocketTicket(env, ticket)).resolves.toMatchObject({
       userId: auth.userId,
       workspaceId: auth.workspaceId,
-      region: "eu",
+      region: "enterprise",
     });
     await expect(verifySocketTicket(env, ticket)).rejects.toMatchObject({ code: "invalid_socket_ticket" });
     expect(azureRealtimeWebSocketUrl(env)).toBe(
-      "https://avalon-eu.openai.azure.com/openai/v1/realtime?intent=transcription",
+      "https://avalon-enterprise.openai.azure.com/openai/v1/realtime?intent=transcription",
     );
   });
 

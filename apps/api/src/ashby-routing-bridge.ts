@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from './env';
 import { AshbyRouteSchema, registerAshbyRoute, serializeAshbyRpcResult } from './services/ashby-routing-service';
@@ -5,7 +6,7 @@ import { z } from 'zod';
 import { workspaceRegionalDatabase } from './services/workspace-runtime-database';
 import { ApiError } from './lib/api-error';
 
-/** Internal EU-to-Global opaque routing registration, with no public mutation URL. */
+/** Internal Regional-to-Global opaque routing registration, with no public mutation URL. */
 export class AshbyRoutingBridge extends WorkerEntrypoint<Env> {
   health() {
     return serializeAshbyRpcResult(async () => {
@@ -20,7 +21,7 @@ export class AshbyRoutingBridge extends WorkerEntrypoint<Env> {
       const id = z.string().uuid().parse(connectionId);
       const route = await workspaceRegionalDatabase(this.env).prepare("SELECT region FROM ashby_connection_routes WHERE connection_id = ? AND status = 'active'").bind(id).first<{ region: string }>();
       if (!route) throw new ApiError(404, 'connection_not_found', 'Ashby connection route not found');
-      return { region: z.enum(['global', 'eu']).parse(route.region) };
+      return { region: RegionSchema.parse(route.region) };
     });
   }
   registerRoute(input: unknown) {

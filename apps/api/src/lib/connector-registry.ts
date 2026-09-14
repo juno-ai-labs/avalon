@@ -80,7 +80,7 @@ export function linearConnectorConfig(env: Env): LinearConnectorConfig | null {
 /**
  * Both regions authorize against one public Notion connection, so both send the
  * same shared-ingress redirect URI — a Notion connection accepts exactly one,
- * and the token exchange replays it. The EU Worker therefore names a Global
+ * and the token exchange replays it. The regional Worker therefore names a Global
  * host here on purpose; `NotionRoutingService` carries the callback back to the
  * region that started it. See `docs/notion-ingress.md`.
  */

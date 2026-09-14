@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import {
   AnonymousTelemetryBatchSchema,
@@ -83,13 +84,13 @@ describe("telemetry registry", () => {
         Object.keys(entry.properties.unwrap().shape).sort(),
       );
       expect(entry.compatibilityNote.length).toBeGreaterThan(10);
-      expect(entry.destination).toMatch(/^(posthog-and-eu-internal|internal-only)$/u);
+      expect(entry.destination).toMatch(/^(posthog|internal-only)$/u);
     }
   });
 
   it("accepts the registered anonymous onboarding intent with exact properties", () => {
     expect(TelemetryEnvelopeSchema.parse(envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     }))).toMatchObject({ name: "onboarding_region_selected" });
   });
@@ -632,7 +633,7 @@ describe("telemetry registry", () => {
 
   it("accepts legacy context v1 while requiring native desktop fields to declare context v2", () => {
     const current = envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     });
     const withoutContextVersion: Record<string, unknown> = { ...current };
@@ -651,7 +652,7 @@ describe("telemetry registry", () => {
 
   it("accepts bounded native desktop SDK context and rejects malformed dimensions", () => {
     const base = envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     });
     const candidate = {
@@ -681,7 +682,7 @@ describe("telemetry registry", () => {
     "10.0.26100.4770",
   ])("accepts a bounded platform OS version: %s", (osVersion) => {
     const candidate = envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     });
     expect(TelemetryEnvelopeSchema.safeParse({
@@ -692,7 +693,7 @@ describe("telemetry registry", () => {
 
   it("rejects control characters in an OS version", () => {
     const candidate = envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     });
     expect(TelemetryEnvelopeSchema.safeParse({
@@ -793,28 +794,28 @@ describe("telemetry registry", () => {
   it.each([
     ["unregistered event", envelope("secret_event", {})],
     ["unknown property", envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
       customerMessage: "top secret",
     })],
     ["category mismatch", { ...envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     }), category: "essential" }],
     ["source mismatch", { ...envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     }), source: "api" }],
     ["identity mismatch", { ...envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     }), identityScope: "installation" }],
     ["non-v7 event id", { ...envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     }), eventId: "018f22f2-4c22-4abc-8def-0123456789ab" }],
     ["direct identifier context", { ...envelope("onboarding_region_selected", {
-      selectedRegion: "eu",
+      selectedRegion: "enterprise",
       entrypoint: "first_run",
     }), context: { ...envelope("x", {}).context, userId: "raw-user" } }],
   ])("rejects %s", (_label, candidate) => {
@@ -894,7 +895,7 @@ describe("telemetry registry", () => {
 });
 
 describe("the envelope schema identifier", () => {
-  const base = envelope("onboarding_region_selected", { selectedRegion: "eu", entrypoint: "first_run" });
+  const base = envelope("onboarding_region_selected", { selectedRegion: "enterprise", entrypoint: "first_run" });
 
   it("mints the current identifier", () => {
     expect(TELEMETRY_ENVELOPE_SCHEMA).toBe("ai.rallywith.telemetry.event");

@@ -342,8 +342,6 @@ methods and `.call()`/`.apply()` inside these callbacks therefore remain a
 mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
-## Changelog
-
 ### 2026-09-09 — Preserve cursor range seeks
 
 **What changed:** Added guidance for optional cursor predicates and fixed,

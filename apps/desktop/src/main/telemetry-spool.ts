@@ -1,3 +1,5 @@
+import type { Region } from "@rally/contracts/regions";
+import { RegionSchema } from "@rally/contracts/regions";
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -9,7 +11,7 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 const StoredRowSchema = z.object({
   version: z.literal(1),
-  route: z.enum(['global', 'eu']),
+  route: RegionSchema,
   accountEpochId: z.string().regex(UUID_V7),
   installationId: z.string().regex(UUID_V7).optional(),
   event: TelemetryEnvelopeSchema,
@@ -36,7 +38,7 @@ export interface TelemetrySpoolOptions {
 }
 
 export interface EnqueueTelemetryInput {
-  route: 'global' | 'eu';
+  route: Region;
   accountEpochId: string;
   installationId?: string;
   event: TelemetryEnvelope;
