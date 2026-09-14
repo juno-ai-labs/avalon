@@ -89,6 +89,9 @@ export interface Env {
   ANALYTICS_LAKEHOUSE_QUEUE?: Queue;
   /** The one path from a D1 access retraction to an open socket. */
   ACCESS_REVOCATION_QUEUE: Queue;
+  PUSH_DELIVERY_QUEUE?: Queue;
+  APNS_AUTH_KEY?: string;
+  APNS_KEY_ID?: string;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;

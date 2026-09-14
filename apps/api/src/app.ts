@@ -13,6 +13,7 @@ import { devRoutes } from "./routes/dev";
 import { automationRoutes, sidekickRoutes } from "./routes/automations";
 import { conversationRoutes } from "./routes/conversations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
+import { pushDeviceRoutes } from "./routes/push-devices";
 import { digestRoutes } from "./routes/digest";
 import { featureFlagRoutes } from "./routes/feature-flags";
 import { healthRoutes } from "./routes/health";
@@ -156,6 +157,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/notes", noteRoutes);
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/digest", digestRoutes);
+  protectedApi.route("/push-devices", pushDeviceRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/sidekicks", sidekickRoutes);
   protectedApi.route("/conversations", conversationRoutes);

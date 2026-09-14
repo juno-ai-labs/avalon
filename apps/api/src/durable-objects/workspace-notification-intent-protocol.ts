@@ -25,13 +25,16 @@ const WorkspaceNotificationIntentSummarySchema = z.strictObject({
   state: WorkspaceNotificationIntentStateSchema,
 });
 
-const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSummarySchema.extend({
+export const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSummarySchema.extend({
   workspaceId: WorkspaceIdSchema,
   sourceGeneration: z.number().int().positive(),
   requiredDirectoryVersion: z.number().int().positive(),
   payloadJson: z.string().min(1),
   state: z.literal("processing"),
 }).strict();
+
+export const WorkspaceNotificationIntentDeliverySchema = WorkspaceNotificationIntentClaimedSchema.omit({ state: true });
+export type WorkspaceNotificationIntentDelivery = z.infer<typeof WorkspaceNotificationIntentDeliverySchema>;
 
 export const WorkspaceNotificationIntentClaimResultSchema = z.discriminatedUnion("outcome", [
   z.strictObject({
@@ -69,6 +72,7 @@ export const WorkspaceNotificationIntentTransitionRequestSchema = z.discriminate
     }).strict(),
     WorkspaceNotificationIntentTransitionBaseSchema.extend({
       transition: z.literal("settle"),
+      retainPayload: z.boolean().optional(),
       state: z.enum(["delivered", "skipped"]),
     }).strict(),
   ],

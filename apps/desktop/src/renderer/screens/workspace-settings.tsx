@@ -20,6 +20,7 @@ import {
   MailPlus,
   MonitorCog,
   Newspaper,
+  Bell,
   Plug,
   RefreshCcw,
   Search,
@@ -216,6 +217,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       // Directly under Account, because a digest is a personal preference like
       // the timezone it borrows — not a workspace-level setting.
       { id: 'digest', label: 'Digest', icon: Newspaper },
+      { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Workspace', icon: Users },
       // Under Workspace rather than beside it: the Terminal egress policy is a
       // workspace-wide setting, but it is a page of its own — a review-then-
@@ -816,6 +818,11 @@ export function WorkspaceSettingsScreen({
     onMutate: () => applicationSettingsLiveGeneration.current,
     onSuccess: applyApplicationSettingsMutation,
   });
+  const updatePushNotifications = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setPushNotificationsEnabled(enabled),
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
+  });
   const updateMenuBarEnabled = useMutation({
     mutationFn: (enabled: boolean) => bridge.setMenuBarEnabled(enabled),
     onMutate: () => applicationSettingsLiveGeneration.current,
@@ -875,10 +882,10 @@ export function WorkspaceSettingsScreen({
     // and returns `flag_disabled`), but there is no copy in this screen for a
     // paused state, and an absent section is still an honest answer to "is
     // this available to me."
-    return digestSettingsAvailable
-      ? withCustomMcp
-      : { ...withCustomMcp, items: withCustomMcp.items.filter((item) => item.id !== 'digest') };
-  }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable]);
+    return { ...withCustomMcp, items: withCustomMcp.items.filter((item) =>
+      (item.id !== 'digest' || digestSettingsAvailable)
+      && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
+  }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -1214,7 +1221,19 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
-            {activeSection === 'digest' && api && digestSettingsAvailable && (
+            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && (
+              <section className="settings-pane">
+                <div className="settings-pane-heading"><h2>On this Mac</h2></div>
+                <SettingToggle setting={settings.pushNotifications}
+                  checked={applicationSettings?.pushNotificationsEnabled ?? true}
+                  disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
+                  onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
+                {applicationSettings?.pushNotificationStatus === 'unavailable' && <p className="settings-section-copy">Notifications need an installed release build of Rally.</p>}
+                {applicationSettings?.pushNotificationStatus === 'denied' && <p className="settings-section-copy">Notifications are turned off in macOS. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
+                {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
+              </section>
+            )}
+            {activeSection === 'digest'  && api && digestSettingsAvailable && (
               <DigestSettings
                 api={api}
                 connections={connections.data ?? []}
