@@ -23,7 +23,13 @@ const SetupResponse = z.object({
   connection: ConnectionSchema,
   manualRegistration: ConnectorManualRegistrationSchema.nullable(),
 });
-const ApiFailure = z.object({ error: z.object({ code: z.string() }) });
+const ApiFailure = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    details: z.object({ provider: z.string(), eventType: z.string() }).optional(),
+  }),
+});
 const unexpectedProviderCalls: string[] = [];
 
 beforeEach(async () => { await reset(); unexpectedProviderCalls.length = 0; });
@@ -275,7 +281,13 @@ describe('the Fireflies workspace installation', () => {
     // Verified, and still refused: an event this connector does not handle.
     const botJoined = await f.deliver(connection.id, payload('meeting.bot_joined'), secret);
     expect(botJoined.status).toBe(400);
-    expect(ApiFailure.parse(botJoined.body).error.code).toBe('unsupported_webhook_event');
+    const refusal = ApiFailure.parse(botJoined.body).error;
+    expect(refusal.code).toBe('unsupported_webhook_event');
+    // The refusal names the event it refused. Without it the operator sees only
+    // `request_failed 400 unsupported_webhook_event`, which cannot distinguish
+    // an event Rally has no reason to model from one it was meant to handle.
+    expect(refusal.message).toContain('meeting.bot_joined');
+    expect(refusal.details).toEqual({ provider: 'fireflies', eventType: 'meeting.bot_joined' });
 
     await f.drainQueue('event');
     expect(await f.activities()).toEqual([]);

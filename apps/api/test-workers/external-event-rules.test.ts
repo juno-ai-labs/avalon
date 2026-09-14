@@ -403,4 +403,21 @@ describe("external event rules across connectors", () => {
     expect(await destinationsFor(topLevel)).toEqual([AUTOMATIONS.unlabelled]);
     expect(await destinationsFor(inThread)).toEqual([]);
   });
+
+  it("names the offending field when a malformed projection is rejected across the RPC boundary", async () => {
+    // What the caller is left holding is the whole point. `replaceRegistrations`
+    // calls this over a Durable Object RPC hop, and the serializer reduces a
+    // `ZodError` to a bare `Error` — no `issues`, no derived message, not even
+    // the name — so a `sidekick_publication` alarm retrying against a malformed
+    // projection logged the five letters `ZodError` and nothing else. Only the
+    // message text crosses, so the paths have to be in it.
+    const rejection = await register(AUTOMATIONS.unlabelled, [
+      { ...rule(AUTOMATIONS.unlabelled, 1, "linear", "linear.issue.created", { kind: "always" }), source: { connectorType: "linear", connectionId: 7 } },
+    ] as unknown as Evaluator[]).then(() => null, (error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(Error);
+    const message = (rejection as Error).message;
+    expect(message).toContain("external_event_registration_projection_invalid");
+    expect(message).toContain("evaluators.0.source");
+  });
 });
