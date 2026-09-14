@@ -3355,7 +3355,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       };
     }
 
-    const pending = this.loop.pendingInputs()[0];
+    // Not the head of the queue: while a question the model asked is still
+    // withheld, Bind takes only its answer, whatever was queued ahead of it.
+    const pending = this.transcript.nextActivationInput(loop.loop_id);
     if (pending) {
       const identity = this.objectStore.identity();
       const projection = this.transcript.readBindProjection(loop.loop_id);
@@ -6372,7 +6374,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (authority && authority.archived_at !== null) return null;
     const loop = this.loop.loop();
     if (loop?.status === "executing") return loop.lease_expires_at;
-    if (loop && this.loop.pendingInputs().length > 0) return now;
+    // What the loop can take, not what is queued. A room parked on a question
+    // with a message queued behind it has pending input and no work: waking on
+    // it would re-arm at `now` on every alarm, for as long as the question
+    // stays open. Admitting the answer arms its own wake.
+    if (loop) {
+      if (this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
+      // The room then goes quiet with messages still queued, and an
+      // `elicitation_requests` row only ever moves `pending -> answered`, so a
+      // question nobody answers — the reader missed the card, or left — stalls
+      // it with no expiry to end the wait. The stall is correct; being unable
+      // to see it is not, and this is the one branch where the loop stops
+      // without an error to find it by.
+      const queued = this.loop.pendingInputs();
+      if (queued.length > 0) {
+        logWarn(this.env, "substream_loop_parked_with_queued_input", {
+          loop_id: loop.loop_id,
+          queued_input_count: queued.length,
+        });
+      }
+    }
     const preparation = this.product.nextRecoverableInputPreparationAt(now);
     if (preparation !== null) return preparation;
     // An admission this isolate is still preparing is in-memory work standing

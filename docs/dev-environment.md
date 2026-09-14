@@ -211,9 +211,32 @@ before wrangler sees any of it.
 
 `pnpm db:open-authority` then seeds Global and says to re-run for EU, which is
 the same "start the Workers and re-run" message it gives for any region that is
-down. Where both regions are needed, the local workaround is to delete the
-`containers` array from `wrangler.global.jsonc` and `wrangler.eu.jsonc` for the
-session; the
+down.
+
+Where both regions are needed, point wrangler at a stand-in for the Docker CLI
+instead of editing anything. It builds an image the dev server never runs, so a
+command that reports success and produces nothing is enough — as long as it
+drains stdin, because wrangler writes the build context into it and a stand-in
+that exits first kills the EU Worker with `EPIPE` while Global, already past
+that write, comes up:
+
+```bash
+cat > /tmp/fake-docker <<'SH'
+#!/bin/sh
+cat > /dev/null 2>/dev/null
+case "$1" in info|version) echo "fake" ;; esac
+exit 0
+SH
+chmod +x /tmp/fake-docker
+WRANGLER_DOCKER_BIN=/tmp/fake-docker pnpm dev:api:local
+```
+
+Both regions then bind and serve: Global answers `GET /health` with
+`"ok": true` after `pnpm db:open-authority`, and EU answers on 8788. Nothing on
+disk changes, so `pnpm test` stays green — prefer this over the edit below.
+
+The older workaround is to delete the `containers` array from
+`wrangler.global.jsonc` and `wrangler.eu.jsonc` for the session; the
 `CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions come up
 normally. **That edit must not be committed, and while it is in place
 `pnpm test` is red** — `apps/api/test/crash-symbolicator-config.test.ts` asserts
@@ -333,23 +356,26 @@ workspace with its work streams, automations, and onboarding checklist.
   a real run gets: no live transcript, no finalization, no stop-and-send. The
   composer's dictation states are covered by
   `components/workstream-composer-dictation.test.tsx`, which drives the hook
-  through a double; a real-window check of how one of those states *looks* means
-  putting the rendered composer into it from the CDP side, the way the streaming
-  turn above is played in.
-- **A real streaming turn.** A local run has no provider credentials, so a run
-  fails with `harness_execution_failed` rather than streaming, and anything that
-  depends on tokens arriving over time cannot be exercised the ordinary way. A
-  turn can still be played into the live screen: wrap `window.WebSocket` in the
-  renderer to capture the sockets the app opens, take the one whose URL ends in
-  `/substreams/0` — the work-stream socket carries metadata, the substream
-  socket carries the transcript — and dispatch `MessageEvent`s onto it carrying
-  `stream_started` and then `stream_delta` frames in the shape
-  `@rally/contracts` accepts. Two traps: `sequence` must exceed the room's
-  current one or `applyEvent` discards the frame as replay, and an in-page
-  `setInterval` is throttled to once a second when the window is occluded, so
-  drive the tokens from the CDP side and call `Page.bringToFront` first. A
-  trackpad gesture over the result is `Input.dispatchMouseEvent` with
-  `type: 'mouseWheel'`.
+  through a double; those states are asserted there rather than in a window,
+  for the reason the entry below gives.
+- **A real streaming turn, and anything a run has to produce.** `.env.local`
+  ships `OPENROUTER_API_KEY` empty, so a run reaches the provider and fails —
+  `harness_execution_failed`, with `Cannot read properties of undefined
+  (reading 'trim')` in the Worker log where the key is read. Nothing a model
+  decides can be staged here: no streaming tokens, and no elicitation, which
+  means no answered question and no pending answer either.
+- **Playing frames into the live screen from the CDP side.** This does not work
+  and the recipe that said to wrap `window.WebSocket` in the renderer was
+  wrong: the renderer opens no sockets. The Node main process owns them and
+  hands frames to the renderer over `window.rally.onRealtimeSocketEvent`
+  ([`websocket-architecture.md`](websocket-architecture.md)), and that bridge is
+  `contextBridge`-exposed — `window.rally` is non-writable, non-configurable and
+  frozen, per [the security model](security.md), so an evaluated script can
+  neither replace a method nor reach the listener the app registered. Wrapping
+  `window.WebSocket` on new document and reloading leaves the capture array
+  empty, which is the check to repeat before believing otherwise. Anything that
+  needs synthetic frames has to be played in from the main process; a state a
+  component can simply be *given* belongs in a component test instead.
 - **The macOS menu bar status item, and the windowless half of a login launch.**
   The item is created only on darwin, and there is no menu bar to draw it into
   here. The launch skips its window only when a status item is actually present,
