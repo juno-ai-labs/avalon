@@ -3039,7 +3039,7 @@ export async function runWorkstreamHarness(
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
         maxCatalogTokens: runScopeLimits.maxCatalogTokens,
         requestEstablishmentTimeoutMs: numericEnv(env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
-        ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
+        ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 180_000),
         streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
         sameModelRetries: 0,
         // Matters most for a work stream pinned from the developer-mode model
@@ -3290,6 +3290,13 @@ export async function runWorkstreamHarness(
         await assertFrozenConnectionAuthorized(env, input, frozen, policy.capability);
       },
     ),
+    onInferenceDelay: (event) => emit({
+      type: "inference_delay_changed",
+      ...event,
+      harnessRunId: input.harnessRunId,
+      executionId: input.harnessRunId,
+      attemptId: liveness.lease.attemptId,
+    }),
     onInferenceAttempt: async (attempt) => {
       await inferenceLogger.onAttempt(attempt);
       const completedAtMs = Date.now();
@@ -4762,7 +4769,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             maxCostCents: limits.maxCostCents,
             maxCatalogTokens: limits.maxCatalogTokens,
             requestEstablishmentTimeoutMs: numericEnv(options.env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
-            ttftTimeoutMs: numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
+            ttftTimeoutMs: numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 180_000),
             streamIdleTimeoutMs: numericEnv(options.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
             sameModelRetries: 0,
             transportRetries: countEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),
@@ -4897,6 +4904,15 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           onInferenceRequest: (request) => suppressChildInferenceRequestCapture
             ? undefined
             : childInferenceLogger.onRequest(request),
+          onInferenceDelay: async (event) => {
+            await publishWorkstreamEvent(options.env, childInput.workspaceId, childInput.parentId, {
+              type: "inference_delay_changed",
+              ...event,
+              harnessRunId: parentInput.harnessRunId,
+              executionId: childInput.harnessRunId,
+              attemptId: childLiveness.lease.attemptId,
+            }, childInput.substreamId ?? "0");
+          },
           onInferenceAttempt: async (attempt) => {
             await childInferenceLogger.onAttempt(attempt);
             await recordOpenRouterInferenceAttempt(

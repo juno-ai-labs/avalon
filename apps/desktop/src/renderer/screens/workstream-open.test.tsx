@@ -153,7 +153,7 @@ describe('socket-first work-stream open', () => {
     session.current = null;
     api.getWorkspaceMembers.mockResolvedValue([]);
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening: vi.fn(),
@@ -266,7 +266,7 @@ describe('socket-first work-stream open', () => {
     scrollTranscriptToEnd.mockImplementationOnce(() => { screen.getByRole('log').scrollTop = 1400; });
     const loadTranscriptRange = vi.fn().mockResolvedValue(undefined);
     retainedSocket.mockReturnValue({
-      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null,
+      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange,
     });
     const boot = historyBoot();
@@ -287,7 +287,7 @@ describe('socket-first work-stream open', () => {
     const loadA = vi.fn(() => new Promise<void>(resolve => { resolveA = resolve; }));
     const loadB = vi.fn(() => new Promise<void>(resolve => { resolveB = resolve; }));
     retainedSocket.mockImplementation((_api, id) => ({
-      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null,
+      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange: id === other ? loadB : loadA,
     }));
     const boots = [historyBoot(), historyBoot(other)];
@@ -320,7 +320,7 @@ describe('socket-first work-stream open', () => {
   it('shows reconnect status at an unloaded edge and resumes when connected', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('offline test'));
-    const socket = { state: 'connecting', workspaceSocketState: 'connected', activeCompaction: null,
+    const socket = { state: 'connecting', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: false, requestSnapshot: vi.fn(), loadTranscriptRange };
     retainedSocket.mockReturnValue(socket);
     const boot = historyBoot();
@@ -344,7 +344,7 @@ describe('socket-first work-stream open', () => {
     });
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('Newer gap unavailable'));
     retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
-      activeCompaction: null, sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
+      activeCompaction: null, activeInferenceDelays: [], sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
     renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
@@ -378,7 +378,7 @@ describe('socket-first work-stream open', () => {
       });
     });
     retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
-      activeCompaction: null, sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
+      activeCompaction: null, activeInferenceDelays: [], sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
     const cache = renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
@@ -399,7 +399,7 @@ describe('socket-first work-stream open', () => {
     }];
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('History unavailable'));
     retainedSocket.mockReturnValue({
-      activeCompaction: null, state: 'connected', workspaceSocketState: 'connected',
+      activeCompaction: null, activeInferenceDelays: [], state: 'connected', workspaceSocketState: 'connected',
       requestSnapshot: vi.fn(), sendReady: true, loadTranscriptRange,
     });
     renderScreen((cache) => {
@@ -859,7 +859,7 @@ describe('socket-first work-stream open', () => {
   it('requests a replacement snapshot when a retained socket outlives its base caches', async () => {
     const requestSnapshot = vi.fn();
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot,
       retryOpening: vi.fn(),
@@ -933,6 +933,31 @@ describe('socket-first work-stream open', () => {
     });
   });
 
+  it.each(['running', 'completed', 'different-run'] as const)('scopes the slowdown notice to the active response: %s', async (phase) => {
+    const runId = '00000000-0000-7000-8000-000000000651';
+    const delay = {
+      harnessRunId: runId, executionId: runId,
+      attemptId: '00000000-0000-7000-8000-000000000652',
+      inferenceRequestId: '00000000-0000-7000-8000-000000000653', turnId: 'turn:delay',
+    };
+    retainedSocket.mockReturnValue({
+      activeCompaction: null, activeInferenceDelays: [delay, { ...delay, inferenceRequestId: '00000000-0000-7000-8000-000000000654' }],
+      createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+      sendReady: true, state: 'connected', workspaceSocketState: 'connected',
+    });
+    const { transcript, ...detail } = recoveryBoot({
+      harnessStatus: phase === 'completed' ? 'completed' : 'running',
+      latestHarnessRunId: phase === 'different-run' ? '00000000-0000-7000-8000-000000000655' : runId,
+    });
+    renderScreen((client) => {
+      client.setQueryData(['workstream', workstreamId], detail);
+      client.setQueryData(['ordered-transcript', workstreamId], transcript);
+    });
+    await act(async () => Promise.resolve());
+    expect(screen.queryAllByText('The model is currently slowed down. Responses might take longer.'))
+      .toHaveLength(phase === 'running' ? 1 : 0);
+  });
+
   it('does not flash the empty invitation while a new run is scheduled', async () => {
     const boot = recoveryBoot({ harnessStatus: 'scheduled' });
     const { transcript, ...detail } = boot;
@@ -994,7 +1019,7 @@ describe('socket-first work-stream open', () => {
   it('retries the authoritative socket after the first attempt fails', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening,
@@ -1013,7 +1038,7 @@ describe('socket-first work-stream open', () => {
 
   it('shows the terminal error after all three timed opening attempts expire', async () => {
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       openingError: 'The live connection timed out after 3 attempts.',
       requestSnapshot: vi.fn(),
@@ -1032,7 +1057,7 @@ describe('socket-first work-stream open', () => {
   it('paints a remembered transcript with a connecting card and blocks sending until the live snapshot lands', async () => {
     const createMessage = vi.fn();
     const socket = {
-      activeCompaction: null, createMessage, requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+      activeCompaction: null, activeInferenceDelays: [], createMessage, requestSnapshot: vi.fn(), retryOpening: vi.fn(),
       sendReady: true, state: 'connecting', workspaceSocketState: 'connecting',
     };
     retainedSocket.mockReturnValue(socket);
@@ -1071,7 +1096,7 @@ describe('socket-first work-stream open', () => {
   it('keeps the remembered transcript and offers a retry on the card when the cached open times out', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
-      activeCompaction: null, createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening,
+      activeCompaction: null, activeInferenceDelays: [], createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening,
       openingError: 'The live connection timed out after 3 attempts.',
       sendReady: false, state: 'unavailable', workspaceSocketState: 'connecting',
     });
