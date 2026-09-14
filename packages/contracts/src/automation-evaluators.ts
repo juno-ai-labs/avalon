@@ -131,14 +131,51 @@ export const ExternalEventPredicateLeafV1Schema = z.union([
  * One rule is one AND group. There is no OR inside a rule: a draft that needs
  * "A or B" writes two rules, which is also how they are stored and matched, one
  * registration each.
+ *
+ * `always` is "every event of this type"; `matching` is "every leaf holds".
  */
-export const ExternalEventPredicateV1Schema = z.union([
+const CanonicalExternalEventPredicateV1Schema = z.union([
   z.strictObject({ kind: z.literal("always") }),
   z.strictObject({
-    kind: z.literal("all"),
+    kind: z.literal("matching"),
     allOf: z.array(ExternalEventPredicateLeafV1Schema).min(1),
   }),
 ]);
+
+/**
+ * `matching` was spelled `all` before this rename, and rows written under that
+ * spelling are still in production: `evaluator_rules_json` on SidekickDO's
+ * `definition_revisions`, and `evaluator_json` on WorkspaceDO's
+ * `workspace_external_event_registrations`, which
+ * `matchExternalEventDestinations` parses on the delivery path of every
+ * incoming event. A stored `all` that stopped parsing would not degrade — it
+ * would throw mid-match, and every event-driven Sidekick registered before the
+ * rename would silently stop waking.
+ *
+ * So the legacy spelling is accepted here and nowhere else. Mapping it *before*
+ * validation rather than admitting it as a third union branch is what keeps it
+ * from spreading: every reader downstream sees only `matching`, and
+ * `z.toJSONSchema(…, { io: "input" })` — which is what `set_evaluator_rules`
+ * hands the drafting model — renders the canonical union alone, so the
+ * discriminant this rename exists to disambiguate is never offered back to the
+ * model under both names.
+ *
+ * Dropping it requires that no stored row spell it `all` any more: a migration
+ * rewriting both columns in every region, or proof that every revision and
+ * registration predating the rename has since been rewritten by a normal
+ * accept/reconcile. Deleting this preprocess without one of those is a silent
+ * outage, not a failed parse anyone would see in review.
+ */
+const LEGACY_MATCHING_PREDICATE_KIND = "all";
+
+export const ExternalEventPredicateV1Schema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const { kind, ...rest } = raw as Record<string, unknown>;
+  if (kind !== LEGACY_MATCHING_PREDICATE_KIND) return raw;
+  // Only the discriminant is rewritten; every other key is left exactly as
+  // stored, so the strict object below still refuses anything it would have.
+  return { kind: "matching", ...rest };
+}, CanonicalExternalEventPredicateV1Schema);
 
 export const ExternalEventEvaluatorV1Schema = z.strictObject({
   evaluatorId: IdSchema.brand<"ExternalEventEvaluatorId">(),

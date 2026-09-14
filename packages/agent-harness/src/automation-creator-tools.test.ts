@@ -439,7 +439,7 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
         event: { kind: "event_type", eventType: "deploy.finished" },
       },
       when: {
-        kind: "all",
+        kind: "matching",
         allOf: [{ kind: "string", attribute: "service", operator: "equals", value: "checkout" }],
       },
     }],
@@ -478,6 +478,23 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
     expect(schema).toContain("pattern");
     expect(schema).not.toContain("00000000-0000-0000-0000-000000000000");
     expect(schema).not.toContain("ffffffff-ffff-ffff-ffff-ffffffffffff");
+  });
+
+  it("offers the model only `matching`, never the pre-rename `all`, as the predicate kind", () => {
+    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS.find(
+      (candidate) => candidate.name === "set_evaluator_rules",
+    );
+    if (!definition) throw new Error("set_evaluator_rules definition missing");
+
+    // `all` reads as "all events", which is what the neighbouring `always`
+    // means; that collision is the whole reason for the rename, and offering
+    // both spellings back to the model would reinstate it. The stored-row
+    // compatibility in `automation-evaluators.ts` is a preprocess rather than a
+    // third union branch precisely so this schema keeps naming one of them.
+    const schema = JSON.stringify(definition.inputSchema);
+    expect(schema).toContain("\"const\":\"matching\"");
+    expect(schema).toContain("\"const\":\"always\"");
+    expect(schema).not.toContain("\"const\":\"all\"");
   });
 });
 
@@ -529,7 +546,7 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
           event: { kind: "event_type", eventType: "deploy.finished" },
         },
         when: {
-          kind: "all",
+          kind: "matching",
           allOf: [{ kind: "string", attribute, operator: "equals", value: "checkout" }],
         },
       }],

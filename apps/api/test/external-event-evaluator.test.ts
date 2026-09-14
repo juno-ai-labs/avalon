@@ -1,14 +1,52 @@
 import { describe, expect, it } from "vitest";
+import { ExternalEventEvaluatorV1Schema, ExternalEventPredicateV1Schema } from "@rally/contracts";
 import { evaluateExternalEventPredicate, validateDraftEvaluatorRules } from "../src/services/external-event-evaluator";
 
 const personId = "11111111-1111-4111-8111-111111111111";
 
 describe("external event evaluator", () => {
+  it("still matches a stored rule that spells `matching` as the pre-rename `all`", () => {
+    // Rows written before the rename are in production in SidekickDO's
+    // `definition_revisions.evaluator_rules_json` and WorkspaceDO's
+    // `workspace_external_event_registrations.evaluator_json`, and
+    // `matchExternalEventDestinations` parses the latter on the delivery path
+    // of every incoming event. A stored `all` that stopped parsing would throw
+    // mid-match, and every Sidekick registered before the rename would stop
+    // waking.
+    const stored = {
+      kind: "all",
+      allOf: [{ kind: "string", attribute: "service", operator: "equals", value: "checkout" }],
+    };
+
+    // One canonical value reaches every reader: nothing downstream branches on
+    // the legacy spelling, so nothing downstream may be handed it.
+    expect(ExternalEventPredicateV1Schema.parse(stored)).toEqual({
+      kind: "matching",
+      allOf: [{ kind: "string", attribute: "service", operator: "equals", value: "checkout" }],
+    });
+
+    // The leaves still decide the answer — a parse that admitted the row but
+    // dropped its conditions would match everything.
+    expect(evaluateExternalEventPredicate(stored, { service: "checkout" })).toBe(true);
+    expect(evaluateExternalEventPredicate(stored, { service: "billing" })).toBe(false);
+
+    // The exact parse the hot delivery path makes, over the whole stored row.
+    expect(ExternalEventEvaluatorV1Schema.parse({
+      evaluatorId: "22222222-2222-4222-8222-222222222222",
+      source: {
+        connectorType: "generic_webhook",
+        connectionId: "33333333-3333-4333-8333-333333333333",
+        eventType: "deploy.finished",
+      },
+      when: stored,
+    }).when).toMatchObject({ kind: "matching" });
+  });
+
   it("evaluates a typed AND group without coercion and treats missing negative leaves as false", () => {
     // One rule is one AND group: "A or B" is authored as two rules, so there is
     // no OR to evaluate here.
     const predicate = {
-      kind: "all" as const,
+      kind: "matching" as const,
       allOf: [
         { kind: "string" as const, attribute: "messageText", operator: "contains" as const, value: "foobar" },
         { kind: "person_id_array" as const, attribute: "participantPersonIds", operator: "has" as const, value: personId },
@@ -24,11 +62,11 @@ describe("external event evaluator", () => {
       participantPersonIds: [personId],
     })).toBe(false);
     expect(evaluateExternalEventPredicate({
-      kind: "all",
+      kind: "matching",
       allOf: [{ kind: "string", attribute: "missing", operator: "not_equals", value: "x" }],
     }, {})).toBe(false);
     expect(evaluateExternalEventPredicate({
-      kind: "all",
+      kind: "matching",
       allOf: [{ kind: "presence", attribute: "missing", operator: "not_exists" }],
     }, {})).toBe(true);
     // The unconditional rule: every event of the watched type matches.
@@ -47,7 +85,7 @@ describe("external event evaluator", () => {
           resourceId: "22222222-2222-4222-8222-222222222222",
         },
         when: {
-          kind: "all" as const,
+          kind: "matching" as const,
           allOf: [{
             kind: "string" as const,
             attribute: "messageText",
@@ -93,7 +131,7 @@ describe("external event evaluator", () => {
       ...rules,
       evaluators: [{
         ...rules.evaluators[0],
-        when: { kind: "all", allOf: [{
+        when: { kind: "matching", allOf: [{
           kind: "number",
           attribute: "messageText",
           operator: "equals",

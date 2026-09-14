@@ -1823,7 +1823,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     }
     const referencedPersonIds = new Set<string>();
     for (const evaluator of rules.evaluators) {
-      if (evaluator.when.kind !== "all") continue;
+      if (evaluator.when.kind !== "matching") continue;
       for (const leaf of evaluator.when.allOf) {
         if (leaf.kind !== "person_id" && leaf.kind !== "person_id_array") continue;
         for (const value of Array.isArray(leaf.value) ? leaf.value : [leaf.value]) referencedPersonIds.add(value);
