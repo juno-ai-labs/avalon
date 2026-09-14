@@ -25,6 +25,9 @@ type LocalOnlyTranscriptOperation =
   | "commitActivationInputs"
   | "settlePendingSteersAtStep"
   | "activatePendingInput"
+  // Reads the queue against the live Bind projection to say which input can
+  // start the next cycle; only the object holding the loop can act on it.
+  | "nextActivationInput"
   | "appendPreparedParticipantMessageAtSequence"
   | "pendingTranscriptInputs"
   | "pendingTranscriptInput"

@@ -284,7 +284,11 @@ control or a bleed derived from something else, and says which in a comment.
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
-`ComposerInput`. An automation's page keeps its lifecycle controls (apply,
+`ComposerInput`. An answer to a question is not one of its rows. It is admitted
+as a pending input like any message, but it is projected as the answered
+question — the same UI identity the canonical turn will carry — so the card
+closes the moment the room accepts it, and it neither draws a queue row nor
+takes part in a reorder. An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
@@ -624,6 +628,47 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-14 — An admitted answer closes its question before the loop promotes it
+
+**What changed:** `pendingTranscriptInputOverlay` projects a pending input whose
+`messageType` is `elicitation` as the answered question rather than as text: it
+takes the question's UI identity (`elicitationMessageId`), carries the parsed
+elicitation, and has no delivery state, so `isComposerQueueOverlay` and
+`pendingOverlayInputId` both leave it out of the composer queue.
+`composeTranscript` then folds it into the canonical question row it answers,
+so the two are one row at the question's position.
+
+**Why:** the card is drawn from the canonical elicitation turn, and that turn
+carries the status frozen at `open` — only the answer's own turn ever replaces
+it. Until the loop promotes the answer there is no such turn, so the optimistic
+"answered" the screen writes on submit survived exactly until the next snapshot
+and then the question came back, over the answer the person had just given. The
+answer meanwhile sat on the composer as a row with no text, rendered as
+"Queued message", because an elicitation response has an empty text block.
+Neither was a rare window: the loop only promotes the answer when it next runs.
+
+**Considered and rejected:** holding the optimistic answered state across
+snapshots on the client. That is a second source of truth for a question's
+status, kept alive by the screen, and it would have to be torn down correctly on
+a failure, a reconnect, and a second answer from another participant — while the
+room already sends everything needed to say so honestly. Filtering empty pending
+inputs out of the queue: that hides the symptom and leaves the question asking.
+
+**Consequences:** the feed is *composed*, not upserted, and the two paths
+reconcile differently. `composeTranscript` drops an overlay only when its
+identity already has a canonical row, and an answer is keyed by its own client
+message while the question is keyed by the question — so review caught both
+being emitted under one message id, the question drawn twice and a duplicate
+React key. `composeTranscript` now folds the answer's status into the canonical
+question row and takes the overlay out, which is the same "one row, at the
+question's position" rule `orderedTranscriptMessages` already applies to the
+canonical pair. A test that reaches this through `upsertTranscriptMessage`
+proves nothing: that helper belongs to the socket path, not to the feed.
+`queueSequence` is now the marker of composer-queue membership: an overlay
+without one is not a row and cannot be reordered. The loop promoting the answer
+out of turn is the other half of this, and lives in the 2026-09-14 entry in
+[`workstream-durable-object.md`](workstream-durable-object.md).
 
 ### 2026-09-13 — The in-flight sweep is painted on each surface of a turn, not on its wrapper
 
