@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import {
   TELEMETRY_EVENTS,
   TelemetryEnvelopeSchema,
@@ -79,7 +80,7 @@ interface AuthenticatedTelemetrySession {
   apiBaseUrl: string;
   accessToken: string;
   workspace: boolean;
-  route: 'global' | 'eu';
+  route: Region;
 }
 
 interface AnonymousTelemetrySession {
@@ -91,7 +92,7 @@ interface AnonymousTelemetrySession {
 export interface TelemetryReporterOptions {
   spool: TelemetrySpool;
   identity: () => TelemetryIdentity;
-  route: () => 'global' | 'eu';
+  route: () => Region;
   /** Local admission gate. */
   productAnalyticsEnabled: () => boolean;
   /** Canonical delivery gate; defaults to the admission gate. */
@@ -112,7 +113,7 @@ export interface TelemetryDecision {
   schemaVersion: number;
   policyClass: TelemetryCategory;
   propertyNames: string[];
-  route: 'global' | 'eu';
+  route: Region;
   validation: 'accepted' | 'suppressed' | 'rejected' | 'delivered' | 'retrying' | 'terminal';
   queueState: 'none' | 'queued' | 'delivered' | 'retrying' | 'removed';
 }
@@ -317,7 +318,7 @@ export class TelemetryReporter {
   }
 
   onboardingRegionSelected(
-    selectedRegion: 'global' | 'eu',
+    selectedRegion: Region,
     entrypoint: TelemetryEntrypoint,
     windowContext?: TelemetryWindowContext,
   ): Promise<void> {
@@ -327,7 +328,7 @@ export class TelemetryReporter {
   }
 
   workspaceCreateRequested(
-    selectedRegion: 'global' | 'eu',
+    selectedRegion: Region,
     entrypoint: TelemetryEntrypoint,
     operationId: string,
     windowContext?: TelemetryWindowContext,
@@ -338,7 +339,7 @@ export class TelemetryReporter {
   }
 
   workspaceActivationRequested(
-    selectedRegion: 'global' | 'eu',
+    selectedRegion: Region,
     entrypoint: TelemetryEntrypoint,
     operationId: string,
     windowContext?: TelemetryWindowContext,

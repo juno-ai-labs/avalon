@@ -1,3 +1,4 @@
+import { regionConfiguration } from '@rally/contracts/regions';
 import { NativeCrashUploader } from '../../../src/main/native-crash-uploader.ts';
 import { prepareNativeCrashGeneration } from '../../../src/main/native-crash-generation.ts';
 import { resolveTelemetryRoute } from '../../../src/main/telemetry-route.ts';
@@ -35,9 +36,7 @@ export async function uploadFixtureGeneration(input) {
     enabled: () => true,
     identity: () => ({ installationId }),
     authenticatedSession: async () => ({
-      apiBaseUrl: input.route === 'eu'
-        ? 'https://eu.api.rallywith.ai'
-        : 'https://api.rallywith.ai',
+      apiBaseUrl: regionConfiguration(input.route).apiUrl,
       accessToken: 'fixture-session',
       route: input.route,
     }),

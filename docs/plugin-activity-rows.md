@@ -36,8 +36,6 @@ them.
 | `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
 | `apps/desktop/src/renderer/components/message-feed.tsx` | Holds which rows a reader has opened, above the virtual window, and hands it to every row as `RowDisclosure`. |
 
-## How it works
-
 ### What the transcript carries
 
 The canonical ordered transcript
@@ -642,8 +640,6 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
-
-## Changelog
 
 ### 2026-09-11 — Separate configured activity names from trusted plugin identity
 

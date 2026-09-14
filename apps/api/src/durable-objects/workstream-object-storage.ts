@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { ConversationParentKindSchema, type ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AgentCompactionStateSchema,
@@ -79,7 +80,7 @@ interface AuthorityRow extends Record<string, SqlStorageValue> {
   workstream_key: string;
   parent_workspace_key: string;
   parent_kind: ConversationParentKind;
-  region: "global" | "eu";
+  region: Region;
   authority_mode: string;
   authority_generation: number;
 }
@@ -415,7 +416,7 @@ function writeActiveStreamCheckpoints(
 function insertIdentity(
   storage: DurableObjectStorage,
   identity: WorkstreamObjectIdentity,
-  region: "global" | "eu",
+  region: Region,
   now: number,
 ): void {
   const existing = first(storage.sql.exec<{
@@ -482,7 +483,7 @@ export class WorkstreamObjectStore {
   constructor(
     private readonly storage: DurableObjectStorage,
     workerVersionId: string,
-    _region: "global" | "eu",
+    _region: Region,
   ) {
     void _region;
     applyWorkstreamObjectSchema(storage, workerVersionId);
@@ -493,7 +494,7 @@ export class WorkstreamObjectStore {
     return this.ready;
   }
 
-  ensureIdentity(identity: WorkstreamObjectIdentity, region: "global" | "eu"): void {
+  ensureIdentity(identity: WorkstreamObjectIdentity, region: Region): void {
     this.storage.transactionSync(() => insertIdentity(this.storage, identity, region, Date.now()));
   }
 

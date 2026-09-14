@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -33,7 +34,7 @@ function patterns(fileName: string): string[] {
   return (config(fileName).routes ?? []).map((route) => route.pattern ?? '');
 }
 
-const REGIONS = ['wrangler.global.jsonc', 'wrangler.eu.jsonc'] as const;
+const REGIONS = ['wrangler.global.jsonc'] as const;
 
 describe('dual-domain deployment', () => {
   it.each(REGIONS)('%s admits both renderer origins', (fileName) => {
@@ -61,10 +62,7 @@ describe('dual-domain deployment', () => {
       'api.with-avalon.com', 'github.with-avalon.com', 'linear.with-avalon.com',
       'notion.with-avalon.com', 'slack.with-avalon.com',
     ]));
-    expect(patterns('wrangler.eu.jsonc')).toEqual(expect.arrayContaining([
-      'eu.api.rallywith.ai',
-      'eu.api.with-avalon.com',
-    ]));
+
   });
 
   it.each(REGIONS)('%s mints only canonical Rally URLs', (fileName) => {
@@ -74,7 +72,7 @@ describe('dual-domain deployment', () => {
     // registrations — which serving both domains would hide rather than surface.
     const vars = config(fileName).vars ?? {};
     for (const name of [
-      'PUBLIC_API_BASE_URL', 'EU_PUBLIC_API_BASE_URL', 'PUBLIC_WEB_BASE_URL',
+      'PUBLIC_API_BASE_URL', 'PUBLIC_WEB_BASE_URL',
       'GITHUB_INGRESS_BASE_URL', 'LINEAR_INGRESS_BASE_URL',
       'NOTION_INGRESS_BASE_URL', 'SLACK_INGRESS_BASE_URL',
       'RESEND_FROM_EMAIL', 'RESEND_NOTIFICATION_FROM_EMAIL',

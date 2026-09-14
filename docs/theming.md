@@ -179,8 +179,6 @@ scheme and iframe are absent from the renderer CSP and Electron protocol
 registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
-## Changelog
-
 ### 2026-09-11 — A mask is not a colour
 
 **What changed:** `themes.css.node.test.ts` reads the property name alongside

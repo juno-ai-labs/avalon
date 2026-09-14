@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { newId } from '@rally/db';
 import { TelemetryBreadcrumbSidecarSchema, type TelemetryBreadcrumbSidecar } from '@rally/contracts/telemetry';
 import { z } from 'zod';
@@ -10,7 +11,7 @@ const MAX_NEW_CRASH_UPLOADS_PER_HOUR = 10;
 const CrashMetadataSchema = z.strictObject({
   uploadId: z.string().uuid().refine((value) => value[14] === '7'),
   installationId: z.string().uuid().refine((value) => value[14] === '7'),
-  route: z.enum(['global', 'eu']),
+  route: RegionSchema,
   release: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   buildId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   platform: z.enum(['darwin', 'win32', 'linux']),

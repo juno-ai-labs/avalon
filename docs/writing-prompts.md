@@ -55,8 +55,6 @@ with run state. Keep that split honest: anything interpolated into the system
 string is something the prompt cache must re-establish and a reviewer must
 reason about, and the default home for run data is a user-role message.
 
-## Principles
-
 ### 1. Pitch it at the right altitude
 
 The central design problem, and the same one skills have. Too **low** — a

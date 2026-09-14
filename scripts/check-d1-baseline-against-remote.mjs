@@ -10,7 +10,7 @@
 // not know about, and every local database built from the baseline would then be
 // faithfully reproducing a schema nobody runs.
 //
-// It also compares Global against EU. The two regions run the same migrations
+// It also compares Global against regional. The two regions run the same migrations
 // but are separate databases with separate ledgers, so "both are migrated" and
 // "both are the same" are genuinely different claims, and only the second one
 // makes a single baseline correct for both.

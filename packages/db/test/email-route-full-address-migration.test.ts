@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,7 +20,7 @@ function beforeMigration(): DatabaseSync {
   database.exec(`
     CREATE TABLE workstream_email_routes (
       local_part TEXT PRIMARY KEY COLLATE NOCASE,
-      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      region TEXT NOT NULL CHECK (region IN ('global', 'enterprise')),
       workspace_id TEXT NOT NULL,
       workstream_id TEXT,
       automation_subscription_id TEXT,

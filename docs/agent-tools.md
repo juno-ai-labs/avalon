@@ -88,8 +88,6 @@ The model-facing flow is deliberately literal:
 4. Call `core_show_connector_connection` with the same values, then stop the
    connector-dependent work for that run. Do not claim the connection worked.
 
-## Principles
-
 ### 1. Fail loud, never silently ignore an input
 
 Argument validation strips what it does not declare. A parameter the model
@@ -975,8 +973,6 @@ future agent tool or plugin, not just this family.
   system messages that tell the model when to reach for a tool.
 - [`security.md`](security.md) — trust boundaries and what is treated as
   untrusted.
-
-## Changelog
 
 ### 2026-09-11 — A blocked connector can become an action, without making OAuth model-authored
 

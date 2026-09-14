@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -116,26 +117,16 @@ describe("Terminal plugin contract", () => {
     });
   });
 
-  it("deploys Terminal in both regions against the same Daytona us environment", () => {
+  it("deploys Terminal against the configured Daytona environment", () => {
     const stripJsoncComments = (raw: string): string => raw.replace(/^\s*\/\/.*$/gmu, "");
     const vars = (fileName: string): Record<string, string> => {
       const raw = readFileSync(new URL(`../${fileName}`, import.meta.url), "utf8");
       return (JSON.parse(stripJsoncComments(raw)) as { vars?: Record<string, string> }).vars ?? {};
     };
     const globalVars = vars("wrangler.global.jsonc");
-    const euVars = vars("wrangler.eu.jsonc");
 
     expect(globalVars.TERMINAL_REGION_CAPABILITY).toBe("supported");
-    expect(euVars.TERMINAL_REGION_CAPABILITY).toBe("supported");
     expect(globalVars.DAYTONA_TARGET).toBe("us");
-    expect(euVars.DAYTONA_TARGET).toBe("us");
-    // The invariant is that the two regions agree, not which snapshot they name.
-    // Pinning the literal made every snapshot roll a test edit -- and a snapshot
-    // is expected to roll: adopting a Rally-owned one, and rebuilding it to stay
-    // current with Daytona's base, both change this value. A region drifting onto
-    // a different snapshot is the thing worth failing on, because the two would
-    // then run different toolchains while sharing one acceptance gate.
     expect(globalVars.DAYTONA_TERMINAL_SNAPSHOT).toMatch(/^[a-z0-9][a-z0-9._-]*$/u);
-    expect(euVars.DAYTONA_TERMINAL_SNAPSHOT).toBe(globalVars.DAYTONA_TERMINAL_SNAPSHOT);
   });
 });

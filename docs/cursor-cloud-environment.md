@@ -33,15 +33,6 @@ in order. Work is placed by the lifetime of the state it produces:
   to create the baseline snapshot and is not rerun on later boots, so it holds
   only work whose product is a file on disk. It is idempotent — a warm re-run
   finishes in seconds and rewrites nothing it does not have to.
-- **`terminals`.** The long-running and per-boot work that a snapshot cannot
-  carry as a live process:
-  - **`api`** runs `pnpm dev:api:local`, both regional Workers with remote
-    bindings disabled (Global `:8787`, EU `:8788`).
-  - **`seed-fixtures`** waits for the Global Worker's health check, then runs
-    `pnpm db:open-authority` once. The authority walk seeds the product fixtures
-    into their Durable Objects and therefore *needs the Worker already up*, which
-    is why it is a terminal gated on health rather than a line in `install`. It
-    is idempotent and re-runs repair a partial import.
 
 There is no `start` phase: nothing here needs per-boot reconciliation that the
 migrate/seed in `install` and the health-gated seed terminal do not already

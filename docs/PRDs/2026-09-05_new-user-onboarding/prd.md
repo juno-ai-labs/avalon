@@ -69,8 +69,6 @@ protection while extending the journey.
 6. Add arbitrary theme documents or a new light/dark system. Personal color
    extends the current semantic tokens; appearance remains System/Light/Dark.
 
-## Product behavior
-
 ### Journey and routing
 
 | Stage | Path A: creating a workspace | Path B: joining a workspace |
@@ -293,8 +291,6 @@ that rule explicitly to allow personal accent choice while retaining the two
 resolved appearances. The standing brief's older dense/dark visual description
 also needs reconciliation with this spacious onboarding treatment when adopted.
 
-## Decision log
-
 ### 2026-09-07 — Final implementation decisions
 
 These supersede the original first-task and discovery requirements above: creator setup proceeds through workspace and
@@ -340,20 +336,6 @@ Existing accounts should not be forced through onboarding. Migration must
 distinguish preexisting accounts from new eligible accounts explicitly; lack of
 a new record alone cannot mean new user. Existing profiles receive compatible
 fallback presentation and can use the new Settings controls.
-
-## Regional impact
-
-Workspace creation, grants, suggestions, invitations, and the example remain in
-the chosen workspace region. EU source content and interaction evidence do not
-travel to Global for ranking. Existing identity discovery already spans regional
-memberships, but regional user IDs are not interchangeable account IDs.
-
-Proposed account presentation authority is the existing Global identity plane,
-with only avatar key, color key, and revision projected into each region. This
-extends today's identity boundary and must be explicitly documented before
-building; it must not become a route for EU activity, member content, or task
-transcripts. If this account-level placement is not accepted, the architecture
-needs another synchronization design that still satisfies all-session consistency.
 
 ## Security and trust model
 
@@ -420,7 +402,7 @@ There is no feature-flag kill switch; rollback is a release operation.
    duplicate side effects or regress progress.
 9. The first task streams real agent activity, supports elicitation, cancellation,
    and follow-up, and distinguishes failure, successful response, and skipping.
-10. Global and EU flows retain their authority boundaries. Existing accounts
+10. configured deployments flows retain their authority boundaries. Existing accounts
     enter normally. Keyboard-only, reduced-motion, short-window, and light/dark
     flows are inspected in a real Electron window before implementation is done.
 

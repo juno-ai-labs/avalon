@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -326,7 +327,7 @@ describe("consumeMigrationCommandQueue", () => {
    */
   it("drops a command addressed to the other region rather than rerouting it", async () => {
     const foreign = env.WORKSTREAM_DOS.idFromName("global:not-this-namespace").toString();
-    const delivery = batch([command({ region: "eu", objectId: foreign })]);
+    const delivery = batch([command({ region: "enterprise", objectId: foreign })]);
     await consumeMigrationCommandQueue(delivery.batch, env);
 
     expect(delivery.messages[0]).toMatchObject({ acked: true, retried: false });

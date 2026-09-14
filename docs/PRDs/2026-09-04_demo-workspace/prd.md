@@ -92,8 +92,6 @@ old objects quiet and prove that an already-queued delivery cannot revive them.
    deferred.** One manually maintained template and one versioned pack suffice.
    Retirement preserves old data; it is not deletion or a retention promise.
 
-## Product behavior
-
 ### The operator and the presenter
 
 An employee admitted by Ace's existing internal Access policy operates a
@@ -412,8 +410,6 @@ suppressed. Connector tools themselves behave normally for a live turn. It adds
 no customer reset capability, global inbox, general replay clock, or permission
 for a model to fabricate tool receipts.
 
-## Decision log
-
 ### 2026-09-10 — The cast is the company's own directory, not invented people
 
 **Decided:** Every part in a pack is played by a colleague with a real account,
@@ -664,17 +660,6 @@ nothing runs until an operator starts it would have hidden it.
 
 ### 2026-09-08 — What a demo may share, and what a retry can reach
 
-**Decided:** Only a Google connection is copied from the template; a
-connection of any other provider is skipped and reported as `shared_grant`. A
-seeded run that fails ends the operation: Retry replays the action into the
-same turn and the same failed run, so the way back is Abandon and a new
-operation. Abandon claims the operation row before it retires anything. A
-candidate is withheld from its members while it is unpublished, whatever its
-status, so an abandoned one never appears. EU binds no preparation Workflow,
-and the binding is outside the boot contract in every region. A Ready demo
-reaches its presenter through the account menu, which lists workspaces only
-while their `multiple-workspaces-enabled` flag is on.
-
 **Why:** A copy shares the template's upstream grant, and for every provider
 but Google the presenter's Disconnect would revoke that grant remotely — for
 the template and every live demo at once; Google's disconnect is local. The
@@ -799,13 +784,7 @@ content, artifacts, operation receipts, and object state stay in the owning
 region. Ace displays authorized operation metadata and progress, not tokens or
 conversation bodies. Credential material is decrypted and re-encrypted only
 within the owning region, and no template credentials or demo content cross the
-Global/EU boundary.
-
-EU demo creation is deferred until the region's template, keys, and the same
-acceptance flows are exercised. General lifecycle code must preserve existing
-EU behavior, but the Global spike is not claimed as EU demo verification. See
-[regionalization](../../regionalization.md) and
-[multiple workspaces](../../multiple-workspaces.md).
+configured deployment boundary.
 
 ## Security and trust model
 

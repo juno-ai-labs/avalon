@@ -27,7 +27,8 @@ export type TerminalNetworkPolicyPreview = ContractTerminalNetworkPolicyPreview;
 export type TerminalWorkstreamState = ContractTerminalWorkstreamState;
 export type GitHubRepositoryAccessSettings = ContractGitHubRepositoryAccessSettings;
 
-export type Region = 'global' | 'eu';
+export type { Region } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 /** How a connection or automation is owned, in the words the UI uses for it. */
 export type Scope = 'you' | 'workspace';
 /**

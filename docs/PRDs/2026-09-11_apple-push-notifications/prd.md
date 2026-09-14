@@ -60,7 +60,7 @@ queue serve it.
    decided, and a registration lives only as long as a session that was made
    from that installation.
 3. One device registers once per region it holds a credential for; a person with
-   workspaces in both Global and EU is notified about each by the Worker that
+   workspaces in both configured deployments is notified about each by the Worker that
    owns it, with that region's secrets, and no notification content crosses the
    regional boundary or enters a Queue.
 4. The backend is platform-agnostic: the registry keys on `platform` and
@@ -153,11 +153,6 @@ signing into a different account on the same Mac disables the earlier person's
 row for that token when the new one registers, so a shared machine never shows
 the previous person's mentions.
 
-**Two regions.** A person with a Global and an EU workspace sees notifications
-from both; each is sent by its own region. The EU payload leaves Rally for Apple
-the same way an EU mention email leaves for Resend today; see
-[Regional impact](#regional-impact).
-
 **Failure.** A device APNs reports unregistered (410) is disabled and never
 retried. A payload APNs refuses (400, 413) is logged with Apple's reason and
 dropped; a transport failure is retried by the Queue and dead-lettered after the
@@ -185,54 +180,38 @@ the aggregate attention they expose today.
   session/access primitives. Implement HTTPS links in the same effort, preserving
   the site-before-desktop deployment gate.
 
-## Key design decisions
-
-1. **A device registers per region, and each region sends its own.** Rejected: a
-   Global registry that EU calls through a bridge. Every ordinary workspace
-   request already stays in its region, `users` is regional (the timezone column
-   set the precedent), the desktop already walks one credential per region for
-   attention reads, and a bridge would carry either EU content to Global or a
-   content-free payload that defeats the feature. The cost is one row per
-   region per device and one registration call per region on launch; both are
-   cheap.
 2. **Push rides the existing notification intent, not a new producer.** The intent
    pipeline already decides audience, fences on the recipient's directory
    projection, refuses self-notification and unlistable rooms, and settles once.
    Rejected: reading `workspace_activity_events` and deciding again, which
    would duplicate the judgement and could disagree with Slack and email.
-3. **Delivery is a Queue hop that carries identifiers only, and the consumer
-   re-runs the access fence.** The intent processor enqueues the region, the
-   workspace, the intent id, and the recipient; the consumer reads the intent
-   row back from WorkspaceDO, re-checks membership, listability, and private-child
-   access exactly as the processor did, and only then renders and sends.
-   [`regionalization.md`](../../regionalization.md#deployments) requires Queue
-   bodies to carry opaque ids and never content, and a Queue with retries
-   extends delivery well past the moment the intent was decided. Rejected:
-   sending inline beside Slack, which would hold the activity consumer for N
-   devices × a 5 s deadline; and a message carrying the rendered title and
-   body, which would put EU content in a Queue whose jurisdiction is not
-   established.
+
 4. **Provider token auth (a team `.p8` key), not certificates.** One key serves
    every app in the team, never expires, and needs no per-app renewal, which is
    exactly what makes iOS a client-only addition. Rejected: per-app APNs
    certificates, which expire yearly and are per bundle.
+
 5. **Electron's built-in `pushNotifications` module, no native addon.**
    Electron 43 ships `registerForAPNSNotifications()` and the
    `received-apns-notification` event. Rejected for v1: an Objective-C++ addon
    that installs a `UNUserNotificationCenter` delegate; it is the fallback if
    the spike in `design.md` finds a click on a system-presented alert does not
    reach the app.
+
 6. **The restricted entitlement goes on the main bundle only.** Helpers keep
    their exact three entitlements; [`security.md`](../../security.md#macos-distribution-and-updates)
    already forbids `com.apple.developer.*` there, and the verifier enforces it.
+
 7. **The payload carries the preview.** The mention email and Slack DM already
    carry the message text to a third party; a content-free push (*You were
    mentioned*) would be the one channel that says less. Rejected for v1: a
    content-free mode; it stays one renderer branch away if a region or a
    customer needs it.
+
 8. **A separate installation id for push.** Minted once per install beside the
    session file, deliberately not the telemetry `installationId`, so a device
    row in D1 cannot be joined to the analytics subject exported to PostHog.
+
 9. **Send-then-record per device, and a redelivery skips devices already
    reached.** A crash between a send and its record may send once more; that is
    the rare case, and the collapse id keeps Notification Center to one entry.
@@ -240,6 +219,7 @@ the aggregate attention they expose today.
    consumer skips any device whose `last_delivery_at` is at or after the
    message's enqueue time. Rejected: a receipt written before the send, which
    loses the notification on a crash after the write, the worse failure.
+
 10. **On by default when the section first appears.** The digest is on by
     default for the same reason: nobody should have to find a settings screen to
     be told what they missed, and macOS gates delivery behind its own permission
@@ -247,6 +227,7 @@ the aggregate attention they expose today.
     Rejected: off by default, which would make the feature invisible to the
     people the rollout is measured on. The product owner can overturn this in
     the decision log.
+
 11. **A registration is bound to sessions, not to the person.** Every
     workspace credential on an installation that registers adds its session id
     to the registration, and sending requires one of those sessions to be live.
@@ -254,6 +235,7 @@ the aggregate attention they expose today.
     abandoned or shared Mac eligible for as long as the person's phone is signed
     in, and would make the client's sign-out delete the only thing ending
     delivery, at the moment it is least reliable.
+
 12. **Push and Slack are both sent when available; email only when neither
     reached anyone.** Product owner's decision, 2026-09-11. Push is device-local
     and Slack is a channel the person chose by linking, so the two do not
@@ -261,11 +243,13 @@ the aggregate attention they expose today.
     push means the intent was enqueued with at least one live device, since
     APNs delivery is best effort. Rejected: email regardless, which would tell a
     person three times.
+
 13. **No presence suppression in v1.** Product owner's decision, 2026-09-11:
     keep it simple. A person with the conversation open on their Mac sees the
     system alert for it. The server-side check against WorkspaceDO viewer
     presence stays the likely later answer because it would serve iOS too, and
     it is one condition in the consumer when wanted.
+
 14. **The preview is 1,000 characters.** Product owner's decision, 2026-09-11.
     `PUSH_BODY_PREVIEW_CHARACTERS = 1000` in `@rally/contracts`, a product
     limit cited to this PRD; the renderer's fit to Apple's 4,096-byte payload
@@ -274,7 +258,7 @@ the aggregate attention they expose today.
 
 ## Data model
 
-Regional D1, both regions, one migration:
+Regional D1, configured deployments, one migration:
 
 | Table | Purpose |
 | --- | --- |
@@ -362,20 +346,11 @@ released before items 1 to 4 exist, and nothing on the backend can send before
    packager refuses a release build without it, the way it refuses one
    without `CSC_NAME`.
 
-**Cloudflare (both regions, per [`runbook.md`](../../runbook.md)).**
+**Cloudflare (configured deployments, per [`runbook.md`](../../runbook.md)).**
 
-6. **Secrets**, set separately per region as `DAYTONA_API_KEY` is:
-   `APNS_AUTH_KEY` (the PEM text of the `.p8`) and `APNS_KEY_ID`, with
-   `wrangler secret put` against `wrangler.global.jsonc` and again against
-   `wrangler.eu.jsonc`. The team id is a constant in the code. Neither is
-   required by the env contract; a region without them reports
-   `pushDelivery: not configured` and skips.
-7. **Queues.** `avalon-global-push-deliveries`, `avalon-eu-push-deliveries`, and
-   their `-dead-letter` queues are declared in the Wrangler files;
-   `deploy-api.yml` creates the missing ones before migrations. Verify with
-   `scripts/ensure-cloudflare-queues.mjs`.
 8. **D1 migration.** Applied by `deploy-api.yml` to both regional databases in
    the ordinary chain; nothing manual.
+
 9. **KV.** The provider-token cache uses the regional KV namespace each API
    Worker already binds; no new namespace.
 10. **Flag.** `push-notifications-enabled` is enabled for everyone. Ace's
@@ -402,23 +377,26 @@ separate milestones.
 Turning it off: the flag. Backing out fully: revert the transport branch in the
 intent processor; the migration and queues stay, empty and harmless.
 
-## Acceptance
-
 1. On a release build with the section enabled, a mention from another account
    shows a macOS notification within a few seconds with Rally quit; clicking it
    launches Rally at that work stream.
+
 2. The same with Rally running in the background; the notification is shown
    once.
+
 3. A seating shows the seating notification; a mention in a private child
    opens the child.
+
 4. Turning the switch off, then a mention: nothing is shown; the row is gone in
-   both regions; a relaunch registers nothing.
+   configured deployments; a relaunch registers nothing.
+
 5. Sign out, then a mention: nothing is shown, including when the client's
    delete is made to fail; sign back in: notifications resume.
+
 6. Leave a work stream after a mention in it is enqueued and before the
    consumer runs: nothing is shown; the log says `access_revoked`.
-7. A person with a Global and an EU workspace is notified from both.
-8. `/health` reports `pushDelivery` as configured in both regions; the
+
+8. `/health` reports `pushDelivery` as configured in configured deployments; the
    dead-letter queues are empty after the run.
 
 ## Open questions

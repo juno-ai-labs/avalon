@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 
 import { parseTelemetryProductIntent } from './telemetry-intent';
@@ -164,8 +165,8 @@ describe('parseTelemetryProductIntent', () => {
     // The allowlist is shared, so the socket event must not be the only kind
     // this file proves reaches the reporter.
     expect(parseTelemetryProductIntent({
-      kind: 'onboarding_region_selected', selectedRegion: 'eu', entrypoint: 'first_run',
-    })).toEqual({ kind: 'onboarding_region_selected', selectedRegion: 'eu', entrypoint: 'first_run' });
+      kind: 'onboarding_region_selected', selectedRegion: 'enterprise', entrypoint: 'first_run',
+    })).toEqual({ kind: 'onboarding_region_selected', selectedRegion: 'enterprise', entrypoint: 'first_run' });
     expect(() => parseTelemetryProductIntent({
       kind: 'onboarding_region_selected', selectedRegion: 'mars', entrypoint: 'first_run',
     })).toThrow('Invalid telemetry intent');

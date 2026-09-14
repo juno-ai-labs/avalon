@@ -197,7 +197,7 @@ are local to WorkspaceDO and cascade only from a deleted project.
 Each project's SQLite rows live in the WorkspaceDO selected by the workspace's
 immutable regional placement. The only external read is the same-region D1
 active-membership check. No project content or product state crosses between
-Global and EU.
+configured deployments.
 
 ## Security and trust model
 
@@ -225,8 +225,6 @@ Default-resource target publication is the one external await: the WorkspaceDO a
 advances their durable retry gates, and then sends one Queue batch. A rejected
 send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
-
-## Changelog
 
 ### 2026-09-10 — Add to project leaves the work-stream context menu
 

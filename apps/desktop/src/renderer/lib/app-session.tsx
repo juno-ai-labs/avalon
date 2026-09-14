@@ -177,9 +177,15 @@ export type AppSessionDesktopBridge = Pick<
   | 'surrenderActiveWorkspace'
 >;
 
+function configuredApiBase(runtime: RuntimeConfig, region: Region): string {
+  const url = runtime.api[region];
+  if (!url) throw new Error('The region is unavailable');
+  return url;
+}
+
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
   if (session.workspace) return session.workspace.region;
-  return runtime.api.eu === session.apiBaseUrl ? 'eu' : 'global';
+  return 'global';
 }
 
 function sessionsShareCacheScope(
@@ -258,7 +264,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       return;
     }
     const nextRegion = nextSession.workspace?.region
-      ?? (runtime?.api.eu === nextSession.apiBaseUrl ? 'eu' : 'global');
+      ?? 'global';
     setDeviceSelectedRegion(nextRegion);
     setRegion(nextRegion);
     if (nextSession.workspace) {
@@ -369,11 +375,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   // service, even when an existing session belongs to the other region.
   const invitationApi = useMemo(() => {
     if (!pendingInvitation || !runtime) return null;
-    return new RallyApi(runtime.api[pendingInvitation.region], null);
+    return new RallyApi(configuredApiBase(runtime, pendingInvitation.region), null);
   }, [pendingInvitation, runtime]);
 
   const createDevelopmentSession = useCallback(async () => {
-    if (!api) throw new Error('Choose a workspace region first.');
+    if (!api) throw new Error('Open a workspace first.');
     const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Rally Development');
     setSession(nextSession);
     if (nextSession.workspace) {
@@ -411,7 +417,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const reconnectAccountIdentity = useCallback(async (): Promise<void> => {
     if (!runtime) throw new Error('Rally is still loading its identity service.');
     const authAttempt = await bridge.createDesktopAuthAttempt({
-      apiBaseUrl: runtime.api.global,
+      apiBaseUrl: configuredApiBase(runtime, 'global'),
       region: 'global',
     });
     // Main honours only this attempt from here on, so whoever waited on an
@@ -420,7 +426,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // already retired.
     settleAccountSignIn(null, new AccountSignInSupersededError());
     try {
-      const identityApi = new RallyApi(runtime.api.global, null);
+      const identityApi = new RallyApi(configuredApiBase(runtime, 'global'), null);
       const url = await identityApi.beginGoogleLogin(
         'global',
         'rallywithai://auth/complete',
@@ -1038,7 +1044,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setDeepLinkError(null);
       try {
         const nextSession = await bridge.exchangeDesktopTicket({
-          apiBaseUrl: runtime.api.global,
+          apiBaseUrl: configuredApiBase(runtime, 'global'),
           region: 'global',
           ticket: intent.ticket!,
           attemptId: intent.attemptId!,

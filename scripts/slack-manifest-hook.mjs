@@ -1,3 +1,4 @@
+import { configuredRegions, regions } from "./regions.mjs";
 import { readFile } from "node:fs/promises";
 
 const manifestUrl = new URL("../config/provider-apps/slack.json", import.meta.url);
@@ -11,14 +12,13 @@ function httpsOrigin(name) {
   return url.origin;
 }
 
-const globalApi = httpsOrigin("SLACK_MANIFEST_API_GLOBAL_BASE_URL");
-const euApi = httpsOrigin("SLACK_MANIFEST_API_EU_BASE_URL");
+const apiUrls = configuredRegions.map((region) => httpsOrigin(`SLACK_MANIFEST_API_${regions[region].bindingPrefix}_BASE_URL`)).filter(Boolean);
 const ingress = httpsOrigin("SLACK_MANIFEST_INGRESS_BASE_URL");
 const displayName = process.env.SLACK_MANIFEST_NAME?.trim();
 
 if (displayName) manifest.display_information.name = displayName;
-if (globalApi || euApi) {
-  manifest.oauth_config.redirect_urls = [globalApi, euApi]
+if (apiUrls.length) {
+  manifest.oauth_config.redirect_urls = apiUrls
     .filter(Boolean)
     .map((base) => `${base}/connections/slack/callback`);
 }

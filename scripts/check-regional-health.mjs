@@ -1,35 +1,33 @@
 #!/usr/bin/env node
+import { configuredRegions, regions } from "./regions.mjs";
 // Calls GET /health on the regional APIs and fails unless every required check
 // passes in every requested region. Runbook step 7 of an ordinary release, and
 // the gate that blocks desktop distribution for a failing region.
 //
 // Usage:
 //   node scripts/check-regional-health.mjs            # both regions
-//   node scripts/check-regional-health.mjs eu         # one region
+//   node scripts/check-regional-health.mjs global         # one region
 //   AVALON_GLOBAL_API_URL=... node scripts/check-regional-health.mjs global
 
 import { isEntryPoint } from "./entry-point.mjs";
 
-const DEFAULT_BASE_URLS = {
-  global: "https://api.rallywith.ai",
-  eu: "https://eu.api.rallywith.ai",
-};
+const DEFAULT_BASE_URLS = Object.fromEntries(Object.entries(regions).map(([region, config]) => [region, config.apiUrl]));
 
 const ATTEMPTS = Number(process.env.AVALON_HEALTH_ATTEMPTS ?? "5");
 const RETRY_BASE_MS = Number(process.env.AVALON_HEALTH_RETRY_BASE_MS ?? "10000");
 const REQUEST_TIMEOUT_MS = Number(process.env.AVALON_HEALTH_TIMEOUT_MS ?? "30000");
 
 export function baseUrlForRegion(region) {
-  const override = region === "eu" ? process.env.AVALON_EU_API_URL : process.env.AVALON_GLOBAL_API_URL;
+  const override = process.env[`AVALON_${regions[region]?.bindingPrefix}_API_URL`];
   return (override ?? DEFAULT_BASE_URLS[region]).replace(/\/+$/u, "");
 }
 
 export function parseRegions(argv) {
   const requested = argv.filter((value) => value.length > 0);
-  const regions = requested.length > 0 ? requested : ["eu", "global"];
+  const regions = requested.length > 0 ? requested : configuredRegions;
   const unknown = regions.filter((region) => !(region in DEFAULT_BASE_URLS));
   if (unknown.length > 0) {
-    throw new Error(`Unknown region(s): ${unknown.join(", ")}. Expected one or more of: eu, global.`);
+    throw new Error(`Unknown region(s): ${unknown.join(", ")}. Expected one or more of: ${configuredRegions.join(", ")}.`);
   }
   return regions;
 }

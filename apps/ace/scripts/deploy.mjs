@@ -14,11 +14,9 @@ const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
 // surfaces and is restricted to Flagship Write plus Queues Edit.
 const aceRuntimeToken = process.env.ACE_FLAGSHIP_API_TOKEN?.trim();
 // The operator tokens Ace's operator pages present to the regional API
-// Workers, one per region. Rally credentials rather than
-// Cloudflare ones: each is what that region's TELEMETRY_OPERATORS_JSON maps to
-// the `demos` role, and neither is known to the other region.
+// Workers. These are Rally operator credentials; the existing Global token
+// remains in RALLY_OPERATOR_TOKEN.
 const rallyOperatorToken = process.env.ACE_RALLY_OPERATOR_TOKEN?.trim();
-const rallyEuOperatorToken = process.env.ACE_RALLY_EU_OPERATOR_TOKEN?.trim();
 const flagshipAppId = 'bec01d3a-d6b6-4d8c-b89a-37440ed63b8c';
 const aceDomain = 'ace.internal.rallywith.ai';
 const migrationDomain = 'migrations.internal.rallywith.ai';
@@ -28,7 +26,6 @@ if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID is required');
 if (!deploymentToken) throw new Error('CLOUDFLARE_API_TOKEN is required');
 if (!aceRuntimeToken) throw new Error('ACE_FLAGSHIP_API_TOKEN is required');
 if (!rallyOperatorToken) throw new Error('ACE_RALLY_OPERATOR_TOKEN is required');
-if (!rallyEuOperatorToken) throw new Error('ACE_RALLY_EU_OPERATOR_TOKEN is required');
 
 async function cloudflare(path, init = {}, authorization = deploymentToken) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`, {
@@ -178,10 +175,6 @@ try {
   });
   run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'RALLY_OPERATOR_TOKEN', '--config', generatedConfig], {
     input: `${rallyOperatorToken}\n`,
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
-  run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'RALLY_EU_OPERATOR_TOKEN', '--config', generatedConfig], {
-    input: `${rallyEuOperatorToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],
   });
 } finally {

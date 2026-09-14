@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import type { Env } from '../src/env';
@@ -180,7 +181,7 @@ describe('projected search authorization', () => {
     const ack = vi.fn();
     const body = { type: 'search_authorization_push_v1', workspaceId: subject.workspaceId, target: { kind: 'parent', id: 'unregistered-parent' } };
     const messages: Message<unknown>[] = [
-      { id: 'bad', timestamp: new Date(), body: { ...body, region: 'eu' }, attempts: 1, ack: vi.fn(), retry },
+      { id: 'bad', timestamp: new Date(), body: { ...body, region: 'enterprise' }, attempts: 1, ack: vi.fn(), retry },
       { id: 'good', timestamp: new Date(), body: { ...body, region: 'global' }, attempts: 1, ack, retry: vi.fn() },
     ];
     await consumeActivityQueue({ queue: 'test', messages, metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } }, ackAll: vi.fn(), retryAll: vi.fn() }, env);

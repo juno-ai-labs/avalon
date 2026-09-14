@@ -1,13 +1,14 @@
+import type { Region } from "@rally/contracts/regions";
 import { TelemetryBootstrapResponseSchema, type TelemetryBootstrapResponse } from '@rally/contracts';
 
 export interface ResolvedTelemetryRoute {
-  route: 'global' | 'eu';
+  route: Region;
   basis: 'explicit_binding' | 'ip_geolocation' | 'geolocation_fallback';
   anonymous: TelemetryBootstrapResponse | null;
 }
 
 export async function resolveTelemetryRoute(input: {
-  explicitRegion: 'global' | 'eu' | null;
+  explicitRegion: Region | null;
   anonymousEpochId: string;
   globalApiBaseUrl: string;
   fetch: typeof globalThis.fetch;

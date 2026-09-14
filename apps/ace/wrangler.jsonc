@@ -14,8 +14,7 @@
     "ACCESS_APPLICATION_AUD": "injected-by-automated-deploy",
     "CLOUDFLARE_ACCOUNT_ID": "53b7fc25c8df9aa77cf183853cb2ce43",
     "FLAGSHIP_APP_ID": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c",
-    "RALLY_API_BASE_URL": "https://api.rallywith.ai",
-    "RALLY_EU_API_BASE_URL": "https://eu.api.rallywith.ai"
+    "RALLY_API_BASE_URL": "https://api.rallywith.ai"
   },
   "routes": [{ "pattern": "ace.internal.rallywith.ai", "custom_domain": true }],
   "assets": {
@@ -25,14 +24,12 @@
     "not_found_handling": "single-page-application"
   },
   "d1_databases": [
-    { "binding": "GLOBAL_DB", "database_name": "avalon-global", "database_id": "3802fdab-e21c-4313-beb2-c1defb37f253", "remote": true },
-    { "binding": "EU_DB", "database_name": "avalon-eu", "database_id": "099eb3bf-4291-4a0f-a051-645e5c338881", "remote": true }
+    { "binding": "GLOBAL_DB", "database_name": "avalon-global", "database_id": "3802fdab-e21c-4313-beb2-c1defb37f253", "remote": true }
   ],
   "queues": {
     "producers": [
       { "binding": "PRODUCT_FLAG_CHANGE_QUEUE", "queue": "avalon-product-feature-flag-changes" },
-      { "binding": "GLOBAL_PRODUCT_FLAG_QUEUE", "queue": "avalon-global-product-feature-flags" },
-      { "binding": "EU_PRODUCT_FLAG_QUEUE", "queue": "avalon-eu-product-feature-flags" }
+      { "binding": "GLOBAL_PRODUCT_FLAG_QUEUE", "queue": "avalon-global-product-feature-flags" }
     ],
     "consumers": [{
       "queue": "avalon-product-feature-flag-changes",

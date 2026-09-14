@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 /**
  * The routing coordinates carried by every externally emitted
  * workspace-scoped Rally link.
@@ -10,7 +11,7 @@
  * exact parser without pulling the complete contracts package into the site.
  */
 
-export type WorkspaceTargetRegion = "global" | "eu";
+export type WorkspaceTargetRegion = Region;
 
 export interface WorkspaceTarget {
   region: WorkspaceTargetRegion;
@@ -29,7 +30,7 @@ export interface WorkspaceAddressedDeepLink {
 export function isWorkspaceTarget(value: unknown): value is WorkspaceTarget {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<WorkspaceTarget>;
-  return (candidate.region === "global" || candidate.region === "eu")
+  return (typeof candidate.region === "string" && /^[a-z][a-z0-9-]*$/u.test(candidate.region))
     && typeof candidate.workspaceId === "string"
     && UUID_PATTERN.test(candidate.workspaceId);
 }

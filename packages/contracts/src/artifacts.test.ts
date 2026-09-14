@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -99,13 +100,13 @@ describe("artifact addressing", () => {
     // Two labels deep is not covered by Universal SSL, so this shape is a TLS
     // decision, not a formatting preference.
     expect(artifactHostLabel(HOSTNAME_STUB, "global")).toBe(`${HOSTNAME_STUB}-g`);
-    expect(artifactHostLabel(HOSTNAME_STUB, "eu")).toBe(`${HOSTNAME_STUB}-eu`);
+    expect(artifactHostLabel(HOSTNAME_STUB, "enterprise")).toBe(`${HOSTNAME_STUB}-enterprise`);
     expect(artifactHostLabel(HOSTNAME_STUB, "global")).not.toContain(".");
-    expect(artifactHostLabel(HOSTNAME_STUB, "eu")).not.toContain(".");
+    expect(artifactHostLabel(HOSTNAME_STUB, "enterprise")).not.toContain(".");
   });
 
   it("round-trips a host back to its artifact and region", () => {
-    for (const region of ["global", "eu"] as const) {
+    for (const region of ["global", "enterprise"] as const) {
       const origin = artifactOrigin(HOSTNAME_STUB, region, "rallyusercontent.com");
       expect(parseArtifactHost(new URL(origin).host)).toEqual({
         hostnameStub: HOSTNAME_STUB,
@@ -131,7 +132,7 @@ describe("artifact addressing", () => {
   });
 
   it("does not confuse the two regions, which share a UUID prefix", () => {
-    expect(parseArtifactHost(`${HOSTNAME_STUB}-eu.rallyusercontent.com`)?.region).toBe("eu");
+    expect(parseArtifactHost(`${HOSTNAME_STUB}-enterprise.rallyusercontent.com`)?.region).toBe("enterprise");
     expect(parseArtifactHost(`${HOSTNAME_STUB}-g.rallyusercontent.com`)?.region).toBe("global");
   });
 

@@ -257,7 +257,6 @@ jobs:
       # that uploads nowhere rather than as an error.
       RALLY_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
       RALLY_GLOBAL_TELEMETRY_R2_BUCKET: ${{ vars.RALLY_GLOBAL_TELEMETRY_R2_BUCKET || vars.AVALON_GLOBAL_TELEMETRY_R2_BUCKET }}
-      RALLY_EU_TELEMETRY_R2_BUCKET: ${{ vars.RALLY_EU_TELEMETRY_R2_BUCKET || vars.AVALON_EU_TELEMETRY_R2_BUCKET }}
       RALLY_RELEASE_BASE_URL: https://downloads.rallywith.ai
       RALLY_RELEASE_PREFIX: stable/darwin/arm64
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -434,7 +433,7 @@ jobs:
       # reaches the update channel.
       - name: Verify regional API health before distributing
         if: ${{ !inputs.skip_health_gate }}
-        run: node scripts/check-regional-health.mjs eu global
+        run: node scripts/check-regional-health.mjs
 
       - name: Publish immutable payloads and promote the release manifest
         shell: bash

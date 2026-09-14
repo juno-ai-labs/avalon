@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from '../lib/ashby-ingress';
 import { planConnectorInstallation } from './connector-installation-plan';
 import { encryptString } from '../lib/crypto';
@@ -18,7 +19,7 @@ import { runConnectorInstallation } from './connector-installation-service';
 import { logInfo } from '../observability/logger';
 
 export const ConnectorMaintenanceSelectionSchema = z.strictObject({
-  provider: ConnectorInstallationProviderSchema, region: z.enum(['global', 'eu']), version: z.number().int().positive(),
+  provider: ConnectorInstallationProviderSchema, region: RegionSchema, version: z.number().int().positive(),
   workspaceIds: z.array(z.string().uuid()).optional(),
 });
 const TargetSchema = z.strictObject({
@@ -33,7 +34,7 @@ export const ConnectorMaintenanceOperationSchema = z.strictObject({
   state: z.enum(['preview', 'running', 'complete', 'cancelled']), targets: z.array(TargetSchema),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
 });
-export const ConnectorMaintenanceQueueSchema = z.strictObject({ kind: z.literal('connector_maintenance'), region: z.enum(['global', 'eu']), operationId: z.string().uuid() });
+export const ConnectorMaintenanceQueueSchema = z.strictObject({ kind: z.literal('connector_maintenance'), region: RegionSchema, operationId: z.string().uuid() });
 type Operation = z.infer<typeof ConnectorMaintenanceOperationSchema>;
 
 async function objectFor(env: Env, workspace: string) {

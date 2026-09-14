@@ -1,9 +1,10 @@
+import "../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
-function testEnv(region: "global" | "eu"): Env {
+function testEnv(region: string): Env {
   return createTestEnv({
     ALLOWED_ORIGINS: "app://avalon",
     AVALON_REGION: region,
@@ -115,7 +116,7 @@ describe("public validation errors", () => {
     expect(JSON.stringify(entry?.request_body)).not.toContain("47");
   });
 
-  it.each(["global", "eu"] as const)(
+  it.each(["global", "enterprise"] as const)(
     "uses the standard error envelope without schema details in the %s region",
     async (region) => {
       const requestId = `validation-${region}`;

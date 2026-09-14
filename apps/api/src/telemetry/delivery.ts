@@ -35,8 +35,6 @@ async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
     "telemetry_accepted_events",
     "telemetry_delivery_receipts",
     "telemetry_crash_access_audit",
-    "telemetry_eu_crash_contributions",
-    "telemetry_eu_events",
     "telemetry_identity_links",
     "telemetry_ingest_rate_buckets",
     "telemetry_onboarding_journeys",
@@ -103,8 +101,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   const telemetryDelivery = env.TELEMETRY_DELIVERY;
   const postHogHost = env.POSTHOG_HOST;
   const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
-  if (env.AVALON_REGION !== "global"
-    || !postHogHost
+  if (!postHogHost
     || !postHogProjectToken
     || !telemetryDelivery) return summary;
   await processProfileOutbox(env);
@@ -120,8 +117,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
             u.product_analytics_enabled
      FROM telemetry_accepted_events e
      LEFT JOIN users u ON u.id = e.subject_user_id
-     WHERE e.route = 'global'
-       AND e.delivery_state IN ('pending', 'retrying')
+     WHERE e.delivery_state IN ('pending', 'retrying')
        AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= ?)
        AND e.delete_at > ?
        AND (e.subject_user_id IS NULL OR NOT EXISTS (

@@ -32,7 +32,6 @@ exists.
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
-| `apps/api/wrangler.artifacts.{global,eu}.jsonc` | The serving Workers: wildcard route, platform D1 index, cross-script DO binding, loader, bucket. |
 | `apps/api/src/services/workstream-artifact-data-tools.ts` | The two read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
@@ -41,8 +40,6 @@ exists.
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | The slot a rail or lightbox offers in its header, and the portal any detail fills it through. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, the activation gate on leaving the origin, and the overlay rule. |
-
-## How it works
 
 ### Publishing
 
@@ -486,7 +483,7 @@ Two traps:
 - Shared platform D1 `artifact_hostname_routes`: `region`, `hostname_stub`,
   `artifact_id`, `created_at`. It contains no workspace, user, session, or
   artifact content.
-- `ArtifactHostDO` (both regions, jurisdiction-pinned): `artifact_state` (one
+- `ArtifactHostDO` (configured deployments, jurisdiction-pinned): `artifact_state` (one
   row), `viewer_sessions` (digests only — the cookie value is never stored), and
   `error_log` (a bounded ring).
 - The `"data"` facet, for stateful artifacts: the model's schema, in a database
@@ -495,17 +492,6 @@ Two traps:
 - R2 `PAYLOADS`: `artifact/<id>/v<n>/assets/<path>` and `…/manifest.json`.
   New manifests optionally carry a `socialPreview` descriptor; generated cards
   are ordinary versioned assets beneath that same prefix.
-
-## Regional impact
-
-Serving content is region-distinct end to end. The two wildcard hosts route to their own
-region's Worker (`*-g` and `*-eu`), so an EU artifact's bytes never transit a
-Global Worker and no cross-region bridge is added. An artifact's assets,
-manifest, stored data, sessions, and error log all rest in its workspace's
-region. Only the opaque stub-to-artifact-UUID row is platform-shared; it carries
-no content or participant identity. The EU half is deployed dark and accepts no
-traffic until EU Terminal ships, because nothing can publish an EU artifact
-before then.
 
 ## Security and trust model
 
@@ -520,8 +506,6 @@ public unless its active handler requires the trusted viewer header; error logs,
 data tools, publication, and revision remain work-stream-authorized. A
 compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
-
-## Changelog
 
 ### 2026-09-13 — The revision loop's import half is connected
 

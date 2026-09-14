@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { createRef } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -341,7 +342,7 @@ describe('WorkstreamHeader origin affordances', () => {
       appVersion: 'test',
       isPackaged: true,
       platform: 'darwin',
-      api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+      api: { global: 'https://api.rallywith.ai', enterprise: 'https://enterprise.api.rallywith.ai' },
       webBaseUrl: 'https://rallywith.ai',
       devAuthEnabled: false,
     });

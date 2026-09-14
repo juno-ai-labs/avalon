@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 54;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 55;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2986,6 +2986,26 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "retain connector identity independently of participant activity labels",
     statements: ["ALTER TABLE transcript_activities ADD COLUMN connector_type TEXT"],
   },
+  { version: 55, description: "allow configured deployment identifiers", statements: [
+  "PRAGMA defer_foreign_keys = ON",
+  "CREATE TABLE \"_region_copy_workstream\" AS SELECT * FROM \"workstream\"",
+  "DROP TRIGGER \"workstream_restricted_content_scope\"",
+  "DROP TRIGGER \"authorization_workstream_insert\"",
+  "DROP TRIGGER \"authorization_workstream_update\"",
+  "DROP TRIGGER \"authorization_workstream_delete\"",
+  "DROP TRIGGER \"workstream_search_display_update\"",
+  "DELETE FROM \"workstream\"",
+  "DROP TABLE \"workstream\"",
+  "CREATE TABLE workstream (\n    id INTEGER PRIMARY KEY CHECK (id = 1),\n    workstream_key TEXT NOT NULL UNIQUE,\n    parent_workspace_key TEXT NOT NULL,\n    parent_do_id TEXT,\n    parent_generation INTEGER NOT NULL DEFAULT 0 CHECK (parent_generation >= 0),\n    region TEXT NOT NULL,\n    authority_mode TEXT NOT NULL CHECK (\n      authority_mode IN ('preparing', 'authoritative', 'quarantined')\n    ),\n    authority_generation INTEGER NOT NULL DEFAULT 0 CHECK (authority_generation >= 0),\n    title TEXT NOT NULL DEFAULT '',\n    description TEXT NOT NULL DEFAULT '',\n    preview TEXT NOT NULL DEFAULT '',\n    scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),\n    exact_state TEXT NOT NULL CHECK (exact_state IN (\n      'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',\n      'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',\n      'idle', 'archived', 'deleting', 'restoring'\n    )),\n    state_reason_code TEXT NOT NULL,\n    next_sequence_number INTEGER NOT NULL CHECK (next_sequence_number > 0),\n    next_attention_ordinal INTEGER NOT NULL CHECK (next_attention_ordinal > 0),\n    unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0\n      CHECK (unread_tracking_start_ordinal >= 0),\n    authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),\n    scope_epoch INTEGER NOT NULL CHECK (scope_epoch >= 0),\n    source_authorization_floor INTEGER NOT NULL CHECK (source_authorization_floor >= 0),\n    listing_epoch INTEGER NOT NULL CHECK (listing_epoch >= 0),\n    deletion_epoch INTEGER NOT NULL CHECK (deletion_epoch >= 0),\n    run_revision INTEGER NOT NULL CHECK (run_revision >= 0),\n    created_at INTEGER NOT NULL,\n    last_people_activity_at INTEGER NOT NULL,\n    state_changed_at INTEGER NOT NULL,\n    completed_at INTEGER,\n    archived_at INTEGER,\n    origin_type TEXT NOT NULL DEFAULT 'ad_hoc',\n    created_by_user_id TEXT,\n    automation_subscription_id TEXT,\n    automation_run_id TEXT,\n    planned_for INTEGER,\n    email_address TEXT,\n    email_route_status TEXT NOT NULL DEFAULT 'pending',\n    created_from_opportunity_id TEXT,\n    opportunity_version INTEGER,\n    opportunity_display_prompt_hash TEXT,\n    opportunity_execution_prompt_hash TEXT,\n    description_source TEXT NOT NULL DEFAULT 'derived' CHECK (\n      description_source IN ('authored', 'derived')\n    ),\n    system_kind TEXT,\n    title_status TEXT NOT NULL DEFAULT 'settled' CHECK (\n      title_status IN ('naming', 'automatic', 'settled')\n    ),\n    model_override TEXT,\n    updated_at INTEGER NOT NULL\n  , parent_kind TEXT NOT NULL DEFAULT 'workstream'\n         CHECK (parent_kind IN ('workstream', 'automation')), appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json))) STRICT",
+  "INSERT INTO \"workstream\" SELECT * FROM \"_region_copy_workstream\"",
+  "DROP TABLE \"_region_copy_workstream\"",
+  "CREATE TRIGGER workstream_restricted_content_scope\n       BEFORE UPDATE OF scope ON workstream\n       WHEN OLD.scope = 'personal'\n        AND NEW.scope = 'workspace'\n        AND EXISTS (\n          SELECT 1 FROM content_audience_fences AS fence\n           WHERE COALESCE(json_extract(fence.audience_json, '$.scope'), '') != 'workspace'\n        )\n       BEGIN\n         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');\n       END",
+  "CREATE TRIGGER authorization_workstream_insert\n      AFTER INSERT ON workstream BEGIN\n        INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)\n        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;\n      END",
+  "CREATE TRIGGER authorization_workstream_update\n      AFTER UPDATE OF scope ON workstream BEGIN\n        INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)\n        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;\n      END",
+  "CREATE TRIGGER authorization_workstream_delete\n      AFTER DELETE ON workstream BEGIN\n        INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)\n        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;\n      END",
+  "CREATE TRIGGER workstream_search_display_update\n    AFTER UPDATE OF title, archived_at ON workstream\n    WHEN NEW.title IS NOT OLD.title OR NEW.archived_at IS NOT OLD.archived_at\n    BEGIN\n      INSERT INTO durable_outbox\n        (message_id, channel, destination_kind, destination_id, partition_key,\n         source_version, source_epoch, contract_version, payload_json, payload_ref,\n         payload_hash, state, attempts, not_before, created_at, acked_at)\n      VALUES ('search-conversation', 'search_conversation_v1', 'queue', 'activity', 'search',\n        NEW.updated_at, 0, 1, json_object(), NULL, 'search-conversation', 'pending', 0, 0, NEW.updated_at, NULL)\n      ON CONFLICT(message_id) DO UPDATE SET source_version = excluded.source_version,\n        state = 'pending', not_before = 0;\n    END",
+  "PRAGMA defer_foreign_keys = OFF"
+] },
 ];
 
 /**

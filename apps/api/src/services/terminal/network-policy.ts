@@ -1,3 +1,4 @@
+import { regions } from "@rally/contracts/regions";
 import { parse as parseDomain } from "tldts";
 
 export const TERMINAL_NETWORK_MAX_TARGETS = 20;
@@ -13,8 +14,7 @@ export const TERMINAL_NETWORK_BASELINE = [
       // `PUBLIC_API_BASE_URL` names, and that is Rally in both regions — so the
       // superseded hosts would be two unreachable entries that each cost a
       // workspace one of its `TERMINAL_NETWORK_MAX_TARGETS` slots.
-      "api.rallywith.ai",
-      "eu.api.rallywith.ai",
+      ...Object.values(regions).map(({ apiUrl }) => new URL(apiUrl).hostname),
       "github.com",
       "objects.githubusercontent.com",
       "raw.githubusercontent.com",

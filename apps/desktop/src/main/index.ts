@@ -1,5 +1,7 @@
 import { DesktopPushNotifications } from "./push-notifications";
 import { workstreamHttpsDeepLink } from "./deep-links";
+import { regions } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
@@ -986,7 +988,7 @@ function refreshCurrentTelemetryCapability(): Promise<ResolvedTelemetryRoute['an
     const refreshed = await refreshTelemetryCapability({
       current: telemetryRoute,
       anonymousEpochId: telemetryIdentity.anonymousEpochId,
-      globalApiBaseUrl: runtimeConfig().api.global,
+      globalApiBaseUrl: configuredApiBase('global'),
       fetch: telemetryFetch,
     });
     if (refreshed) telemetryRoute = { ...telemetryRoute, anonymous: refreshed };
@@ -1022,7 +1024,7 @@ function regionForStoredSession(value: WireSession): RallyRegion {
 }
 
 function apiBaseForAuth(auth: StoredAuth): string {
-  return runtimeConfig().api[auth.binding.region];
+  return configuredApiBase(auth.binding.region);
 }
 
 function activeSessionEncryptionMode(): SessionEncryptionMode {
@@ -1736,22 +1738,22 @@ function parseRallyBaseUrl(value: string | undefined, fallback: string): string 
   return parsed.toString().replace(/\/$/u, '');
 }
 
+function configuredApiBase(region: RallyRegion): string {
+  const url = runtimeConfig().api[region];
+  if (!url) throw new Error('The region is unavailable');
+  return url;
+}
+
 function runtimeConfig(): RuntimeConfig {
   const packaged = app.isPackaged;
   return {
     appVersion: app.getVersion(),
     isPackaged: packaged,
     platform: process.platform,
-    api: {
-      global: parseRallyBaseUrl(
-        packaged ? undefined : process.env['VITE_API_GLOBAL_URL'],
-        packaged ? 'https://api.rallywith.ai' : 'http://127.0.0.1:8787',
-      ),
-      eu: parseRallyBaseUrl(
-        packaged ? undefined : process.env['VITE_API_EU_URL'],
-        packaged ? 'https://eu.api.rallywith.ai' : 'http://127.0.0.1:8788',
-      ),
-    },
+    api: Object.fromEntries(Object.entries(regions).map(([region, config]) => [region, parseRallyBaseUrl(
+      packaged ? undefined : process.env[`VITE_API_${config.bindingPrefix}_URL`],
+      packaged ? config.apiUrl : config.localApiUrl,
+    )])),
     webBaseUrl: parseRallyBaseUrl(
       packaged ? undefined : process.env['PUBLIC_WEB_BASE_URL'],
       packaged ? 'https://rallywith.ai' : 'http://127.0.0.1:5174',
@@ -1764,7 +1766,7 @@ async function telemetryAuthenticatedSession(): Promise<{
   apiBaseUrl: string;
   accessToken: string;
   workspace: boolean;
-  route: 'global' | 'eu';
+  route: Region;
 } | null> {
   const auth = await loadStoredAuth();
   if (!auth) return null;
@@ -1787,7 +1789,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
   telemetryRoute = await resolveTelemetryRoute({
     explicitRegion: launchAuth?.binding.workspaceId ? launchAuth.binding.region : null,
     anonymousEpochId: telemetryIdentity.anonymousEpochId,
-    globalApiBaseUrl: runtimeConfig().api.global,
+    globalApiBaseUrl: configuredApiBase('global'),
     fetch: telemetryFetch,
   });
 
@@ -1880,7 +1882,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       screenWidth: primaryDisplay.size.width,
       screenHeight: primaryDisplay.size.height,
     },
-    globalApiBaseUrl: runtime.api.global,
+    globalApiBaseUrl: configuredApiBase('global'),
   });
   nativeCrashUploader = new NativeCrashUploader({
     rootDirectory: crashRoot,
@@ -1905,7 +1907,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
         expiresAt: refreshed.expiresAt,
       } : null;
     },
-    globalApiBaseUrl: runtime.api.global,
+    globalApiBaseUrl: configuredApiBase('global'),
     fetch: telemetryFetch,
     onState: (state) => telemetryReporter?.crashUploadState(state),
   });
@@ -2011,7 +2013,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     throw new Error('Invalid desktop sign-in payload');
   }
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
-  if (apiBaseUrl !== runtimeConfig().api.global) {
+  if (apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('Rally sign-in must use the platform identity endpoint');
   }
   const attempt = desktopAuthAttempts.proof(candidate.attemptId);
@@ -2077,7 +2079,7 @@ function createDesktopAuthAttempt(input: unknown): { attemptId: string; codeChal
     throw new Error('Rally uses one platform sign-in endpoint');
   }
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
-  if (apiBaseUrl !== runtimeConfig().api.global) {
+  if (apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('The authentication endpoint does not match Rally sign-in');
   }
   // Starting over makes the newest browser flow authoritative. An older
@@ -2102,13 +2104,13 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
     throw new Error('Invalid workspace name');
   }
   const session = await requestSession(apiBaseUrl, '/auth/dev/session', { workspaceName: candidate.workspaceName.trim() });
-  const identity = await requestSession(runtimeConfig().api.global, '/auth/dev/identity', {});
+  const identity = await requestSession(configuredApiBase('global'), '/auth/dev/identity', {});
   if (
     !session.workspace
     || session.apiBaseUrl !== apiBaseUrl
     || runtimeConfig().api[session.workspace.region] !== apiBaseUrl
     || identity.workspace
-    || identity.apiBaseUrl !== runtimeConfig().api.global
+    || identity.apiBaseUrl !== configuredApiBase('global')
     || identity.user.email.toLocaleLowerCase('en-US') !== session.user.email.toLocaleLowerCase('en-US')
   ) {
     throw new Error('The development session returned a mismatched regional endpoint');
@@ -2140,7 +2142,7 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
     throw identityRenewalFailure(error);
   });
   if (!stored) throw accountReconnectRequiredFailure();
-  if (stored.apiBaseUrl !== runtimeConfig().api.global) {
+  if (stored.apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('Workspace setup requires a Rally platform identity session');
   }
   return stored;
@@ -2199,7 +2201,7 @@ function workspaceSummary(workspace: {
 /** Ask Global for the account's complete membership and invitations. */
 async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
   const { identity, response } = await onboardingIdentityRequest((credential) => net.fetch(
-    `${runtimeConfig().api.global}/onboarding`,
+    `${configuredApiBase('global')}/onboarding`,
     {
       method: 'GET',
       headers: {
@@ -2450,7 +2452,7 @@ async function requestOnboardingSession(
     throw new Error('Rally was signed out while workspace setup was running');
   }
   const requested = await onboardingIdentityRequest((credential) => net.fetch(
-    `${runtimeConfig().api.global}${path}`,
+    `${configuredApiBase('global')}${path}`,
     {
       method: 'POST',
       headers: {
@@ -2616,7 +2618,7 @@ async function acceptInvitation(input: unknown): Promise<DesktopSession> {
 async function declineInvitation(input: unknown): Promise<void> {
   const parsed = parseInvitationAction(input);
   const { response } = await onboardingIdentityRequest((identity) => net.fetch(
-    `${runtimeConfig().api.global}/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/decline`,
+    `${configuredApiBase('global')}/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/decline`,
     {
       method: 'POST',
       headers: {
@@ -3322,7 +3324,7 @@ function registerIpc(): void {
   ipcMain.handle('onboarding:get-account', async (event) => {
     assertTrustedIpcSender(event);
     const { response } = await onboardingIdentityRequest((credential) => net.fetch(
-      `${runtimeConfig().api.global}/onboarding/account`,
+      `${configuredApiBase('global')}/onboarding/account`,
       { headers: { Authorization: `Bearer ${credential.accessToken}` } },
     ));
     if (!response.ok) throw await responseError(response);
@@ -3332,7 +3334,7 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     const input = UpdateAccountOnboardingSchema.parse(raw);
     const { response } = await onboardingIdentityRequest((credential) => net.fetch(
-      `${runtimeConfig().api.global}/onboarding/account`,
+      `${configuredApiBase('global')}/onboarding/account`,
       { method: 'PATCH', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
     ));
     if (!response.ok) throw await responseError(response);

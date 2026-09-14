@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
 
@@ -22,7 +23,7 @@ describe('WorkspaceChangeGuard', () => {
     const guard = new WorkspaceChangeGuard();
     guard.recordingChanged(41, 'global:workspace-a', true);
 
-    expect(guard.blocksChangeFrom('global:workspace-a', 'eu:workspace-a')).toBe(true);
+    expect(guard.blocksChangeFrom('global:workspace-a', 'enterprise:workspace-a')).toBe(true);
   });
 
   it('releases the guard when recording stops or its meeting window closes', () => {
@@ -38,7 +39,7 @@ describe('WorkspaceChangeGuard', () => {
 
   it('refuses a recording that starts while a workspace change is in flight', () => {
     const guard = new WorkspaceChangeGuard();
-    const pending = guard.beginChange('global:workspace-a', 'eu:workspace-b');
+    const pending = guard.beginChange('global:workspace-a', 'enterprise:workspace-b');
 
     expect(() => guard.recordingChanged(41, 'global:workspace-a', true))
       .toThrow('Wait for Rally to finish changing workspaces before starting the recording');

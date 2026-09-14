@@ -28,8 +28,6 @@ mid-call, or the event carrying the name never lands.
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-object-product.ts` | Where the grace is applied to a read: `directoryWorkstream` for a sidebar row, `summary` for the work stream itself. |
 | `apps/desktop/src/renderer/lib/naming-skeleton.ts` | `useNamingSkeleton` — the same rule applied to what the client already holds. Every renderer surface that shows a skeleton reads it from here. |
 
-## How it works
-
 ### The title a work stream is created with
 
 A model call cannot sit on the create path — the person who pressed enter is
@@ -460,8 +458,6 @@ ordinary work-stream update and belongs to the object's product service.
   the current clock, and the past-the-grace tests take fake timers, set the system
   clock to the creation instant, and advance past it. A naming fixture left on the
   file's hard-coded date asserts nothing.
-
-## Changelog
 
 ### 2026-09-10 — Substreams are named, and every address carries the substream
 

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrashIngestService } from '../src/telemetry/crash-ingest';
 import { processPendingCrashReports } from '../src/telemetry/crash-processing';
@@ -96,30 +97,6 @@ describe('Global native crash delivery', () => {
     database.close();
   });
 
-  it('has no destination path in EU', async () => {
-    const database = migratedSqliteDatabase();
-    database.prepare(`INSERT INTO telemetry_crash_reports
-      (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
-       content_sha256, release, build_id, platform, architecture, process_role,
-       launch_id, channel, parser_state, structured_report_json, issue_fingerprint,
-       destination_state, received_at, delete_at)
-      VALUES ('crash-eu-guard', 'upload-eu-guard', 'installation-1', 'global',
-              'telemetry/crashes/global/eu-guard.dmp', 4, 'hash', '1.235.0',
-              'build-test', 'darwin', 'arm64', 'renderer', 'launch-1', 'stable',
-              'symbolicated', '{"status":"symbolicated"}', 'fingerprint-1',
-              'pending', ?, ?)`)
-      .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
-    const deliverCrashBatch = vi.fn();
-    await expect(processCrashOutbox(createTestEnv({
-      DB: sqliteD1(database), AVALON_REGION: 'eu',
-      POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      TELEMETRY_DELIVERY: { deliverCrashBatch },
-    }))).resolves.toEqual({ selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0 });
-    expect(deliverCrashBatch).not.toHaveBeenCalled();
-    expect(database.prepare('SELECT destination_state FROM telemetry_crash_reports').get())
-      .toEqual({ destination_state: 'pending' });
-    database.close();
-  });
 
   it('translates crash RPC transport rejection into durable retry', async () => {
     const database = migratedSqliteDatabase();

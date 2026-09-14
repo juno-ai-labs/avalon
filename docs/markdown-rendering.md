@@ -737,8 +737,6 @@ The traps, both of which have bitten:
   a fixture that exercises the nesting — a three-level bulleted list alone
   exercises none of the `ol` selectors.
 
-## Changelog
-
 ### 2026-09-10 — A published site gets its own mark
 
 **What changed:** `ResourceIcon` draws a Tabler `rosette-asterisk` for

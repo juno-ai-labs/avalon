@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Region } from "@rally/contracts";
@@ -306,7 +307,7 @@ describe("Resend inbound-email routing", () => {
     const database = new FakeDatabase();
     database.routes.set(EMAIL_ADDRESS, {
       email_address: EMAIL_ADDRESS,
-      region: "eu",
+      region: "enterprise",
       workspace_id: WORKSPACE_ID,
       workstream_id: WORKSTREAM_ID,
       automation_subscription_id: null,
@@ -332,7 +333,7 @@ describe("Resend inbound-email routing", () => {
       routedCount: 1,
     });
     expect(dispatched).toEqual([expect.objectContaining({
-      region: "eu",
+      region: "enterprise",
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       emailAddress: EMAIL_ADDRESS,
@@ -359,7 +360,7 @@ describe("Resend inbound-email routing", () => {
     });
     database.routes.set(legacyAddress, {
       email_address: legacyAddress,
-      region: "eu",
+      region: "enterprise",
       workspace_id: "00000000-0000-7000-8000-000000000011",
       workstream_id: "00000000-0000-7000-8000-000000000012",
       automation_subscription_id: null,
@@ -393,7 +394,7 @@ describe("Resend inbound-email routing", () => {
     database.routes.set(EMAIL_ADDRESS, {
       email_address: EMAIL_ADDRESS,
       address_source: "migration",
-      region: "eu",
+      region: "enterprise",
       workspace_id: WORKSPACE_ID,
       workstream_id: WORKSTREAM_ID,
       automation_subscription_id: null,
@@ -434,7 +435,7 @@ describe("Resend inbound-email routing", () => {
     const legacyAddress = `${LOCAL_PART}@${LEGACY_DOMAIN}`;
     database.routes.set(legacyAddress, {
       email_address: legacyAddress,
-      region: "eu",
+      region: "enterprise",
       workspace_id: WORKSPACE_ID,
       workstream_id: WORKSTREAM_ID,
       automation_subscription_id: null,
@@ -457,7 +458,7 @@ describe("Resend inbound-email routing", () => {
 
     await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw)))
       .resolves.toMatchObject({ routedCount: 1 });
-    expect(dispatch).toHaveBeenCalledExactlyOnceWith("eu", expect.objectContaining({
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith("enterprise", expect.objectContaining({
       emailAddress: legacyAddress,
     }));
   });
@@ -466,7 +467,7 @@ describe("Resend inbound-email routing", () => {
     const database = new FakeDatabase();
     database.routes.set(EMAIL_ADDRESS, {
       email_address: EMAIL_ADDRESS,
-      region: "eu",
+      region: "enterprise",
       workspace_id: WORKSPACE_ID,
       workstream_id: null,
       automation_subscription_id: "automation-subscription-1",
@@ -488,10 +489,10 @@ describe("Resend inbound-email routing", () => {
 
     await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw)))
       .resolves.toMatchObject({ accepted: true, routedCount: 1 });
-    expect(dispatch).toHaveBeenCalledExactlyOnceWith("eu", expect.objectContaining({
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith("enterprise", expect.objectContaining({
       targetType: "automation",
       automationSubscriptionId: "automation-subscription-1",
-      region: "eu",
+      region: "enterprise",
       workspaceId: WORKSPACE_ID,
       resendEmailId: RESEND_EMAIL_ID,
       emailAddress: EMAIL_ADDRESS,
@@ -502,7 +503,7 @@ describe("Resend inbound-email routing", () => {
     const database = new FakeDatabase();
     database.routes.set(EMAIL_ADDRESS, {
       email_address: EMAIL_ADDRESS,
-      region: "eu",
+      region: "enterprise",
       workspace_id: WORKSPACE_ID,
       workstream_id: null,
       automation_subscription_id: "removed-automation",
@@ -529,7 +530,7 @@ describe("Resend inbound-email routing", () => {
     });
   });
 
-  it("rejects replay-window violations and never exposes the EU ingress publicly", async () => {
+  it("rejects replay-window violations and never exposes the enterprise ingress publicly", async () => {
     const database = new FakeDatabase();
     const raw = eventBody();
     const oldTimestamp = Math.floor(NOW / 1_000) - 301;
@@ -538,7 +539,7 @@ describe("Resend inbound-email routing", () => {
     });
     await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw, oldTimestamp)))
       .rejects.toMatchObject({ status: 401, code: "invalid_signature" });
-    await expect(new ResendInboundEmailRoutingService(environment(database, "eu"), {
+    await expect(new ResendInboundEmailRoutingService(environment(database, "enterprise"), {
       now: () => NOW,
     }).ingest(new TextEncoder().encode(raw), await signedHeaders(raw)))
       .rejects.toMatchObject({ status: 404, code: "not_found" });
@@ -615,7 +616,7 @@ describe("regional Resend email ingestion", () => {
     }));
     const bucket = new FakeBucket();
     const service = new ResendRegionalEmailService(
-      environment(database, "eu", bucket, { admitInboundEmail }),
+      environment(database, "enterprise", bucket, { admitInboundEmail }),
       { fetch: fetcher, now: () => NOW },
     );
 
@@ -676,7 +677,7 @@ describe("regional Resend email ingestion", () => {
     }));
     const bucket = new FakeBucket();
     const service = new ResendRegionalEmailService(
-      environment(database, "eu", bucket, { admitInboundEmail }),
+      environment(database, "enterprise", bucket, { admitInboundEmail }),
       { fetch: fetcher, now: () => NOW },
     );
 
@@ -721,7 +722,7 @@ describe("regional Resend email ingestion", () => {
       runId,
     }));
     const service = new ResendRegionalEmailService(
-      environment(database, "eu", new FakeBucket(), { admitInboundEmail }),
+      environment(database, "enterprise", new FakeBucket(), { admitInboundEmail }),
       { fetch: fetcher, now: () => NOW },
     );
 
@@ -755,7 +756,7 @@ describe("regional Resend email ingestion", () => {
       attachments: [{ id: "attachment", filename: "notes.txt", content_type: "text/plain" }],
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const service = new ResendRegionalEmailService(
-      environment(database, "eu", bucket),
+      environment(database, "enterprise", bucket),
       { fetch: fetcher, now: () => NOW },
     );
 
@@ -842,7 +843,7 @@ describe("regional Resend email ingestion", () => {
     });
     const fetcher = vi.fn();
     const service = new ResendRegionalEmailService(
-      environment(database, "eu", new FakeBucket()),
+      environment(database, "enterprise", new FakeBucket()),
       { fetch: fetcher, now: () => NOW },
     );
 
@@ -873,7 +874,7 @@ describe("regional Resend email ingestion", () => {
       attachments: [],
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const service = new ResendRegionalEmailService(
-      environment(database, "eu", new FakeBucket()),
+      environment(database, "enterprise", new FakeBucket()),
       { fetch: fetcher, now: () => NOW },
     );
 
@@ -1034,7 +1035,7 @@ function regionalInput(): ResendRegionalEmailInput {
     resendEmailId: RESEND_EMAIL_ID,
     svixId: SVIX_ID,
     receivedAt: "2026-08-02T18:00:00.000Z",
-    region: "eu",
+    region: "enterprise",
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
     localPart: LOCAL_PART,
@@ -1047,7 +1048,7 @@ function automationRegionalInput(): ResendRegionalEmailInput {
     resendEmailId: RESEND_EMAIL_ID,
     svixId: SVIX_ID,
     receivedAt: "2026-08-02T18:00:00.000Z",
-    region: "eu",
+    region: "enterprise",
     workspaceId: WORKSPACE_ID,
     targetType: "automation",
     automationSubscriptionId: AUTOMATION_ID,

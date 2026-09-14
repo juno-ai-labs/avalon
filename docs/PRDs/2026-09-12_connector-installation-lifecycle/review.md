@@ -75,19 +75,16 @@ Later review also led to these corrections:
   replay does not count a second setup. Both disconnect entry points use full
   local teardown even if adoption or cleanup Queue dispatch fails. Cleanup only
   becomes an uncertain provider write immediately before its provider call.
+
 - A failed setup response recovers the existing workspace reservation in Settings.
   If recovery lookup fails, the form requires finding that reservation before
   another setup request. Reconciliation only offers eligible unresolved steps,
   clears stale input after success, and shows readable Granola event labels.
-- Dedicated ingress health checks the Global routing directory and both regional
-  ingress contracts, including region identity. The duplicate shared-host API
-  routing path and Global API-to-EU Ashby binding were removed. The first rollout
-  automatically bootstraps Global when the active router export is absent,
-  verifies its health/export, then proceeds to EU and shared ingress. No manual
-  pre-merge Global-only deployment is required.
+
 - Historical connection-dependent lists are explicitly named through v53. The v54
   installation foreign key is documented for future rebuilds without changing
   old migration SQL or hashes.
+
 - New isolated claim fencing, overlapping maintenance, real-migration routing,
   teardown and Queue-consumer regressions strengthen the disputed coverage.
 
@@ -160,17 +157,6 @@ clipped four-event selector label; the compact Granola note events option now
 fits while the full event list remains in its heading and title.
 All captures use synthetic public status metadata.
 
-## Acceptance that remains unavailable
-
-The absence of an authorized Ashby organization prevents live OAuth, real tool
-inventory/execution, provider webhook/recovery and actual payload acceptance.
-The PRD remains in progress. The user authorized organization notifications for
-workspace automation on September 13; the blanket admission block was removed.
-Personal queries and usable workspace events are both required for launch. The dedicated Worker isolates ingress only;
-provider management and MCP still execute in the regional API. See the exact
-remaining checks in [plan.md](plan.md). The workflow automatically handles the
-first Global router deployment before EU; no bootstrap or deployment was performed.
-
 ## Automatic subscription follow-up — 2026-09-13
 
 The user's later instruction replaces the original two-event setup choice with
@@ -208,12 +194,6 @@ visual inspection pass. All ten committed screenshot files and PR image embeds
 were removed at the user's request; visual QA continues locally.
 
 ## Automatic deployment ordering — 2026-09-13
-
-The first Global router bootstrap is now selected automatically from active
-exports, with existing EU targets checked before reversing the ordinary order.
-Global health/export failure stops EU; shared ingress follows both regional
-health barriers. Partial regional dispatch and Worker-first migrations retain
-their boundaries. No manual pre-merge deployment remains required.
 
 The 460-test scripts suite, lint, typecheck and docs check passed; five reverted
 production mutation proofs caught missing ordering/failure barriers. Detailed

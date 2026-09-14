@@ -52,7 +52,7 @@ const workspace = await jsonRequest("/workspace", { headers: authHeaders });
 const expectedRegion = health.body?.region;
 assert(workspace.body?.region === expectedRegion, "The organization was not bound to the API's region");
 
-const wrongRegion = expectedRegion === "global" ? "eu" : "global";
+const wrongRegion = "unconfigured-deployment";
 const wrongRegionRequest = await jsonRequest("/health", {
   headers: { "x-avalon-region": wrongRegion },
 });

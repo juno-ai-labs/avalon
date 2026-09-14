@@ -1,3 +1,5 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { RALLY_HEADERS, rallyHeaderAliases, readRallyHeader } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
@@ -41,7 +43,7 @@ interface SocketClaims {
   parentKind: ConversationParentKind;
   parentId: string;
   substreamId: SubstreamId;
-  region: "global" | "eu";
+  region: Region;
   ticketId: string;
   expiresAt: number;
   afterSequence?: number;
@@ -72,7 +74,7 @@ interface WorkspaceSocketClaims {
   sessionId: string;
   userId: UserId;
   workspaceId: WorkspaceId;
-  region: "global" | "eu";
+  region: Region;
   ticketId: string;
   expiresAt: number;
 }
@@ -84,7 +86,7 @@ interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
 export interface TranscriptionSocketClaims {
   userId: UserId;
   workspaceId: WorkspaceId;
-  region: "global" | "eu";
+  region: Region;
   ticketId: string;
   expiresAt: number;
 }
@@ -197,7 +199,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       typeof payload.wid !== "string" || typeof payload.wsid !== "string" || typeof payload.ssid !== "string" ||
       (payload.pk !== "workstream" && payload.pk !== "automation") ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
-      (payload.region !== "global" && payload.region !== "eu")
+      !isConfiguredRegion(payload.region)
     ) throw new Error("Incomplete socket claims");
     const afterSequence = typeof payload.after === "number"
       && Number.isInteger(payload.after)
@@ -260,7 +262,7 @@ export async function verifyWorkspaceSocketTicket(
       payload.purpose !== "workspace_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
-      (payload.region !== "global" && payload.region !== "eu")
+      !isConfiguredRegion(payload.region)
     ) throw new Error("Incomplete workspace socket claims");
     return {
       sessionId: payload.sid,
@@ -311,7 +313,7 @@ export async function verifyWorkstreamControlSocketTicket(
       payload.purpose !== "workstream_control_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
       typeof payload.wsid !== "string" || typeof payload.jti !== "string" ||
-      typeof payload.exp !== "number" || (payload.region !== "global" && payload.region !== "eu")
+      typeof payload.exp !== "number" || !isConfiguredRegion(payload.region)
     ) throw new Error("Incomplete workstream control socket claims");
     return {
       sessionId: payload.sid,
@@ -351,7 +353,7 @@ export async function verifyTranscriptionSocketTicket(
     if (
       payload.purpose !== "transcription_socket" || typeof payload.sub !== "string" ||
       typeof payload.wid !== "string" || typeof payload.jti !== "string" ||
-      typeof payload.exp !== "number" || (payload.region !== "global" && payload.region !== "eu")
+      typeof payload.exp !== "number" || !isConfiguredRegion(payload.region)
     ) throw new Error("Incomplete transcription socket claims");
     return {
       userId: asUserId(payload.sub),

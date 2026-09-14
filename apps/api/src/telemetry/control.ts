@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
 import type { Env } from '../env';
 import { TelemetryBootstrapService } from './bootstrap';
@@ -8,18 +9,18 @@ import {
 
 const CapabilityCommandSchema = z.strictObject({
   capability: z.string().min(32).max(2_048),
-  expectedRoute: z.literal('eu'),
+  expectedRoute: RegionSchema,
 });
 
 const CapabilityProjectionSchema = z.strictObject({
-  route: z.literal('eu'),
+  route: RegionSchema,
   anonymousEpochId: z.string().uuid(),
   closed: z.boolean(),
 });
 
 export type CapabilityProjection = z.infer<typeof CapabilityProjectionSchema>;
 
-/** EU-to-Global control-plane RPC. None of its commands accepts a platform user
+/** Regional-to-Global control-plane RPC. None of its commands accepts a platform user
  * id, regional database id, event payload, crash payload, or analytics id. */
 export interface GlobalTelemetryControlRpcBinding {
   mutatePreference(input: unknown): Promise<CanonicalPreferenceResult>;

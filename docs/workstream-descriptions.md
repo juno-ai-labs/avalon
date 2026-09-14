@@ -25,8 +25,6 @@ stream forever.
 | `packages/db/migrations/0058_workstream_description_refresh.sql` | The refresh table and the one-time `description_source` backfill. |
 | `apps/api/test/workstream-description-refresh.test.ts` | Asserts against the exported constants. |
 
-## How it works
-
 ### Why the description goes stale
 
 Almost no description is authored. Creating a work stream from the composer derives
@@ -45,8 +43,6 @@ first message, stored whole.
 
 Then the work stream is used, and two things drift apart:
 
-- **The description was never good.** It restates a first message — "EU cards are
-  failing again" — which describes a moment, not a purpose.
 - **The purpose actually changed.** A work stream opened to chase one bug becomes
   where a team runs the whole migration that bug exposed. Nobody renames it, because
   renaming it is nobody's job.
@@ -330,8 +326,6 @@ Four log events are emitted:
 | `workstream_description_rewrite_rejected` | A proposal was refused by a guard. A run of these on one `rejection_code` is the signal that either the guard or the model's routing needs attention. |
 | `workstream_description_change_below_threshold` | Every gate cleared except novelty. Carries the novel-term count, which is the only source of data for tuning that threshold: a rewrite the loop is deferring shows up as a run of these on one work stream, with the count sitting just below the floor. |
 | `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
-
-## Changelog
 
 ### 2026-09-04 — Keep descriptions as context, not navigation copy
 

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 
 import type { ApiError } from "../src/lib/api-error";
@@ -27,23 +28,23 @@ function refusal(schema: Parameters<typeof parseRpcInput>[0], input: unknown): A
 describe("internal RPC contracts", () => {
   it("accepts a well-formed route registration", () => {
     expect(parseRpcInput(SlackRouteInputSchema, {
-      teamId: "T0123456", region: "eu", workspaceId, connectionId,
+      teamId: "T0123456", region: "enterprise", workspaceId, connectionId,
     }, "registerSlackRoute")).toEqual({
-      teamId: "T0123456", region: "eu", workspaceId, connectionId,
+      teamId: "T0123456", region: "enterprise", workspaceId, connectionId,
     });
   });
 
-  it("refuses a region the deployment does not have", () => {
-    // The value that decides which side of the Global/EU boundary a record
+  it("refuses a malformed region identifier", () => {
+    // The value that decides which side of the Global/enterprise boundary a record
     // lands on. A TypeScript type never checked it at the hop.
     const error = refusal(SlackRouteInputSchema, {
-      teamId: "T0123456", region: "us-east", workspaceId, connectionId,
+      teamId: "T0123456", region: "not a region", workspaceId, connectionId,
     });
     expect(error.status).toBe(400);
     expect(error.code).toBe("invalid_rpc_input");
     expect(error.details).toMatchObject({
       method: "probe",
-      issues: [{ path: "region", code: "invalid_value" }],
+      issues: [{ path: "region", code: "invalid_format" }],
     });
   });
 
@@ -84,7 +85,7 @@ describe("internal RPC contracts", () => {
   });
 
   it("bounds a batch so one regional caller cannot hold a Global invocation open", () => {
-    const route = { region: "eu" as const, workspaceId, automationSubscriptionId: connectionId };
+    const route = { region: "enterprise" as const, workspaceId, automationSubscriptionId: connectionId };
     const schema = rpcBatch(AutomationEmailRouteInputSchema);
     expect(parseRpcInput(schema, Array.from({ length: RPC_BATCH_LIMIT }, () => route), "reserveAutomations"))
       .toHaveLength(RPC_BATCH_LIMIT);

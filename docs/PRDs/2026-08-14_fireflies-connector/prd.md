@@ -141,8 +141,6 @@ includes and how it is contained.
    date and a summary can land after the meeting has aged out of any date
    window. Open question 5 says what would promote it into scope.
 
-## Product behavior
-
 ### Connecting — workspace scope
 
 In Settings → Connections, the Fireflies card offers the two established
@@ -361,8 +359,6 @@ write actions, under the same hosted-MCP governance that already applies to
 Granola, Slack, and Notion personal connections. Meetings enter Rally as
 connector activity and on-demand reads, not as a new surface.
 
-## Decision log
-
 ### 2026-09-13 — Super Admin coverage is not detectable, so the copy says so
 
 **Decided:** The setup form states the honest fallback in every case: "Rally
@@ -428,7 +424,6 @@ to review rather than less.
 
 **Changes:** Nothing in the agreed scope. Rollout's "ship workspace scope first,
 personal MCP second if sequencing demands" is answered: it did not.
-
 
 ## Key design decisions
 
@@ -654,26 +649,6 @@ to `["personal"]`, mirroring `GranolaCapabilities` (`fireflies.personal.read`
 is the capability handed to `createHostedMcpPassthrough`, as Granola's
 `personalRead` is).
 
-## Regional impact
-
-Connection rows, credentials, the webhook installation's state, and
-activities are authoritative in the owning workspace's regional WorkspaceDO,
-with credentials encrypted with that region's `CONNECTOR_CREDENTIALS_KEY_*`;
-regional D1 holds only routing and identity — the directory that maps a
-connection's ingress route and an OAuth callback to the workspace that owns
-them — plus the lifecycle's frozen operator maintenance operations, and
-never a connector row, credential, or activity body, per the
-no-fallback rule in [`data-model.md`](../../data-model.md). The ingestion
-endpoint is served by each
-regional Worker, and the URL shown in the connect modal is the owning
-region's, so an EU workspace's webhook traffic terminates in the EU Worker —
-no shared Global ingress is needed because the customer pastes a
-per-connection URL. Nothing new crosses the regional boundary. Fireflies
-itself is a US-based processor and its data residency is its own; connecting
-is a customer's processor decision, as with Granola and Notion. The
-`FIREFLIES_CONNECTOR_ENABLED` variable is declared in both
-`wrangler.global.jsonc` and `wrangler.eu.jsonc`.
-
 ## Security and trust model
 
 - The API key is admin-entered once, verified, sealed with `CredentialCipher`
@@ -731,8 +706,6 @@ is a customer's processor decision, as with Granola and Notion. The
 - No new Worker secrets: the dynamic-client-registration precondition was
   verified against the live server ([research](research.md)), and
   `FIREFLIES_CONNECTOR_ENABLED` is a non-secret variable.
-
-## Agent behavior
 
 ### Plugin contract
 
@@ -982,7 +955,6 @@ read and has to be added in three places, all in the same change:
 | --- | --- |
 | `apps/api/src/env.ts` | `FIREFLIES_CONNECTOR_ENABLED?: string;` on the `Env` interface, alongside the other optional integration values (`TWITTER_API_IO_API_KEY` at `:124` is the neighbouring shape). It is **not** added to `assertEnvContract`'s required set — an unset value is the off state, not a misconfiguration. |
 | `apps/api/wrangler.global.jsonc` | An entry in `vars` — a plain non-secret string, never `wrangler secret`. |
-| `apps/api/wrangler.eu.jsonc` | The same entry, so the regions stay in step and either can be enabled independently. |
 
 `.env.example` gains it too, with the one-line comment its neighbours carry,
 since local development reads it the same way.

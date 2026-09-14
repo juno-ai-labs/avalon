@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -13,7 +14,7 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { removeAuthorizedConnectorRegistration, withAuthorizedConnection } from "./connector-connection-access";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
-export const ConnectorInstallationQueueSchema = z.strictObject({ kind: z.literal("connector_installation"), workspaceId: z.string().uuid(), connectionId: z.string().uuid(), region: z.enum(["global", "eu"]) });
+export const ConnectorInstallationQueueSchema = z.strictObject({ kind: z.literal("connector_installation"), workspaceId: z.string().uuid(), connectionId: z.string().uuid(), region: RegionSchema });
 
 export async function runConnectorInstallation(env: Env, workspace: string, connectionId: string, signal: AbortSignal): Promise<ConnectorInstallation | null> {
   const workspaceId = asWorkspaceId(workspace);

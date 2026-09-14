@@ -23,7 +23,7 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
  * One candidate page, admitted through the projected search decisions and
  * rendered from the index's own attributes. Nothing here reads a content
  * owner (WorkstreamDO, SubstreamAgent) or R2; admission reads KV in Global and
- * the WorkspaceDO snapshot table in EU, one warm object. The projection is
+ * the WorkspaceDO snapshot table in regional, one warm object. The projection is
  * registered from the mutation side, so a decision exists before the search
  * that needs it; one the projection still lacks is omitted and filled after
  * the response (`defer`), and a row indexed before the display attributes

@@ -30,7 +30,7 @@ Rally is an AI-native workplace communication and execution environment organize
 
 ## Required prototype outcomes
 
-The prototype provides a secure Electron shell; Global/EU signup routing; Google identity and separately scoped connector authorization; persistent work streams, participants, messages, resources, automations, and activities; live collaboration; OpenRouter streaming and tool execution; structured elicitation; dynamic scheduling; Google, GitHub App, Linear, Notion, signed-webhook, and Firecrawl web-tool paths; and contextual activity routing.
+The prototype provides a secure Electron shell; configured deployment signup routing; Google identity and separately scoped connector authorization; persistent work streams, participants, messages, resources, automations, and activities; live collaboration; OpenRouter streaming and tool execution; structured elicitation; dynamic scheduling; Google, GitHub App, Linear, Notion, signed-webhook, and Firecrawl web-tool paths; and contextual activity routing.
 
 The visual language is a dense, quiet, dark work surface inspired by Codex and Claude Code: text-forward navigation, a readable shared transcript, a restrained bottom composer, compact status dots, and a contextual 320–380px right rail.
 

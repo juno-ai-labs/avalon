@@ -64,7 +64,7 @@ message kinds, correlated logs, and authoritative state provide that meaning.
    typed WorkspaceDO outcomes.
 4. Every successful, skipped, deferred, retried, and failed branch remains
    queryable through content-free structured logs with opaque IDs.
-5. Global and EU remain independent data planes. No connector payload or
+5. configured deployments remain independent data planes. No connector payload or
    processing pointer crosses regions.
 6. The change introduces no new Cloudflare Queue, DLQ, binding, or dashboard
    provisioning step.
@@ -116,8 +116,6 @@ Under failure:
 None. This refines reliability and removes an unnecessary orchestration layer;
 it does not change what a work stream is, who participates, or what connector
 activity should reach a person.
-
-## Decision log
 
 ### 2026-08-26 — Retain one regional activity Queue
 
@@ -187,15 +185,6 @@ The shared Queue accepts two strict connector variants:
 
 No regional D1 product row or cross-workspace index is introduced.
 
-## Regional impact
-
-There are no resource changes. Global continues to use
-`avalon-global-activities` and its DLQ; EU continues to use
-`avalon-eu-activities` and its DLQ. Every connector message carries and
-validates its region. A misrouted message is terminally skipped in that region;
-there is no Global fallback. Raw provider bytes remain in regional R2 and
-connector state remains in the workspace's regional Durable Object.
-
 ## Security and trust model
 
 Provider webhooks are verified and polling credentials authorized before
@@ -229,9 +218,6 @@ deployment preflight remain unchanged.
 4. In a later cleanup, remove the Workflow binding/class/input, then optionally
    rename the physical SQLite owner column. Do not combine that irreversible
    cleanup with the behavioral cutover.
-
-The behavioral change deploys EU-first then Global under the existing health
-gate. There is no dual write and no dashboard mutation.
 
 ## Acceptance
 
