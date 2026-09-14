@@ -52,11 +52,20 @@ export interface TerminalCommandOutput {
 
 export interface TerminalImportResourceOutput {
   resourceId: string;
+  /**
+   * Where the import landed: a file's path, or a site's directory root.
+   *
+   * One key for both rather than a second one beside it, so the round trip
+   * stays `filePath` in, `filePath` out and a republish targets exactly what
+   * the import returned.
+   */
   filePath: string;
   outcome: "created" | "reused" | "replaced";
   mimeType: string;
   sizeBytes: number;
   sourceSha256: string;
+  /** A site's materialized file count. Absent for a single-file import. */
+  fileCount?: number;
 }
 
 export interface TerminalPublishedResourceOutput {
@@ -534,7 +543,12 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
         ? { ...input, destinationPath: safeRelativePath(input.destinationPath, "destinationPath") }
         : input;
       const output = await runtime.importResource(context, placed);
-      return { output, summary: `Imported resource ${input.resourceId}` };
+      return {
+        output,
+        summary: output.fileCount === undefined
+          ? `Imported resource ${input.resourceId}`
+          : `Imported ${output.fileCount} site files into ${output.filePath}`,
+      };
     },
     async publish_resource(rawInput, context): Promise<HarnessToolResult> {
       const input: PublishResourceInput = TerminalArgumentSchemas.publish_resource.parse(rawInput);

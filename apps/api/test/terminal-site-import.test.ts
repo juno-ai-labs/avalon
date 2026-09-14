@@ -100,16 +100,23 @@ describe("writing a materialized site tree", () => {
   it("replaces the whole tree rather than merging into it", () => {
     // Merging is the dangerous default this rules out: it would leave behind
     // files a later version deleted, and the next publish would ship them back.
-    expect(command(true)).toContain('rm -rf -- "$destination"');
+    expect(command(true)).toContain('mv -- "$destination" "$backup"');
     expect(command(true)).not.toContain("exit 44");
   });
 
-  it("stages beside the destination and moves into place", () => {
-    // A failure partway leaves the previous tree intact rather than a
-    // half-replaced one.
+  it("moves the previous tree aside rather than deleting it, and puts it back", () => {
+    // Deleting first meant a move that failed had already destroyed the tree it
+    // was replacing, including local edits that were never published.
     const staged = command(true);
+    expect(staged).not.toContain('rm -rf -- "$destination"');
     expect(staged.indexOf('mv -- "$staging" "$destination"'))
-      .toBeGreaterThan(staged.indexOf('rm -rf -- "$destination"'));
+      .toBeGreaterThan(staged.indexOf('mv -- "$destination" "$backup"'));
+    // Restore on a failed install, and only then give up.
+    expect(staged).toContain('if ! mv -- "$staging" "$destination"; then');
+    expect(staged).toContain('mv -- "$backup" "$destination" || exit 47');
+    // The backup outlives the install and is removed only once it succeeded.
+    expect(staged.indexOf('rm -rf -- "$backup"\nprintf'))
+      .toBeGreaterThan(staged.indexOf('if ! mv -- "$staging" "$destination"; then'));
   });
 
   it("refuses a destination that is not a directory, in both modes", () => {
@@ -147,8 +154,14 @@ describe("what an import failure tells the model to do", () => {
     expect(importTreeFailure(46)?.code).toBe("resource_import_failed");
   });
 
+  it("names the surviving backup when the install failed and the restore failed too", () => {
+    // The one failure a retry cannot resolve on its own: the previous tree is
+    // intact, but beside the destination rather than in it.
+    expect(importTreeFailure(47)?.message).toContain(".rally-replacing");
+  });
+
   it("carries a repair in every failure it produces", () => {
-    for (const code of [44, 45, 46, 99]) {
+    for (const code of [44, 45, 46, 47, 99]) {
       expect(importTreeFailure(code)?.details?.reason, String(code)).toBeTruthy();
     }
   });
