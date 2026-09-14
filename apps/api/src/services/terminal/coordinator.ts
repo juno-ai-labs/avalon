@@ -116,10 +116,14 @@ function providerStateError(state: TerminalSandboxState): TerminalToolError {
 /**
  * A provider state Rally cannot use and cannot wait out.
  *
- * `expired` is Daytona's destroyed sandbox and `failed` covers its error
- * states — including an archived sandbox whose restore found no completed
- * backup. Neither becomes usable by retrying, and the row would otherwise name
- * it until the thirty-day expiry.
+ * `expired` is Daytona's destroyed sandbox, and `failed` is `error` or
+ * `build_failed` — including an archived sandbox whose restore found no
+ * completed backup. Neither becomes usable by retrying, and the row would
+ * otherwise name it until the thirty-day expiry.
+ *
+ * Only those two. Replacement discards the sandbox's files, so every other
+ * state — in transit, or one this Daytona SDK maps to `unknown` — is waited
+ * out instead. A mid-transition read must never be mistaken for a verdict.
  */
 function isLostProviderSandbox(state: TerminalSandboxState): boolean {
   return state === "expired" || state === "failed";
@@ -242,21 +246,18 @@ export class TerminalSandboxCoordinator {
       row.sandboxId ? null : "start";
     let localFilesRetained = Boolean(row.sandboxId);
 
-    const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
-    if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
-      telemetryAction = "repository_replace";
-      localFilesRetained = false;
-      row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, now);
-    }
-
-    if (row.appliedNetworkRevision !== policy.revision) {
-      row = await this.reconcileNetworkPolicy(context, row, policy.revision, domains, now);
-    }
-
-    if (!row.sandboxId) {
-      row = await this.createReservedSandbox(context, row, domains, now);
-    } else {
-      const resumed = await this.resumeProviderSandbox(
+    // Before anything else touches the provider. Authority replacement deletes
+    // the sandbox and policy reconciliation stops and reconfigures it, and both
+    // used to drive from the row — so a work stream whose sandbox Daytona had
+    // lost *and* whose authority or policy revision had moved threw a raw
+    // provider error one branch earlier than the recovery below, and repeated
+    // it on every later run. One read answers for all three.
+    let observed = row.sandboxId ? await this.observeProviderSandbox(row.sandboxId) : null;
+    if (row.sandboxId && (!observed || isLostProviderSandbox(observed.state))) {
+      // A replacement carries this run's authority and policy revision, and
+      // bumps the generation — which is everything the two steps below would
+      // have done, without asking the provider about a sandbox it has lost.
+      row = await this.replaceLostSandbox(
         context,
         row,
         authorityFingerprint,
@@ -264,9 +265,41 @@ export class TerminalSandboxCoordinator {
         domains,
         now,
       );
-      row = resumed.row;
-      telemetryAction = resumed.action ?? telemetryAction;
-      if (resumed.action === "start_fresh") localFilesRetained = false;
+      telemetryAction = "start_fresh";
+      localFilesRetained = false;
+    } else {
+      const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
+      if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {
+        telemetryAction = "repository_replace";
+        localFilesRetained = false;
+        row = await this.replaceForAuthority(context, row, authorityFingerprint, policy.revision, now);
+        observed = null;
+      }
+
+      if (row.appliedNetworkRevision !== policy.revision) {
+        row = await this.reconcileNetworkPolicy(context, row, policy.revision, domains, now, observed);
+        // That stop and policy write moved the sandbox, so the observation is
+        // spent; the resume below reads the provider again rather than
+        // deciding from a state that is now one transition old.
+        observed = null;
+      }
+
+      if (!row.sandboxId) {
+        row = await this.createReservedSandbox(context, row, domains, now);
+      } else {
+        const resumed = await this.resumeProviderSandbox(
+          context,
+          row,
+          observed,
+          authorityFingerprint,
+          policy.revision,
+          domains,
+          now,
+        );
+        row = resumed.row;
+        telemetryAction = resumed.action ?? telemetryAction;
+        if (resumed.action === "start_fresh") localFilesRetained = false;
+      }
     }
 
     const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
@@ -710,6 +743,8 @@ export class TerminalSandboxCoordinator {
   private async resumeProviderSandbox(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
+    /** What the caller already observed, or `null` to read it here. */
+    observation: TerminalSandboxSnapshot | null,
     authorityFingerprint: string,
     networkRevision: number,
     domains: string[],
@@ -733,7 +768,7 @@ export class TerminalSandboxCoordinator {
       ),
       action: "start_fresh",
     });
-    const observed = await this.observeProviderSandbox(sandboxId);
+    const observed = observation ?? await this.observeProviderSandbox(sandboxId);
     if (!observed || isLostProviderSandbox(observed.state)) return replaceLost();
     if (observed.state === "running") {
       if (row.lifecycleState === "running") {
@@ -746,10 +781,16 @@ export class TerminalSandboxCoordinator {
         action: "restore",
       };
     }
-    // `starting` is Daytona mid-transition, including the restore of an archive
-    // that outlasts one start call. Waiting it out inside the tool would hold
-    // the run against a provider deadline Rally does not set; the model retries.
-    if (observed.state === "starting") throw providerStateError(observed.state);
+    // Only these two are startable. Everything left is Daytona mid-transition —
+    // including the restore of an archive that outlasts one start call — or a
+    // state this SDK does not name, and both are waited out rather than acted
+    // on: starting a sandbox whose actual state is unknown is how a caller ends
+    // up reasoning about a workspace nobody has observed. Waiting inside the
+    // tool would instead hold the run against a provider deadline Rally does
+    // not set, so the model retries.
+    if (observed.state !== "stopped" && observed.state !== "archived") {
+      throw providerStateError(observed.state);
+    }
     try {
       await this.provider.startSandbox(sandboxId);
     } catch (error) {
@@ -843,7 +884,15 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    if (row.sandboxId) await this.provider.deleteSandbox(row.sandboxId);
+    if (row.sandboxId) {
+      // Not-found only: the sandbox is about to be discarded, so its absence is
+      // the outcome this wanted. Any other provider failure still stops the
+      // replacement, because an authority change must not proceed while a
+      // sandbox holding the old authority may still be running.
+      await this.provider.deleteSandbox(row.sandboxId).catch((error: unknown) => {
+        if (!isTerminalProviderNotFound(error)) throw error;
+      });
+    }
     return this.terminal(context).replaceGeneration({
       generation: row.generation,
       authorityFingerprint,
@@ -861,9 +910,16 @@ export class TerminalSandboxCoordinator {
     revision: number,
     domains: string[],
     now: number,
+    /** The provider state acquisition already read, when it has one. */
+    observation: TerminalSandboxSnapshot | null = null,
   ): Promise<TerminalSandboxRecord> {
     if (row.sandboxId) {
-      if (row.lifecycleState === "running") await this.provider.stopSandbox(row.sandboxId);
+      // The provider decides whether there is anything to stop. Driving this
+      // from `lifecycle_state` stopped a sandbox Daytona had already stopped —
+      // and, worse, left one Daytona still had running unstopped while its
+      // egress policy was rewritten underneath it.
+      const running = observation ? observation.state === "running" : row.lifecycleState === "running";
+      if (running) await this.provider.stopSandbox(row.sandboxId);
       await this.provider.updateNetworkPolicy(row.sandboxId, domains.length ? domains : null);
     }
     await this.terminal(context).setAppliedNetworkRevision({ networkRevision: revision, now });

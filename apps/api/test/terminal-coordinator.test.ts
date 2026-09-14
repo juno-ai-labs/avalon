@@ -308,6 +308,53 @@ describe("Terminal sandbox coordinator", () => {
     )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-2" });
   });
 
+  it("waits out a sandbox mid-transition instead of discarding its files", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    // Daytona stops and archives on its own schedule, and the provider reports
+    // the states it does not recognize as `unknown`. Neither is a verdict.
+    for (const transitional of ["starting", "unknown"] as const) {
+      observeProviderState(provider, "sandbox-1", transitional);
+      advance(20);
+
+      await expect(coordinator.acquire(context()), transitional)
+        .rejects.toMatchObject({ code: "sandbox_unavailable" });
+    }
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT sandbox_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ sandbox_id: "sandbox-1" });
+  });
+
+  it("replaces a lost sandbox before running the provider mutations its row would order", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    // A stale policy revision makes acquisition stop and reconfigure the
+    // sandbox before it would ever reach the recovery. Driving that from the
+    // row is how a work stream whose sandbox Daytona had lost threw a raw
+    // provider error one branch early, and repeated it on every later run.
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET applied_network_revision = 0 WHERE id = 1",
+    );
+    const missing = new Error("Sandbox with ID sandbox-1 not found") as Error & { status: number };
+    missing.status = 404;
+    for (const call of [provider.getSandbox, provider.stopSandbox, provider.updateNetworkPolicy, provider.deleteSandbox]) {
+      vi.mocked(call).mockRejectedValue(missing);
+    }
+    advance(20);
+
+    await expect(coordinator.acquire(context()))
+      .resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2, state: "running" });
+    expect(provider.stopSandbox).not.toHaveBeenCalled();
+    expect(provider.updateNetworkPolicy).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a sandbox the provider still holds when one start attempt fails", async () => {
     const { objectStore, env, provider, clock, advance } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
