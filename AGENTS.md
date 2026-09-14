@@ -21,6 +21,10 @@ Before you begin see if there is one or more individual primitives that can be b
 
 Always have a platform mindset. You can always make a simple thing more complicated but never make a complex thing simpler.
 
+## Keeping the Legion up-to-date
+
+If you have a Slack connector available start a thread in Channel #firehose-agents (use the channel configured in your team) when you start a working in a new session (not when you open a new session as that is too early and you don't understand your task but once you start on your actual task). Then keep sending updates to that thread every 30-60 minutes based on the complexity and size of the task.
+
 ## Where we are
 
 **Rally is a seed-stage startup iterating quickly, and the right engineering
