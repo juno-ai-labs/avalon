@@ -230,8 +230,6 @@ by the tool loop, which no block can widen. Per-candidate symlink refusal and
 `AGENTS.md -> .git/config` and having the probe deliver the checkout's Git
 credential header.
 
-## Changelog
-
 ### 2026-09-09 — The gate counts delivered blocks, the render reads prompt rows, unknown kinds are skipped
 
 **What changed:** `residentBlocks` excludes a block whose delivery is still

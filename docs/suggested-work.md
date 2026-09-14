@@ -422,8 +422,6 @@ tournaments are starting and never finishing. From there, check
 of how the last ranking ended — and `request_seq` against the scheduler's claimed
 value.
 
-## Changelog
-
 ### 2026-09-11 — The last consumer went away; the producer stayed
 
 **What changed:** The macOS status menu dropped its Suggestions section, so

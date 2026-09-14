@@ -22,8 +22,6 @@ owns the window and the boot around it.
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The screen, and the freshness each of its reads is held to. |
 | `apps/desktop/src/common/settings.ts` | `DesktopSettingsSection`, shared by the URL, the IPC channel and the screen. |
 
-## How it works
-
 ### The window is built before it is asked for
 
 `createSettingsWindow` used to run on the click. That meant spawning a renderer
@@ -296,8 +294,6 @@ exists to survive and Electron does not guarantee it.
 - **Whether prewarming should be conditional.** It is unconditional today. A
   machine under memory pressure is the case that would argue otherwise, and the
   threshold for that is a number nobody here can currently derive.
-
-## Changelog
 
 ### 2026-09-10 — Settings opens a window that already exists, drawn on the session
 

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { planConnectorInstallation } from '../src/services/connector-installation-plan';
 import { connectorRegistryForEnv } from '../src/lib/connector-registry';
 import { previewConnectorMaintenance, applyConnectorMaintenance, runConnectorMaintenance, connectorMaintenanceStatus, cancelConnectorMaintenance } from '../src/services/connector-maintenance-service';
@@ -26,12 +27,12 @@ beforeEach(async () => { await reset(); });
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-async function fixture(region: 'global' | 'eu' = env.AVALON_REGION) {
+async function fixture(region: string = env.AVALON_REGION) {
   const workspaceId = asWorkspaceId(crypto.randomUUID());
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName(region, workspaceId));
   await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
     state.storage.sql.exec(`INSERT INTO workspace_identity (id, workspace_id, region, placement_affinity, created_at, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?)`, workspaceId, region, region === 'eu' ? 'weur' : 'wnam', Date.now(), Date.now());
+      VALUES (1, ?, ?, ?, ?, ?)`, workspaceId, region, region === 'enterprise' ? 'weur' : 'wnam', Date.now(), Date.now());
   });
   const connectionId = crypto.randomUUID();
   const at = new Date().toISOString();
@@ -410,19 +411,19 @@ describe('connector installation authority', () => {
     await seedOpenWorkstreamAuthority(env.DB);
     const router = new AshbyRoutingBridge(createExecutionContext(), env);
     const globalBridge = new AshbyRegionalBridge(createExecutionContext(), { ...env, AVALON_REGION: 'global' });
-    const euBridge = new AshbyRegionalBridge(createExecutionContext(), { ...env, AVALON_REGION: 'eu' });
-    const bindings = { GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: globalBridge, EU_ASHBY_BRIDGE: euBridge };
+    const enterpriseBridge = new AshbyRegionalBridge(createExecutionContext(), { ...env, AVALON_REGION: 'enterprise' });
+    const bindings = { GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: globalBridge, ENTERPRISE_ASHBY_BRIDGE: enterpriseBridge };
     const worker = new AshbyIngressWorker(createExecutionContext(), bindings);
     const request = () => new Request('https://ashby.rallywith.ai/health');
     // Missing directory migration must fail readiness before any provider call.
     expect((await worker.fetch(request())).status).toBe(503);
     await env.DB.exec(`CREATE TABLE ashby_connection_routes (connection_id TEXT PRIMARY KEY, region TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL)`);
     expect((await worker.fetch(request())).status).toBe(200);
-    const miswired = new AshbyIngressWorker(createExecutionContext(), { ...bindings, EU_ASHBY_BRIDGE: globalBridge });
+    const miswired = new AshbyIngressWorker(createExecutionContext(), { ...bindings, ENTERPRISE_ASHBY_BRIDGE: globalBridge });
     expect((await miswired.fetch(request())).status).toBe(503);
   });
 
-  it.each(['global', 'eu'] as const)('routes the dedicated Ashby host to %s authority with unchanged signed bytes', async (region) => {
+  it.each(['global', 'enterprise'] as const)('routes the dedicated Ashby host to %s authority with unchanged signed bytes', async (region) => {
     const { stub, input, workspaceId, connectionId } = await fixture(region);
     const key = 'regional-envelope-test-key';
     const secret = 'regional-signing-test-key';
@@ -434,12 +435,12 @@ describe('connector installation authority', () => {
     await env.DB.prepare("INSERT INTO connector_ingress_routes VALUES (?, ?, ?, 'ashby', 'workspace', NULL, NULL, 'active', ?)").bind(connectionId, workspaceId, region, new Date().toISOString()).run();
     const router = new AshbyRoutingBridge(createExecutionContext(), env);
     expect(await router.registerRoute({ connectionId, region, status: 'active' })).toEqual({ ok: true, value: { registered: true } });
-    // Each bridge holds a distinct credential key. Routing EU to Global cannot
+    // Each bridge holds a distinct credential key. Routing enterprise to Global cannot
     // accidentally verify using the target workspace's key in this test.
     const regionalEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: key, CONNECTOR_CREDENTIALS_KEY_VERSION: '1' };
-    const globalBridge = new AshbyRegionalBridge(createExecutionContext(), { ...regionalEnv, AVALON_REGION: 'global', ...(region === 'eu' ? { CONNECTOR_CREDENTIALS_KEY: 'wrong-global-key' } : {}) });
-    const euBridge = new AshbyRegionalBridge(createExecutionContext(), { ...regionalEnv, AVALON_REGION: 'eu', ...(region === 'global' ? { CONNECTOR_CREDENTIALS_KEY: 'wrong-eu-key' } : {}) });
-    const worker = new AshbyIngressWorker(createExecutionContext(), { GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: globalBridge, EU_ASHBY_BRIDGE: euBridge });
+    const globalBridge = new AshbyRegionalBridge(createExecutionContext(), { ...regionalEnv, AVALON_REGION: 'global', ...(region === 'enterprise' ? { CONNECTOR_CREDENTIALS_KEY: 'wrong-global-key' } : {}) });
+    const enterpriseBridge = new AshbyRegionalBridge(createExecutionContext(), { ...regionalEnv, AVALON_REGION: 'enterprise', ...(region === 'global' ? { CONNECTOR_CREDENTIALS_KEY: 'wrong-enterprise-key' } : {}) });
+    const worker = new AshbyIngressWorker(createExecutionContext(), { GLOBAL_ASHBY_ROUTER: router, GLOBAL_ASHBY_BRIDGE: globalBridge, ENTERPRISE_ASHBY_BRIDGE: enterpriseBridge });
     const bytes = new TextEncoder().encode('{ "action": "ping", "data": { "webhookActionType": "ping" } }');
     const signing = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     const signature = 'sha256=' + Array.from(new Uint8Array(await crypto.subtle.sign('HMAC', signing, bytes)), (byte) => byte.toString(16).padStart(2, '0')).join('');

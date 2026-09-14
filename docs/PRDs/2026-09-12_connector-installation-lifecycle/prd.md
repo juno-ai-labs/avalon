@@ -113,8 +113,6 @@ declare precisely which operations are supported.
    rejection, outreach, and stage changes require a concrete authorized request;
    the agent does not infer permission from an incoming event.
 
-## Product behavior
-
 ### One Ashby entry, two independently authorized capabilities
 
 **Settings → Connections → Ashby** presents two setup options:
@@ -479,8 +477,6 @@ It creates no global activity feed, new work-stream type, or global approval
 gate. A workspace connection remains workspace authority; a person's MCP
 connection remains personal authority. Maintenance never turns one into the other.
 
-## Decision log
-
 ### 2026-09-12 — Explicit user clarifications supersede the proposed confirmation, labels and ingress design
 
 **Decided:** Rally never asks for per-tool confirmation, including writes.
@@ -496,15 +492,6 @@ acceptance table; no agent should implement the historical confirmation flow.
 They approved dedicated connector Workers because API startup and bundle size
 had already caused an engineering incident, and selected the existing operator
 identity. No authorized Ashby organization is available for live acceptance.
-
-**Changes:** Settings, onboarding, public guidance and agent instructions reflect
-those decisions. The dedicated Worker isolates ingress; provider management and
-MCP remain regional API work, so this change does not reduce the main API bundle.
-Global must expose the new routing entrypoint before EU's first deployment binds
-to it. Complete independent implementation and automated tests while keeping
-live OAuth/tools, provider delivery/recovery and confidential audience acceptance
-outstanding in the plan. Both personal queries and workspace events remain
-required for launch. No deployment, fleet operation or merge was performed.
 
 ### 2026-09-13 — Subscribe automatically to the documented Ashby event catalog
 
@@ -542,16 +529,6 @@ semantics. Opening either view remains read-only. Explicit Test retains repair
 followed by healthCheck. Visual inspection is still performed locally.
 
 ### 2026-09-13 — Automate the first regional deployment
-
-**Decided:** The normal API workflow inspects active Cloudflare exports and
-bootstraps Global first only when the new Ashby router is absent, after proving
-its existing EU dependencies. Health and export verification precede EU; shared
-ingress follows both regions. Later releases retain EU-first order. A partial
-EU-only request cannot implicitly deploy Global.
-
-**Why:** EU retirement will take time and must not block this connector. Requiring
-a manual pre-merge bootstrap would make ordinary deployment unsafe. The user
-authorized the workflow fix and PR update, without authorizing deployment or merge.
 
 **Changes:** Reuse direct regional deployment commands and existing health checks;
 fail on unknown metadata or a circular dependency, and test both initial and
@@ -652,21 +629,9 @@ not a second control plane allowed to overwrite it.
 
 ## Regional impact
 
-Personal OAuth exchanges, MCP discovery, and tool calls also stay in the
-workspace's region. Use regional callbacks and never relay EU codes, tokens, or
-results through Global. Ashby is an external processor; an EU Rally workspace
-does not imply the provider's MCP server is EU-hosted. Verify the actual provider
-configuration and disclosure instead of inventing an EU Ashby endpoint.
-
-All setup, verification, credential handling, event admission, and maintenance
-execution happen in the workspace's owning region. Global and EU receivers use
-the existing regional API hosts. A shared command addresses both regions
-explicitly and may display content-free progress locally; it does not copy EU
-provider content or credentials into Global storage.
-
 Use existing regional Queues for deferred work and typed calls when a caller
 requires a committed response, per [Queues or RPC](../../choosing-queues-or-rpc.md).
-If routing a new job kind requires queue configuration changes, both regions and
+If routing a new job kind requires queue configuration changes, configured deployments and
 their dead-letter destinations must be registered together. No queue or Worker
 is created per customer.
 
@@ -759,7 +724,7 @@ These provider statements were checked on 2026-09-12.
 
 Register Rally as the client with verified OAuth metadata, scopes, origins, and
 regional callbacks. Release acceptance verifies DCR, refresh, account restrictions,
-and live tool compatibility in both regions. Published documentation is not
+and live tool compatibility in configured deployments. Published documentation is not
 evidence of a completed Rally authorization flow. No API key is requested for
 this personal mode. The workspace webhook key does not authenticate MCP.
 
@@ -840,7 +805,7 @@ provider writes. Transfer lifecycle ownership through a per-connection migration
 marker so old and new setup/repair paths cannot both act during a rolling deploy.
 That marker tracks ownership, not feature availability.
 
-Exercise both providers with test accounts in Global and EU before release.
+Exercise both providers with test accounts in configured deployments before release.
 For a maintenance upgrade, inspect a selected subset, then deliberately expand
 the same reviewed version. Existing enabled registrations remain until their
 replacements are verified where supported. Capture any provider-imposed delivery
@@ -893,7 +858,7 @@ subsystem ships. A phased `plan.md` is written only after PRD approval.
 | Shared implementation | Ashby and Granola use the same setup/maintenance state machine; provider-specific branches are limited to declared protocol facets. |
 | Installation | Same-key retries return the same attempt; changed-input key reuse conflicts; interrupted setup is reconciled; immediate ping succeeds; partial registration failure remains visible. |
 | Granola adoption | Existing IDs, secrets, URLs, and events survive; no create/delete is performed during import; delivery continues. |
-| Regional ownership | Global and EU setup, events, and maintenance remain regional; forged provider or connection coordinates cannot cross tenants. |
+| Regional ownership | configured deployments setup, events, and maintenance remain regional; forged provider or connection coordinates cannot cross tenants. |
 | Durable admission | A crash between event acceptance and processing dispatch loses no accepted event; repeated delivery has one normalized effect. |
 | Provider semantics | Ashby related actions with the same action ID remain distinct; Granola verifies its own signature format and grouped event set. |
 | Bulk updates | Preview shows exact intended changes; interrupted apply resumes; completed steps are skipped; every target has an explicit result. |
@@ -939,7 +904,7 @@ blocks release.
    or arbitrary SQL mutation path is implied by this PRD.
 4. **Personal MCP compatibility — blocks release:** verify OAuth metadata, scopes,
    registration, refresh, and live recruiting workflows against actual test
-   accounts in both regions. Finalize Global/EU external-provider disclosures.
+   accounts in configured deployments. Finalize configured deployment external-provider disclosures.
 5. **Profile-change coverage — blocks claiming this query supported:** verify the
    fields available for modification-time filtering and whether actor or detailed
    change history is exposed. The initial experience must state any limitation;

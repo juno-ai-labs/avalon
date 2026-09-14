@@ -32,10 +32,7 @@ retryable failure for direct reads and explicit partial status for search/lists.
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
 | `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
-| `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
-
-## How it works
 
 ### The producer writes the fact and publishes it
 
@@ -223,8 +220,6 @@ own:
 Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 `revokeSocketAccess` methods are called by the consumer and by nothing else.
 
-## Failure modes and limits
-
 - **The queue is unavailable when a producer publishes.** Logged as
   `access_revocation_publish_failed` and swallowed. The socket outlives the
   retraction until the client reconnects and fails admission — which every
@@ -235,37 +230,40 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   until it reconnects. Making it durable needs an outbox row written in the same
   D1 write as the retraction, and a sweep that enqueues until delivery; that is
   a real design change and is not built.
+
 - **The expiry sweep re-asserts its predicate when it marks.** The rows were
   selected in an earlier round trip and D1 auto-commits between statements, so a
   logout landing in between has already written its own `revoked_at`; marking by
   id alone would overwrite it with the sweep's later timestamp and move the
   recorded moment access ended.
+
 - **The expiry sweep publishes before it marks**, which is what stops the same
   failure being permanent there. Marking first would exclude the row from every
   later sweep, so a transient queue outage would lose that expiry for good; in
   this order the row stays unmarked and the next run retries it. The cost is a
   duplicate message when the mark fails, and a duplicate revocation is a hop
   that finds nothing left to close.
-- **A hop throws.** Logged as `access_revocation_hop_failed` and retried, up to
-  `max_retries: 5`, then dead-lettered to
-  `avalon-{global,eu}-access-revocations-dead-letter`. A non-empty dead-letter
-  queue is the monitoring for this module.
+
 - **A message cannot be parsed.** Acknowledged, not retried — nothing will make
   it readable later, and retrying it only delays the batch behind it. Logged as
   `access_revocation_message_invalid` with the failing field paths and the
   body's `kind`, because a producer and this consumer disagreeing about the
   schema is otherwise invisible: the message is gone from the queue and nothing
   else records it.
+
 - **A logout's message is dropped.** Logged as `session_revocation_unannounced`.
   Unlike expiry there is no later run to pick it up — the row is already
   revoked — so that session's sockets stay open until they reconnect.
+
 - **Batch settings.** `max_batch_size: 10`, `max_batch_timeout: 1`. One message
   is one person losing access and each is handled independently, so batching buys
   fewer invocations and nothing else; the short timeout matters because this
   message is the only thing standing between a revoked session and an open
   socket.
+
 - **`sendBatch` caps at 100 messages**, so `publishDescendantRevocations` chunks.
   A workspace with more than 100 work streams fans out over several sends.
+
 - **The expiry sweep is bounded at 200 rows per run**, which is 40 sessions a
   minute. That is a real ceiling: a sustained expiry rate above it grows a
   backlog indefinitely. It is sized for the steady state, where a five-minute
@@ -274,6 +272,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   ever reached the visible symptom is expired sessions staying connected longer
   and longer; the fix is paging within one invocation under a time budget, not a
   bigger single page.
+
 - **Not covered by the queue, and deliberately not left to it:** losing
   participation in, or visibility of, one work stream. Those are facts in the
   object's *own* SQL, not in D1, so no producer here can publish them — and the
@@ -285,8 +284,10 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   this work stream still admit this reader", which only that object knows. The
   distinction to hold on to: what was removed from those paths is the **D1**
   read, not the object-local one.
+
 - **Genuinely not covered:** a block's visibility narrowing within a dashboard
   the reader still has access to. That closes on their next reconnect.
+
 - **A hop against a retired workspace is done, not failed.** Retirement closes
   every socket an object holds when it writes the tombstone, so a hop that
   reaches a retired object has nothing left to find. `revokeSocketAccess` is
@@ -297,6 +298,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   retrying it — a retry would dead-letter one message per retired object,
   spending this module's own monitoring signal on a condition somebody designed.
   See [`workspace-retirement.md`](workspace-retirement.md#background-callers).
+
 - **A revocation is not versioned.** A message names `(workspaceId, userId)` and
   nothing more, so one delayed or dead-letter-replayed message can close sockets
   belonging to a membership that was since restored. Admission decides what
@@ -318,15 +320,6 @@ Traps:
 - The object side needs real hibernation attachments, which is why it lives in
   the workers suite; a Node double of `getWebSockets()` would prove nothing about
   what the runtime hands back after a hibernation round trip.
-
-## Regional impact
-
-The queue is per region — `avalon-global-access-revocations` and
-`avalon-eu-access-revocations` — and so is its dead-letter queue. A revocation
-never crosses the boundary, because the objects it addresses never do: a session
-is bound to one region's workspace, and the consumer resolves stubs through the
-same `workspacePlacementAffinity` every other caller uses. Membership discovery
-lives in Global, but the sockets do not, so nothing here reads across.
 
 ## Security and trust model
 
@@ -355,8 +348,6 @@ would be a way into somebody else's workspace.
 - `workspace_socket_access_revoked` — the successful case, with the socket count.
 - The dead-letter queues are the alarm: empty is healthy, non-empty means
   somebody kept access they should have lost.
-
-## Changelog
 
 ### 2026-09-08 — A retired object's refusal ends the hop
 

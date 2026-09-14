@@ -1,3 +1,5 @@
+import { configuredRegions } from "@rally/contracts/regions";
+import { RegionSchema, type Region } from "@rally/contracts/regions";
 import {
   TELEMETRY_EVENTS,
   TelemetryEnvelopeSchema,
@@ -8,15 +10,13 @@ import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { telemetryPayloadHash } from "../telemetry/payload-integrity";
 
-export const ANALYTICS_LAKEHOUSE_QUEUE_NAMES = new Set([
-  "avalon-global-analytics-events-lakehouse",
-]);
+export const ANALYTICS_LAKEHOUSE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-analytics-events-lakehouse`));
 
 export const AnalyticsLakehousePointerSchema = z.strictObject({
   schemaVersion: z.literal(1),
   eventId: z.string().uuid(),
   payloadHash: z.string().min(1),
-  region: z.literal("global"),
+  region: RegionSchema,
 });
 
 export type AnalyticsLakehousePointer = z.infer<typeof AnalyticsLakehousePointerSchema>;
@@ -41,7 +41,7 @@ export interface AnalyticsLakehouseRecord {
   source: string;
   category: string;
   identity_scope: string;
-  route: "global";
+  route: Region;
   routing_basis: string;
   accepted_at: string;
   normalized_timestamp: string;
@@ -81,7 +81,7 @@ interface AcceptedAnalyticsRow {
   event_id: string;
   payload_hash: string;
   envelope_json: string;
-  route: "global" | "eu";
+  route: Region;
   routing_basis: string;
   analytics_subject_id: string;
   workspace_analytics_id: string | null;
@@ -100,8 +100,7 @@ export type AnalyticsLakehouseDeliveryResult =
 
 export const ANALYTICS_LAKEHOUSE_RECOVERY_QUERY = `SELECT event_id, payload_hash
  FROM telemetry_accepted_events
- WHERE route = 'global'
-   AND analytics_lakehouse_state IN ('pending', 'queued')
+ WHERE analytics_lakehouse_state IN ('pending', 'queued')
    AND delete_at > ?
  ORDER BY accepted_at DESC
  LIMIT 50`;
@@ -110,12 +109,12 @@ export function isAnalyticsLakehouseQueue(queue: string): boolean {
   return ANALYTICS_LAKEHOUSE_QUEUE_NAMES.has(queue);
 }
 
-export function analyticsLakehousePointer(eventId: string, payloadHash: string): AnalyticsLakehousePointer {
+export function analyticsLakehousePointer(eventId: string, payloadHash: string, region: Region = "global"): AnalyticsLakehousePointer {
   return AnalyticsLakehousePointerSchema.parse({
     schemaVersion: 1,
     eventId,
     payloadHash,
-    region: "global",
+    region,
   });
 }
 
@@ -141,7 +140,7 @@ function recordFromRow(row: AcceptedAnalyticsRow, envelope: TelemetryEnvelope): 
     source: envelope.source,
     category: envelope.category,
     identity_scope: envelope.identityScope,
-    route: "global",
+    route: row.route,
     routing_basis: row.routing_basis,
     accepted_at: row.accepted_at,
     normalized_timestamp: row.normalized_timestamp,
@@ -183,13 +182,13 @@ export async function enqueueAnalyticsLakehousePointer(
   eventId: string,
   payloadHash: string,
 ): Promise<boolean> {
-  if (env.AVALON_REGION !== "global" || !env.ANALYTICS_LAKEHOUSE_QUEUE) return false;
+  if (!env.ANALYTICS_LAKEHOUSE_QUEUE) return false;
   try {
-    await env.ANALYTICS_LAKEHOUSE_QUEUE.send(analyticsLakehousePointer(eventId, payloadHash));
+    await env.ANALYTICS_LAKEHOUSE_QUEUE.send(analyticsLakehousePointer(eventId, payloadHash, env.AVALON_REGION));
     await env.DB.prepare(
       `UPDATE telemetry_accepted_events
        SET analytics_lakehouse_state = 'queued'
-       WHERE event_id = ? AND payload_hash = ? AND route = 'global'
+       WHERE event_id = ? AND payload_hash = ?
          AND analytics_lakehouse_state IN ('pending', 'queued')`,
     ).bind(eventId, payloadHash).run();
     return true;
@@ -204,7 +203,7 @@ export async function enqueueAnalyticsLakehousePointer(
 }
 
 export async function recoverUndeliveredAnalyticsLakehouseEvents(env: Env): Promise<number> {
-  if (env.AVALON_REGION !== "global" || !env.ANALYTICS_LAKEHOUSE_QUEUE) return 0;
+  if (!env.ANALYTICS_LAKEHOUSE_QUEUE) return 0;
   // Fifty is the established telemetry outbox quantum and the maximum accepted
   // client batch, so recovery cannot create a larger burst than normal ingest.
   const rows = await env.DB.prepare(ANALYTICS_LAKEHOUSE_RECOVERY_QUERY)
@@ -224,7 +223,7 @@ async function rejectStoredAnalyticsRow(
   await env.DB.prepare(
     `UPDATE telemetry_accepted_events
      SET analytics_lakehouse_state = 'rejected'
-     WHERE event_id = ? AND route = 'global'
+     WHERE event_id = ?
        AND analytics_lakehouse_state IN ('pending', 'queued')`,
   ).bind(row.event_id).run();
   return { outcome: "rejected", reason };
@@ -235,8 +234,8 @@ export async function deliverAnalyticsLakehousePointer(
   body: unknown,
 ): Promise<AnalyticsLakehouseDeliveryResult> {
   const pointer = AnalyticsLakehousePointerSchema.parse(body);
-  if (env.AVALON_REGION !== "global") {
-    throw new Error(`analytics_lakehouse_pointer_misrouted:global:${env.AVALON_REGION}`);
+  if (env.AVALON_REGION !== pointer.region) {
+    throw new Error(`analytics_lakehouse_pointer_misrouted:${pointer.region}:${env.AVALON_REGION}`);
   }
   if (!env.ANALYTICS_LAKEHOUSE) throw new Error("analytics_lakehouse_pipeline_binding_missing");
   const row = await env.DB.prepare(
@@ -249,7 +248,7 @@ export async function deliverAnalyticsLakehousePointer(
      WHERE e.event_id = ?`,
   ).bind(pointer.eventId).first<AcceptedAnalyticsRow>();
   if (!row) return { outcome: "expired" };
-  if (row.route !== "global" || row.payload_hash !== pointer.payloadHash) {
+  if (row.route !== env.AVALON_REGION || row.payload_hash !== pointer.payloadHash) {
     return { outcome: "rejected", reason: "pointer_integrity_failed" };
   }
   if (row.analytics_lakehouse_state === "delivered") return { outcome: "duplicate" };
@@ -286,7 +285,7 @@ export async function deliverAnalyticsLakehousePointer(
     await env.DB.prepare(
       `UPDATE telemetry_accepted_events
        SET analytics_lakehouse_state = 'suppressed'
-       WHERE event_id = ? AND payload_hash = ? AND route = 'global'`,
+       WHERE event_id = ? AND payload_hash = ?`,
     ).bind(pointer.eventId, pointer.payloadHash).run();
     return { outcome: "suppressed" };
   }
@@ -295,7 +294,7 @@ export async function deliverAnalyticsLakehousePointer(
   await env.DB.prepare(
     `UPDATE telemetry_accepted_events
      SET analytics_lakehouse_state = 'delivered', analytics_lakehouse_delivered_at = ?
-     WHERE event_id = ? AND payload_hash = ? AND route = 'global'`,
+     WHERE event_id = ? AND payload_hash = ?`,
   ).bind(new Date().toISOString(), pointer.eventId, pointer.payloadHash).run();
   return { outcome: "delivered", record };
 }

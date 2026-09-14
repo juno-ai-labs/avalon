@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
@@ -379,7 +380,7 @@ const ProductAuthSchema = z.strictObject({
   sessionId: z.string().min(1).max(200),
   userId: UserIdSchema,
   workspaceId: WorkspaceIdSchema,
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   role: z.enum(["owner", "admin", "member"]),
   // Absent: `sessionId` names a `sessions` row and is verified there.
   // `"connector"`: a connector ingress already verified the link that binds

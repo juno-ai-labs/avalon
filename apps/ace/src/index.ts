@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { DemoOperationStartRequestSchema, ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -180,7 +181,7 @@ app.put('/api/models/:role', async (c) => {
 const UuidSchema = z.string().uuid();
 const AbandonRequestSchema = z.strictObject({ confirmOperationId: z.string().uuid() });
 const RetireRequestSchema = z.strictObject({
-  region: z.enum(['global', 'eu']),
+  region: RegionSchema,
   confirmWorkspaceId: z.string().uuid(),
 });
 

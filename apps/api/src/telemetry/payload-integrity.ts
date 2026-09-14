@@ -1,7 +1,8 @@
+import type { Region } from "@rally/contracts/regions";
 import { sha256 } from "../lib/crypto";
 
 export interface TelemetryPayloadIdentity {
-  route: "global" | "eu";
+  route: Region;
   analyticsSubjectId: string;
   subjectUserId: string | null;
   workspaceAnalyticsId: string | null;

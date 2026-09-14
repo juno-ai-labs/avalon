@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkstreamId } from "@rally/contracts";
 import {
   conversationEffectHash,
@@ -1071,7 +1072,7 @@ describe("the activity Queue consumer's effect legs", () => {
       parentKind: "workstream",
       parentId: WORKSTREAM_ID,
     });
-    const { batch, ack, retry } = queued({ ...envelope, region: "eu" });
+    const { batch, ack, retry } = queued({ ...envelope, region: "enterprise" });
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       await consumeActivityQueue(batch, env);

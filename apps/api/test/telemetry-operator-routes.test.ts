@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import type { HonoAppEnv } from '../src/env';
@@ -39,7 +40,7 @@ describe('regional telemetry operator routes', () => {
     // `demos` is a role of the same credential map; the isolation the role
     // exists for holds only if this router names the roles it admits.
     const environment = createTestEnv({ AVALON_REGION: 'global', LOG_LEVEL: 'error', TELEMETRY_OPERATORS_JSON: operatorConfig() });
-    for (const [method, path] of [['GET', '/internal/telemetry/status'], ['GET', '/internal/telemetry/eu/crash-issues'], ['POST', '/internal/telemetry/replay']] as const) {
+    for (const [method, path] of [['GET', '/internal/telemetry/status'], ['GET', '/internal/telemetry/enterprise/crash-issues'], ['POST', '/internal/telemetry/replay']] as const) {
       const response = await app().request(path, { method, headers: authorization(demosToken) }, environment);
       expect(response.status, `${method} ${path}`).toBe(403);
       await expect(response.json()).resolves.toMatchObject({ error: { code: 'operator_role_forbidden' } });

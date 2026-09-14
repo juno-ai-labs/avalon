@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,8 +15,8 @@ const active = {
   id: 'workspace-global', name: 'Global Studio', slug: 'global-studio', region: 'global' as const,
   role: 'owner' as const, createdAt: '2026-08-01T00:00:00.000Z',
 };
-const eu = {
-  id: 'workspace-eu', name: 'Europe Studio', slug: 'europe-studio', region: 'eu' as const,
+const enterprise = {
+  id: 'workspace-enterprise', name: 'Europe Studio', slug: 'europe-studio', region: 'enterprise' as const,
   role: 'member' as const, createdAt: '2026-08-02T00:00:00.000Z',
 };
 
@@ -23,7 +24,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
   const props: React.ComponentProps<typeof WorkspaceAccountMenu> = {
     activeWorkspace: active,
     attention: {
-      [desktopWorkspaceIdentityKey(eu.region, eu.id)]: {
+      [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
         waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true,
       },
     },
@@ -40,7 +41,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     onSignOut: vi.fn(),
     onSwitchWorkspace: vi.fn(async () => true),
     staleAt: null,
-    workspaces: [active, eu],
+    workspaces: [active, enterprise],
     ...overrides,
   };
   render(<Tooltip.Provider><WorkspaceAccountMenu {...props} /></Tooltip.Provider>);
@@ -57,8 +58,8 @@ describe('workspace account menu', () => {
     const props = renderMenu({ presentation: 'grok' });
     openMenu();
     expect(props.onMenuOpen).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('menuitem', { name: /Europe Studio.*EU/u }));
-    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Europe Studio.*enterprise/u }));
+    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(enterprise);
     expect(screen.queryByText('Weekly usage')).not.toBeInTheDocument();
     expect(screen.queryByText('Get Rally for iOS')).not.toBeInTheDocument();
   });
@@ -103,14 +104,14 @@ describe('workspace account menu', () => {
 
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Workspaces')).toBeVisible();
-    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*US.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*EU.*3 mentions waiting for you/u });
+    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*global.*Current/u })).toBeVisible();
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*enterprise.*3 mentions waiting for you/u });
     // One dot for any activity, never a count.
     expect(europe.querySelector('.workspace-activity-dot')).toHaveAccessibleName('3 mentions waiting for you');
     expect(europe).not.toHaveTextContent('3');
 
     fireEvent.click(europe);
-    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(enterprise);
   });
 
   it('explains the activity dot on hover', async () => {
@@ -124,7 +125,7 @@ describe('workspace account menu', () => {
 
     renderMenu({
       attention: {
-        [desktopWorkspaceIdentityKey(eu.region, eu.id)]: {
+        [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
           waitingForYou: 0, waitingReason: null, hasUnreadActivity: true,
         },
       },
@@ -140,7 +141,7 @@ describe('workspace account menu', () => {
     const onSwitchWorkspace = vi.fn()
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
-    renderMenu({ onSwitchWorkspace, workspaceErrors: { [desktopWorkspaceIdentityKey(eu.region, eu.id)]: undefined } });
+    renderMenu({ onSwitchWorkspace, workspaceErrors: { [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: undefined } });
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: /Europe Studio/u }));
     await waitFor(() => expect(onSwitchWorkspace).toHaveBeenCalledTimes(1));
@@ -153,7 +154,7 @@ describe('workspace account menu', () => {
   it('marks unread-only activity on the account trigger', () => {
     renderMenu({
       attention: {
-        [desktopWorkspaceIdentityKey(eu.region, eu.id)]: {
+        [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
           waitingForYou: 0, waitingReason: null, hasUnreadActivity: true,
         },
       },
@@ -164,13 +165,13 @@ describe('workspace account menu', () => {
   });
 
   it('does not mark a same-id workspace in another region as current', () => {
-    const regionalCollision = { ...eu, id: active.id };
+    const regionalCollision = { ...enterprise, id: active.id };
     const props = renderMenu({ attention: {}, workspaces: [active, regionalCollision] });
 
     openMenu();
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*US.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*EU/u });
+    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*global.*Current/u })).toBeVisible();
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*enterprise/u });
     expect(europe).not.toHaveAccessibleName(/Current/u);
 
     fireEvent.click(europe);
@@ -200,20 +201,20 @@ describe('workspace account menu', () => {
     expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   });
 
-  it('names the active workspace\'s data region as US or EU under the account, and offers no reconnect item', () => {
+  it('names the active workspace\'s data region by deployment identifier under the account, and offers no reconnect item', () => {
     renderMenu({ attention: {} });
     openMenu();
 
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText('US workspace')).toBeVisible();
+    expect(within(menu).getByText('global workspace')).toBeVisible();
     expect(within(menu).queryByRole('menuitem', { name: /Reconnect/u })).not.toBeInTheDocument();
     expect(within(menu).queryByText(/Reconnect your account/u)).not.toBeInTheDocument();
   });
 
   it('says where the person is expected while a switch waits on the browser, and lets the row be chosen again', () => {
-    const euKey = desktopWorkspaceIdentityKey(eu.region, eu.id);
+    const enterpriseKey = desktopWorkspaceIdentityKey(enterprise.region, enterprise.id);
     const onSwitchWorkspace = vi.fn(() => new Promise<boolean>(() => undefined));
-    renderMenu({ attention: {}, onSwitchWorkspace, signingInWorkspaceKey: euKey, switchingWorkspaceKey: euKey });
+    renderMenu({ attention: {}, onSwitchWorkspace, signingInWorkspaceKey: enterpriseKey, switchingWorkspaceKey: enterpriseKey });
     openMenu();
 
     const europe = screen.getByRole('menuitem', { name: /Europe Studio/u });
@@ -224,16 +225,16 @@ describe('workspace account menu', () => {
     // The person closed the browser without finishing: choosing the row again
     // opens it again rather than doing nothing.
     fireEvent.click(europe);
-    expect(onSwitchWorkspace).toHaveBeenCalledWith(eu);
+    expect(onSwitchWorkspace).toHaveBeenCalledWith(enterprise);
     expect(screen.getByRole('menu')).toBeVisible();
   });
 
   it('ignores a second choice of a row that is opening, and shows a failed sign-in under the row', () => {
-    const euKey = desktopWorkspaceIdentityKey(eu.region, eu.id);
+    const enterpriseKey = desktopWorkspaceIdentityKey(enterprise.region, enterprise.id);
     const props = renderMenu({
       attention: {},
-      switchingWorkspaceKey: euKey,
-      workspaceErrors: { [euKey]: 'Sign in could not be completed: access denied' },
+      switchingWorkspaceKey: enterpriseKey,
+      workspaceErrors: { [enterpriseKey]: 'Sign in could not be completed: access denied' },
     });
     openMenu();
 
@@ -276,7 +277,7 @@ describe('workspace account menu', () => {
   it('notes the browser sign-in in the create dialog while creation waits on it', async () => {
     let progress: { onSignInRequired: () => void } | null = null;
     const onCreateWorkspace = vi.fn((
-      _input: { name: string; region: 'global' | 'eu' },
+      _input: { name: string; region: string },
       _operationId: string,
       hooks: { onSignInRequired: () => void },
     ) => new Promise<void>(() => { progress = hooks; }));
@@ -284,7 +285,7 @@ describe('workspace account menu', () => {
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
     const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    expect(within(create).getByText('United States')).toBeVisible();
+    expect(within(create).queryByRole('radio')).not.toBeInTheDocument();
     fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
     await waitFor(() => expect(progress).not.toBeNull());
@@ -303,7 +304,7 @@ describe('workspace account menu', () => {
     let rejectFirst: ((error: Error) => void) | null = null;
     const onCreateWorkspace = vi.fn()
       .mockImplementationOnce((
-        _input: { name: string; region: 'global' | 'eu' },
+        _input: { name: string; region: string },
         _operationId: string,
         hooks: { onSignInRequired: () => void },
       ) => new Promise<void>((_resolve, reject) => {
@@ -336,7 +337,7 @@ describe('workspace account menu', () => {
   it('abandons the creation, not the sign-in, when the dialog is closed while waiting on the browser', async () => {
     let progress: { onSignInRequired: () => void } | null = null;
     const onCreateWorkspace = vi.fn((
-      _input: { name: string; region: 'global' | 'eu' },
+      _input: { name: string; region: string },
       _operationId: string,
       hooks: { onSignInRequired: () => void },
     ) => new Promise<void>(() => { progress = hooks; }));

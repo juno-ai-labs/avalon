@@ -111,8 +111,6 @@ and on the shape of retirement all still hold.
 
 ---
 
-## 1. What was proven
-
 ### A demo pack can be built entirely out of production write paths
 
 Three work streams were created through `WorkstreamObjectCreationService` (the
@@ -190,6 +188,7 @@ Then the reset was attacked deliberately:
   out right *only because the seeder happens to run in chronological order* — a demo
   that opened the sidebar would show three rooms all last active "just now". §4 has what
   it would take to fix.
+
 - **A human message that starts no run never enters the model's context.** The four
   persona messages in the middle of the renewal conversation are in the canonical
   transcript (all ten turns render) and are absent from the protocol array above. The
@@ -200,18 +199,21 @@ Then the reset was attacked deliberately:
   (§3), so in production some of those messages might have activated the loop instead.
   If it holds, a scripted multi-person discussion is invisible to the agent that is asked
   about it, which is a demo problem *and* a product question.
+
 - ~~Nothing was checked in a real window.~~ **Corrected: it was.** See
   [§6](#6-visual-verification). The Electron client was run under Xvfb against the seeded pack
   and every visible claim above holds on screen. Two things only the visual inspection showed
   are recorded there.
-- **EU was not exercised.** Everything ran in the Global region.
+
 - **Retirement was never tested against a workspace with automations.** The pack creates
   none, so the automation-pause arm of the protocol compiled and ran against an empty
   list. Its shape has a known gap: `AutomationAgent.pause` takes an *actor*, and a
   retirement has no person in it — the spike passes the automation's own author.
+
 - **Nothing was tested under concurrency, eviction, or a partially-failed retirement.**
   The retirement walk is a straight-line loop with no receipts; a crash halfway leaves a
   workspace partly retired and there is no resume.
+
 - **The pack is two thirds specified.** The brief describes work stream A (the decision
   memo) and one more whose content matches what the verification calls C (the renewal
   conversation). No middle work stream was specified. The seeder invents one — a short

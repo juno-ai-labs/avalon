@@ -87,8 +87,6 @@ later decision.
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 
-## How it works
-
 ### Authorization model
 
 - A personal connection can be used only by its owner principal.
@@ -382,8 +380,6 @@ The two records are isolated by Rally capability checks, not by separate Google 
 
 ### GitHub App
 
-GitHub uses one public App with a signature-verifying smart ingress. One installation may be connected to Global workspaces, EU workspaces, or both; an indexed installation directory fans exact signed deliveries only to the applicable regional Workers. OAuth callbacks, credentials, raw payload storage, normalization, and activity processing remain regional. Workspace connections execute with short-lived installation tokens. Personal connections require an expiring user token and prove that the user can access the selected installation and repository.
-
 The agent can list and search repositories, list directories or bounded recursive
 trees, list commits, read files, inspect and create/update issues and comments,
 inspect and create/review pull requests, and read Actions and check runs.
@@ -473,14 +469,13 @@ to work streams without copying their content into Rally. Issue-dependency and
 sub-issue deliveries add both sides of the relationship, including
 cross-repository issues, while retaining one normalized activity per delivery.
 
-
 ### Linear
 
 Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Rally owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants `app:assignable` and `app:mentionable` for activation plus `write` for the deterministic source-comment acknowledgement; resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams and workflow states, create/update issues, and create comments.
 
 `search_issues` matches a term against issue titles **and descriptions**, so an issue is findable by what it is about rather than only by what it was called. `list_workflow_states` exists because `stateId` had no discovery path: the only way to learn a valid state was to read an unrelated issue in the same team and copy the id out of it, which is a lookup dance a model does not invent and frequently gets wrong. Every argument schema on this connector is strict, and `create_issue` accepts every issue field `update_issue` accepts — the two go together, because a family whose members take different fields plus a non-strict parse is the silent-drop trap in [`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input): a model that learned `dueDate` on update sent it to create, it vanished, and the tool reported success.
 
-Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning Global/EU connections, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Workspace app connections receive matching resource events directly. A personal connection receives a delivery only after its own token proves access to the signed resource or a signed parent in one bounded GraphQL probe; its normalized activity remains personal and targets only its Rally owner. Authorization loss marks that connection `needs_reconnect`, and lifecycle/native-agent events never fan out to personal connections. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
+Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning configured deployment connections, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Workspace app connections receive matching resource events directly. A personal connection receives a delivery only after its own token proves access to the signed resource or a signed parent in one bounded GraphQL probe; its normalized activity remains personal and targets only its Rally owner. Authorization loss marks that connection `needs_reconnect`, and lifecycle/native-agent events never fan out to personal connections. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
 
 The native-agent surface is a control-plane protocol, not a model-callable tool. `ConnectorAdapter.nativeAgent` supplies the typed invocation and outbound protocol facet; the manifest separately records `runtimeStatus`. Linear is currently `protocol_only`: the provider schemas and GraphQL operations exist, but the coordinating session-to-workstream runtime is deliberately not advertised as operational. Its descriptor records preview maturity, delegation/mention/follow-up invocation, authored activity kinds, cancellation, links, plans, proactive sessions, Linear's five-second webhook response deadline, and the ten-second first-activity deadline.
 
@@ -513,7 +508,7 @@ setup URL, encrypted in the owning WorkspaceDO connection row, and then used to
 verify every later webhook signature before normalization and queueing. Unlike
 every other connector here, Notion's OAuth callback and webhook are not
 regional: one public connection issues one redirect URI and one webhook URL for
-both regions, so both arrive at a Global ingress that routes them to the owning
+configured deployments, so both arrive at a Global ingress that routes them to the owning
 region — see [`notion-ingress.md`](notion-ingress.md).
 
 ### Ashby
@@ -730,7 +725,6 @@ metadata keeps JSON merge-patch semantics, including explicit-null deletion.
 changes: those fields and `updated_at` describe the last meaningful discovery
 change, not a last-seen heartbeat. Real workerd coverage lives in `resource-update-cost.test.ts`.
 
-
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
 - `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
@@ -848,11 +842,6 @@ A provider account installed twice in one workspace may likewise produce two
 connection-scoped events; collapsing those requires an explicit workspace-level
 product rule rather than an accidental cross-connection dedupe.
 
-“Global ingress” means Cloudflare's edge Worker fleet, not one US data plane.
-The global router may inspect routing metadata, but EU workspace content is
-forwarded to the EU regional Worker, EU Queue, and EU-locked WorkspaceDO.
-Normalized content never crosses through the global D1 routing plane.
-
 The removed semantic route into an existing work stream is recorded in
 [`contextual-routing.md`](contextual-routing.md). It is not a dormant step in
 this pipeline: current processing has no classifier, card, or feedback endpoint.
@@ -905,7 +894,6 @@ IDs, webhook bodies, activity content, error text, and credentials remain outsid
 telemetry. The established OAuth operation pair remains available to correlate a
 desktop request with denial/failure while richer connection events describe the
 configuration that was actually established.
-
 
 ## Invariants
 
@@ -1097,7 +1085,6 @@ whichever object makes the mistake next.
 
 `apps/api/test-workers/resource-update-cost.test.ts` covers no-op discovery, each
 independent change condition, mixed batches, and URL/metadata merge behavior.
-
 
 | Suite | Covers |
 | --- | --- |
@@ -1408,7 +1395,6 @@ request.
 reads the named collection on it. `head` and `base` are sent only when the
 caller supplied them, which `github.test.ts` asserts directly — a default
 quietly reintroduced there is the original failure again.
-
 
 ### 2026-09-08 — Skip unchanged discovered resources
 

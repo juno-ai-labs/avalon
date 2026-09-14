@@ -404,7 +404,7 @@ real window.
   effect receipts use leases, generations, idempotency keys, and final authority
   rereads; unrelated work-stream membership generations do not stale each other.
 - **Regionalization:** project product state stays in the workspace's regional
-  object. Global and EU use separate Queue/DLQ sets and carry only opaque IDs and
+  object. configured deployments use separate Queue/DLQ sets and carry only opaque IDs and
   bounded routing metadata.
 - **No prompt change:** no project name, instruction, memory, or resource list is
   added to the system prompt or compaction checkpoint. Resources affect a work

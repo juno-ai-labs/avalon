@@ -240,8 +240,6 @@ transcript stays the readable shared record it already is. Repository
 guidance is one more untrusted input the agent reads, in the same layer as
 the file contents it reads today.
 
-## Decision log
-
 ### 2026-09-09 — The gate counts delivered blocks only
 
 **Decided:** The known-resident set the Terminal probe is given holds only
@@ -833,16 +831,6 @@ the byte-frozen ordered-transcript schema under
 released migration hashes, and this table is bookkeeping about the transcript
 rather than part of it, which is the same reason the run-scoped tables it sits
 beside live in the object schema.
-
-## Regional impact
-
-None crosses a region. The ledger persists repository file content at rest,
-which is new, but it lives in the substream agent's own Durable Object in the
-work stream's region beside the transcript that already holds the same bytes
-as delivered messages, and nothing reads it from the other region. EU and
-Global behave identically. The question is asked here because
-[PRDs](../../prds.md) requires it in spirit for anything that changes where
-data comes to rest.
 
 ## Security and trust model
 

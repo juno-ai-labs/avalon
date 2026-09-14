@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DEVICE_PREFERENCES_STORAGE_KEY,
@@ -12,19 +13,19 @@ describe('device preferences', () => {
   beforeEach(() => window.localStorage.clear());
 
   it('stores renderer preferences in one versioned record', () => {
-    setDeviceSelectedRegion('eu');
+    setDeviceSelectedRegion('enterprise');
     setDeviceWorkspaceName('  European Research  ');
     setDeviceMicrophoneId('  microphone-42  ');
 
     expect(readDevicePreferences()).toEqual({
       version: 1,
-      selectedRegion: 'eu',
+      selectedRegion: 'enterprise',
       workspaceName: 'European Research',
       microphoneDeviceId: 'microphone-42',
     });
     expect(JSON.parse(window.localStorage.getItem(DEVICE_PREFERENCES_STORAGE_KEY)!)).toEqual({
       version: 1,
-      selectedRegion: 'eu',
+      selectedRegion: 'enterprise',
       workspaceName: 'European Research',
       microphoneDeviceId: 'microphone-42',
     });
@@ -60,14 +61,14 @@ describe('device preferences', () => {
   it('drops an unknown appearance without discarding the rest of the record', () => {
     window.localStorage.setItem(DEVICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
       version: 1,
-      selectedRegion: 'eu',
+      selectedRegion: 'enterprise',
       microphoneDeviceId: 'microphone-42',
       theme: 'sepia',
     }));
 
     expect(readDevicePreferences()).toEqual({
       version: 1,
-      selectedRegion: 'eu',
+      selectedRegion: 'enterprise',
       microphoneDeviceId: 'microphone-42',
     });
   });
@@ -75,7 +76,7 @@ describe('device preferences', () => {
   it('ignores incompatible preference versions and allows the region to be cleared', () => {
     window.localStorage.setItem(DEVICE_PREFERENCES_STORAGE_KEY, JSON.stringify({
       version: 2,
-      selectedRegion: 'eu',
+      selectedRegion: 'enterprise',
     }));
 
     expect(readDevicePreferences()).toEqual({ version: 1 });

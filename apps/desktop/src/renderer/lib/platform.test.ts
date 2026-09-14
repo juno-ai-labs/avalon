@@ -1,9 +1,10 @@
+import "../../../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RallyDesktopBridge, DesktopSession } from '../../common/desktop';
 import { desktopBridge } from './platform';
 
 const globalApiBaseUrl = 'http://127.0.0.1:8787';
-const euApiBaseUrl = 'http://127.0.0.1:8788';
+const enterpriseApiBaseUrl = 'https://enterprise.api.with-avalon.com';
 
 const identityWireSession: DesktopSession & { refreshToken: string } = {
   accessToken: 'identity-access-token-longer-than-twenty-characters',
@@ -57,13 +58,13 @@ describe('browser fallback single-platform identity boundary', () => {
     expect(copyText).toHaveBeenCalledWith('copied through preload');
   });
 
-  it('refuses to create or exchange an EU authentication attempt', async () => {
+  it('refuses to create or exchange an enterprise authentication attempt', async () => {
     const bridge = desktopBridge();
-    await expect(bridge.createDesktopAuthAttempt({ apiBaseUrl: euApiBaseUrl, region: 'eu' }))
+    await expect(bridge.createDesktopAuthAttempt({ apiBaseUrl: enterpriseApiBaseUrl, region: 'enterprise' }))
       .rejects.toThrow('Global identity service');
     await expect(bridge.exchangeDesktopTicket({
-      apiBaseUrl: euApiBaseUrl,
-      region: 'eu',
+      apiBaseUrl: enterpriseApiBaseUrl,
+      region: 'enterprise',
       ticket: 'single-use-ticket-long-enough',
       attemptId: 'a'.repeat(43),
     })).rejects.toThrow('Global identity service');
@@ -86,14 +87,14 @@ describe('browser fallback single-platform identity boundary', () => {
       ...identityWireSession,
       accessToken: 'regional-access-token-longer-than-twenty-characters',
       refreshToken: 'regional-refresh-token-kept-private-in-browser-adapter',
-      apiBaseUrl: euApiBaseUrl,
-      user: { id: 'eu-shadow-user-9', email: 'ADAM@example.com', name: 'Adam' },
-      workspace: { id: 'workspace-eu', name: 'European Research', region: 'eu', role: 'member' },
+      apiBaseUrl: enterpriseApiBaseUrl,
+      user: { id: 'enterprise-shadow-user-9', email: 'ADAM@example.com', name: 'Adam' },
+      workspace: { id: 'workspace-enterprise', name: 'Enterprise Research', region: 'enterprise', role: 'member' },
     }) as Response);
-    const regionalSession = await bridge.activateWorkspace({ region: 'eu', workspaceId: 'workspace-eu' });
+    const regionalSession = await bridge.activateWorkspace({ region: 'enterprise', workspaceId: 'workspace-enterprise' });
 
-    expect(regionalSession.apiBaseUrl).toBe(euApiBaseUrl);
-    expect(regionalSession.workspace?.region).toBe('eu');
+    expect(regionalSession.apiBaseUrl).toBe(enterpriseApiBaseUrl);
+    expect(regionalSession.workspace?.region).toBe('enterprise');
     expect(regionalSession).not.toHaveProperty('refreshToken');
   });
 
@@ -132,7 +133,7 @@ describe('browser fallback single-platform identity boundary', () => {
       workspace: { id: 'workspace-global', name: 'Wrong Workspace', region: 'global', role: 'member' },
     }) as Response);
 
-    await expect(bridge.activateWorkspace({ region: 'eu', workspaceId: 'workspace-eu' }))
+    await expect(bridge.activateWorkspace({ region: 'enterprise', workspaceId: 'workspace-enterprise' }))
       .rejects.toThrow('did not match this workspace request');
   });
 
@@ -150,12 +151,12 @@ describe('browser fallback single-platform identity boundary', () => {
 
     fetchMock.mockResolvedValueOnce(jsonResponse({
       ...identityWireSession,
-      apiBaseUrl: euApiBaseUrl,
-      user: { id: 'eu-shadow-user-9', email: 'mallory@example.com', name: 'Mallory' },
-      workspace: { id: 'workspace-eu', name: 'European Research', region: 'eu', role: 'member' },
+      apiBaseUrl: enterpriseApiBaseUrl,
+      user: { id: 'enterprise-shadow-user-9', email: 'mallory@example.com', name: 'Mallory' },
+      workspace: { id: 'workspace-enterprise', name: 'Enterprise Research', region: 'enterprise', role: 'member' },
     }) as Response);
 
-    await expect(bridge.activateWorkspace({ region: 'eu', workspaceId: 'workspace-eu' }))
+    await expect(bridge.activateWorkspace({ region: 'enterprise', workspaceId: 'workspace-enterprise' }))
       .rejects.toThrow('did not match this workspace request');
   });
 });

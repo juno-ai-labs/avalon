@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 
 import { assertEnvContract, EnvContractError, type Env } from "../src/env";
@@ -100,7 +101,7 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(withoutTerminal)).toThrow(/TERMINAL_PROVIDER is missing/u);
   });
 
-  it("requires the shared telemetry delivery binding only in Global production and staging", () => {
+  it("requires telemetry delivery in hosted deployments", () => {
     const global = contractCompleteEnv() as Env & { TELEMETRY_DELIVERY?: object };
     delete global.TELEMETRY_DELIVERY;
     expect(() => assertEnvContract(global)).toThrow(/TELEMETRY_DELIVERY is missing/u);
@@ -117,18 +118,18 @@ describe("environment contract", () => {
     delete development.TELEMETRY_DELIVERY;
     expect(() => assertEnvContract(development)).not.toThrow();
 
-    const eu = contractCompleteEnv({
-      AVALON_REGION: "eu",
-      PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
+    const enterprise = contractCompleteEnv({
+      AVALON_REGION: "enterprise",
+      PUBLIC_API_BASE_URL: "https://enterprise.api.with-avalon.com",
     }) as Env & { TELEMETRY_DELIVERY?: object };
-    delete eu.TELEMETRY_DELIVERY;
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
-    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
-    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE;
-    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
-    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE;
-    expect(() => assertEnvContract(eu)).not.toThrow();
+    delete enterprise.TELEMETRY_DELIVERY;
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    delete (enterprise as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
+    delete (enterprise as Partial<Env>).INFERENCE_LAKEHOUSE;
+    delete (enterprise as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
+    delete (enterprise as Partial<Env>).ANALYTICS_LAKEHOUSE;
+    expect(() => assertEnvContract(enterprise)).toThrow(/LAKEHOUSE.*missing/u);
   });
 
   it("requires the shared inference-pricing KV binding", () => {
@@ -220,19 +221,19 @@ describe("environment contract", () => {
     expect(() => assertEnvContract({ ...withoutGoogle, APP_ENV: "development" })).not.toThrow();
   });
 
-  it("does not require the Google OAuth secrets in EU, which never carries them", () => {
+  it("does not require the Google OAuth secrets in enterprise, which never carries them", () => {
     // Regression. Identity sign-in happens only through Global, so the deployed
-    // EU Worker has neither key by design — and requiring them there failed its
+    // enterprise Worker has neither key by design — and requiring them there failed its
     // contract on every request, queue batch, and cron tick, while `/health`
     // stayed exempt and went on answering `ok`.
-    const eu = contractCompleteEnv({ AVALON_REGION: "eu", PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com" });
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    const enterprise = contractCompleteEnv({ AVALON_REGION: "enterprise", PUBLIC_API_BASE_URL: "https://enterprise.api.with-avalon.com" });
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
 
-    expect(() => assertEnvContract(eu)).not.toThrow();
+    expect(() => assertEnvContract(enterprise)).not.toThrow();
   });
 
-  it("requires both lakehouse binding pairs in Global but intentionally omits them in EU", () => {
+  it("requires both lakehouse binding pairs in hosted deployments", () => {
     const global = contractCompleteEnv();
     delete (global as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
     delete (global as Partial<Env>).INFERENCE_LAKEHOUSE;
@@ -246,23 +247,23 @@ describe("environment contract", () => {
       /ANALYTICS_LAKEHOUSE is missing, ANALYTICS_LAKEHOUSE_QUEUE is missing/u,
     );
 
-    const eu = contractCompleteEnv({
-      AVALON_REGION: "eu",
-      PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
+    const enterprise = contractCompleteEnv({
+      AVALON_REGION: "enterprise",
+      PUBLIC_API_BASE_URL: "https://enterprise.api.with-avalon.com",
     });
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
-    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
-    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE;
-    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
-    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE;
-    expect(() => assertEnvContract(eu)).not.toThrow();
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    delete (enterprise as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
+    delete (enterprise as Partial<Env>).INFERENCE_LAKEHOUSE;
+    delete (enterprise as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
+    delete (enterprise as Partial<Env>).ANALYTICS_LAKEHOUSE;
+    expect(() => assertEnvContract(enterprise)).toThrow(/LAKEHOUSE.*missing/u);
   });
 
   it("holds an unrecognized region to every rule, including Global's", () => {
     // The fail-closed branch. The invalid-region case above keeps both Google
     // keys, so on its own it never proves they stay required when the region
-    // cannot be read — and a change that treated an unknown region like EU
+    // cannot be read — and a change that treated an unknown region like enterprise
     // would pass the suite without this.
     const unknown = contractCompleteEnv({ AVALON_REGION: "us" as never });
     delete (unknown as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
@@ -277,14 +278,14 @@ describe("environment contract", () => {
     ]);
   });
 
-  it("still requires the OpenRouter key in EU, which does use it", () => {
-    const eu = contractCompleteEnv({ AVALON_REGION: "eu", PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com" });
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
-    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
-    delete (eu as Partial<Env>).OPENROUTER_API_KEY;
+  it("still requires the OpenRouter key in enterprise, which does use it", () => {
+    const enterprise = contractCompleteEnv({ AVALON_REGION: "enterprise", PUBLIC_API_BASE_URL: "https://enterprise.api.with-avalon.com" });
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (enterprise as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    delete (enterprise as Partial<Env>).OPENROUTER_API_KEY;
 
     let thrown: EnvContractError | undefined;
-    try { assertEnvContract(eu); } catch (error) { thrown = error as EnvContractError; }
+    try { assertEnvContract(enterprise); } catch (error) { thrown = error as EnvContractError; }
     expect(thrown?.keys).toEqual(["OPENROUTER_API_KEY is missing"]);
   });
 

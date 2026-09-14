@@ -30,8 +30,6 @@ contracts; activation acknowledgement follows
 | `apps/api/src/services/slack-agent-service.ts` | The Agent surface, tool execution, and the event-scoped search token. |
 | `apps/api/src/routes/slack.ts` | The ingress the subscribed events arrive at. |
 
-## How it works
-
 ### The permission model
 
 - **Workspace bot installation** — a Slack administrator installs the Rally app.

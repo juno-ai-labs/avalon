@@ -1,8 +1,10 @@
+import { configuredRegions, isConfiguredRegion } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-export type NativeCrashRoute = 'global' | 'eu';
+export type NativeCrashRoute = Region;
 
 const LOCAL_CRASH_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -163,7 +165,7 @@ async function classifyInactiveGenerations(
 
 async function purgeExpiredUploadGenerations(rootDirectory: string, now: Date): Promise<string[]> {
   const purged: string[] = [];
-  for (const route of ['global', 'eu'] as const) {
+  for (const route of configuredRegions) {
     const routeDirectory = join(rootDirectory, 'upload', route);
     for (const generationId of await listDirectories(routeDirectory)) {
       const directory = join(routeDirectory, generationId);
@@ -198,7 +200,7 @@ async function readManifest(
     if (candidate.version !== 1
       || candidate.generationId !== expectedGenerationId
       || !GENERATION_ID_PATTERN.test(expectedGenerationId)
-      || (candidate.route !== 'global' && candidate.route !== 'eu')
+      || !isConfiguredRegion(candidate.route)
       || !isIsoInstant(candidate.createdAt)
       || !isIsoInstant(candidate.deleteAfter)
       || (candidate.invalidatedAt !== null && !isIsoInstant(candidate.invalidatedAt))

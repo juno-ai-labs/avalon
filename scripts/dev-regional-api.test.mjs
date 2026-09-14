@@ -3,27 +3,15 @@ import test from 'node:test';
 
 import { regionalApiCommands, wranglerReadyLine } from './dev-regional-api.mjs';
 
-test('starts Global before EU so Wrangler Container image builds cannot race', () => {
-  assert.deepEqual(regionalApiCommands({ local: true }), [
-    {
-      name: 'global',
-      arguments: ['--filter', '@rally/api', 'dev:local'],
-    },
-    {
-      name: 'eu',
-      arguments: ['--filter', '@rally/api', 'dev:local:eu'],
-    },
-  ]);
-  assert.deepEqual(regionalApiCommands({ local: false }), [
-    {
-      name: 'global',
-      arguments: ['--filter', '@rally/api', 'dev'],
-    },
-    {
-      name: 'eu',
-      arguments: ['--filter', '@rally/api', 'dev:eu'],
-    },
-  ]);
+test('starts the configured deployment with its service Workers', () => {
+  const [global] = regionalApiCommands({ local: true });
+  assert.equal(regionalApiCommands({ local: true }).length, 1);
+  assert.equal(global.name, 'global');
+  assert.ok(global.arguments.includes('wrangler.global.jsonc'));
+  assert.ok(global.arguments.includes('wrangler.documents.global.jsonc'));
+  assert.ok(global.arguments.includes('--local'));
+  assert.equal(global.arguments[global.arguments.indexOf('--port') + 1], '8787');
+  assert.ok(!regionalApiCommands({ local: false })[0].arguments.includes('--local'));
 });
 
 test('waits for Wrangler readiness rather than an incidental build line', () => {

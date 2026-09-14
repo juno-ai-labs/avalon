@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
@@ -3627,7 +3628,7 @@ function googleActivityScope(
 > {
   return {
     workspaceId: connection.workspaceId,
-    region: z.enum(["global", "eu"]).parse(connection.config.region ?? "global"),
+    region: RegionSchema.parse(connection.config.region ?? "global"),
     connectionId: connection.id,
     connectionScope: connection.scope,
     connectionOwnerUserId: connection.ownerUserId,

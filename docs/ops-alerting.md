@@ -68,7 +68,7 @@ The events that notify today:
   ids, error codes, attempt counts, alarm kinds and keys. Never a prompt, a
   message body, connector content, a person's name or email, or a workspace
   name — this text leaves Rally for a third party, and the channel may be
-  shared by both regions. The same rule `telemetry_operations_snapshot` keeps.
+  shared by configured deployments. The same rule `telemetry_operations_snapshot` keeps.
 - **The token travels in a header, never in a URL.** The platform's automatic
   tracing records every outbound fetch's `url.full`, and Global exports those
   spans; a credential in a URL path — an incoming webhook's whole design — would
@@ -160,29 +160,6 @@ Cloudflare administration credentials never become Worker variables
   its default Slack token rules, which want digit groups; a realistic-looking
   token in a test trips it.
 
-## Regional impact
-
-Both regions post to the same channel when both are configured, and a notice
-says which region it came from in its first line. An EU notice therefore
-leaves the EU: it carries the ids, codes, and counts under *Invariants* and
-nothing a person wrote, which is the same bar `telemetry_operations_snapshot`
-holds for EU data. A deployment that wants EU notices kept apart configures a
-separate channel in the EU Worker's secrets; nothing in the code assumes one.
-
-## Security and trust model
-
-`OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID` are per-region Cloudflare
-secrets set with `wrangler secret put`, never `vars` entries, never behind a
-`VITE_` name, and never committed; locally they reach `.dev.vars.*` only from
-an ignored `.env.local` through `pnpm env:sync`. Possession of the token is the
-right to post as the operator app wherever it is a member — which is why the
-app is granted `chat:write` alone and invited to one channel, and why the token
-is sent in a header rather than a URL: outbound URLs are recorded by automatic
-tracing and exported, and headers are not. The content rule under *Invariants*
-is the other half: the channel is outside Rally's trust boundary, so a notice
-is treated as a log line handed to a third party, and EU-originated notices
-carry opaque ids only.
-
 ## Operations
 
 Create a small internal Slack app — "Rally Ops" — with the `chat:write` bot
@@ -199,16 +176,6 @@ pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret 
 ```bash
 pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret put OPS_SLACK_CHANNEL_ID --config wrangler.global.jsonc
 ```
-
-and the same two with `--config wrangler.eu.jsonc`. `GET /health` then reports
-`opsNotifications: configured`; one secret without the other reports it half
-configured, and the notifier posts nothing until both are set. Rotating the
-token is a `secret put` of the new one and a revocation of the old in the
-app's settings; nothing in Rally caches it. The events above are the whole
-contract — adding one means adding a row to that table and a test that proves
-it posts once.
-
-## Changelog
 
 ### 2026-08-22 — Created
 

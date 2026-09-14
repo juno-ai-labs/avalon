@@ -34,34 +34,6 @@ workspace-addressed callback machinery. The actions read **Connect for me** and
 opens Settings → Connections for the API key and event configuration; their
 personal connections continue through browser authorization.
 
-Global `users` owns the introduction flag, eligibility, appearance and revision.
-Appearance includes the chosen display name and avatar initials; the name also
-updates `users.name`, and subsequent Google sign-in preserves the custom choice.
-An account save compares the expected revision. A replay of the same saved
-appearance succeeds; a stale different choice returns a conflict. The existing
-identity bridge projects these fields into EU user rows, never a workspace's
-content. Workspace sync invalidations refresh the account and member roster;
-focus also refreshes the account. Theme accents derive from the existing semantic
-palette. Sidebar backgrounds retain the neutral light/dark theme colors rather
-than taking the account accent. Account settings edits preview immediately and
-save each valid change without a Save button or typing delay. One write runs at
-a time; edits arriving during it are combined into the next write using its
-acknowledged revision. The account gate owns the writer so leaving the settings
-pane cannot cancel pending edits. Invalid drafts stay local until corrected;
-failed writes retain the draft and expose Retry after refreshing the revision.
-An older response cannot replace later typing. Onboarding retains its explicit
-Continue step.
-
-Global member notifications are published independently of EU discovery, so an
-EU outage cannot suppress Global profile updates. WorkspaceDO streams the
-existing workspace-profile and member-directory invalidations to connected
-members; their account and roster queries fetch the committed state. New or
-reconnecting users load the current profile through the same authoritative
-queries. EU discovery retains the narrow identity projection and regional
-notifications. Background publication failures remain visible to the Worker
-runtime rather than being swallowed; later discovery still reconciles the EU
-projection.
-
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
 and API before releasing the desktop client; existing accounts are exempted by
@@ -126,15 +98,6 @@ equal projections do not emit repeated invalidations.
 
 ## Testing
 
-Desktop `account-profile-editor.test.ts` covers immediate drafts, serial writes,
-coalescing, conflicts, invalid fields and navigation; `guided-onboarding.test.tsx`
-exercises the real settings fields and account-gate lifecycle, plus the Ashby and
-Granola workspace handoff to Settings and personal Ashby browser authorization.
-Settings search and workspace-socket suites cover discovery and streamed query invalidations.
-`test-workers/account-profile-realtime.test.ts` drives a real account PATCH,
-D1 persistence and delivery to another member's WorkspaceDO socket while EU
-discovery fails. Dropping the route's publication must fail that test.
-
 Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
 `test-workers/onboarding-journey.test.ts`. Account tests apply the actual regional
@@ -146,8 +109,6 @@ cover existing authentication and activation behavior.
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
-
-## Changelog
 
 ### 2026-09-09 — Keep pending onboarding from admitting conversations
 
@@ -193,15 +154,6 @@ workspace still opens the composer. The rule and the reason are in
 [`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream).
 
 ### 2026-09-08 — Save profile changes immediately and move personal appearance to Account
-
-Account profile edits now preview immediately and autosave through one
-account-scoped writer. Queuing every keystroke independently was rejected because
-requests could race on the same revision and responses could erase newer typing.
-The writer combines pending edits, preserves them across pane navigation and
-keeps failed drafts for retry. Global realtime invalidations no longer depend on
-successful EU discovery; the previous coupling could persist a profile while
-silently leaving every connected Global member stale. Sidebar backgrounds remain
-neutral; personal accent and avatar colors still update.
 
 Account settings now uses compact settings rows for name, initials and color,
 with a small live avatar and no Save action. The onboarding editor keeps its

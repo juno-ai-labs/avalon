@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrashIngestService } from '../src/telemetry/crash-ingest';
 import { processPendingCrashReports } from '../src/telemetry/crash-processing';
@@ -91,38 +92,22 @@ describe('regional native crash processing', () => {
     database.close();
   });
 
-  it('keeps a complete internal EU occurrence and never creates a destination job', async () => {
+  it('queues enterprise crash delivery with the same policy as Global', async () => {
     const database = migratedSqliteDatabase();
     const storage = bucket();
     const env = createTestEnv({
-      DB: sqliteD1(database), AVALON_REGION: 'eu', TELEMETRY_PAYLOADS: storage.binding,
+      DB: sqliteD1(database), AVALON_REGION: 'enterprise', TELEMETRY_PAYLOADS: storage.binding,
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
         idFromName: vi.fn(() => createTestDurableObjectId('crash-symbolicator')),
         get: vi.fn(),
       }),
     });
     await new CrashIngestService(env).accept({
-      ...metadata, route: 'eu', dump: dump(), subjectUserId: null,
+      ...metadata, route: 'enterprise', dump: dump(), subjectUserId: null,
     });
     await processPendingCrashReports(env);
     expect(database.prepare('SELECT parser_state, destination_state FROM telemetry_crash_reports').get()).toEqual({
-      parser_state: 'unsymbolicated', destination_state: 'internal_only',
-    });
-    expect(database.prepare(
-      `SELECT fingerprint, occurred_at, release, build_id, platform, architecture,
-              process_role, channel, launch_id, delete_at
-       FROM telemetry_eu_crash_contributions`,
-    ).get()).toEqual({
-      fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
-      occurred_at: '2026-08-12T20:00:00.000Z',
-      release: '1.96.0',
-      build_id: 'build-123',
-      platform: 'darwin',
-      architecture: 'arm64',
-      process_role: 'renderer',
-      channel: 'stable',
-      launch_id: metadata.launchId,
-      delete_at: '2027-09-12T20:00:00.000Z',
+      parser_state: 'unsymbolicated', destination_state: 'pending',
     });
     database.close();
   });

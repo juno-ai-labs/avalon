@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
@@ -36,7 +37,7 @@ describe('native desktop authentication attempts', () => {
       randomBytes: (size) => Uint8Array.from({ length: size }, () => seed++ % 256),
     });
     const first = store.create('https://api.rallywith.ai', 'global');
-    const second = store.create('https://eu.api.rallywith.ai', 'eu');
+    const second = store.create('https://enterprise.api.rallywith.ai', 'enterprise');
     const third = store.create('https://api.rallywith.ai', 'global');
 
     expect(store.proof(first.attemptId)).toBeNull();
@@ -52,7 +53,7 @@ describe('native desktop authentication attempts', () => {
   it('supports explicit single-attempt and logout cleanup', () => {
     const store = new DesktopAuthAttemptStore();
     const first = store.create('https://api.rallywith.ai', 'global');
-    store.create('https://eu.api.rallywith.ai', 'eu');
+    store.create('https://enterprise.api.rallywith.ai', 'enterprise');
     store.discard(first.attemptId);
     expect(store.proof(first.attemptId)).toBeNull();
     expect(store.size).toBe(1);

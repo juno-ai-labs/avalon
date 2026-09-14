@@ -1,10 +1,11 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it, vi } from 'vitest';
 import { refreshTelemetryCapability, resolveTelemetryRoute } from './telemetry-route';
 
 const anonymousEpochId = '018f0000-0000-7000-8000-000000000001';
 const bootstrap = {
   journeyId: '018f0000-0000-7000-8000-000000000002',
-  route: 'eu' as const,
+  route: 'enterprise' as const,
   routingBasis: 'ip_geolocation' as const,
   capability: 'c'.repeat(64),
   expiresAt: '2026-08-12T21:00:00.000Z',
@@ -14,8 +15,8 @@ describe('desktop telemetry route gate', () => {
   it('uses an explicit signed-in workspace binding without asking Global geolocation', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     await expect(resolveTelemetryRoute({
-      explicitRegion: 'eu', anonymousEpochId, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
-    })).resolves.toEqual({ route: 'eu', basis: 'explicit_binding', anonymous: null });
+      explicitRegion: 'enterprise', anonymousEpochId, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
+    })).resolves.toEqual({ route: 'enterprise', basis: 'explicit_binding', anonymous: null });
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -25,7 +26,7 @@ describe('desktop telemetry route gate', () => {
     }));
     await expect(resolveTelemetryRoute({
       explicitRegion: null, anonymousEpochId, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
-    })).resolves.toEqual({ route: 'eu', basis: 'ip_geolocation', anonymous: bootstrap });
+    })).resolves.toEqual({ route: 'enterprise', basis: 'ip_geolocation', anonymous: bootstrap });
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ anonymousEpochId });
   });
 
@@ -42,7 +43,7 @@ describe('desktop telemetry route gate', () => {
   });
 
   it('refreshes only the same journey and rejects a route change', async () => {
-    const current = { route: 'eu' as const, basis: 'ip_geolocation' as const, anonymous: bootstrap };
+    const current = { route: 'enterprise' as const, basis: 'ip_geolocation' as const, anonymous: bootstrap };
     const refreshed = { ...bootstrap, capability: 'd'.repeat(64), expiresAt: '2026-08-12T22:00:00.000Z' };
     const matching = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify(refreshed), {
       status: 201, headers: { 'content-type': 'application/json' },

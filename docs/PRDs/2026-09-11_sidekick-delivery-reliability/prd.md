@@ -301,8 +301,6 @@ answer was lost.
   reverting their changes, and none of them alters stored data a revert
   cannot read.
 
-## Decision log
-
 ### 2026-09-11 — Absence reaches the wire through the sanitizer, not through per-parameter conversion
 
 **Decided:** `@juno-ai/bind` 14 rewrites a nullable single type to `anyOf`

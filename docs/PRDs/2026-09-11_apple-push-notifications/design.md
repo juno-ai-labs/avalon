@@ -113,7 +113,7 @@ rather than dropped:
 
 ## Schema
 
-Regional D1, both regions, `packages/db/migrations/<next>_user_push_devices.sql`:
+Regional D1, configured deployments, `packages/db/migrations/<next>_user_push_devices.sql`:
 
 ```sql
 CREATE TABLE user_push_devices (
@@ -260,13 +260,6 @@ up.
 
 ## The delivery consumer
 
-`consumePushDeliveryQueue(batch, env)`, dispatched from `worker-events.ts`
-beside the access-revocation consumer, on `avalon-global-push-deliveries` /
-`avalon-eu-push-deliveries`, each with `<queue>-dead-letter`, declared as
-producer and consumer in both Wrangler files, created by `deploy-api.yml`'s
-queue step. Consumer settings copy the access-revocation queue's and are the
-team's to change.
-
 Per message:
 
 1. Parse `PushDeliveryMessageSchema`; a region mismatch is a thrown error (as the
@@ -315,27 +308,6 @@ Group by the main workstream ID, including notifications originating in its
 substreams. The notification URL still opens the originating substream.
 
 `renderPushPayload(intent, platform)`:
-
-```jsonc
-// macos and ios share the aps core
-{
-  "aps": {
-    "alert": { "title": "<intent.title>", "body": "<intent.body>" },
-    "thread-id": "<intent.threadKey>",
-    "sound": "default",
-    "category": "RALLY_<KIND>",
-    "mutable-content": 1          // ios only; reserved for a service extension
-    // "badge": n                  // ios only; deferred with the unread source
-  },
-  "rally": {
-    "v": 1,
-    "kind": "<mention|participant_added>",
-    "url": "<intent.url>",
-    "workspaceId": "<opaque>",
-    "region": "<global|eu>"
-  }
-}
-```
 
 `rally.url` is the canonical work-stream link the mention email already carries
 (`packages/contracts/src/workstream-links.ts`); the desktop routes it through

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { TelemetryBootstrapService } from "../src/telemetry/bootstrap";
@@ -26,7 +27,7 @@ function onboardingEvent(journeyId: string): TelemetryEnvelope {
       onboardingJourneyId: journeyId,
       operationId: eventId,
     },
-    properties: { selectedRegion: "eu", entrypoint: "first_run" },
+    properties: { selectedRegion: "enterprise", entrypoint: "first_run" },
   };
 }
 
@@ -54,8 +55,8 @@ describe("anonymous telemetry bootstrap", () => {
   afterEach(() => vi.useRealTimers());
 
   it.each([
-    ["DE", "eu", "ip_geolocation"],
-    ["US", "global", "ip_geolocation"],
+    ["DE", "global", "geolocation_fallback"],
+    ["US", "global", "geolocation_fallback"],
     [undefined, "global", "geolocation_fallback"],
     ["XX", "global", "geolocation_fallback"],
   ] as const)("routes country %s immediately to %s", async (country, route, routingBasis) => {
@@ -66,7 +67,7 @@ describe("anonymous telemetry bootstrap", () => {
       SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
     }));
 
-    const result = await service.bootstrap(epochId, country);
+    const result = await service.bootstrap(epochId);
     expect(result).toMatchObject({ route, routingBasis });
     expect(result.capability).not.toContain(epochId);
     expect(database.prepare(`
@@ -87,66 +88,25 @@ describe("anonymous telemetry bootstrap", () => {
     database.close();
   });
 
-  it("forwards the exact validated EU projection and keeps no Global event row", async () => {
-    const database = migratedSqliteDatabase();
-    const projections: unknown[] = [];
-    const service = new TelemetryBootstrapService(createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
-      EU_TELEMETRY_BRIDGE: {
-        acceptAnonymous: async (projection: unknown) => {
-          projections.push(projection);
-          return { result: "accepted", eventId };
-        },
-      },
-    }));
-    const bootstrap = await service.bootstrap(epochId, "FR");
-
-    await expect(service.accept(bootstrap.capability, [onboardingEvent(bootstrap.journeyId)]))
-      .resolves.toEqual([{ result: "accepted", eventId }]);
-    expect(projections).toEqual([{
-      event: onboardingEvent(bootstrap.journeyId),
-      route: "eu",
-      routingBasis: "ip_geolocation",
-      analyticsSubjectId: epochId,
-      subjectUserId: null,
-      workspaceAnalyticsId: null,
-    }]);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM telemetry_accepted_events").get())
-      .toEqual({ count: 0 });
-    database.close();
-  });
-
   it("accepts a pre-workspace creation intent under the fixed anonymous epoch", async () => {
     const database = migratedSqliteDatabase();
-    const projections: unknown[] = [];
     const service = new TelemetryBootstrapService(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
-      EU_TELEMETRY_BRIDGE: {
-        acceptAnonymous: async (projection: unknown) => {
-          projections.push(projection);
-          return { result: "accepted", eventId };
-        },
-      },
     }));
-    const bootstrap = await service.bootstrap(epochId, "DE");
+    const bootstrap = await service.bootstrap(epochId);
     const intent: TelemetryEnvelope = {
       ...onboardingEvent(bootstrap.journeyId),
       name: "workspace_create_requested",
       identityScope: "anonymous-epoch",
-      properties: { selectedRegion: "eu", entrypoint: "first_run" },
+      properties: { selectedRegion: "enterprise", entrypoint: "first_run" },
     };
 
     await expect(service.accept(bootstrap.capability, [intent]))
       .resolves.toEqual([{ result: "accepted", eventId }]);
-    expect(projections).toMatchObject([{
-      route: "eu",
-      analyticsSubjectId: epochId,
-      event: { name: "workspace_create_requested", identityScope: "anonymous-epoch" },
-    }]);
+    expect(database.prepare('SELECT route, analytics_subject_id FROM telemetry_accepted_events WHERE event_id = ?').get(eventId))
+      .toEqual({ route: 'global', analytics_subject_id: epochId });
     database.close();
   });
 
@@ -157,7 +117,7 @@ describe("anonymous telemetry bootstrap", () => {
       AVALON_REGION: "global",
       SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
     }));
-    const bootstrap = await service.bootstrap(epochId, "US");
+    const bootstrap = await service.bootstrap(epochId);
     const valid = onboardingEvent(bootstrap.journeyId);
 
     await expect(service.accept(`${bootstrap.capability}x`, [valid]))
@@ -179,7 +139,7 @@ describe("anonymous telemetry bootstrap", () => {
       AVALON_REGION: "global",
       SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
     }));
-    const bootstrap = await service.bootstrap(epochId, "US");
+    const bootstrap = await service.bootstrap(epochId);
     const installationId = "018f22f2-4c22-7abc-8def-0123456789ad";
     await expect(service.accept(bootstrap.capability, [lifecycleEvent()], installationId))
       .resolves.toEqual([{ result: "accepted", eventId }]);
@@ -193,7 +153,7 @@ describe("anonymous telemetry bootstrap", () => {
     const database = migratedSqliteDatabase();
     database.prepare(`INSERT INTO telemetry_onboarding_journeys
       (journey_id, anonymous_epoch_id, route, routing_basis, created_at, expires_at, delete_at)
-      VALUES (?, ?, 'eu', 'ip_geolocation', ?, ?, ?)`).run(
+      VALUES (?, ?, 'enterprise', 'ip_geolocation', ?, ?, ?)`).run(
       "018f22f2-4c22-7abc-8def-0123456789aa",
       epochId,
       "2026-05-13T19:00:00.000Z",
@@ -206,9 +166,9 @@ describe("anonymous telemetry bootstrap", () => {
       SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key",
     }));
 
-    const result = await service.bootstrap(epochId, "US");
+    const result = await service.bootstrap(epochId);
 
-    expect(result).toMatchObject({ route: "global", routingBasis: "ip_geolocation" });
+    expect(result).toMatchObject({ route: "global", routingBasis: "geolocation_fallback" });
     expect(result.journeyId).not.toBe("018f22f2-4c22-7abc-8def-0123456789aa");
     expect(database.prepare(`SELECT COUNT(*) AS count FROM telemetry_onboarding_journeys
       WHERE anonymous_epoch_id = ?`).get(epochId)).toEqual({ count: 1 });

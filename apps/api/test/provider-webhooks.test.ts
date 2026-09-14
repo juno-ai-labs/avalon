@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import type { ConnectorConnectionContext, ConnectorError } from "@rally/connectors";
 import type { Scope } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1291,24 +1292,24 @@ describe("provider-wide webhook ingestion", () => {
     expect(database.challenge?.setup_nonce_hash).toBe(await sha256(newNonce));
   });
 
-  it("prevents older challenge replication from overwriting a newer EU generation", async () => {
+  it("prevents older challenge replication from overwriting a newer enterprise generation", async () => {
     const database = new FakeDatabase();
     const service = serviceFor(
       database,
       new FakeBucket(),
       new FakeQueue(),
-      { AVALON_REGION: "eu" },
+      { AVALON_REGION: "enterprise" },
     );
 
-    await service.storeNotionChallengeToken("newer-eu-token", null, 2);
-    await expect(service.storeNotionChallengeToken("older-eu-token", null, 1))
+    await service.storeNotionChallengeToken("newer-enterprise-token", null, 2);
+    await expect(service.storeNotionChallengeToken("older-enterprise-token", null, 1))
       .rejects.toMatchObject({ code: "unauthorized" });
     await expect(decryptString(
       database.challenge!.encrypted_token,
       database.challenge!.token_iv,
       ENCRYPTION_KEY,
-      "provider-webhook:notion:eu",
-    )).resolves.toBe("newer-eu-token");
+      "provider-webhook:notion:enterprise",
+    )).resolves.toBe("newer-enterprise-token");
     expect(database.challenge?.setup_generation).toBe(2);
   });
 

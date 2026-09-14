@@ -1,10 +1,12 @@
+import type { Region } from "@rally/contracts/regions";
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
 import { ConnectorError } from '@rally/connectors';
 import type { Env } from '../env';
 import { ApiError } from '../lib/api-error';
 import { workspaceRegionalDatabase } from './workspace-runtime-database';
 
-export const AshbyRouteSchema = z.strictObject({ connectionId: z.string().uuid(), region: z.enum(['global', 'eu']), status: z.enum(['active', 'disabled']) });
+export const AshbyRouteSchema = z.strictObject({ connectionId: z.string().uuid(), region: RegionSchema, status: z.enum(['active', 'disabled']) });
 export const AshbyIngressSchema = z.strictObject({ connectionId: z.string().uuid(), rawBody: z.instanceof(ArrayBuffer), signature: z.string().nullable() });
 export const AshbyIngestionResultSchema = z.union([
   z.strictObject({ ping: z.literal(true) }),
@@ -12,12 +14,12 @@ export const AshbyIngestionResultSchema = z.union([
 ]);
 export type AshbyRpcResult<T> = { ok: true; value: T } | { ok: false; error: { status: ApiError['status']; code: string; message: string } };
 export interface GlobalAshbyRouterRpcBinding {
-  health(): Promise<AshbyRpcResult<{ region: "global" | "eu" }>>;
-  lookupRoute(connectionId: string): Promise<AshbyRpcResult<{ region: "global" | "eu" }>>;
+  health(): Promise<AshbyRpcResult<{ region: Region }>>;
+  lookupRoute(connectionId: string): Promise<AshbyRpcResult<{ region: Region }>>;
   registerRoute(input: z.infer<typeof AshbyRouteSchema>): Promise<AshbyRpcResult<{ registered: true }>>;
 }
 export interface AshbyRegionalBridgeRpcBinding {
-  health(): Promise<AshbyRpcResult<{ region: "global" | "eu" }>>;
+  health(): Promise<AshbyRpcResult<{ region: Region }>>;
   ingest(input: z.infer<typeof AshbyIngressSchema>): Promise<AshbyRpcResult<z.infer<typeof AshbyIngestionResultSchema>>>;
 }
 export async function serializeAshbyRpcResult<T>(operation: () => Promise<T>): Promise<AshbyRpcResult<T>> {
@@ -38,7 +40,7 @@ function unwrap<T>(result: AshbyRpcResult<T>): T {
 /** Global stores only an opaque routing address, never API keys or signing secrets. */
 export async function registerAshbyRoute(env: Env, input: z.infer<typeof AshbyRouteSchema>) {
   const route = AshbyRouteSchema.parse(input);
-  if (env.AVALON_REGION === 'eu') {
+  if (env.AVALON_REGION !== 'global') {
     if (!env.GLOBAL_ASHBY_ROUTER) throw new ApiError(503, 'ashby_routing_unavailable', 'Ashby routing is unavailable');
     return unwrap(await env.GLOBAL_ASHBY_ROUTER.registerRoute(route));
   }

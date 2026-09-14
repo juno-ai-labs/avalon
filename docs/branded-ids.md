@@ -59,8 +59,6 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 — a deliberate compromise recorded here so a later pass can push the brands
 through their callers.
 
-## Changelog
-
 ### 2026-08-29 — Transcript turn identity is explicitly opaque
 
 **What changed:** `TranscriptTurnIdSchema` is the shared contract for canonical

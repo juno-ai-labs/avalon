@@ -167,19 +167,6 @@ edits and republishes. If context was compacted, the resource inventory
 and `workstream_list_resources` rediscover the document exactly as they
 rediscover any attachment.
 
-**States and failure.** Terminal unavailable for the run (region, origin,
-or plugin rules): the guidance is absent and the answer is inline, as
-today. Concretely, Terminal is configured supported in the Global region
-and unsupported in the EU today, so this PRD changes nothing for EU
-workspaces until that configuration changes — a real product asymmetry,
-named again under rollout risks. Sandbox acquisition fails: the model falls back to answering
-inline and says so — a worse answer beats no answer. Publish fails: the
-standard tool failure surfaces on its activity row, and the model retries
-or reports per its ordinary tool-failure behavior. A participant's
-explicit instruction always wins in both directions: "just answer in
-chat" produces an inline answer regardless of shape; "make that a
-document" produces a file-and-publish regardless of length.
-
 **The trigger heuristic** carries over from the superseded PRD, restated
 as this policy's intent: explicit document-type requests (PRD, press
 release, plan, spec, brief, report, proposal, memo, FAQ, or comparable)
@@ -196,8 +183,6 @@ typed, authorized tools that already exist; a published document is a
 resource, one of the contract's named persistent kinds; participants see
 tool activity and a resource, never a terminal, shell, or PTY; viewing
 the document is viewing and creates no participation. No clause moves.
-
-## Decision log
 
 ### 2026-08-27 — Acceptance criterion 1 is blocked: nothing in the client reads a published document
 
@@ -391,13 +376,9 @@ module itself are still made deliberately, as for any prompt change.
 
 1. Ship the policy module and the publish-path refinement in one API
    deploy. No desktop release, no migration, no flag.
+
 2. Rollback is reverting the policy module (the publish-path refinement is
    inert without the guidance driving republish traffic and can stay).
-3. Tuning is prompt wording, measured the way the superseded PRD's
-   instrumentation section proposed: publish rates, rail-open rates, and
-   participant overrides reviewed through the Global inference lakehouse —
-   EU runs are invisible to that loop by design, so dogfooding cohorts
-   should be Global.
 
 **Migration and compatibility risks, stated plainly:**
 
@@ -405,6 +386,7 @@ module itself are still made deliberately, as for any prompt change.
   wide (non-goal 4 accepts this). Whether the addition warrants a
   work-stream prompt-version bump is settled at implementation against
   the in-flight-run cost that bump carries.
+
 - Changing publish identity derivation must not disturb replay of
   already-settled publishes. Today the publish path derives the
   resource's provider identity from the per-call effect intent, which is
@@ -412,13 +394,11 @@ module itself are still made deliberately, as for any prompt change.
   work stream and published path, while single-call replay keeps its
   receipt-based dedupe. Existing dogfood resources keep their
   identities; only new publishes adopt path-scoped identity.
-- EU workspaces get nothing from this PRD while Terminal is regionally
-  unsupported there; document generation for the EU arrives with EU
-  Terminal support or with a different producer, and pretending
-  otherwise in rollout comms would be worse than the gap.
+
 - Until the versioning sibling lands, republish is destructive
   (latest-only); teams relying on drafts-history during that window have
   the transcript, not the document, as their record.
+
 - Sandbox cold-start adds seconds to the first document request in a work
   stream; accepted, since generation time dominates.
 

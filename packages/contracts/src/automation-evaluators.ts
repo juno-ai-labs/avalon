@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import {
   ActivitySourceBindingKeySchema,
@@ -271,7 +272,7 @@ export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema
 export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.strictObject({
   type: z.literal("workspace_external_event_delivery_v1"),
   schemaVersion: z.literal(1),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   workspaceId: IdSchema.brand<"WorkspaceId">(),
   registrationId: IdSchema,
   destination: ExternalEventDestinationSchema,

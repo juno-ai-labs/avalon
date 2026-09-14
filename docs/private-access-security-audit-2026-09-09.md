@@ -41,8 +41,6 @@ HTTP attacks. That is valuable network/traffic-pattern protection, but it is not
 an application email budget or proof that low-rate valid-looking abuse is blocked.
 [Cloudflare DDoS defaults](https://developers.cloudflare.com/ddos-protection/get-started/).
 
-## Findings still requiring launch controls
-
 ### High — arbitrary-address email abuse and waitlist poisoning
 
 `apps/api/src/routes/private-access.ts` accepts an unauthenticated address and
@@ -160,20 +158,21 @@ email/R2 use through aliases, but the earlier authority read still occurs. It is
 not a substitute for the pre-D1 control above. Canonical webhook hosts already
 have their own path fences; do not broadly rewrite those during acquisition work.
 
-## Controls verified as sound within scope
-
 - Tokens use 256 bits of cryptographic randomness; storage retains SHA-256 only.
+
 - Download authority is the bearer token, as requested; email verification and
   approved-account sign-in gates were not introduced.
+
 - Grant queries are parameterized, token lookups are indexed, and deadlines use
   normalized UTC strings. Expiry/revocation/use is rechecked at atomic admission.
+
 - GET/HEAD and email-link previews do not consume a grant. Missing R2 objects do
   not consume it. Concurrent single-use redemption admits only one stream.
+
 - The generated token is a URL fragment, removed by the browser and excluded from
   site telemetry. Redeeming streams bytes instead of returning a reusable object
   redirect. No caller-supplied bucket key or download destination is accepted.
-- Ace issuance remains behind Cloudflare Access and same-origin mutation checks.
-  Request lists do not include bearer tokens. EU acquisition is refused.
+
 - Existing public installer/updater URLs remain accessible by design. Restricted
   landing links do not make distribution exclusive or prevent resharing a DMG.
 
@@ -214,7 +213,6 @@ sender/reply domain, and confirm deployed rules actually cover the canonical hos
 without alias bypass. No high-volume production experiment is required to turn on
 basic protection. Recheck CI and review against the final head, deploy API/schema
 first, then publish site/Ace. Automatic merge/deployment is paused during this audit.
-
 
 ## Follow-up — launch essentials implementation (2026-09-09)
 

@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import type { ConnectorInstallationManagement } from "./installation";
 import type { ToolDefinition } from "@rally/contracts";
 import { z, type ZodError } from "zod";
@@ -643,7 +644,7 @@ export function createFirefliesConnector(config: FirefliesConnectorConfig): Conn
         const occurredAt = new Date(event.timestamp).toISOString();
         return {
           workspaceId: connection.workspaceId,
-          region: connection.config.region === "eu" ? "eu" : "global",
+          region: RegionSchema.parse(connection.config.region ?? "global"),
           connectionId: connection.id,
           connectionScope: connection.scope,
           connectionOwnerUserId: connection.ownerUserId,

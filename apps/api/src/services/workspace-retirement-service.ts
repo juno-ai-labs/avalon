@@ -88,7 +88,7 @@ export async function retireWorkspaceGraph(
   // it is the caller's to ask for, not this function's to infer.
   //
   // The running Worker's own region, never the caller's. A region taken as a
-  // parameter does not cross a region — it builds an EU-shaped *name* and
+  // parameter does not cross a region — it builds a regional-shaped *name* and
   // resolves it in the Global jurisdiction, which brings brand-new empty
   // objects into existence, tombstones them, and reports the workspace closed
   // while the real one stays open and serving.

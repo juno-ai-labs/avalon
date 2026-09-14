@@ -1,3 +1,7 @@
+import { configuredRegions } from "@rally/contracts/regions";
+import { regionalDatabase } from "./regional-api";
+import type { Region } from "@rally/contracts/regions";
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
 import type { Env } from './env';
 
@@ -5,7 +9,7 @@ export interface DirectoryUser {
   id: string;
   email: string;
   name: string;
-  region: 'global' | 'eu';
+  region: Region;
 }
 
 /** One workspace row as the page reads it; the page parses the answer with this rather than trusting it. */
@@ -13,11 +17,11 @@ export const DirectoryWorkspaceSchema = z.strictObject({
   id: z.string().uuid(),
   name: z.string(),
   slug: z.string(),
-  region: z.enum(['global', 'eu']),
+  region: RegionSchema,
 });
 export type DirectoryWorkspace = z.infer<typeof DirectoryWorkspaceSchema>;
 
-export type DirectoryRegion = 'global' | 'eu';
+export type DirectoryRegion = Region;
 
 /**
  * A workspace search over both regions. A region that did not answer is named
@@ -27,7 +31,7 @@ export type DirectoryRegion = 'global' | 'eu';
  */
 export const WorkspaceSearchResultSchema = z.strictObject({
   results: z.array(DirectoryWorkspaceSchema),
-  unavailableRegions: z.array(z.enum(['global', 'eu'])),
+  unavailableRegions: z.array(RegionSchema),
 });
 export type WorkspaceSearchResult = z.infer<typeof WorkspaceSearchResultSchema>;
 
@@ -35,7 +39,7 @@ function like(query: string): string {
   return `%${query.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
 }
 
-async function users(db: D1Database, region: 'global' | 'eu', query: string): Promise<DirectoryUser[]> {
+async function users(db: D1Database, region: Region, query: string): Promise<DirectoryUser[]> {
   const result = await db.prepare(
     `SELECT platform_user_id AS id, email, name
        FROM users
@@ -48,7 +52,7 @@ async function users(db: D1Database, region: 'global' | 'eu', query: string): Pr
 
 async function workspaces(
   db: D1Database,
-  region: 'global' | 'eu',
+  region: Region,
   query: string,
 ): Promise<DirectoryWorkspace[]> {
   // By id as well as by name or slug: the retirement form asks the operator to
@@ -62,21 +66,14 @@ async function workspaces(
 }
 
 export async function searchUsers(env: Env, query: string): Promise<DirectoryUser[]> {
-  const [global, eu] = await Promise.all([
-    users(env.GLOBAL_DB, 'global', query),
-    users(env.EU_DB, 'eu', query),
-  ]);
-  return [...global, ...eu];
+  return (await Promise.all(configuredRegions.map((region) => users(regionalDatabase(env, region), region, query)))).flat();
 }
 
 export async function searchWorkspaces(env: Env, query: string): Promise<WorkspaceSearchResult> {
   // Settled, not raced: one region's outage must not blank the other's rows,
   // and it must be reported rather than read as "no matches".
-  const settled = await Promise.allSettled([
-    workspaces(env.GLOBAL_DB, 'global', query),
-    workspaces(env.EU_DB, 'eu', query),
-  ]);
-  const regions: DirectoryRegion[] = ['global', 'eu'];
+  const regions = configuredRegions;
+  const settled = await Promise.allSettled(regions.map((region) => workspaces(regionalDatabase(env, region), region, query)));
   const results: DirectoryWorkspace[] = [];
   const unavailableRegions: DirectoryRegion[] = [];
   settled.forEach((outcome, index) => {

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -97,7 +98,7 @@ describe("migrated SQLite fixtures", () => {
       `INSERT INTO platform_workspace_bindings
          (platform_user_id, region, workspace_id, status, operation_id,
           pending_expires_at, created_at, updated_at, placement_affinity)
-       VALUES (?, 'eu', ?, 'active', ?, NULL, ?, ?, 'weur')`,
+       VALUES (?, 'global', ?, 'active', ?, NULL, ?, ?, 'wnam')`,
     ).run(
       "00000000-0000-7000-8000-0000000000a1",
       "00000000-0000-7000-8000-0000000000a2",
@@ -117,14 +118,14 @@ describe("migrated SQLite fixtures", () => {
          FROM platform_workspace_bindings`,
     ).get()).toEqual({
       platform_user_id: "00000000-0000-7000-8000-0000000000a1",
-      region: "eu",
+      region: "global",
       workspace_id: "00000000-0000-7000-8000-0000000000a2",
       status: "active",
       operation_id: "00000000-0000-7000-8000-0000000000a3",
       pending_expires_at: null,
       created_at: "2026-08-01T00:00:00.000Z",
       updated_at: "2026-08-01T00:00:00.000Z",
-      placement_affinity: "weur",
+      placement_affinity: "wnam",
     });
     expect(database.prepare(
       `SELECT COUNT(*) AS count FROM platform_workspace_operations`,

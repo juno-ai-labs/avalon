@@ -75,79 +75,6 @@ pagination contract, not a claim that hashing prevents existence inference.
 A resource returns after its first valid attachment grant; unrelated
 alternative locations do not need to be read once access is established.
 
-Search decision snapshots use Global `AUTHORIZATION_CACHE` KV, with WorkspaceDO
-SQLite as the regional fallback (including EU). Keys hash the schema version,
-workspace, user, delegation and exact resource address. New keys never read the
-legacy snapshots. Member search answers a miss unavailable, omits the candidate
-without reporting it, and resolves canonical authority once after the response
-(`waitUntil`), storing allowed, denied or not-found decisions; other callers
-resolve the miss inline. A miss is the exception, not the first-search norm:
-every push job first registers the pairs its target reaches (see below), so the
-decision a search needs exists before the search. A KV miss whose decision the
-durable projection already holds is answered from there and republished to KV
-under its generation fence, so a cached negative lookup does not keep missing.
-Global reads only KV on the request; EU reads the WorkspaceDO snapshot table, one
-warm object, on the request. Cache hits never recheck owners or schedule work.
-There is no TTL, age-based denial, or periodic/demand-driven refresh. Relevant
-WorkspaceDO row mutations and accepted child inventory deliveries transactionally
-record a coalesced push intent. The alarm sends a reference-only
-`search_authorization_push_v1` target job to the regional activity queue.
-The consumer first registers the pairs its target reaches, read from the
-WorkspaceDO's own directories (`search-authorization-universe.ts`): a parent
-reaches its members when workspace-scoped and its participants otherwise, for
-the main feed, every child the inventories or backfill registry name, and every
-attachment-admitted resource located under it; a connection reaches every member
-for one `connection` address; a note reaches every member, an upload the readers
-of its locations and its uploader; a member reaches everything that member could
-read, skipping archived rooms. This is discovery for registration, never a
-grant, and it over-approximates on purpose: a registered denial costs one key,
-a missing grant costs a search result. Connector resources are not registered
-per resource at all. Their readability is exactly their connection's (scope,
-owner, status), so the index row carries `connection_id` and the read path
-admits it by the `(subject, connection)` decision; the busiest workspace holds
-about 81,000 synced resources against 18 connections, which is the difference
-between a projection that fits a Durable Object and one that does not.
-Membership changes name the member: a removal, a departure or an accepted
-invitation publishes a `member` push for that user alone, on top of the
-`member_directory` refresh of every registered key. WorkspaceDO migration 48
-queues one push per live parent, connection and attachment-admitted resource so
-existing workspaces are registered without waiting for a mutation.
-The consumer then reloads the registered subjects' canonical decisions and publishes
-replacements through WorkspaceDO. Registration allocates a monotonically increasing
-per-key generation before authority reads; superseded generations cannot publish.
-A superseded push retries so a newer, failed cache fill cannot consume its durable
-mutation intent.
-An instance-local per-key queue orders KV writes without holding a DO-wide
-`blockConcurrencyWhile` across network I/O. Unrelated events and keys remain runnable.
-Unavailable owners preserve the previous decision and retry through the queue.
-Push jobs identify a changed parent, resource or connection. Indexed key addresses
-and a normalized dependency table select
-matching resource addresses, recorded owner dependencies and current attachment
-locations, so new grants and removed grants both reach their keys. Pending
-mutations coalesce per target. Misses register their key before loading owners,
-so concurrent source changes can reach a decision being populated. Unavailable
-placeholders are targeted by address/current locations rather than included in
-every parent push. Failed subjects do not prevent remaining subjects from
-publishing; failed queue messages retry without abandoning sibling messages.
-Registration retains current attachment dependencies before reading owners, so
-a removal during an initial fill still targets that key. Cache-read or
-miss-population failures become unavailable candidates, preserving
-partial search results. Archived conversation content remains excluded by the
-index's archive attribute, independently of cached authorization.
-Changes reach cached grants and denials without another search. This deliberately
-accepts eventual consistency for grants and revocations, including queue and KV
-propagation delay. Five minutes remains a design goal, never a refresh trigger.
-
-A cache-admitted candidate renders from the index: its text, title, time and
-archive state travel with the row, written by the owning object (see
-[text search](text-search.md)). No content RPC runs on the read path.
-`readAdmittedSearchContent` and `resourceSearchRecords` remain callable for one
-release so Workers still rolling out can finish their requests, and are
-otherwise unused. Normal product reads continue through their own access path.
-Legacy snapshot RPCs remain inert for rolling compatibility; the shipped SQLite
-table is reused under the new key prefix and must not be dropped. EU never reads
-Global KV.
-
 The attachment reverse index remains Queue-maintained discovery, never a grant.
 Each positive attachment path is checked against its current canonical owner.
 Completed negative discovery is usable regardless of observation age; source
@@ -284,18 +211,6 @@ The conversation contract test proves a cached grant stays usable until a push
 publishes revocation. Deliberately disabling cache reuse, publication, and queue
 delivery makes the corresponding regression tests fail.
 
-## Regional impact
-
-All owner state, Queue references and WorkspaceDO snapshots stay in their
-workspace region. Global Wrangler configuration declares a dedicated KV binding
-for provisioning on first deployment. The pinned Wrangler 4.129.0 CLI enables
-`experimental-provision` and `experimental-auto-create` by default; its binding
-provisioner creates or reuses the named resource. No production deployment was
-performed to verify that operation. KV stores Global search decisions when bound;
-regional SQLite provides the fallback. The binding is therefore absent from the
-environment contract's required `productionOnlyBindings` list. EU deliberately has
-no authorization KV binding and does not use a Global fallback. See [regionalization](regionalization.md).
-
 ## Operations
 
 The private control binding accepts `{workspaceId, action}` where action is
@@ -356,12 +271,6 @@ not authorization rechecks on ordinary reads.
 
 ### Explicit visibility experiment
 
-`scripts/fixtures/kv-visibility-probe.mjs` is a disposable Worker, separate from
-product traffic. Bind the Global authorization namespace as `AUTHORIZATION_CACHE`,
-set a temporary `PROBE_TOKEN`, and deploy copies with explicit `placement.region`
-hints (for example `gcp:us-west1` and `gcp:europe-west1`). It can only access synthetic
-`measurement:kv-visibility:` UUID keys. No user grants or EU product data enter the experiment.
-
 Run `PROBE_TOKEN=... node scripts/measure-kv-visibility.mjs --writer <url>
 --reader <url> --reader <url> --samples <n> --interval-ms <n> --observation-ms <n>`.
 The caller chooses the experimental sample count, polling resolution, and observation
@@ -373,8 +282,6 @@ reports unfinished observations explicitly, and deletes its synthetic key afterw
 placement hints with results. Visibility times include polling resolution and use
 Worker timestamps; they are not exact replication timestamps. Remove probe deployments
 after the experiment. Pair these results with mutation-to-write-ack queue events.
-
-## Changelog
 
 ### 2026-09-10 — Republish a durable decision after a cached KV miss
 

@@ -1,3 +1,5 @@
+import { RegionSchema } from "@rally/contracts/regions";
+import { regionalBindings } from "../lib/regional-bindings";
 import { asAutomationId, asUserId, asWorkspaceId, type Region } from "@rally/contracts";
 import { newId } from "@rally/db";
 import { z } from "zod";
@@ -72,7 +74,7 @@ const RegionalEmailInputSchema = z.object({
   resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
   svixId: z.string().min(1).max(200),
   receivedAt: z.string().datetime({ offset: true }),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   workspaceId: z.string().min(1).max(200),
   targetType: z.enum(["workstream", "automation"]).optional(),
   workstreamId: z.string().min(1).max(200).optional(),
@@ -95,7 +97,7 @@ interface ResendInboundEnvBindings {
   RESEND_WEBHOOK_SECRET?: string;
   RESEND_RECEIVING_API_KEY?: string;
   WORKSTREAM_EMAIL_DOMAIN?: string;
-  EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
+
 }
 
 interface EmailRouteRow {
@@ -372,8 +374,8 @@ export class ResendInboundEmailRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ResendRegionalEmailService(this.env).ingest(input);
     }
-    const bridge = this.bindings().EU_INBOUND_EMAIL_BRIDGE;
-    if (this.env.AVALON_REGION === "global" && region === "eu" && bridge) {
+    const bridge = regionalBindings(this.env, region).inboundEmail;
+    if (this.env.AVALON_REGION === "global" && bridge) {
       return unwrapRegionalResult(await bridge.ingestResendEmail(input));
     }
     throw new ApiError(503, "email_region_unavailable", `The ${region} inbound-email service is unavailable`);

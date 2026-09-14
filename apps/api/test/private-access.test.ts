@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { mockAccessMail } from './helpers/access-providers';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
@@ -122,8 +123,8 @@ describe('private access against regional migrations', () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
-  it('does not write pre-workspace acquisition to EU or send real mail in development', async () => {
-    env.AVALON_REGION = 'eu';
+  it('does not write pre-workspace acquisition to enterprise or send real mail in development', async () => {
+    env.AVALON_REGION = 'enterprise';
     expect((await submit('person@example.com')).status).toBe(404);
     expect(await listAccessRequests(env.DB)).toEqual([]);
     env.AVALON_REGION = 'global'; env.APP_ENV = 'development';

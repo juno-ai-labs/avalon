@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject } from 'cloudflare:test';
@@ -33,7 +34,7 @@ async function fixture(provider: 'ashby' | 'granola' = 'ashby') {
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName(env.AVALON_REGION, workspaceId));
   await runInDurableObject(stub, (_object: WorkspaceDO, state) => {
     state.storage.sql.exec(`INSERT INTO workspace_identity (id, workspace_id, region, placement_affinity, created_at, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?)`, workspaceId, env.AVALON_REGION, env.AVALON_REGION === 'eu' ? 'weur' : 'wnam', Date.now(), Date.now());
+      VALUES (1, ?, ?, ?, ?, ?)`, workspaceId, env.AVALON_REGION, env.AVALON_REGION === 'enterprise' ? 'weur' : 'wnam', Date.now(), Date.now());
   });
   const connectionId = crypto.randomUUID();
   const at = new Date().toISOString();

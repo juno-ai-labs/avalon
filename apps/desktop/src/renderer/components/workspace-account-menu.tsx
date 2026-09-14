@@ -62,15 +62,12 @@ export interface WorkspaceAccountMenuProps {
 
 /** The two data regions, as the compact tag on a row and the caption under
  * the account's email. `global` is the region key of the US data region — the
- * key predates the EU region, and stored sessions and workspace records carry
+ * key predates deployment isolation, and stored sessions and workspace records carry
  * it, so only its name changes. */
 function regionLabel(region: RallyRegion): string {
-  return region === 'eu' ? 'EU' : 'US';
+  return region;
 }
 
-function regionName(region: RallyRegion): string {
-  return region === 'eu' ? 'European Union' : 'United States';
-}
 
 /** What the dot means when nothing is waiting on this person. */
 export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
@@ -140,7 +137,7 @@ export function WorkspaceAccountMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
-  const [workspaceRegion, setWorkspaceRegion] = useState<RallyRegion>('global');
+  const workspaceRegion = 'global';
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [creationSigningIn, setCreationSigningIn] = useState(false);
@@ -454,7 +451,7 @@ export function WorkspaceAccountMenu({
       </Modal>
 
       <Modal
-        description="Choose carefully: a workspace's region cannot be changed later."
+        description="A shared home for your team and Rally."
         footer={(
           <>
             <Button
@@ -492,23 +489,7 @@ export function WorkspaceAccountMenu({
             value={workspaceName}
           />
         </label>
-        <fieldset className="workspace-region-choice">
-          <legend>Data region</legend>
-          {(['global', 'eu'] as const).map((region) => (
-            <label key={region}>
-              <input
-                checked={workspaceRegion === region}
-                name="workspace-region"
-                onChange={() => setWorkspaceRegion(region)}
-                type="radio"
-              />
-              <span>
-                <strong>{regionName(region)}</strong>
-                <small>{region === 'eu' ? 'Data stored in the European Union' : 'Data stored in the United States'}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+
         {creationSigningIn && !actionError && <p className="inline-note">{FINISH_SIGN_IN_IN_BROWSER}</p>}
         {actionError && <p className="inline-error">{actionError}</p>}
       </Modal>

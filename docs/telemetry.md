@@ -6,12 +6,6 @@ Electron crash reports. Rally owns collection, policy, routing, identity,
 durability, and internal retention; PostHog is the Global destination, not an SDK
 embedded in the renderer or a source of product truth.
 
-The single account-scoped **Product analytics** setting defaults on. Turning it
-off stops product events, detailed JavaScript diagnostics, identity/profile jobs,
-and native crash upload; essential bounded reliability signals continue. Global
-may send approved data to the US PostHog project. EU product and crash telemetry
-terminates in Rally's EU-isolated Cloudflare resources.
-
 ## Where the code lives
 
 | Path | Responsibility |
@@ -27,8 +21,6 @@ terminates in Rally's EU-isolated Cloudflare resources.
 | `apps/desktop/src/renderer/lib/telemetry.ts` | Narrow renderer facade for registered screen, product-intent, and error-candidate calls. |
 | `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, and SubstreamAgent-feed hooks; it also reports every WorkstreamDO-control and SubstreamAgent-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
-| `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
-| `apps/api/src/telemetry/` | Regional collector, identity/preference logic, typed telemetry-delivery contract, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
@@ -36,7 +28,6 @@ terminates in Rally's EU-isolated Cloudflare resources.
 | `apps/api/src/telemetry/product-usage.ts`, `apps/api/src/telemetry/run-outcome.ts` | Shared bounded dimensions, idempotent resource event IDs, and authoritative run/tool journey outcomes. |
 | `apps/site/src/telemetry.ts`, `apps/site/src/site-entry.ts` | Region-before-identity public-site page, action, acquisition, and browser-to-desktop handoff reporting. |
 | `apps/api/src/crash-symbolicator*.ts`, `apps/api/crash-symbolicator/` | Private Cloudflare Container boundary and pinned native stack-walking image. |
-| `packages/db/migrations/0074_regional_telemetry.sql` | Telemetry identities, preferences, outboxes, internal EU projections, crash indexes, deadlines, rate buckets, circuits, and analysis dimensions. |
 | `packages/db/migrations/0077_connector_oauth_telemetry_shape.sql` | The bounded event version, connector scope, capability count, and reconnect state admitted with an OAuth attempt for later terminal telemetry. |
 | `apps/desktop/scripts/publish-telemetry-artifacts.mjs` | Private source-map and native-symbol publication to both isolated telemetry buckets. |
 | `apps/desktop/scripts/telemetry-crashpad-fixture.mjs` | Real packaged Electron/Crashpad two-launch release gate. |
@@ -57,7 +48,6 @@ debounce, request, paint, scope resolution, retrieval, hydration, and server wor
 Queries and result contents are never event properties. `text-search.md` owns the
 pagination contract and p50/p90 acceptance targets.
 
-
 ### Contract and producers
 
 `TELEMETRY_EVENTS` is the only event registry. Each entry fixes its sources,
@@ -71,14 +61,14 @@ shared envelope schema accepts API events so those internal producers remain
 typed, not so a session-bearing client can claim server authority.
 
 Application icon ingestion retains every shipped identifier in
-`TELEMETRY_APPLICATION_ICON_IDS`, including retired artwork, for both regional
+`TELEMETRY_APPLICATION_ICON_IDS`, including retired artwork, for configured regional
 collectors and the desktop spool. `CURRENT_APPLICATION_ICON_IDS` is the smaller
 selection/persistence allowlist. Replacing artwork adds a new identifier rather
 than reusing a retired one; Ludicrous speed's supplied artwork uses `ludicrous`.
 
 Legacy envelopes have the frozen context v1 shape. Native desktop enrichment
 uses `contextSchemaVersion: 2`; the regional reader accepts both shapes, while
-API-generated events remain on v1. The regional reader must reach both regions
+API-generated events remain on v1. The regional reader must reach configured deployments
 before a desktop release emits v2, and a later API rollback must retain that v2
 reader until every released desktop producer has aged out.
 
@@ -289,38 +279,7 @@ coalesced to one report per five minutes through a 100-entry in-memory table. A
 handled network failure is diagnostic only: unlike a real JavaScript exception or
 rejection, it does not emit an essential `process_health` transition.
 
-The public site uses the same anonymous capability boundary but has its own
-identity rule. It first obtains a content-free Cloudflare `eu`/`global` route and
-a five-minute signed decision token. Global then reads or creates one random
-first-party `localStorage` epoch for multi-page acquisition paths. EU uses an
-in-memory epoch for that page and does not read or write a persistent analytics
-identifier. Bootstrap consumes the signed first decision instead of
-independently routing its second request. Registered events cover
-safe page/path/referrer/campaign fields, bounded actions and placements, and
-handoff type/method/validity. URL query strings/fragments, tickets, provider
-state, resource IDs, forms, and page content are never sent. See
-[`public-site-telemetry.md`](public-site-telemetry.md).
-
 ### Route and identity
-
-Before the first renderer exists, main resolves telemetry routing. An existing
-workspace binding is authoritative. Otherwise the Global bootstrap endpoint
-reduces Cloudflare's country signal to `eu` or `global`, stores only the route and
-basis, and returns a short-lived capability bound to the current anonymous login
-epoch. An affirmative EU result prevents pre-region Crashpad startup. Non-EU,
-unknown, malformed, failed, or two-second timed-out bootstrap uses Global. No
-region-pending payload store exists.
-
-Every event receives one immutable route. Identity has five scopes: installation,
-anonymous epoch, platform user, workspace user, and personless workspace
-execution. A later workspace choice changes future events only. Global can hand
-an already validated EU onboarding projection to the
-named EU telemetry RPC; no EU event, identity, crash, or replay moves to Global.
-If login succeeds before a workspace exists and the Global login session does
-not match the coarse EU route, registered pre-workspace intents continue under
-the route-fixed anonymous epoch and its capability. They are accepted
-immediately rather than becoming authenticated rows that wait for region
-selection. A later workspace selection is prospective and does not migrate them.
 
 The desktop persists one random installation ID and one rotating anonymous login
 epoch. Only the epoch is used for the explicit anonymous-history-to-person
@@ -369,79 +328,7 @@ been acknowledged, and the periodic flush retries the link after transient
 delivery failures. The renderer sees only named IPC methods; main validates the
 sender against a live Rally window and the pinned application origin.
 
-### Regional acceptance and destinations
-
-The API validates the batch again, resolves or allocates immutable random
-analytics identities, derives trusted route/release context, normalizes excessive
-clock skew, and commits the accepted row plus receipt before returning `202`.
-Identical event-ID retries acknowledge as duplicates; a different payload under
-the same ID conflicts. EU acceptance also writes the independently expiring
-internal semantic projection. Global acceptance leaves a destination row for the
-five-minute scheduled processor. It also leaves an independent lakehouse outbox
-state and best-effort enqueues an event-ID/hash pointer. Scheduled recovery
-retries pending and still-undelivered queued pointers newest-first; the Global
-consumer reloads the canonical row, recomputes its acceptance hash, and
-revalidates the envelope before projecting every admitted context/property
-field to `avalon.analytics_events`. Permanent integrity/schema failures are
-terminally rejected rather than retried. EU never enters that transport.
-
-Global delivery uses stable `$insert_id`, `$session_id`, `$window_id`,
-`$device_id`, `distinct_id`, PostHog workspace groups, `$is_identified`,
-`$process_person_profile`, `$geoip_disable`, normalized
-timestamps, and the official exception capture path. The adapter translates only
-exact provider equivalents: legacy `screen_viewed` and current
-`surface_viewed` become `$screen` without being produced for the same current
-navigation; `site_page_viewed` and `site_page_left` become `$pageview` and
-`$pageleave`; `application_opened` becomes `Application Opened`; and background becomes
-`Application Backgrounded`. Other lifecycle reliability retains
-`application_lifecycle`. The canonical open carries `application_open_source`,
-`from_background`, and version/build on cold starts. This leaves one—not
-parallel custom and reserved—PostHog open event for each attributed occurrence.
-`application_version_changed` becomes `Application Installed` or
-`Application Updated`; rollout onto an existing installation establishes a
-durable baseline without emitting a false installation event. A pending
-transition keeps one stable event ID until its local spool enqueue succeeds, so
-an interrupted write retries without losing or double-counting the transition.
-The adapter keeps
-`rally_event_name` on every destination event and adds the applicable
-first-party app context: `$app_*`, `$device_type`, `$os`/`$os_name`,
-`$os_version`, `$locale`, `$timezone`, display/viewport dimensions, and
-device/window identity. It marks only events
-that originated in the API with `$is_server`. It never emits both the Rally and
-provider spelling for one occurrence. JavaScript source maps are loaded privately
-and only mapped application frames leave Rally. Malformed
-profile jobs are terminalized individually so one corrupt row cannot block later
-profiles, event delivery, or operational snapshots. PostHog 408,
-429, 5xx, and network failures on ordinary event/profile batches retry with
-`Retry-After` or exponential backoff; other 4xx responses become terminal. The
-PostHog exception SDK exposes only flush success/failure for JavaScript/native
-exceptions, so a failed flush retries without status-specific classification.
-Five consecutive transient failures open a per-stream five-minute circuit. EU
-has no PostHog token, host, binding, SDK graph, or telemetry Analytics Engine dataset.
-Global policy and outbox code passes already approved rows plus its existing
-destination settings to the stateless telemetry-delivery Worker over private
-typed RPC. Each call returns a result keyed by destination so a successful sink
-can be committed independently of a failing sibling; delivery receipts, retries,
-and circuits remain in the regional API. The Global analytics lakehouse keeps
-its existing independent Queue/Pipeline path until moving it into this boundary
-can preserve that same failure independence and replay behavior.
-For identified Global settings events, the adapter also uses PostHog's event
-`$set` shape to maintain current `rally_launch_at_login_*`,
-`rally_lockdown_mode_*`, `rally_application_icon_*`, and
-`rally_menu_bar_*` person properties.
-Anonymous settings snapshots remain personless; the semantic event itself is the
-regional source of truth in both regions.
-Workspace-owned API events use the stable workspace analytics ID as both their
-personless distinct ID and `workspace` group key; they set
-`$process_person_profile: false` and never create or update a PostHog person.
-
 ### PostHog product compatibility
-
-This table was audited against the Tools catalog visible in the US PostHog
-project on 2026-08-13. "Supported" means Rally's truthful data contract is
-enough for the product; it does not mean the product has been pinned in the
-sidebar or configured with a saved view. Reserved PostHog events are destination
-formatting only. The regional registry and EU projection keep their Rally names.
 
 | PostHog tool | Status | Rally contract |
 | --- | --- | --- |
@@ -484,43 +371,32 @@ scheduled prefix sweep removes expired objects even if the R2 write succeeded
 but the D1 index transaction never did; missing or malformed deadlines fail
 closed.
 
-The five-minute processor claims stale/retryable work, loads the matching private
-symbol archive, invokes the region's no-egress Cloudflare Container, sanitizes and
-fingerprints the result, and retries transient processing failures without
-renewing the deadline. Missing symbols produce `unsymbolicated`; invalid output is
-`malformed`. Global sends the complete approved structured report through
-PostHog's exception path. Raw dumps, symbols, memory fragments, source excerpts,
-absolute paths, and unsanitized values remain in Rally. EU keeps the full
-occurrence for 90 days and a flat fingerprint/release contribution for 13 months;
-issue and crash-free views are computed from surviving rows at query time.
-The exec-only processor image exposes an unused local-supervisor port because
-Wrangler requires one during development; production has no listener and all
-work still crosses the authenticated Durable Object RPC/exec boundary.
-
-## Invariants
-
 - **Route, event ID, payload hash, and deletion deadline are immutable.** A retry,
   replay, recurrence, login, or destination acknowledgement cannot move or renew
   data; doing so would merge residency histories or defeat the published ceiling.
+
 - **The renderer has no provider or identity authority.** It cannot name an event,
   send an arbitrary property dictionary, read a telemetry credential, or call
   PostHog; otherwise an XSS becomes a data-exfiltration and schema-expansion path.
+
 - **Only the per-login epoch performs an anonymous history merge.** The random
   installation ID may appear as PostHog `$device_id` for SDK-compatible device
   attribution, but it is never used as `$anon_distinct_id`, entered in Rally's
   identity-link table, or exported across regions; conflating these roles would
   merge login journeys or residency histories.
+
 - **An anonymous-to-person transition is ordered and never superseded.** Losing
   `$anon_distinct_id` during an outage permanently splits the onboarding funnel.
+
 - **Opt-out is enforced at creation, regional acceptance, and delivery.** Any one
   check alone leaves an offline device or queued row able to cross the choice.
+
 - **Crashpad owns its live database.** Main may invalidate the sibling manifest,
   but opening, rewriting, or deleting the live database races Electron's handler.
-- **Global and EU use separate D1, telemetry R2 buckets, processors, artifacts,
-  credentials, and queries.** The named EU projection and Global control RPCs
-  are narrow exceptions, not a general telemetry bridge.
+
 - **Rejected values never enter storage or logs.** Rejections retain only fixed
   violation codes, registered names or the `unregistered` sentinel, and counts.
+
 - **Telemetry failure never changes product behavior.** Reporters, middleware,
   processors, and operational callbacks fail independently of the action observed.
 
@@ -541,41 +417,42 @@ advisory and may be incomplete; regional product authority is canonical — D1
 for workspace/control data and, after its guarded cutover, the owning
 WorkstreamDO for work-stream product data.
 
-## Failure modes and limits
-
-- The pre-renderer route request times out after two seconds and falls back to
-  Global; an affirmative EU result creates no pre-region dump.
 - The authenticated Product analytics preference read times out after 15
   seconds. Existing same-account launches continue collecting into the durable
   local spool but do not transmit nonessential rows; new account/session
   transitions remain fully fail-closed until verification.
+
 - Local event rows expire after 14 days, with a 2,000-row/8 MiB spool. Corrupt
   rows are quarantined only when their independent deadline is valid; otherwise
   they are deleted immediately.
+
 - Native local material expires after 14 days and is bounded to 20 reports/100
   MiB. A dormant device physically purges it on its next launch before delivery
   or Crashpad restart.
+
 - Normal event batches are at most 256 KiB and 50 events. Native dumps are at
   most 20 MiB; breadcrumb sidecars are at most 32 KiB; structured reports are at
   most 4 MiB; source maps are at most 16 MiB.
-- Regional accepted/outbox/receipt/profile/replay/rejection and full crash rows
-  expire no later than 90 days. EU product contributions and minimized crash
-  contributions expire independently after 13 months.
+
 - Global analytics lakehouse handoff is unretractable in the current design. A
   late opt-out, user cascade, or D1 expiry does not delete a current Iceberg row;
   the projected deadline and registry retention fields are metadata until an
   automated transactional Iceberg deletion engine exists.
+
 - A destination outage backs off to the immutable deadline and opens a five-minute
   circuit after five consecutive transient failures. The product action is not
   retried or failed because telemetry is unavailable.
+
 - A caught renderer transport failure keeps its normal user-facing `network_error`
   behavior even when the preload bridge or regional telemetry endpoint is
   unavailable. Diagnostic delivery never retries the product request. Repeated
   failures at the same sanitized frame emit at most once per five minutes per app
   launch, and Product analytics opt-out suppresses that report completely.
+
 - Opt-out cannot synchronously stop Electron's already-running Crashpad handler.
   It stops upload and invalidates the generation immediately; restart purges that
   generation before a new handler can start.
+
 - Raw crash access is by opaque crash ID, region-restricted, reason-coded, and
   audited. A missing raw object returns a fixed result and never exposes its key.
 
@@ -603,7 +480,7 @@ deadlines. API tests use fake telemetry-delivery Service Bindings and R2 binding
 exact destination payloads. A real-workerd test proves typed nested rows cross
 the private telemetry-delivery RPC boundary by value. Desktop storage tests use real temporary directories. The Crashpad
 fixture packages the pinned Electron version and creates two real renderer dumps;
-it is macOS-arm64-only because that is the only released target. Both Wrangler
+it is macOS-arm64-only because that is the only released target. Configured Wrangler
 dry-run builds are required to validate regional bindings and the Container image.
 The Docker integration gate downloads checksum-pinned upstream minidump and
 symbol fixtures, then exercises the built image as its non-root user with no
@@ -612,41 +489,11 @@ checks.
 
 ## Data model
 
-`users` and `workspaces` hold immutable random regional analytics IDs; `users`
-also owns the canonical preference/version and opaque projection handle.
-`telemetry_onboarding_journeys` fixes provisional routes. Accepted envelopes,
-receipts, profile jobs, identity links, replay audits, rejection/rate buckets, and
-destination circuit state live in regional D1. Global accepted rows also carry
-the independent analytics-lakehouse pointer state; no second envelope copy is
-stored. `telemetry_eu_events` is the EU
-query projection with release/platform/channel/correlation dimensions.
-Public-site Global epochs reuse the journey table; the content-free, signed
-route probe does not create a row. Its short-lived token is not persisted as
-identity or authority. EU site epochs are page-scoped and therefore do not join
-separate page loads.
-
 `telemetry_crash_reports` is the content-free raw-object index plus the sanitized
 full occurrence, processing lease/retry state, and destination state.
-`telemetry_eu_crash_contributions` is one independently expiring flat row per
-occurrence; no issue aggregate or regression workflow is persisted. Raw dumps,
+Raw dumps,
 source maps, and native symbols live only in the region's dedicated
 `TELEMETRY_PAYLOADS` bucket.
-
-## Regional impact
-
-Global owns identity sign-in, coarse onboarding routing, canonical preference,
-and the private Global telemetry-delivery service. It can send a validated EU onboarding projection over
-`EU_TELEMETRY_BRIDGE`. EU can send only opaque preference commands and
-route-bound capability verification/closure commands over
-`GLOBAL_TELEMETRY_CONTROL`; Global returns no destination identity, key, or event
-payload. EU owns its D1 rows, `avalon-eu-telemetry` R2 bucket with EU
-jurisdiction, EU-constrained no-egress symbolicator, support audit, and internal
-queries. EU configuration contains no PostHog secret, binding, SDK graph, or telemetry Analytics
-Engine destination.
-
-The route signal stores neither IP nor country. A future EU PostHog project or
-movement of historical EU data requires a new recorded decision; it is not a
-configuration flip in this adapter.
 
 ## Security and trust model
 
@@ -715,7 +562,9 @@ when matching artifacts exist. Operational snapshots and packaged fixtures provi
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
-## Changelog
+### 2026-09-14 — Configurable deployment isolation
+
+Configured deployments use the existing Global delivery policy. Public-site and pre-login telemetry use the Global identity endpoint, and workspace events keep their deployment identifier. Geographical routing and the separate internal telemetry sink are removed because deployment IDs now describe isolation, not a product residency promise. Existing preferences, schemas, receipts, and destination adapters remain responsible for delivery.
 
 ### 2026-09-11 — Menu-bar events follow the menu that shrank, and stop being refused
 
@@ -874,7 +723,7 @@ released event contract.
 **Considered and rejected:** Versioning the same event solely for an artwork
 replacement would add a second event shape without changing its meaning.
 
-**Consequences:** Both regions and the desktop spool continue to accept retired
+**Consequences:** Configured deployments and the desktop spool continue to accept retired
 IDs. New artwork receives a fresh ID so historical observations stay distinct.
 
 PR: #566.
@@ -961,26 +810,12 @@ owns every D1 outbox and circuit, and records destination outcomes. The Worker
 statically owns the PostHog SDK and adapter, stores nothing, and returns an
 outcome keyed by destination so later fan-out can remain independently durable.
 
-**Why:** Cloudflare rejected the shared API graph at production upload with
-startup CPU error 10021. That graph also forced EU to initialize a provider it
-is forbidden to call. A provider-I/O boundary removes the SDK from both API
-artifacts while preserving the existing policy and residency authorities.
-
 **Considered and rejected:** Sending raw envelopes to a generic operation
 endpoint would weaken the typed contract. A PostHog-named Worker would encourage
 one service per later vendor rather than one reviewed destination boundary.
 Moving outboxes or retry policy would split regional authority. A second stored
 PostHog token was unnecessary because the existing Global secret can cross the
 private binding for one call during the first deployment.
-
-**Consequences:** Global destination attempts add a private Worker invocation
-and require the service to deploy before its caller. New Global destination
-adapters extend this Worker and add an independent result instead of creating a
-destination-specific service. The analytics lakehouse remains on its independent
-Queue/Pipeline lifecycle until a focused change can move it without coupling
-failures. Exact provider payload tests remain at the adapter; real workerd proves
-RPC serialization separately. EU has no delivery binding or provider graph. No
-telemetry schema, retention rule, or migration changes.
 
 Shipped in #471.
 
@@ -1000,11 +835,6 @@ automation share one durable route now, so the pathname alone cannot say which
 screen is showing. Every draft after its first turn was reporting as
 `automation_detail`, which made authoring an automation indistinguishable from
 reading one — and authoring is the funnel this surface exists to measure.
-
-**Consequences:** Projection lag cannot change lifecycle or delivery decisions,
-and EU automation payloads remain absent from Global analytics exports. A
-`surface_viewed` comparison that spans the cutover is not comparing like with
-like: before it, `automation_builder` meant `/automations/new` only.
 
 ### 2026-08-27 — Feed telemetry drops the retired compatibility source
 
@@ -1070,13 +900,6 @@ recreates the loss. Session changes close both local spool admission and
 delivery until the new account is verified, and explicit enable still requires
 the canonical compare-and-set acknowledgement; only ordinary cold-launch
 reconciliation moved off the critical path.
-
-**Consequences:** The event is suppressed whenever Product analytics is not
-effectively enabled, without awaiting a preference fetch on the measured path.
-Global uses the existing PostHog and lakehouse destination; EU remains on the
-regional internal path. Retention is 90 days. Content, URLs, errors, cursors,
-close codes, and unknown annotations are structurally rejected; an unregistered
-phase remains local until governance adds it to the schema.
 
 Early launch events can enter the durable regional spool immediately when the
 stored same-account preference is enabled. Successful verification releases
@@ -1184,11 +1007,6 @@ abandonment. A
 single repeated request ID was rejected because the tracing contract defines it
 per call; the operation header already carries the longer click lifetime.
 
-**Consequences:** Every accepted sidebar click has one terminal outcome, retries
-remain individually diagnosable, and queries must treat `abandoned` separately
-from rapid work-stream switching and load failure. UUID, consent, content, and
-Global-versus-EU boundaries are unchanged.
-
 ### 2026-08-25 — Sidebar-to-painted-feed latency, every work-stream socket start, and each opening attempt's socket lease are measurable
 
 **What changed:** Added `workstream_feed_visible`, emitted after a sidebar click
@@ -1237,24 +1055,6 @@ operation ID for socket attempts and the click would collapse distinct ticket
 requests. Adding only the opening ID to socket starts would still strand
 pre-click warmups. The lease-plus-attempt model preserves both the pooled
 lifetime and each actual request.
-
-**Consequences:** These remain Product analytics: opted-out accounts emit
-neither; Global events can reach PostHog and the Global lakehouse, while EU
-events remain on the regional internal path. Exact milliseconds are an explicit
-exception to the usual coarse product-duration vocabulary because the approved
-question is a percentile distribution; the schemas stay closed and retain no
-content. Socket-start volume counts attempts, not unique sockets, and reconnect
-storms are intentionally visible. `feed_cache` is authoritative whenever the
-transcript query already held data; such an open correctly has no matching
-detail request even though its interaction operation ID remains present. A
-`socket_snapshot` open likewise has no detail request: join its opening ID and
-socket lease to the socket-start and connection events instead.
-
-One opening attempt has exactly one started event and at most one terminal
-outcome; paint latency covers successful sidebar opens only, so the feed metric
-remains success-only while the outcome event supplies its attempt denominator.
-The identifiers are opaque UUIDv7 values governed as operational Product
-analytics, with the existing opt-out and Global-versus-EU routing unchanged.
 
 ### 2026-08-25 — The envelope schema identifier is ai.rallywith.telemetry.event
 
@@ -1308,12 +1108,6 @@ repository.
 
 ### 2026-08-24 — Accepted events feed a governed Global analytics lakehouse
 
-**What changed:** The regional collector now seeds an independent Global
-lakehouse outbox after acceptance. A Queue pointer consumer projects every
-promoted dimension plus the complete validated context/properties into the
-Global `avalon.analytics_events` table; EU remains on its existing internal
-path.
-
 **Why:** Backend and client producers already share one typed, preference-aware,
 region-aware acceptance point. Projecting there preserves those controls and
 makes maximal admitted metadata durable without adding direct client-to-vendor
@@ -1322,11 +1116,6 @@ authority.
 **Considered and rejected:** A second analytics ingestion endpoint, direct
 renderer Pipeline access, arbitrary autocapture, and reusing raw inference
 storage. Each weakens policy or mixes incompatible privacy contracts.
-
-**Consequences:** New event fields continue to be governed in
-`TELEMETRY_EVENTS`; adding arbitrary content remains prohibited. Global delivery
-failure is recovered asynchronously and never changes product behavior. EU
-debugging never falls back to the Global table.
 
 Shipped in the pull request for this change. See
 [`analytics-lakehouse.md`](analytics-lakehouse.md).
@@ -1446,15 +1235,6 @@ it will be counted as the server's.
 
 ### 2026-08-20 — Global Worker telemetry is exported to PostHog, traces included
 
-**What changed:** `wrangler.global.jsonc` names two account-level OTLP
-destinations — `posthog-logs` for Workers Logs and `posthog-traces` for
-automatic tracing — both pointing at the US PostHog project's `/i/v1/logs` and
-`/i/v1/traces` ingest. `persist` is left at its default, so Cloudflare keeps its
-own copy and the export is an addition rather than a redirection. The EU
-Worker's config names no destination and is unchanged; a comment there now says
-that adding one *is* the decision this entry records, so it cannot be made by
-accident.
-
 **Why:** The traces shipped in #203 answer "which step was slow" only for
 whoever is looking at Workers Logs at the time. Putting them where the product
 events already are means one place to ask both halves of the question, and the
@@ -1517,13 +1297,6 @@ logger redacts, so logs alone would have been the conservative option, and the
 gives up the span waterfall, which is the part a trace is for. *Redacting at the
 destination.* There is no hook: the attribute is attached by the platform before
 anything of ours runs.
-
-**Consequences:** The boundary this document defends is now narrower than it
-was: it holds for the EU region, and for Global it holds only up to the trace
-destination. Anything that would widen what a Durable Object writes through
-embedded SQL now also widens what PostHog receives, with no review step that
-would flag it as a logging change. If Cloudflare ships attribute filtering, this
-is the first thing that should use it.
 
 Shipped in #207.
 
@@ -1777,24 +1550,10 @@ server-owned provenance, and emit only after the durable work-stream write.
 API-authored events must use the internal emitter; the authenticated desktop
 batch route rejects them.
 
-Completion events fire only after the product operation succeeds.
-Workspace-owned tool events group in PostHog without person processing, and EU
-keeps the equivalent events internally.
-
 Cold launches without a login-item flag or deep link are `user_launch`.
 `push_notification` remains dormant until a native notification callback
 exists. Product analytics opt-out suppresses attributed opens; bounded
 essential lifecycle events continue under their Rally name.
-
-The icon analytics taxonomy and picker share one identifier allowlist. Product
-analytics opt-out suppresses snapshots, change events, and Global
-person-property updates. EU keeps the closed semantic events internally and
-makes no PostHog call.
-
-Menu and keyboard events follow the Product analytics preference and the
-existing regional route. Global receives them through the ordinary PostHog
-adapter; EU retains them internally. Suggested-work clients may omit `surface`
-for backward compatibility, but an omitted surface produces no success event.
 
 ### 2026-08-13 — PostHog receives native desktop context and app semantics without duplicate events
 
@@ -1849,21 +1608,6 @@ generations. Duplication corrupts counts; the other options either move
 provider concerns into the regional contract or claim observations Rally did
 not make.
 
-**Consequences:** In Global PostHog, `$device_id` can associate Rally's random
-installation identity with an identified person, matching SDK device
-attribution; the explicit anonymous merge still uses only the rotating login
-epoch. EU keeps the same typed context internally and receives no PostHog
-identity. New context fields must be main-derived and bounded, and browser-only
-metadata remains outside the Electron contract. Context v1 remains readable for
-old clients and stored replay, while new desktop producers declare context v2;
-an API rollback may not remove the v2 reader while those producers are live.
-
-PostHog queries for provider-standard navigation/lifecycle use the reserved
-event name and can filter or recover Rally's semantic name through
-`rally_event_name`. EU storage and queries remain unchanged. Every future
-reserved-name mapping needs an exact semantic-equivalence test and must
-replace, not duplicate, its custom destination spelling.
-
 Design: [regional telemetry PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-13 — Caught renderer transport failures reach exception telemetry
@@ -1888,13 +1632,6 @@ contained no exception explaining the outage.
 the renderer, or reporting the request URL/message/body. The first misses handled
 failures, the second violates the main-owned telemetry boundary, and the third
 could copy workspace content or credentials into diagnostics.
-
-**Consequences:** Eligible Global failures reach PostHog while EU failures remain
-inside EU. Both contain only stable classification and sanitized generated
-frames. An outage cannot turn handled request failures into renderer-process
-health degradation or enqueue one event per polling attempt. Any new desktop
-request header must be added to the explicit CORS allowlist and the preflight
-regression before it ships.
 
 ### 2026-08-13 — Artifact verification uses authoritative upload metadata
 
@@ -1926,23 +1663,6 @@ closed. Inventory time may trail the upload response by at most one second to
 allow for provider timestamp-serialization precision.
 
 ### 2026-08-13 — Release artifacts use the regional object API directly
-
-**What changed:** The initial REST migration uploaded and read back private
-source maps and native symbols through Cloudflare's object API. It bounded the
-uploaded and returned bytes, timed out stalled requests, and sent the explicit
-`eu` jurisdiction header only for the EU telemetry bucket. API deployment also
-derived a hosted-R2 inventory from both Wrangler files, logged every binding,
-and proved each bucket existed before remote mutations. The cached-read failure
-and replacement verification strategy are recorded in the newer entry above.
-
-**Why:** Wrangler's object read returned a deleted, earlier native-symbol object
-on a release retry even though Cloudflare's authoritative object listing no
-longer contained it. That made a valid regenerated archive fail the checksum
-gate and prevented an otherwise signed and notarized release from publishing.
-The first attempt also found that `avalon-eu-telemetry` did not actually exist:
-Wrangler had accepted and deployed its binding without provisioning the bucket.
-The previous artifact command also omitted Wrangler's EU-jurisdiction flag, so
-even a provisioned EU bucket could not be addressed by that release path.
 
 **Considered and rejected:** Disabling checksum verification, accepting the old
 archive, or rotating both buckets. Those would respectively remove the
@@ -1984,28 +1704,6 @@ Shipped in the pull request for this change.
 
 ### 2026-08-13 — Telemetry seams preserve policy and metric correctness
 
-**What changed:** Server outcomes now use event-specific idempotency keys while
-keeping the client operation ID only as correlation; valid onboarding failures
-emit bounded authoritative outcomes; desktop rows fix `sentAt` at their first
-transmission; EU semantic retention starts at normalized occurrence; anonymous
-identity linking waits for local epoch rows to drain; and a regional preference
-conflict projects and adopts the canonical winner instead of replaying a stale
-device choice. API-operation middleware now mounts once above sibling routers;
-expired onboarding journeys are replaced safely; invalid profile jobs terminate
-per row; crash-free denominators count distinct launches; Product analytics owns
-breadcrumb teardown; and release publication accepts every source-map chunk for
-each approved Electron process.
-
-**Why:** Reusing an operation ID across different outcome kinds caused the
-accepted-event primary key to discard one funnel step. Capture-time `sentAt`
-shifted delayed events forward during clock normalization, acceptance-time EU
-deadlines exceeded the occurrence-based ceiling, and closing a journey after a
-best-effort flush could strand backoff rows. Separately, compare-and-set retries
-must preserve a newer account preference, especially an opt-out. Review also
-proved duplicated operation events, retained-expired journey conflicts, delivery
-poison pills, inflated crash-free denominators, an inverted settings callback,
-and a source-map allowlist that became mutable discovery state.
-
 **Considered and rejected:** Removing idempotency, treating capture time as send
 time, extending retention by offline delay, linking while rows merely have a
 future retry scheduled, and automatically overwriting the canonical preference
@@ -2013,15 +1711,6 @@ after a conflict. Each would trade correctness or user control for a simpler
 happy path. Silently dropping corrupt profile work, counting joined rows, or
 assuming one source map per process were also rejected because they make healthy
 operations and dashboards depend on accidental input shape.
-
-**Consequences:** New authoritative producers need a durable event-specific key
-and a separate operation correlation. Spool schema changes must preserve the
-first-send marker, EU lifecycle tests must anchor semantic deadlines to
-occurrence, and identity-link or preference retry changes must retain the new
-conflict/drain regressions. Middleware remains a single root concern, profile
-validation remains row-isolated, crash-free queries deduplicate launch IDs, only
-Product analytics changes may control breadcrumbs, and artifact discovery must
-keep its allowlist immutable.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
@@ -2052,12 +1741,6 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-08-13 — Regional telemetry becomes an end-to-end production subsystem, from native dumps to operator surfaces
 
-**What changed:** Added the typed registry, route and identity epochs, account
-preference, bounded desktop spools, semantic and reliability producers, regional
-collector and EU sink, idiomatic Global PostHog adapter, ordered profiles, replay,
-operations, JavaScript diagnostics, native Crashpad upload/symbolication, internal
-queries, dedicated telemetry buckets, release artifacts, and packaged gate.
-
 Native dumps: added whole-directory inactive rotation, absolute 14-day local
 deadlines, durable generation invalidation, and corrupt/expired startup purge.
 
@@ -2071,19 +1754,8 @@ non-root, read-only, no-network boundary used by production. Its host fixture
 directory grants traversal and read access to the container UID while the
 mount itself remains read-only.
 
-Operator and EU control: added the authenticated per-region
-`/internal/telemetry` surface for status, Global replay, raw-crash access, and
-EU aggregate queries. Operator identity and role now come only from a regional
-secret map. EU also verifies and closes Global-issued onboarding journeys
-through a narrow control RPC instead of holding the capability-signing key.
-
-Pre-workspace EU intent: route-mismatched, logged-in onboarding intent now
-continues under the fixed anonymous epoch until a workspace region exists;
-workspace creation and activation intents are allowlisted for that narrow
-capability.
-
 Regional Container development: added the local-supervisor port declaration
-required by Wrangler and serialized the two regional Worker startups until
+required by Wrangler and serialized configured Worker startups until
 Global reports ready.
 
 **Why:** Product analysis needs client intent joined to authoritative server
@@ -2105,26 +1777,10 @@ sanitizer interoperate in the shipped image. Native Linux preserves bind-mount
 permissions, so private host defaults made the valid fixture look absent to the
 non-root parser; Docker Desktop's file-sharing layer had hidden that boundary.
 
-Library functions with no deployed caller could not support an incident, and
-accepting a caller-supplied role would not be authorization. Independently,
-copying the Global capability key into EU would let either region mint
-authority for the other and make rotation a cross-region secret-sharing
-operation.
-
-A Global identity session can exist before workspace residency is chosen.
-Treating it as an authenticated Global delivery left EU-routed intent queued
-locally, contradicting the no-holding and immediate-coarse-route design.
-
 Concurrent Wrangler builds of the shared symbolicator image race on transient
 Docker tags, while an exec-only image without an exposed port is rejected by
 the local Container supervisor. Together these made the documented dual-region
 development command fail after adding native processing.
-
-**Considered and rejected:** Direct renderer PostHog, a thin reverse proxy,
-mechanism-based autocapture, a Segment dependency for one destination, a
-region-pending store, EU-to-US forwarding, and a shared Analytics Engine sink.
-Each either weakened semantic quality, residency, policy enforcement, or exact
-retention without solving the native crash boundary.
 
 For native dumps: reading the live database, direct Crashpad upload, and a
 local stack-walking CLI as the production processor.
@@ -2137,20 +1793,11 @@ the Dockerfile contains security-related strings, or running the integration
 container as root. The first two do not execute the parser or observe the
 report; the last one stops testing the production security boundary.
 
-For operator and EU control: a public debug route, desktop-session
-authorization, operator ID/role fields in request bodies, and a shared
-regional capability key. Each either exposes raw diagnostics to the product
-plane or lets an untrusted caller/region manufacture authority.
-
-For pre-workspace EU intent: sending the intent to the login session's Global
-region or waiting to re-route it after workspace creation. Both would move or
-delay a route-fixed onboarding history and corrupt the regional funnel.
-
 For Container development: duplicating the processor image/classes per region.
 That would obscure the intentionally identical toolchain without removing the
 underlying concurrent Docker-build behavior.
 
-**Consequences:** Global and EU deployments need distinct telemetry R2
+**Consequences:** configured deployments deployments need distinct telemetry R2
 resources, Container support, migrations, capability secrets, and five-minute
 maintenance. Release automation must publish private artifacts before
 distribution. Provider-side PostHog lifecycle remains an operational
@@ -2177,10 +1824,6 @@ keep the signing key in Global.
 Cross-region provisional journeys remain aggregate until a same-region identity
 link exists. Operation IDs still correlate intent and outcome where both
 survive in the same regional analysis surface.
-
-`pnpm dev:api` and `pnpm dev:api:local` start EU only after Global is accepting
-requests, then supervise both processes together. The declared port must
-remain unused unless the trust model is redesigned.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).

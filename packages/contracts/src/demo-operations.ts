@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
 import { IdSchema } from "./identifiers";
@@ -149,7 +150,7 @@ export type DemoTemplate = z.infer<typeof DemoTemplateSchema>;
 
 /** The Workflow's payload: a pointer, re-read on arrival. */
 export const DemoPreparationWorkflowInputSchema = z.strictObject({
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   operationId: IdSchema,
   attempt: z.number().int().positive(),
 });

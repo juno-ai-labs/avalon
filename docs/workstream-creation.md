@@ -30,8 +30,6 @@ attempt at the opposite that the changelog records.
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 | `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
 
-## How it works
-
 ### The launcher and the work stream are one screen
 
 `NewWorkstreamScreen` holds a `launching: LaunchingWorkstream | null` state. It is
@@ -378,18 +376,6 @@ see
 - These are component, stylesheet, and service tests, so none of them sees the
   transition. **A change to the animation or to either state's geometry still has
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
-
-## Regional impact
-
-The email route reservation crosses to the Global registry from every non-Global
-region, and activation crosses a second time, so an EU create pays two hops that
-a Global one does not. Both are on the create path. Moving activation off it was
-tried and reverted — see the changelog — because the create's own cache
-invalidation makes `list` backfill the route immediately, paying the same hop a
-moment later against extra reads. Anything that wants that hop back has to deal
-with the backfill first. See [`regionalization.md`](regionalization.md).
-
-## Changelog
 
 ### 2026-09-10 — Project-owned creation uses the message capsule too
 
@@ -923,17 +909,6 @@ change between them animates. On the server, `POST /workstreams` no longer waits
 for the Cloudflare Workflows round trip that starts the harness, nor for the
 email route activation; both are deferred to `waitUntil`. The two pre-flight
 checks now run together.
-
-**Why:** `create` made eight sequential round trips before returning 201, and the
-client did not navigate until it did. Nothing on screen changed in that window
-except a spinner in the send button the message had already left, so the whole
-cost of creating a work stream was paid in front of a screen that looked idle.
-The two deferred steps were picked because nothing in the response depends on
-them: the harness run row and its id are written before the workflow start, and
-the address is settled by the reservation, leaving only its routing status. For
-an EU workspace the activation is a second hop to the Global registry, which made
-it the largest thing that could leave the path without changing what the caller
-gets.
 
 **Considered and rejected:** *A client-generated work-stream id*, sent in the
 create request so the client could navigate straight to the final URL. It is the
