@@ -707,3 +707,99 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
     expect(result.output).not.toHaveProperty("rulesNamingNoTrigger");
   });
 });
+
+describe("a composed source binding key is enough on its own", () => {
+  /**
+   * Fireflies' shape: an event the connector declares, and no resource
+   * relationship anywhere, so `resources_search` has nothing to return for it.
+   */
+  const MEETING_PLUGIN = {
+    pluginId: "plugin_fireflies",
+    displayName: "Fireflies",
+    icon: "webhook" as const,
+    description: "Meetings the notetaker recorded.",
+    scope: "workspace" as const,
+    searchAliases: [],
+    systemMessage: "",
+    activityTriggers: [{
+      eventType: "meeting.summarized",
+      label: "Meeting summarized",
+      description: "Fireflies finished a meeting's AI summary.",
+      eventFamilies: [],
+      filterFields: [],
+      resourceRelationships: [],
+      digestible: true,
+    }],
+    tools: [],
+  };
+  const composedDraft = {
+    name: "Meeting recap emailer",
+    description: "Emails a recap when a meeting is summarized.",
+    overview: "Watches Fireflies and emails a recap.",
+    instructions: "Read the summary and send a recap email.",
+    triggers: [{
+      type: "connector_activity",
+      connectorType: "fireflies",
+      // Composed, not looked up: no tool returns this value for any connector,
+      // and this one has no bindable resource to have returned it with.
+      sourceBindingKey: "fireflies_meetings",
+      suggestedSourcePluginId: "plugin_fireflies",
+      eventTypes: ["meeting.summarized"],
+      deterministicFilters: {},
+    }],
+    requiredCapabilities: [],
+    expectedOutputs: ["A recap email"],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: "workspace",
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  };
+
+  it("admits a ready event draft with no resource behind it", async () => {
+    const state = host({
+      catalog: [MEETING_PLUGIN],
+      inspectedPluginIds: new Set(["plugin_fireflies"]),
+      loadedPluginIds: new Set(["plugin_fireflies"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+      },
+    });
+    const tools = createAutomationsPlugin(state).tools;
+    await toolNamed(tools, "set_evaluator_rules").execute({
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "summarized",
+        source: {
+          sourceBindingKey: "fireflies_meetings",
+          suggestedSourcePluginId: "plugin_fireflies",
+          event: { kind: "event_type", eventType: "meeting.summarized" },
+        },
+        when: { kind: "always" },
+      }],
+    }, toolContext);
+
+    // The behaviour the field's description now promises. A connector with no
+    // bindable resource was never actually blocked here — the description said
+    // the label came from a search, so a drafting run searched, found nothing,
+    // and reported a configuration blocker instead of composing one.
+    await expect(toolNamed(tools, "submit_draft").execute(composedDraft, toolContext))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(state.draftState.submitted).not.toBeNull();
+  });
+
+  it("does not send the model looking a binding key up", () => {
+    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS
+      .find((candidate) => candidate.name === "submit_draft")!;
+    const described = JSON.stringify(definition.inputSchema);
+
+    // Two descriptions contradicted each other: resources_search says to omit
+    // resourceId when nothing is bindable, while this field claimed its value
+    // came from that same search. The model followed this one.
+    expect(described).not.toContain("taken from plugin_inspect or resources_search");
+    expect(described).toContain("no tool returns one");
+  });
+});

@@ -226,7 +226,12 @@ export const DraftEvaluatorKeySchema = z.string().regex(/^[a-z][a-z0-9_-]*$/u).b
 export const DraftExternalEventEvaluatorV1Schema = z.strictObject({
   evaluatorKey: DraftEvaluatorKeySchema,
   source: z.strictObject({
-    sourceBindingKey: ActivitySourceBindingKeySchema,
+    // The rule half of the join. Described here as well as on the trigger
+    // because a label written on only one side is the failure this field
+    // produces, and until now only the trigger's half said anything at all —
+    // leaving the side that has to match it undocumented.
+    sourceBindingKey: ActivitySourceBindingKeySchema
+      .describe("The label of the trigger this rule filters, copied exactly from that trigger's `sourceBindingKey` in the draft. You composed that label yourself; no tool returns one, so copy it rather than looking it up or writing a second spelling. A rule whose label matches no trigger in the draft is refused when the draft is submitted."),
     suggestedSourcePluginId: ModelPluginIdSchema,
     event: z.union([
       z.strictObject({ kind: z.literal("event_type"), eventType: NonEmptyStringSchema }),
