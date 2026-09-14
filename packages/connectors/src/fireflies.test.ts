@@ -107,7 +107,6 @@ describe('Fireflies protocol', () => {
     }, neverAborts())).rejects.toMatchObject({ code: 'unsupported_capability' });
     await expect(management.remove(connection(), 'anything', neverAborts())).rejects.toMatchObject({ code: 'unsupported_capability' });
     expect(management.manualInstructions).toContain('https://app.fireflies.ai/integrations/api/webhook');
-    expect(management.manualInstructions).toContain('meeting.bot_joined');
     expect(management.manualInstructions).toContain('test event');
     // The labels Fireflies puts on its own form, not the wire names: an
     // administrator is matching words to a screen, and `meeting.transcribed`
