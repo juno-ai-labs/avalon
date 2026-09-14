@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
@@ -365,14 +366,14 @@ describe("analytics events lakehouse", () => {
     database.close();
   });
 
-  it("acknowledges an analytics pointer that reaches the EU consumer", async () => {
+  it("acknowledges an analytics pointer that reaches the enterprise consumer", async () => {
     const database = migratedSqliteDatabase();
     const pipelineSend = vi.fn();
     const ack = vi.fn();
     const retry = vi.fn();
     const env = createTestEnv({
       DB: sqliteD1(database),
-      AVALON_REGION: "eu",
+      AVALON_REGION: "enterprise",
       LOG_LEVEL: "error",
       ANALYTICS_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["ANALYTICS_LAKEHOUSE"]>>({
         send: pipelineSend,
@@ -469,7 +470,7 @@ describe("analytics events lakehouse", () => {
       "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(eventId) as { envelope_json: string };
     const stored = JSON.parse(storedRow.envelope_json) as TelemetryEnvelope;
-    stored.properties = { selectedRegion: "eu", entrypoint: "first_run" };
+    stored.properties = { selectedRegion: "enterprise", entrypoint: "first_run" };
     database.prepare(
       "UPDATE telemetry_accepted_events SET envelope_json = ? WHERE event_id = ?",
     ).run(canonicalTelemetryJson(stored), eventId);
@@ -544,25 +545,25 @@ describe("analytics events lakehouse", () => {
     database.close();
   });
 
-  it("does not export EU client or backend telemetry", async () => {
+  it("exports configured enterprise telemetry with its deployment identifier", async () => {
     const database = migratedSqliteDatabase();
     const send = vi.fn();
     const env = createTestEnv({
       DB: sqliteD1(database),
-      AVALON_REGION: "eu",
+      AVALON_REGION: "enterprise",
       ANALYTICS_LAKEHOUSE_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     });
     await new TelemetryCollector(env).accept(event(), {
-      route: "eu",
+      route: "enterprise",
       routingBasis: "ip_geolocation",
-      analyticsSubjectId: "eu-anonymous-epoch-1",
+      analyticsSubjectId: "enterprise-anonymous-epoch-1",
       subjectUserId: null,
       workspaceAnalyticsId: null,
     });
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ region: "enterprise" }));
     expect(database.prepare(
       "SELECT analytics_lakehouse_state FROM telemetry_accepted_events WHERE event_id = ?",
-    ).get(eventId)).toEqual({ analytics_lakehouse_state: null });
+    ).get(eventId)).toEqual({ analytics_lakehouse_state: "queued" });
     database.close();
   });
 });

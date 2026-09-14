@@ -8,17 +8,12 @@ import {
   workspaceProductAuthorityRouteUpsertSql,
 } from "./open-local-authority-sql.mjs";
 
-test("local authority bootstrap covers both regional Workers", () => {
-  assert.deepEqual(localAuthorityRegions, ["global", "eu"]);
+test("local authority bootstrap covers configured regional Workers", () => {
+  assert.deepEqual(localAuthorityRegions, ["global"]);
   assert.deepEqual(localAuthorityTarget("global"), {
     baseUrl: "http://127.0.0.1:8787",
     config: "wrangler.global.jsonc",
     state: ".wrangler/state/global",
-  });
-  assert.deepEqual(localAuthorityTarget("eu"), {
-    baseUrl: "http://127.0.0.1:8788",
-    config: "wrangler.eu.jsonc",
-    state: ".wrangler/state/eu",
   });
 });
 

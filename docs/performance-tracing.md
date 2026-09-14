@@ -30,7 +30,6 @@ necessarily keeps apart.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
-| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability.traces`, which is what makes any of this reach a trace. Custom spans require it; see [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). |
 | `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `POST /:id/messages`, and both socket-ticket routes. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
@@ -52,7 +51,6 @@ another page. They must not count as completed first-result samples. The optiona
 debounce, request, paint, scope resolution, retrieval, hydration, and server work.
 Queries and result contents are never event properties. `text-search.md` owns the
 pagination contract and p50/p90 acceptance targets.
-
 
 ### A custom span is a callback
 
@@ -388,29 +386,6 @@ and of a terminal until a reader opens the Verbose level. That is what lets it
 stay on in every build rather than behind a preference nobody had enabled when
 the slow open happened.
 
-Each click-scoped completed flow also emits `renderer_perf_flow` through the typed renderer
-intent, validated main-process IPC, and regional telemetry spool. This is a
-closed diagnostic projection, not console forwarding: it carries exact total,
-phase, blocked, and effect-to-first-request milliseconds; a closed
-flow/outcome vocabulary; bounded structural counts; and the work-stream,
-ticket, client-message, and operation identifiers needed to join the backend
-work. Speculative hover and retained background socket attempts still print a
-local flow but are not uploaded as opening samples. Direct Electron routes add
-PAC, DNS, TCP, TLS, and edge-upgrade milliseconds; proxied routes add one
-CONNECT/TLS/edge aggregate plus failed-route count because the inner tunnel
-phases are not observable truthfully. The main broker supplies its phase
-callback before client construction and retains any synchronous construction
-phase only until socket ownership is registered, then relays later phases live.
-This removes a fragile main-process registration order; it does not prove that
-historical missing fields came from that gap. Check the packaged-client version
-and native phase emission before attributing an absence. Message sends keep the UUIDv4 client-message identifier separate from the
-UUIDv7 operation identifier required by the telemetry envelope. Raw console
-fields such as cursors and close codes are omitted, as are URLs, errors,
-messages, attachment names, and arbitrary annotations. Product analytics
-opt-out suppresses the event, Global follows the existing PostHog/lakehouse
-route, and EU remains on the regional internal route. The HTTP perf line remains
-local because its request duration is already present in backend request traces.
-
 Creation flows use that same projection but finish at the existing two-frame
 painted send-ready boundary. An ordinary `workstream_create` carries its
 operation ID from the POST across navigation instead of ending at
@@ -592,7 +567,7 @@ workspace search and the work-stream flows described here.
 | `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence, the exact governed projection and rejection of arbitrary console fields, and that `newRequestId` produces something `requestContext` will accept rather than replace. |
 | `apps/desktop/src/main/native-performance-log.test.ts`, desktop release tests | The exact public structured record, observational failure behavior, development/packaged addon paths, and that the native bridge is packaged, signed, and release-verified. |
 | `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, explicit per-request socket IDs remain unchanged, and a work-stream detail retry carries its longer-lived opening attempt separately as `x-rally-operation-id`. |
-| `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in both regions and is exposed on the response. |
+| `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in configured deployments and is exposed on the response. |
 
 Three traps:
 
@@ -667,11 +642,6 @@ Worth adding to the saved views in [`runbook.md`](runbook.md#log-shape) once
 there are enough production rows to pick thresholds that are not guesses; they
 are deliberately not guessed here.
 
-**This is now pointed at a third-party destination.** As of 2026-08-20 the
-Global Worker exports both its logs and its traces to the US PostHog project,
-via the `posthog-logs` and `posthog-traces` destinations named in
-`wrangler.global.jsonc`. The EU Worker does not, and its config says why.
-
 The two things below had to be decided rather than inherited before that
 happened. They are kept here in full because they are what a future reader needs
 in order to understand what was accepted, and because the first of them is not
@@ -718,14 +688,6 @@ Note also how an export is scoped, because it is easy to get backwards. The
 destination is account configuration; the **attachment is per Worker**, through
 `observability.<signal>.destinations`. Creating a destination exports nothing —
 a Worker exports when its own config names one.
-
-Global does; EU does not, and `telemetry.md` records that changing that requires
-a new recorded decision. But what enforces it is the absence of a line in
-`wrangler.eu.jsonc`, which is why
-`apps/api/test/telemetry-export-destinations.test.ts` asserts that absence in
-both signals rather than trusting the comment there to survive.
-
-## Changelog
 
 ### 2026-09-09 — Keep socket timing attribution explicit
 
@@ -790,7 +752,6 @@ would report a fast success before a result existed. Search now keeps the trace
 open through continuation and user wait time until results or a terminal response.
 The latency target remains about useful results rather than candidate-page speed.
 
-
 ### 2026-09-07 — Measure search from typing through painted results
 
 **What changed:** The existing `renderer_perf_flow` contract accepts
@@ -806,7 +767,6 @@ logs alone cannot measure. Reusing the governed flow avoids a separate exporter.
 failed and superseded searches remain separately visible. Backend timing fields
 are optional and do not change legacy search responses. See `text-search.md` for
 the retrieval and pagination contracts.
-
 
 ### 2026-09-05 — Keep preview timings out of creation percentiles
 
@@ -1060,18 +1020,6 @@ to the fleet tracker would turn a timing question into cross-region queue
 traffic and defeat its deploy/heartbeat dedupe; structured Worker logs provide
 the per-wake record without changing tracker semantics.
 
-**Consequences:** Diagnostic events obey the Product analytics preference;
-Global can reach PostHog and the lakehouse while EU remains internal-region
-only. The 90-day event omits cursor positions, close codes, raw server event
-names, errors, URLs, and content. Adding a renderer phase now requires an
-explicit contract change or it remains local, and raw console lines are still
-ephemeral. Local renderer records survive app restarts and remain on the device
-regardless of Product analytics, while governed uploads still obey the account
-preference and regional route. Migration and initialization failures remain
-behaviorally identical. Workerd's pinned clock can report `0 ms` for
-synchronous work, and the residual outside `initialize` is inferred platform
-wake plus binding transport rather than a separately timed phase.
-
 ### 2026-08-25 — The socket snapshot is the cold-open clock
 
 **What changed:** A selected work stream starts its feed subscription before
@@ -1115,7 +1063,7 @@ individual calls and their shared click must remain visible.
 the product attempt denominator. Keeping the repeated request ID and documenting
 the fan-out would preserve ambiguity in Workers traces. The existing operation
 header already expresses a lifecycle longer than one request and is CORS-safe in
-both regions.
+configured deployments.
 
 **Consequences:** Join on `rally.operation.id` to collect every detail retry for
 one click, then use `rally.request.id` to inspect one call. Authentication replay
@@ -1316,30 +1264,6 @@ surrogates are random UUIDv7s whose mapping to `users.id` exists only in
 regional D1. Answering "this trace was slow, what was that person doing, and who
 do I email" meant a manual join through the database. Carrying both identities on
 the span removes the step.
-
-**Considered and rejected:** *Workers KV, with an in-memory cache in front.* This
-was the proposal, and it loses on four counts, the last of them decisive. It buys
-no round trip, because the D1 read happens regardless — `workspaces` was already
-joined and `users` is a primary key away, so the columns are free where a KV read
-is a fresh I/O hop that can miss the colo cache and fall back through the regional
-and central tiers. It is eventually consistent, so a freshly minted surrogate is
-invisible for up to a minute — on exactly the first-session traces most worth
-having. It becomes a second source of truth needing a write path and an
-invalidation story for data whose authority is a D1 column. And **a KV namespace
-is global**: jurisdictional restriction for KV is in private beta, so putting EU
-member identity in one would move it out of the region that
-[`regionalization.md`](regionalization.md) and [`telemetry.md`](telemetry.md)
-keep it in, to save a query that is not being made. *An isolate-local cache on
-its own* has the same first objection — there is nothing to cache — and would
-add a bounded map that can never be authoritative, for no saving. *Putting the
-surrogates in the access token or the socket ticket.* The session read happens
-anyway, so it saves nothing, and it would bake a lazily minted value into a
-credential issued before it exists. *The inverse: sending the raw `users.id` to
-PostHog as a person property, and joining there.* One `$set` per person rather
-than two attributes per span, and cheaper — but it reverses the decision
-`telemetry.md` records, which is that raw product ids do not go to PostHog. Given
-the choice of which side carries the linkage, traces already carry raw ids and
-internal detail, and PostHog deliberately does not.
 
 **Also measured here:** authentication now records `rally.auth.duration_ms`.
 The session lookup is uncached and blocks every authenticated request, and it

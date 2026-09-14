@@ -1,18 +1,19 @@
+import { configuredRegions, regions } from "./regions.mjs";
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { isEntryPoint } from './entry-point.mjs';
 
 export function regionalApiCommands({ local }) {
-  return [
-    {
-      name: 'global',
-      arguments: ['--filter', '@rally/api', local ? 'dev:local' : 'dev'],
-    },
-    {
-      name: 'eu',
-      arguments: ['--filter', '@rally/api', local ? 'dev:local:eu' : 'dev:eu'],
-    },
-  ];
+  return configuredRegions.map((region, index) => ({
+    name: region,
+    arguments: ['--filter', '@rally/api', 'exec', '--', 'wrangler', 'dev',
+      ...(local ? ['--local', '--enable-containers=false'] : []),
+      ...['', 'documents.', 'terminal.', ...(region === 'global' ? ['telemetry.'] : [])]
+        .flatMap((service) => ['--config', `wrangler.${service}${region}.jsonc`]),
+      '--env-file', `.dev.vars.${region}`, '--persist-to', `.wrangler/state/${region}`,
+      '--port', new URL(regions[region].localApiUrl).port,
+      '--inspector-port', String(9230 + index)],
+  }));
 }
 
 export function wranglerReadyLine(line) {
@@ -82,18 +83,14 @@ async function run() {
   process.on('SIGTERM', onTerminate);
 
   try {
-    const global = startRegion(commands[0]);
-    running.push(global);
-    await global.readiness;
-
-    const eu = startRegion(commands[1]);
-    running.push(eu);
-    await Promise.race([
-      eu.readiness,
-      global.exit.then(() => {
-        throw new Error('Global Worker exited while EU was starting');
-      }),
-    ]);
+    for (const command of commands) {
+      const previous = [...running];
+      const next = startRegion(command);
+      running.push(next);
+      await Promise.race([next.readiness, ...previous.map((region) => region.exit.then(() => {
+        throw new Error(`${region.name} Worker exited while ${next.name} was starting`);
+      }))]);
+    }
 
     const firstExit = await Promise.race(running.map(async (region) => ({
       region: region.name,

@@ -8,11 +8,6 @@
         "name": "GLOBAL_SUBSTREAM_AGENTS",
         "class_name": "SubstreamAgent",
         "script_name": "avalon-api-global"
-      },
-      {
-        "name": "EU_SUBSTREAM_AGENTS",
-        "class_name": "SubstreamAgent",
-        "script_name": "avalon-api-eu"
       }
     ]
   }

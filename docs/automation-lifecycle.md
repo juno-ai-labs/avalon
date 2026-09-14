@@ -70,9 +70,9 @@ sidebar renders participants as a facepile and provides attachment removal.
 
 The Worker exports `SidekickDO`. PR #583 supplied the dual-export compatibility
 release with the old v9 bindings. The
-rename release appends v10 in both regions and points `AUTOMATION_DOS` at
+rename release appends v10 in configured deployments and points `AUTOMATION_DOS` at
 `SidekickDO`, preserving namespace IDs and all `:automation:` object-name bytes.
-It requires verified compatibility deployments in both regions before rollout.
+It requires verified compatibility deployments in configured deployments before rollout.
 The object now reports class `SidekickDO` but retains component `automation_do`
 and its existing schema ledger. Migration commands queued with `AutomationDO`
 are translated at dispatch to the new class; the tracker accepts both names so
@@ -80,7 +80,6 @@ pre-rename inventory and reports remain actionable during regional rollout.
 The final cleanup removes the old Worker export only after verifying the rename.
 An internal source-import shim still exposes the historical type name; it does
 not export a Cloudflare class from the Worker entrypoint.
-
 
 ## Where the code lives
 
@@ -110,8 +109,6 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/styles/app.css` | `.sidekick-tile-tooltip`, the one width every answer a strip tile's tooltip gives is held to. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
-
-## How it works
 
 ### Creation and ownership
 
@@ -215,7 +212,6 @@ up to 92px. The deliberate differences are one horizontally scrolling row
 (the reference wraps an auto-fit grid), lifecycle state instead of message
 state, and an indicator at bottom right as requested — the reference's dot,
 here the play the changelog below explains.
-
 
 ### Drafting in the conversation
 `sidekick_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
@@ -728,8 +724,6 @@ alarm entry behind its backoff gate in `_internal_durable_alarms`;
 run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
-
-## Changelog
 
 ### 2026-09-13 — Removing a Sidekick is presented as archive
 
@@ -1469,7 +1463,6 @@ icon and gave Sidekicks different spacing from work streams. Expanded navigation
 retains its captioned horizontal strip; compact navigation uses the same 54px
 row geometry as work streams while the account controls remain fixed.
 
-
 ### 2026-09-08 — Finish authoring conversations after publication
 
 Ready submissions now return to the model for an acknowledgement instead of
@@ -1782,7 +1775,6 @@ there, and the card the room posts is the natural place to continue.
 the draft is parsed, so the stored definition never carries an address.
 `automations_list` reads through `WorkspaceDO.listWorkstreamAutomations` and
 `AutomationDO.readDetail` as the person the run acts for.
-
 
 ### 2026-09-04 — A posted result drains into the room, and the rail survives an archive
 
@@ -2373,7 +2365,6 @@ has no third scope, and the enum is used wherever a room's audience is chosen �
 widening it would offer `workstream` in every one of those places. Automations
 got `AutomationScopeSchema` of their own instead.
 
-
 ### 2026-09-01 — A completed run's result is judged before it is delivered
 
 **What changed:** `resolveRunDisposition` on AutomationAgent, four columns on
@@ -2464,16 +2455,6 @@ client retries and retrying is the one thing that never turns a non-member into
 a member. They are reachable: the membership read in `requireAuth` and the one
 inside the object are two separate reads of `workspace_members`, so a revocation
 landing between them arrives here.
-
-The larger half of the same class is `acceptDraft` reaching
-`WorkstreamEmailRoutingService` to claim the automation's address. That service
-throws `ApiError`, and an EU region whose `GLOBAL_EMAIL_ROUTER` binding is
-unreachable raises a deliberate 503 there — which arrived as `500` because
-`instanceof` does not survive the hop and the human sentence matches neither the
-table nor `SAFE_CODE`. `automationApiError` now recognises it by shape, which
-does survive. This one is defence rather than a proven repair: the workers pool
-preserves the class, so the test that guards the outcome passes with the rebuild
-removed, and the boundary where it does not is one no suite here reproduces.
 
 `applyAutomationProjection` is deliberately **not** wrapped. Everything it can
 throw is a fault rather than a refusal — a `ZodError` on its own strict schema,
@@ -2662,13 +2643,6 @@ one message rather than a regional fan-out. The
 `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` justification is corrected, as is every
 neighbouring comment and document section that still described the script as
 something a deploy runs.
-
-**Why:** The cutover ran in production on 2026-08-28 and cannot run again
-meaningfully; every step above was written to be temporary. The refusal is the
-one that costs something if it stays: it bans an EU-only or Global-only deploy
-outright, so the next person needing a one-region hotfix would be blocked by a
-gate naming a cutover that finished months earlier, with nothing to tell them
-it had already happened.
 
 The limit's stated reason was simply wrong, which is worse than terse. It
 claimed a failing message would retry forever without reaching the dead-letter

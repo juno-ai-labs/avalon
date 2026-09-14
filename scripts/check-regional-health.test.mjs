@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { checkRegion, checkRegions, failedCheckNames, isHealthy, parseRegions } from "./check-regional-health.mjs";
+import { checkRegion, failedCheckNames, isHealthy, parseRegions } from "./check-regional-health.mjs";
 
 const respond = (status, body) => ({
   status,
   text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
 });
 
-const healthy = { ok: true, region: "eu", checks: { d1: { ok: true, message: "available" } } };
+const healthy = { ok: true, region: "global", checks: { d1: { ok: true, message: "available" } } };
 const unhealthy = {
   ok: false,
-  region: "eu",
+  region: "global",
   checks: { d1: { ok: true, message: "available" }, r2: { ok: false, message: "unavailable" } },
 };
 
@@ -34,7 +34,7 @@ test("failing checks are named so the log says what broke", () => {
 
 test("a healthy region passes on the first attempt without retrying", async () => {
   let calls = 0;
-  const result = await checkRegion("eu", {
+  const result = await checkRegion("global", {
     ...silent,
     fetchHealth: async () => {
       calls += 1;
@@ -47,7 +47,7 @@ test("a healthy region passes on the first attempt without retrying", async () =
 
 test("a region that recovers mid-check passes", async () => {
   let calls = 0;
-  const result = await checkRegion("eu", {
+  const result = await checkRegion("global", {
     ...silent,
     fetchHealth: async () => {
       calls += 1;
@@ -61,7 +61,7 @@ test("a region that recovers mid-check passes", async () => {
 test("a persistently unhealthy region fails after every attempt", async () => {
   let calls = 0;
   const warnings = [];
-  const result = await checkRegion("eu", {
+  const result = await checkRegion("global", {
     ...silent,
     attempts: 3,
     warn: (message) => warnings.push(message),
@@ -77,7 +77,7 @@ test("a persistently unhealthy region fails after every attempt", async () => {
 
 test("a non-JSON body is a failure, not a pass", async () => {
   // An HTML error page from a proxy must never be read as a healthy region.
-  const result = await checkRegion("eu", {
+  const result = await checkRegion("global", {
     ...silent,
     attempts: 2,
     fetchHealth: async () => respond(502, "<html>Bad Gateway</html>"),
@@ -99,22 +99,8 @@ test("a network error is retried and does not pass the gate", async () => {
   assert.equal(calls, 2);
 });
 
-test("one unhealthy region fails the whole gate, and every region is still checked", async () => {
-  const seen = [];
-  const result = await checkRegions(["eu", "global"], {
-    ...silent,
-    attempts: 1,
-    fetchHealth: async (url) => {
-      seen.push(url);
-      return url.includes("eu.") ? respond(503, unhealthy) : respond(200, healthy);
-    },
-  });
-  assert.equal(result, false);
-  assert.equal(seen.length, 2);
-});
-
-test("regions default to both and unknown names are rejected", () => {
-  assert.deepEqual(parseRegions([]), ["eu", "global"]);
+test("regions default to configured deployments and unknown names are rejected", () => {
+  assert.deepEqual(parseRegions([]), ["global"]);
   assert.deepEqual(parseRegions(["global"]), ["global"]);
   assert.throws(() => parseRegions(["apac"]), /Unknown region\(s\): apac/u);
 });

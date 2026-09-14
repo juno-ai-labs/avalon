@@ -48,7 +48,7 @@ test('CI distributes the expensive verification work across independent lanes', 
   assert.equal(
     matrixCommand(workflow, 'typecheck-and-build-invariants'),
     'pnpm typecheck && pnpm --filter @rally/api build && '
-      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:telemetry && '
+      + 'pnpm --filter @rally/api build:telemetry && '
       + 'pnpm --filter @rally/api check:telemetry-startup-boundary && '
       + 'pnpm --filter @rally/api build:ashby && '
       + 'pnpm --filter @rally/api build:pricing && '
@@ -58,7 +58,6 @@ test('CI distributes the expensive verification work across independent lanes', 
       // route, binding, or startup profile is worth catching on the pull
       // request instead of at release.
       + 'pnpm --filter @rally/api build:artifacts && '
-      + 'pnpm --filter @rally/api build:artifacts:eu && '
       + 'pnpm --filter @rally/desktop test:release',
   );
   assert.equal(
@@ -147,7 +146,6 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm lint',
     'pnpm typecheck',
     'pnpm --filter @rally/api build',
-    'pnpm --filter @rally/api build:eu',
     'pnpm --filter @rally/api build:telemetry',
     'pnpm --filter @rally/api check:telemetry-startup-boundary',
     'pnpm --filter @rally/api build:pricing',

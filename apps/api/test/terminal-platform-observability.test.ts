@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
 import { recordTerminalPlatformObservation } from "../src/observability/terminal-platform-observability";
@@ -42,7 +43,7 @@ describe("Terminal platform observability", () => {
     const env = createTestEnv({
       TERMINAL_ANALYTICS: { writeDataPoint: vi.fn(() => { throw new Error("unavailable"); }) },
       LOG_LEVEL: "error",
-      AVALON_REGION: "eu",
+      AVALON_REGION: "enterprise",
     });
 
     expect(() => recordTerminalPlatformObservation(env, {

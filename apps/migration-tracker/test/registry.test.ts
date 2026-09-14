@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
@@ -589,7 +590,7 @@ describe("recordSweep", () => {
         status: "partial",
         namespaces: [{
           namespaceId: "ns-1",
-          scriptName: "avalon-api-eu",
+          scriptName: "avalon-api-enterprise",
           className: "WorkspaceDO",
           usesSqlite: true,
           objects: [
@@ -606,7 +607,7 @@ describe("recordSweep", () => {
     expect(overview.latestSweep?.status).toBe("partial");
     expect(overview.latestSweep?.truncatedNamespaces).toEqual(["ns-1"]);
     expect(overview.latestSweep?.errorMessage).toBe("ns-2: cloudflare_api_status_429");
-    expect(overview.namespaces[0]?.scriptName).toBe("avalon-api-eu");
+    expect(overview.namespaces[0]?.scriptName).toBe("avalon-api-enterprise");
     expect(overview.namespaces[0]?.objectCount).toBe(2);
     expect(overview.namespaces[0]?.storedObjectCount).toBe(1);
   });
@@ -621,7 +622,7 @@ describe("recordSweep", () => {
     const { enumerated, afterFailure } = await withRegistry((registry) => {
       const namespace = {
         namespaceId: "ns-1",
-        scriptName: "avalon-api-eu",
+        scriptName: "avalon-api-enterprise",
         className: "SubstreamAgent",
         usesSqlite: true,
       };
@@ -847,8 +848,8 @@ describe("the registry schema", () => {
         report({ schemaVersion: 15, latestVersion: 15, workerVersionId: "0.23.0" }),
         report({
           objectId: objectId("c"),
-          objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
-          region: "eu",
+          objectName: `enterprise:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
+          region: "enterprise",
           schemaVersion: 12,
           latestVersion: 12,
           workerVersionId: "0.23.0",
@@ -862,8 +863,8 @@ describe("the registry schema", () => {
         report({ objectId: objectId("b"), schemaVersion: 12, latestVersion: 12 }),
         report({
           objectId: objectId("d"),
-          objectName: `eu:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
-          region: "eu",
+          objectName: `enterprise:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
+          region: "enterprise",
           schemaVersion: 15,
           latestVersion: 15,
         }),
@@ -897,7 +898,7 @@ describe("the registry schema", () => {
     expect(components).toEqual([
       {
         component: "substream_agent_do",
-        region: "eu",
+        region: "enterprise",
         latest_version: 15,
         // The new key was already ahead here, so its build keeps the head.
         worker_version_id: "0.24.0",
@@ -1108,17 +1109,17 @@ describe("retiring a namespace that has left the account", () => {
    * Retirement is per region, not per class.
    *
    * The same Durable Object classes are deployed in `avalon-api-global` and
-   * `avalon-api-eu`, so a class has one namespace per region and the tracker
+   * `avalon-api-enterprise`, so a class has one namespace per region and the tracker
    * holds a `component_versions` row per region. Deriving retirement from the
    * class alone — asking whether *any* namespace for `SubstreamAgent` is still
    * live — leaves the global component reading live after the global namespace
-   * is deleted, purely because the EU one still exists, which is the case the
+   * is deleted, purely because the enterprise one still exists, which is the case the
    * marker exists to show.
    */
   it("retires only the region whose namespace is gone", async () => {
-    const EU = {
-      namespaceId: "ns-eu",
-      scriptName: "avalon-api-eu",
+    const enterprise = {
+      namespaceId: "ns-enterprise",
+      scriptName: "avalon-api-enterprise",
       className: "SubstreamAgent",
       usesSqlite: true,
     };
@@ -1127,27 +1128,27 @@ describe("retiring a namespace that has left the account", () => {
       record(
         registry,
         report({ objectId: objectId("a"), region: "global" }),
-        report({ objectId: objectId("e"), region: "eu" }),
+        report({ objectId: objectId("e"), region: "enterprise" }),
       );
       registry.recordSweep(sweep({
         namespaces: [
           { ...LIVE, objects: [{ objectId: objectId("a"), hasStoredData: true }] },
-          { ...EU, objects: [{ objectId: objectId("e"), hasStoredData: true }] },
+          { ...enterprise, objects: [{ objectId: objectId("e"), hasStoredData: true }] },
         ],
       }));
-      // Only the global namespace goes; the EU one keeps running the class.
+      // Only the global namespace goes; the enterprise one keeps running the class.
       registry.recordSweep(sweep({
-        namespaces: [{ ...EU, objects: [{ objectId: objectId("e"), hasStoredData: true }] }],
+        namespaces: [{ ...enterprise, objects: [{ objectId: objectId("e"), hasStoredData: true }] }],
       }));
       return registry.overview().components;
     });
 
     const global = components.find((entry) => entry.region === "global");
-    const eu = components.find((entry) => entry.region === "eu");
+    const isolatedComponent = components.find((entry) => entry.region === "enterprise");
     expect(global?.retired).toBe(true);
     expect(global?.absent).toBe(1);
-    expect(eu?.retired).toBe(false);
-    expect(eu?.absent).toBe(0);
+    expect(isolatedComponent?.retired).toBe(false);
+    expect(isolatedComponent?.absent).toBe(0);
   });
 
   /**
@@ -1252,19 +1253,19 @@ describe("listObjects", () => {
         objectName: null,
         component: "workspace_do",
         className: "WorkspaceDO",
-        region: "eu",
+        region: "enterprise",
       }));
       return {
         behind: registry.listObjects(ObjectQuerySchema.parse({ status: "behind" })),
         component: registry.listObjects(ObjectQuerySchema.parse({ component: "workspace_do" })),
-        region: registry.listObjects(ObjectQuerySchema.parse({ region: "eu" })),
+        region: registry.listObjects(ObjectQuerySchema.parse({ region: "enterprise" })),
         search: registry.listObjects(ObjectQuerySchema.parse({ search: objectId("a").slice(0, 8) })),
       };
     });
 
     expect(results.behind.objects.map((object) => object.objectId)).toEqual([objectId("b")]);
     expect(results.component.total).toBe(1);
-    expect(results.region.objects[0]?.region).toBe("eu");
+    expect(results.region.objects[0]?.region).toBe("enterprise");
     expect(results.search.objects.map((object) => object.objectId)).toEqual([objectId("a")]);
   });
 
@@ -1357,8 +1358,8 @@ describe("forced migration targets", () => {
     const selection = await withRegistry((registry) => {
       registry.recordSweep(sweep({
         namespaces: [{
-          namespaceId: "ns-eu",
-          scriptName: "avalon-api-eu",
+          namespaceId: "ns-enterprise",
+          scriptName: "avalon-api-enterprise",
           className: "WorkspaceDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("d"), hasStoredData: true }],
@@ -1370,7 +1371,7 @@ describe("forced migration targets", () => {
     expect(selection.targets).toEqual([{
       objectId: objectId("d"),
       objectName: null,
-      region: "eu",
+      region: "enterprise",
     }]);
     expect(selection.unroutable).toBe(0);
   });
@@ -1404,14 +1405,14 @@ describe("forced migration targets", () => {
           usesSqlite: true,
           objects: [{ objectId: objectId("a"), hasStoredData: true }],
         }, {
-          namespaceId: "ns-eu",
-          scriptName: "avalon-api-eu",
+          namespaceId: "ns-enterprise",
+          scriptName: "avalon-api-enterprise",
           className: "WorkstreamDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("b"), hasStoredData: true }],
         }],
       }));
-      return registry.migrationTargets({ className: "WorkstreamDO", region: "eu" });
+      return registry.migrationTargets({ className: "WorkstreamDO", region: "enterprise" });
     });
 
     expect(selection.targets.map((target) => target.objectId)).toEqual([objectId("b")]);
@@ -1482,7 +1483,7 @@ describe("migration runs", () => {
       registry.recordMigrationRun(migrationRun({ className: "WorkspaceDO" }));
       registry.recordMigrationRun(migrationRun({
         className: "SubstreamAgent",
-        region: "eu",
+        region: "enterprise",
         matched: 40,
         dispatched: 25,
         unroutable: 15,
@@ -1495,7 +1496,7 @@ describe("migration runs", () => {
 
     expect(runs.map((run) => run.className)).toEqual(["SubstreamAgent", "WorkspaceDO"]);
     expect(runs[0]).toMatchObject({
-      region: "eu",
+      region: "enterprise",
       matched: 40,
       dispatched: 25,
       unroutable: 15,

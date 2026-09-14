@@ -1,3 +1,4 @@
+import { configuredRegions } from "./regions.mjs";
 import { isEntryPoint } from "./entry-point.mjs";
 
 const DATASET = "avalon_terminal_operations";
@@ -14,8 +15,8 @@ export function parseTerminalAnalyticsArguments(arguments_) {
       if (options.days < 1 || options.days > 90) throw new Error("--days must be between 1 and 90");
       index += 1;
     } else if (argument === "--region") {
-      if (value !== "all" && value !== "global" && value !== "eu") {
-        throw new Error("--region must be all, global, or eu");
+      if (value !== "all" && !configuredRegions.includes(value)) {
+        throw new Error("--region must be all or a configured region");
       }
       options.region = value;
       index += 1;

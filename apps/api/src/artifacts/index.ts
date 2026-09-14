@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 /**
  * The artifact serving Worker.
  *
@@ -90,7 +91,7 @@ const SESSION_COOKIE = "__rally_artifact_session";
 
 export interface ArtifactServingEnv {
   APP_ENV: "development" | "test" | "staging" | "production";
-  AVALON_REGION: "global" | "eu";
+  AVALON_REGION: Region;
   ARTIFACT_SERVING_DOMAIN: string;
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   PLATFORM_DB: D1Database;
@@ -147,7 +148,7 @@ function readCookie(request: Request, name: string): string | null {
  *
  * The artifact Worker receives this one D1 binding instead of either product
  * region's database. A composite primary key makes the lookup one row and keeps
- * equal stubs in `-g` and `-eu` independent origins.
+ * equal stubs in `-g` and a configured suffix independent origins.
  */
 async function resolveArtifactHostname(
   env: ArtifactServingEnv,

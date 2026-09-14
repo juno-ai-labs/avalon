@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import type { AccountOnboarding, UpdateAccountOnboarding } from '@rally/contracts';
 import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
@@ -16,7 +17,7 @@ import type {
   DesktopRealtimeSocketSendInput,
 } from './realtime-socket';
 
-export type RallyRegion = 'global' | 'eu';
+export type RallyRegion = Region;
 
 /** Stable UI/cache identity for a workspace. Workspace UUIDs are only unique
  * within a region, so desktop state must never key one without its region. */

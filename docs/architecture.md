@@ -1,7 +1,7 @@
 # Architecture
 
 Rally is a pnpm TypeScript monorepo with an Electron desktop client, a Hono API
-Worker deployed twice as Global and EU, internal operator Workers, and shared
+Worker deployed twice as configured deployments, internal operator Workers, and shared
 packages that hold every contract and rule the surfaces agree on. This document
 is the map of how those surfaces fit together: what runs where, what crosses
 which boundary, and which document owns each subsystem in detail.
@@ -37,7 +37,6 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
 | `apps/api/src/durable-objects` | `WorkspaceDO`, the model-free conversation parents `WorkstreamDO` and `AutomationDO` over their shared `ConversationParentDurableObject` base, `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
-| `apps/api/src/*-regional-bridge.ts`, `apps/api/src/*-routing-bridge.ts` | The `WorkerEntrypoint` RPC bridges that are the only path from Global to EU. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
 | `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
@@ -45,8 +44,6 @@ docs/                      Product, architecture, security, setup, runbooks
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
 | `scripts/eslint-rules/require-validated-response.mjs` | The lint rule that makes a route validate its own response. |
-
-## How it works
 
 ### Core surfaces
 
@@ -77,7 +74,7 @@ docs/                      Product, architecture, security, setup, runbooks
    active work-stream route before reporting ephemeral presence to WorkspaceDO;
    pooled work-stream sockets are never treated as attention.
 2. **`apps/api`** is a Hono application deployed as three statically imported
-   Cloudflare Worker graphs in each of Global and EU: the regional API plus
+   Cloudflare Worker graphs in each of configured deployments: the regional API plus
    private document-processing and Terminal-provider services reached through
    typed Service Bindings. Global adds a private telemetry-delivery graph and a
    scheduled inference-pricing graph. The API owns authentication, authorization,
@@ -95,40 +92,6 @@ docs/                      Product, architecture, security, setup, runbooks
 
 ### Request and event flow
 
-```mermaid
-flowchart LR
-  E["Electron renderer"] -->|"typed HTTPS"| H["Hono API"]
-  E <-->|"workspace sync + command + presence WebSocket"| WD["WorkspaceDO"]
-  E <-->|"aggregate metadata WebSocket"| WS["WorkstreamDO (no agent)"]
-  E <-->|"direct feed WebSocket"| SA["SubstreamAgent"]
-  H --> D[("Regional D1")]
-  H --> B[("Regional R2")]
-  H --> WD
-  H --> SA
-  WD --> SA
-  SA --> WS
-  WS -->|"opaque state/effect wake-up"| Q
-  H --> Q["Activity Queue"]
-  GH["GitHub App"] -->|"signed webhook"| GI["Smart GitHub ingress"]
-  GI -->|"installation route"| H
-  GI -->|"exact bytes over RPC"| EH["EU Hono API"]
-  Q --> C["Idempotent activity consumer"]
-  C -->|"typed directory state RPC"| WD
-  C --> D
-  C --> S["WorkspaceDO alarm"]
-  S --> SA
-  SA --> A["Rally Bind 15 adapter"]
-  A --> O["OpenRouter"]
-  A --> T["Authorized connection plugins"]
-  A --> X["Deferred Terminal plugin"]
-  ACE["Ace internal Hono Worker"] -->|"managed write"| FF["Cloudflare Flagship"]
-  ACE -->|"flag key"| FQ["Shared then regional Queues"]
-  FQ -->|"regional Worker RPC"| WD
-  X --> DT["Private Daytona sandbox"]
-  T --> G["Google APIs"]
-  T --> M["Signed webhook"]
-```
-
 Authority follows the data boundary. Regional D1 is the thin identity/routing
 plane: workspace/member/user identity, opaque connector/object routes,
 migration controls, and bounded operational audit/telemetry. WorkspaceDO owns
@@ -142,58 +105,15 @@ product state and the full conversation agent loop; `WorkstreamDO` and
 `AutomationDO` own aggregate metadata and their outboxes. Large activity
 payloads, uploads, and snapshots live in R2.
 
-Users and workspaces each own a validated IANA timezone. The desktop detects the
-local system timezone during native authentication and sends it to seed an account
-that has never chosen one; a client that detects nothing sends nothing, and the
-server has no default of its own. Workspace defaults are `America/Los_Angeles` in
-Global and `Europe/London` in EU. Automation drafting preserves an explicit
-trigger timezone and leaves an unnamed one null: the zone is resolved when a
-revision is applied, inside the automation's own object, against the scope it
-is being applied with and the account it will run for. A zone the runtime
-cannot format refuses the apply with `sidekick_timezone_invalid` rather than
-being silently replaced.
-
 ### Region boundary
 
 Google sign-in has one platform endpoint: the Global control plane at
 `api.rallywith.ai`. It creates a short-lived, identity-only bootstrap session
 and then discovers the user's existing workspace memberships and pending
-invitations in both regions. Only users with neither receive the post-auth
+invitations in configured deployments. Only users with neither receive the post-auth
 workspace-region selector. Existing members activate their workspace directly,
 while invited users can accept or decline the invitation in its issuing region
 without a second Google sign-in.
-
-Global reaches the EU deployment only through named Cloudflare Worker RPC service
-bindings; there is no public internal-bridge HTTP route. `RegionalIdentityBridge`
-carries minimal onboarding operations. `GitHubRegionalBridge` carries verified
-setup operations and exact signed GitHub webhook bytes for installations
-connected in EU. `WorkstreamEmailRoutingBridge` reserves globally unique,
-immutable friendly addresses, while `InboundEmailRegionalBridge` passes only one
-verified Resend event to the owning data plane so the body is fetched and stored
-there. A successful activate, create, or accept operation mints a session in the
-workspace's owning region and commits the Global opaque workspace binding. The
-Global identity session remains a narrow discovery credential; it is not valid
-for regional product traffic. Electron stores it beside one independent
-credential/profile binding per activated regional workspace, keeps exactly one
-binding active, and opens a product socket only for that selection. Regional
-user UUIDs may differ for the same verified Google account, so discovery links
-them by verified email and never treats one regional UUID as account-wide.
-Both deployments retain separate D1, R2, Durable Object namespaces,
-session-signing and credential-encryption keys, and Worker secrets. Cross-region
-workspace-content access is not implemented.
-
-Telemetry begins before workspace selection without introducing a third data
-plane. Global reduces Cloudflare's country signal to an immediate Global/EU route;
-an affirmative EU result crosses only as a validated semantic projection over
-`EU_TELEMETRY_BRIDGE` and prevents pre-region crash saving. The explicit workspace
-binding controls future signals, but accepted history never moves. Global delivers
-approved rows through a Global-only typed telemetry-delivery Worker, whose first
-destination adapter is PostHog; EU terminates telemetry in its regional D1, dedicated
-EU-jurisdiction R2, and pinned crash processor. EU uses the separate
-`GLOBAL_TELEMETRY_CONTROL` binding only for opaque preference mutation and
-Global-signed journey authorization/closure; the key and destination identities
-stay in Global. [`telemetry.md`](telemetry.md) owns the full event, preference,
-identity, crash, and restricted operator flow.
 
 ### Identity and secrets
 
@@ -247,28 +167,6 @@ identity, crash, and restricted operator flow.
   connection scope, and requested capability server-side.
 
 ### Work streams and live updates
-
-Within each regional workspace, one `WorkspaceDO` synchronizes workspace
-surfaces and routes user commands, every
-work stream maps to one model-free `WorkstreamDO`, and every independent model
-context maps to one `SubstreamAgent`. Main external substream `0` retains the
-historical room name during class rename; additional children append
-their substream ID. Every staging/production lookup resolves through a restricted
-namespace: `jurisdiction("us")` for Global and `jurisdiction("eu")` for EU,
-with the workspace's best-effort persisted affinity (`wnam`/`enam` or
-`weur`/`eeur`) on every possible first `get()`. Creation derives west/east from
-the initiating Cloudflare request longitude; fixed western values remain only
-fallbacks for migrations, background creation, or missing metadata. The
-maintenance import creates the restricted target graph; an unrestricted Global
-predecessor is a different ID and is not a serving fallback. All namespaces are
-SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
-serves work-stream product rows;
-afterward each child owns its ordered parts, runs/tools, compaction, timers,
-retained-content audience fences, and Terminal state, while its parent aggregates common/user
-metadata and `WorkspaceDO` owns the authoritative workspace product database.
-D1 retains identity/membership, regional routing/migration, and operational
-records; it has no rebuildable workspace/work-stream serving projections. The normalized schemas, fleet import, and authority states are in
-[`workstream-durable-object.md`](workstream-durable-object.md).
 
 `WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
 sync/command admission, metadata, authoritative directory queries, and regional effects.
@@ -571,7 +469,7 @@ paths for:
 - One public GitHub App with installation tokens, expiring user authorization, a
   signature-verifying smart ingress, regional fanout, resource discovery, and
   normalized repository activity.
-- One public Linear app with Global and EU OAuth callbacks, app-actor attribution,
+- One public Linear app with configured deployments OAuth callbacks, app-actor attribution,
   a signature-verifying smart ingress, regional fanout, a first-class resource
   surface, and a feature-gated `protocol_only` native-agent surface; plus one
   public Notion connection whose single redirect URI and single webhook
@@ -598,8 +496,6 @@ hydration remains capability-checked through its originating connection.
 Deterministic trigger/watch checks
 precede any LLM classification.
 
-## Invariants
-
 - **Authority follows the declared storage boundary.** Regional D1 owns
   membership/identity, opaque ingress/object routing, migration, and operational
   audit/telemetry. `WorkspaceDO` owns workspace-scoped connector, Terminal
@@ -612,6 +508,7 @@ precede any LLM classification.
   `WorkstreamDO` and `AutomationDO` own aggregate metadata/outbox, and legacy D1
   product and pin tables do not exist. R2 holds large payloads; the authority that names each
   workspace reference stays in the owning WorkspaceDO database.
+
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
   that build erases.** That covers HTTP requests, JSON responses, queue messages,
   Workflow params and step results, Durable Object fetches and their stored state,
@@ -626,7 +523,7 @@ precede any LLM classification.
     anything unparseable.
   - **The internal RPC surface** — the `WorkerEntrypoint` bridges — parses each
     argument at the hop (`lib/rpc-contracts.ts`). Same account is not the same
-    guarantee, and `region`/`workspaceId` decide which side of the Global/EU
+    guarantee, and `region`/`workspaceId` decide which side of the configured deployment
     boundary a record lands on.
   - **Stored SQL rows** are parsed at the read rather than coerced field by field,
     mirroring the columns' own CHECK constraints, so a bad row fails where it is
@@ -643,6 +540,7 @@ precede any LLM classification.
     became a client-side `invalid_response` with nothing on the server naming the
     field. A body the route builds from literals is exempt — the route is its own
     contract there.
+
 - **A row schema bounds what its column does not, or one bad row kills a list.**
   Mirror a `CHECK` exactly, and bound anything the column does not: an enum that
   restates a real constraint can only fail on drift, and naming the column is the
@@ -650,14 +548,11 @@ precede any LLM classification.
   bounds is truncated at the read instead — `origin_label`, `resources.title`,
   `activities.title`. Without that, one over-long value fails every row the same
   query returned.
+
 - **Widen the code before the column.** A migration that relaxes a `CHECK` must
   ship after the deploy that widens the matching enum, or rows written by the new
   schema fail the readers still running the old one.
-- **Global reaches EU only through named Worker RPC service bindings.** There is
-  no public internal-bridge HTTP route, and adding one would put the region
-  boundary on the open internet. The engineering MCP is the explicit
-  Access-authorized operator exception that may return requested EU Durable
-  Object content through such a binding; product traffic has no equivalent.
+
 - **Within one attempt, a run's authority can narrow but never widen.**
   Progressive plugin activation cannot introduce a connection or grant the
   attempt did not start with, and live connection reauthorization drops one the
@@ -667,12 +562,15 @@ precede any LLM classification.
   mid-run can widen the resumed surface; the recorded run scope is a forensic
   record on the root path and is not consulted to bound it. See
   [`agent-harness.md`](agent-harness.md).
+
 - **Business rules live in services or shared packages, never in route
   handlers.** A rule enforced in a handler is a rule the scheduler, the Queue
   consumer, and the Workflow do not get.
+
 - **The renderer is never trusted with a secret.** It never receives provider
   credentials, native PKCE verifiers, OpenRouter keys, Cloudflare administration
   keys, raw IPC, Node integration, or arbitrary navigation.
+
 - **Telemetry observes product state; it never becomes product state or changes
   its result.** Producers emit a closed semantic contract, API outcomes come from
   the authoritative service, and a reporter/destination/processor failure is
@@ -689,7 +587,7 @@ document, and it does not absorb one when it grows:
 | For | Read |
 | --- | --- |
 | Identity, tenancy, and the D1 schema | [`data-model.md`](data-model.md) |
-| The Global/EU boundary in detail | [`regionalization.md`](regionalization.md) |
+| The configured deployment boundary in detail | [`regionalization.md`](regionalization.md) |
 | Trust boundaries and the renderer's isolation | [`security.md`](security.md) |
 | The Bind adapter, runs, tools, skills, limits | [`agent-harness.md`](agent-harness.md) |
 | Socket admission and the ticket | [`realtime-sockets.md`](realtime-sockets.md) |
@@ -770,23 +668,7 @@ table.
 
 The traps are environmental rather than architectural: in a sandbox the API starts
 with `pnpm dev:api:local`, because the `ai` binding forces a remote proxy session
-that takes both regions down without Cloudflare credentials.
-
-## Regional impact
-
-The Global and EU deployments run the same Worker code and share nothing but the
-identity control plane and the named RPC bridges. Each retains its own D1, ordinary
-R2, dedicated telemetry R2, Durable Object namespaces, telemetry crash processor,
-session-signing and credential-encryption keys, and Worker secrets. Global
-Durable Objects resolve in the US jurisdiction; EU Durable Objects and its
-telemetry bucket resolve in the EU jurisdiction. EU has no PostHog or telemetry
-Analytics Engine destination.
-
-This is a logical and storage boundary for the prototype, not a claim that all
-subprocessors provide complete EU-only processing. The Global identity control
-plane transiently handles onboarding summaries for EU workspaces and stores an
-opaque EU workspace locator; EU workspace content remains in the EU deployment.
-[`regionalization.md`](regionalization.md) owns the boundary in full.
+that takes configured deployments down without Cloudflare credentials.
 
 ## Security and trust model
 
@@ -802,8 +684,6 @@ Telemetry IPC is a closed named surface, local files are owner-only and bounded,
 and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
 access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
-
-## Changelog
 
 ### 2026-09-10 — Escape closes the Sidekicks window, through a gesture Settings no longer owns
 
@@ -894,11 +774,6 @@ identity session while Electron stores independent regional workspace sessions
 and selects exactly one. Discovery links regional accounts by verified email
 rather than assuming their user UUIDs match.
 
-**Why:** An EU workspace credential cannot call Global discovery, and regional
-identity rows are deliberately separate authorities. Revoking the bootstrap
-after each activation made returning to setup or discovering another region
-require a new Google sign-in.
-
 **Considered and rejected:** Rebinding one refresh token between regions and
 making the platform user UUID universal. Both collapse authorities that are
 kept separate in storage, signing keys, and deployment.
@@ -933,13 +808,6 @@ authority; [`api-worker-deployment.md`](api-worker-deployment.md) owns its build
 and rollout contract.
 
 ### 2026-08-30 — Heavy provider graphs move behind typed Worker services
-
-**What changed:** Each region now deploys three statically imported Workers:
-the regional API, a document processor for PDF/image codecs, and a Terminal
-provider for the Daytona SDK. The API reaches the latter two through explicit
-typed Service Binding RPC methods. Deployment builds and profiles all six
-regional artifacts, establishes services before callers, and retains the EU
-health barrier before Global.
 
 **Why:** Cloudflare evaluates a Worker's static module graph before serving it,
 and the monolithic graph crossed the platform startup CPU limit. The controllable
@@ -1192,11 +1060,6 @@ configuration and durable fan-out, while each block ID resolves to a
 `SubstreamAgent("0")` for fenced source runtime SQL, and settles versioned
 results into WorkstreamDO for its socket.
 
-*Placement affinity.* The Global onboarding reservation, regional workspace row,
-and WorkspaceDO SQL now persist one immutable affinity. Every workspace-scoped
-object resolver reads that projection and combines it with the existing US/EU
-jurisdiction lock.
-
 *Electron sockets.* Each authenticated renderer for the active workspace has one
 persistent WorkspaceDO synchronization/command socket. Each selected or running
 work stream has a WorkstreamDO complete-metadata socket and a SubstreamAgent
@@ -1234,11 +1097,6 @@ authority.
 **Consequences:** The hierarchy has two agent child types with shared lifecycle
 primitives. Operators must distinguish low-volume parent dispatch/result RPCs
 from direct block-to-source runtime SQL, and Electron needs no fourth socket.
-
-Global hierarchies use `wnam` or `enam`; EU hierarchies use `weur` or `eeur`.
-Selecting the western cell solely from jurisdiction is a fallback only; affinity
-is cached per Worker isolate because it is immutable, and changing it requires a
-fleet move.
 
 New workspace surfaces need a typed invalidation topic; new aggregate fields
 need complete WorkstreamDO snapshots; and user writes remain exclusive to
@@ -1352,17 +1210,6 @@ Shipped in the pull request for this change.
 
 ### 2026-08-13 — Regional telemetry joins client intent to server truth, separates projection from control, and gives main the crash generations
 
-**What changed:** *Reporter and destinations.* Electron main now owns a typed,
-durable regional reporter and Crashpad lifecycle; APIs accept the same closed
-contract, add authoritative outcomes, and route to an internal EU sink or
-idiomatic Global PostHog adapter. Anonymous onboarding receives an immediate
-coarse route and later same-region person link.
-
-*Two directional RPC surfaces.* The architecture now names validated
-event/outcome projection from Global to EU and opaque preference/journey control
-from EU to Global. Restricted regional telemetry operations are mounted
-separately from the product-session API.
-
 *Native crashes.* The first regional telemetry module boundary in Electron main:
 Crashpad writes only inside an active route-final generation, and a later
 process rotates or purges that whole generation before starting another handler.
@@ -1372,10 +1219,6 @@ The detailed lifecycle and future regional pipeline live in
 **Why:** Product funnels need the intent visible only in the client and the
 result known only by the service, while crash reporting must survive renderer
 and process failure without placing provider authority in that renderer.
-
-EU onboarding needs both an immediate regional event path and a way to verify
-Global-issued journey authority, but combining them or sharing the signing key
-would turn a narrow region bridge into a general cross-region data plane.
 
 Crashpad cannot be stopped after startup and cannot use Rally's required
 authenticated-header uploader. Giving main ownership of the directory above the
@@ -1388,13 +1231,6 @@ and using analytics as canonical state. Those shapes either weaken the
 trust/region boundary or lose the semantic server outcome. Also one
 bidirectional telemetry bridge, a shared capability key, and leaving
 replay/raw-access helpers without a deployed authorization boundary.
-
-**Consequences:** Telemetry remains observational and independently fallible.
-Every new event enters the shared registry and receives tests at producer,
-regional acceptance, and destination boundaries; EU and Global resources are
-operated independently. Event payloads cross only Global-to-EU; EU-to-Global
-commands carry no event, dump, regional analytics identity, or destination key.
-Operator access remains independently authenticated in the owning region.
 
 **Future changes must preserve:** Renderer code never owns crash paths or
 transport, and main never reads or mutates a database while its Crashpad handler

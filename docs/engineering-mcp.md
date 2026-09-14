@@ -35,22 +35,11 @@ authentication. The origin independently verifies the signed
 audience. A verified request reaches the stateless MCP handler; every other
 request fails closed.
 
-The Worker has two named Service Bindings, one to
-`avalon-api-global#EngineeringInspectionBridge` and one to
-`avalon-api-eu#EngineeringInspectionBridge`. Every ID-based list tool asks both
-regions concurrently. SQL tools first ask both regions to resolve the target
-without executing SQL, require exactly one answer, and then send SQL only to
-that binding with the resolved authority generation. The regional bridge
-revalidates that generation immediately before obtaining the object stub.
-Neither region finding a target is a not-found error; both finding it is an
-ambiguity error. This means the MCP Worker never guesses a region, silently
-prefers Global, or mutates both sides of a duplicate route.
-
 The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
-| `list_workspaces` | Regional `workspaces` plus the workspace authority ledger | D1 identity inventory from both regions |
+| `list_workspaces` | Regional `workspaces` plus the workspace authority ledger | D1 identity inventory from configured deployments |
 | `list_workstreams` | Active workspace route at the open regional authority generation | `workspace_workstream_directory` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the active workspace route generation | WorkspaceDO SQLite |
@@ -74,7 +63,7 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
   `durable_object_open` generation with a compatible serving contract. Pending,
   importing, verified, quarantined, and stale-generation routes cannot obtain a
   Durable Object stub.
-- SQL resolves both regions without mutation, refuses a duplicate target, and
+- SQL resolves configured deployments without mutation, refuses a duplicate target, and
   executes against exactly one selected binding. The selected bridge rechecks
   the generation so a cutover between resolution and execution fails closed.
 - Main substream `0` needs no directory row: route activation happens only after
@@ -143,13 +132,6 @@ challenge.
 
 ## Regional impact
 
-This subsystem is an explicit operator exception to Rally's ordinary
-no-cross-region-content rule. An Access-authorized engineering query can return
-EU Durable Object content through the shared MCP Worker and onward to the
-operator's MCP client. Neither the MCP Worker nor Global D1 persists that
-content, and query material is excluded from logs. The exception exists only
-for deliberate engineering inspection; no product request may traverse it.
-
 Both regional API Workers execute SQL locally against their own D1 routes and
 Durable Objects. The shared Worker never receives a database handle or a copy of
 the SQLite file, only the requested result.
@@ -170,12 +152,6 @@ Cloudflare Access application, not in application code.
 
 ## Operations
 
-Normal rollout is the API production workflow. It verifies the entire revision,
-deploys and health-checks EU before Global, then provisions the Access
-application, injects its audience into an ephemeral Wrangler config, and deploys
-the MCP Worker. A manual deployment that selects only one region skips the MCP
-step, preserving its last known pair of compatible regional entrypoints.
-
 Operator connection instructions for Codex, Claude Code, and Cursor Desktop,
 including the first safe schema query and OAuth troubleshooting, live in
 [`internal-admin-mcp-server.md`](internal-admin-mcp-server.md).
@@ -190,8 +166,6 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
-
-## Changelog
 
 ### 2026-08-30 — Admit hosted origins to the MCP transport
 
@@ -246,12 +220,12 @@ active route in the current open, serving-compatible generation. The Access
 provisioner now paginates both application and policy inventory, and BLOB
 serialization uses bounded chunks instead of per-byte string growth.
 
-**Why:** The first implementation issued SQL to both regions concurrently and
+**Why:** The first implementation issued SQL to configured deployments concurrently and
 only rejected ambiguity after both calls returned. A duplicate route could
 therefore apply one destructive statement twice, and maintenance or stale
 routes could address an object that was not the current serving authority.
 
-**Considered and rejected:** Running read-only SQL in both regions and parsing
+**Considered and rejected:** Running read-only SQL in configured deployments and parsing
 the statement was rejected because SQLite text is not a reliable capability
 boundary and the tools deliberately permit arbitrary statements. Choosing the
 first successful region was rejected because a second route is an authority
@@ -280,7 +254,7 @@ and product OAuth were rejected because they widen the raw-SQL boundary or mix
 operator identity with Rally membership.
 
 **Consequences:** Access admission now grants deliberate destructive database
-console authority across Global and EU. The MCP must deploy after both named
+console authority across configured deployments. The MCP must deploy after both named
 regional entrypoints, raw query material must never be logged or persisted, and
 future product callers must not reuse the inspection RPC in place of a typed
 domain contract.

@@ -26,7 +26,7 @@ CORS before the request reaches the Worker.
    authority or changes routing, add a reading-side case to
    `apps/api/test/legacy-header-compatibility.test.ts` as well.
 4. Keep the client, Worker allowlist, and regression test in the same pull
-   request. The middleware is shared by Global and EU; do not add a wildcard or a
+   request. The middleware is shared by configured deployments; do not add a wildcard or a
    region-specific bypass.
 
 If the header contains authority or user content, stop and review
@@ -57,10 +57,6 @@ curl -i -X OPTIONS https://api.rallywith.ai/workstreams \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: authorization,content-type,x-example-header'
 ```
-
-Expect `204`, `Access-Control-Allow-Origin: app://rallywithai`, and the new header in
-`Access-Control-Allow-Headers`. Repeat against the EU endpoint when the feature is
-available there.
 
 A missing CORS entry appears as a renderer transport failure. Chromium does not
 send the product request, so the blocked mutation has no Worker request log. The

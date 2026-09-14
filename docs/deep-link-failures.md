@@ -22,8 +22,6 @@ link does; [`domain-migration.md`](domain-migration.md) owns the scheme.
 | `apps/desktop/src/preload/index.ts` | The four bridge methods and the `deep-link-error:changed` channel. |
 | `apps/desktop/src/common/desktop.ts` | The bridge contract those four methods satisfy. |
 
-## How it works
-
 ### Why the message leaves the renderer
 
 Deep links are delivered to a renderer, and which renderer depends on the link.
@@ -222,8 +220,6 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it), call
   `window.rally.showDeepLinkError('…')` from the main window with a long message,
   and confirm the button is still on screen.
-
-## Changelog
 
 ### 2026-09-01 — Connectivity failures give a retryable remedy
 

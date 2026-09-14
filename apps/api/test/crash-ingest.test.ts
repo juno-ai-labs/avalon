@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrashIngestService } from '../src/telemetry/crash-ingest';
 import { createCloudflareTestBinding, createTestEnv } from './helpers/cloudflare-test';
@@ -84,7 +85,7 @@ describe('regional native crash ingest', () => {
       .rejects.toThrow('crash_dump_malformed');
     await expect(service.accept({ ...metadata, dump: minidump(20 * 1024 * 1024), subjectUserId: 'user-1' }))
       .rejects.toThrow('crash_dump_too_large');
-    await expect(service.accept({ ...metadata, route: 'eu' as never, dump: minidump(), subjectUserId: 'user-1' }))
+    await expect(service.accept({ ...metadata, route: 'enterprise' as never, dump: minidump(), subjectUserId: 'user-1' }))
       .rejects.toThrow('crash_route_mismatch');
     await expect(service.accept({ ...metadata, dump: minidump(), subjectUserId: 'user-1' }))
       .resolves.toEqual({ result: 'suppressed', uploadId });

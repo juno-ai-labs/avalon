@@ -1,3 +1,4 @@
+import { fallbackWorkspacePlacementAffinity } from "../lib/durable-object-namespace";
 import { Hono } from "hono";
 import {
   AutomationDraftSchema,
@@ -194,7 +195,7 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
   );
   await workspaceObject.initializeWorkspace(
     workspaceId,
-    env.AVALON_REGION === "eu" ? "weur" : "wnam",
+    fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
   );
   const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
 

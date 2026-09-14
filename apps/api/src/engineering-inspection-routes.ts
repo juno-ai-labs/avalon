@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
 import type { Env } from "./env";
@@ -7,7 +8,7 @@ export const InspectionWorkspaceRouteSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   placement_affinity: z.string(),
   authority_state: z.literal("active"),
   authority_generation: z.number().int().positive(),

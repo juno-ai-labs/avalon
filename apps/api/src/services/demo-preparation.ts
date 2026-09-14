@@ -278,7 +278,7 @@ export async function demoTemplate(env: Env): Promise<{
   castEmailDomain: string;
 }> {
   // Demos are prepared where the template lives, and this answer is the
-  // company's directory: an EU call could do nothing with it but read out
+  // company's directory: a regional call could do nothing with it but read out
   // every European colleague's name and address.
   requireDemoRegion(env);
   const rows = await env.DB.prepare(
@@ -309,7 +309,7 @@ export async function demoTemplate(env: Env): Promise<{
   };
 }
 
-/** Demos are prepared where the template lives. The EU deployment carries the routes and refuses them. */
+/** Demos are prepared where the template lives. The regional deployment carries the routes and refuses them. */
 function requireDemoRegion(env: Env): void {
   if (env.AVALON_REGION !== "global") {
     throw new ApiError(409, "demo_region_unsupported", "Demos are prepared in the Global region");

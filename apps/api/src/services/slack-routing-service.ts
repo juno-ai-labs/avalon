@@ -1,3 +1,5 @@
+import { regionalBindings } from "../lib/regional-bindings";
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -120,7 +122,8 @@ export class SlackRoutingService {
     ).bind(teamId).first<{ region: Region }>();
     if (!route) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Rally");
     if (route.region === "global") return local(new SlackAgentService(this.env));
-    if (route.region === "eu" && this.env.EU_SLACK_BRIDGE) return unwrap(await remote(this.env.EU_SLACK_BRIDGE));
+    const bridge = regionalBindings(this.env, route.region).slack;
+    if (bridge) return unwrap(await remote(bridge));
     throw new ApiError(503, "slack_region_unavailable", `The ${route.region} Slack connector service is unavailable`);
   }
 
@@ -139,7 +142,7 @@ export function isAllowedSlackIngressRoute(method: string, pathname: string): bo
 }
 
 function validate(input: SlackRouteInput): void {
-  if (!input.teamId || input.teamId.length > 100 || !input.workspaceId || !input.connectionId || !["global", "eu"].includes(input.region)) {
+  if (!input.teamId || input.teamId.length > 100 || !input.workspaceId || !input.connectionId || !isConfiguredRegion(input.region)) {
     throw new ApiError(422, "invalid_slack_route", "The Slack installation route is invalid");
   }
 }

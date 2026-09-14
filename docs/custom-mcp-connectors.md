@@ -24,8 +24,6 @@ and connection rules it inherits are in [`connectors.md`](connectors.md).
 | `apps/api/src/lib/connector-registry.ts` | `customMcpConnectorConfig` — the callback URI, which is all this connector needs to be available in a region. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The provider card, the connect dialog, and the **MCP tools** pane. |
 
-## How it works
-
 ### Adding a server
 
 A person supplies a name, an HTTPS endpoint, and one of two ways to
@@ -248,8 +246,6 @@ the endpoint and the header are one decision and are captured together.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.
-
-## Changelog
 
 ### 2026-09-11 — Name the server in participant activity
 

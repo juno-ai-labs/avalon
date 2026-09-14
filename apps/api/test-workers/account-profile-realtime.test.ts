@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { reset } from 'cloudflare:test';
@@ -13,7 +14,7 @@ const peerId = asUserId('00000000-0000-7000-8000-000000000902');
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000903');
 beforeEach(async () => { await reset(); });
 
-it('streams committed profile changes to another member even when EU discovery fails', async () => {
+it('streams committed profile changes to another member even when enterprise discovery fails', async () => {
   // This lane proves D1 -> route -> real WorkspaceDO -> another member's socket.
   // Its D1 starts empty; these are the identity/auth tables this flow reads.
   await env.DB.batch([
@@ -25,7 +26,7 @@ it('streams committed profile changes to another member even when EU discovery f
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'global', 'wnam', NULL, NULL)`).bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT, user_id TEXT, role TEXT, status TEXT, last_seen_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspace_members VALUES (?, ?, 'owner', 'active', NULL), (?, ?, 'member', 'active', NULL)`).bind(workspaceId, userId, workspaceId, peerId),
-    env.DB.prepare(`INSERT INTO workspaces VALUES ('abandoned', 'global', 'invalid', NULL, '2026-09-08'), ('foreign', 'eu', 'invalid', NULL, NULL)`),
+    env.DB.prepare(`INSERT INTO workspaces VALUES ('abandoned', 'global', 'invalid', NULL, '2026-09-08'), ('foreign', 'enterprise', 'invalid', NULL, NULL)`),
     env.DB.prepare(`INSERT INTO workspace_members VALUES ('abandoned', ?, 'owner', 'active', NULL), ('foreign', ?, 'owner', 'active', NULL)`).bind(userId, userId),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare(`INSERT INTO sessions VALUES ('peer-session', ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(peerId, workspaceId),
@@ -49,7 +50,7 @@ it('streams committed profile changes to another member even when EU discovery f
   messages.length = 0;
   const tasks: Promise<unknown>[] = [];
   const failures: unknown[] = [];
-  let euRequested = false;
+  let enterpriseRequested = false;
   const app = new Hono<HonoAppEnv>();
   app.use('*', async (c, next) => { c.set('auth', { sessionId: 'identity', userId, workspaceId: null, region: 'global', role: null }); await next(); });
   app.route('/', onboardingRoutes);
@@ -57,7 +58,7 @@ it('streams committed profile changes to another member even when EU discovery f
     const result = await app.request('/account', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expectedRevision: 0, presentation: { displayName: 'Alex Rivera', initials: 'AR', color: 'violet', avatar: 'circle' } }),
-    }, { ...env, EU_IDENTITY_BRIDGE: { discover: async () => { euRequested = true; throw new Error('EU unavailable'); } } }, {
+    }, { ...env, REGION_ENTERPRISE_IDENTITY_BRIDGE: { discover: async () => { enterpriseRequested = true; throw new Error('enterprise unavailable'); } } }, {
       waitUntil: (task) => { tasks.push(task.catch((error: unknown) => { failures.push(error); })); },
       passThroughOnException: () => {}, props: {},
     });
@@ -65,7 +66,7 @@ it('streams committed profile changes to another member even when EU discovery f
     expect(await result.json()).toMatchObject({ revision: 1, presentation: { displayName: 'Alex Rivera', initials: 'AR', color: 'violet' } });
     await Promise.all(tasks);
     expect(failures).toHaveLength(1);
-    expect(euRequested).toBe(true);
+    expect(enterpriseRequested).toBe(true);
     // The queue may deliver the WS frame just after publishSync resolves.
     await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: 'workspace_sync', topics: ['workspace_profile', 'member_directory'] })), { timeout: 5_000 });
     const row = await env.DB.prepare('SELECT name, presentation_json FROM users WHERE id = ?').bind(userId).first<{ name: string; presentation_json: string }>();

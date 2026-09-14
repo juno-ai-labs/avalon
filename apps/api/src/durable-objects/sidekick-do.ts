@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { z } from "zod";
 import {
@@ -178,7 +179,7 @@ interface AutomationRow extends Record<string, SqlStorageValue> {
   registration_generation: number;
   automation_id: string;
   workspace_id: string;
-  region: "global" | "eu";
+  region: Region;
   author_user_id: string;
   run_as_user_id: string;
   lifecycle: Lifecycle;
@@ -379,6 +380,16 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE automation ADD COLUMN appearance_json TEXT
        CHECK (appearance_json IS NULL OR json_valid(appearance_json))`,
   ],
+}, { version: 8, description: "allow configured deployment identifiers", statements: [
+  "PRAGMA defer_foreign_keys = ON",
+  "CREATE TABLE \"_region_copy_automation\" AS SELECT * FROM \"automation\"",
+  "DELETE FROM \"automation\"",
+  "DROP TABLE \"automation\"",
+  "CREATE TABLE automation (\n      id INTEGER PRIMARY KEY CHECK (id = 1),\n      automation_id TEXT NOT NULL UNIQUE,\n      workspace_id TEXT NOT NULL,\n      region TEXT NOT NULL,\n      author_user_id TEXT NOT NULL,\n      run_as_user_id TEXT NOT NULL,\n      lifecycle TEXT NOT NULL CHECK (lifecycle IN ('draft', 'active', 'paused', 'deleted')),\n      paused_by TEXT CHECK (paused_by IS NULL OR paused_by IN ('person', 'room_archive')),\n      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace', 'workstream')),\n      owning_workstream_id TEXT,\n      owning_room_archived_at INTEGER CHECK (owning_room_archived_at IS NULL OR owning_room_archived_at >= 0),\n      title TEXT NOT NULL,\n      description TEXT NOT NULL,\n      current_definition_revision INTEGER NOT NULL CHECK (current_definition_revision >= 0),\n      accepted_definition_revision INTEGER\n        CHECK (accepted_definition_revision IS NULL OR accepted_definition_revision > 0),\n      connector_bindings_json TEXT NOT NULL CHECK (json_valid(connector_bindings_json)),\n      default_plugin_ids_json TEXT NOT NULL CHECK (json_valid(default_plugin_ids_json)),\n      activity_source_plugin_ids_json TEXT NOT NULL CHECK (json_valid(activity_source_plugin_ids_json)),\n      evaluator_projection_json TEXT NOT NULL CHECK (json_valid(evaluator_projection_json)),\n      model_override TEXT,\n      email_address TEXT COLLATE NOCASE,\n      effective_after_event_sequence INTEGER,\n      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),\n      created_at INTEGER NOT NULL,\n      updated_at INTEGER NOT NULL, applied_effects_revision INTEGER, loadable INTEGER NOT NULL DEFAULT 0 CHECK (loadable IN (0, 1)), registration_generation INTEGER NOT NULL DEFAULT 0, appearance_json TEXT\n       CHECK (appearance_json IS NULL OR json_valid(appearance_json)),\n      CHECK ((scope = 'workstream') = (owning_workstream_id IS NOT NULL))\n    ) STRICT",
+  "INSERT INTO \"automation\" SELECT * FROM \"_region_copy_automation\"",
+  "DROP TABLE \"_region_copy_automation\"",
+  "PRAGMA defer_foreign_keys = OFF"
+]
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {

@@ -1,4 +1,4 @@
-import { Building2, Check, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
+import { Building2, LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, ConnectorMark, InlineError } from '../components/primitives';
@@ -6,7 +6,7 @@ import { useAppSession } from '../lib/app-session';
 import { isComposingKeyEvent } from '../lib/ime';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
-import type { PendingWorkspaceInvitation, Region } from '../lib/types';
+import type { PendingWorkspaceInvitation } from '../lib/types';
 
 export type SignInDesktopBridge = Pick<
   RallyDesktopBridge,
@@ -23,46 +23,6 @@ export function BootScreen(): React.JSX.Element {
   );
 }
 
-function RegionOptions({ selected, onChange }: {
-  selected: Region;
-  onChange: (region: Region) => void;
-}): React.JSX.Element {
-  return (
-    <fieldset className="region-options">
-      <legend className="sr-only">Workspace data region</legend>
-      <label className="region-option">
-        <input
-          checked={selected === 'global'}
-          name="region"
-          onChange={() => onChange('global')}
-          type="radio"
-          value="global"
-        />
-        <span className="region-icon"><Globe2 aria-hidden="true" size={18} /></span>
-        <span className="region-option-copy">
-          <strong>United States</strong>
-          <span>US-Jurisdiction storage</span>
-        </span>
-        {selected === 'global' && <Check aria-hidden="true" className="region-check" size={17} />}
-      </label>
-      <label className="region-option">
-        <input
-          checked={selected === 'eu'}
-          name="region"
-          onChange={() => onChange('eu')}
-          type="radio"
-          value="eu"
-        />
-        <span className="region-icon"><ShieldCheck aria-hidden="true" size={18} /></span>
-        <span className="region-option-copy">
-          <strong>European Union</strong>
-          <span>EU-jurisdiction storage</span>
-        </span>
-        {selected === 'eu' && <Check aria-hidden="true" className="region-check" size={17} />}
-      </label>
-    </fieldset>
-  );
-}
 
 export function SignInScreen(): React.JSX.Element {
   const {
@@ -78,8 +38,7 @@ export function SignInScreen(): React.JSX.Element {
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    // Identity entry is one Rally login surface. Workspace data residency is
-    // selected only after account and invitation discovery.
+    // Global owns identity; existing workspace assignments come from discovery.
     selectRegion('global');
   }, [selectRegion]);
 
@@ -145,8 +104,8 @@ export function SignInScreen(): React.JSX.Element {
 }
 
 export function RegionOnboarding(): React.JSX.Element {
-  const { finishWorkspaceSetup, region, session, signOut, workspaceName } = useAppSession();
-  const [selected, setSelected] = useState<Region>(region ?? 'global');
+  const { finishWorkspaceSetup, session, signOut, workspaceName } = useAppSession();
+  const selected = 'global';
   const [name, setName] = useState(workspaceName);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,11 +126,6 @@ export function RegionOnboarding(): React.JSX.Element {
     createOperation.current = operation;
     const operationId = operation.id;
     reportTelemetryProductIntent({
-      kind: 'onboarding_region_selected',
-      selectedRegion: selected,
-      entrypoint: 'first_run',
-    });
-    reportTelemetryProductIntent({
       kind: 'workspace_create_requested',
       selectedRegion: selected,
       entrypoint: 'first_run',
@@ -191,10 +145,10 @@ export function RegionOnboarding(): React.JSX.Element {
 
   return (
     <main className="onboarding-shell workspace-setup-shell window-drag">
-      <section className="onboarding-card workspace-setup-card window-no-drag" aria-labelledby="region-heading">
+      <section className="onboarding-card workspace-setup-card window-no-drag" aria-labelledby="workspace-heading">
         <RallyMark className="signin-mark" />
         <div className="onboarding-copy">
-          <h1 id="region-heading">Create your workspace</h1>
+          <h1 id="workspace-heading">Create your workspace</h1>
           <p>A shared home for your team and Rally.</p>
         </div>
 
@@ -219,11 +173,6 @@ export function RegionOnboarding(): React.JSX.Element {
           </span>
         </label>
 
-        <p className="region-question">Where should Rally keep your data?</p>
-        <RegionOptions selected={selected} onChange={setSelected} />
-        <p className="region-note">
-          This choice controls only where workspace data is stored and cannot be changed later.
-        </p>
         {error && <InlineError>{error}</InlineError>}
         <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
@@ -293,7 +242,7 @@ export function InvitationOnboarding({
               <div>
                 <strong>{invitation.workspaceName}</strong>
                 <span>Invited by {invitation.invitedByName} · {invitation.role === 'admin' ? 'Administrator' : 'Member'}</span>
-                <span>{invitation.region === 'eu' ? 'European Union' : 'United States'} data region</span>
+
               </div>
               <div className="invitation-choice-actions">
                 <Button disabled={workingId !== null} onClick={() => void decline(invitation)}>Decline</Button>

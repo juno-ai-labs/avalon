@@ -190,8 +190,6 @@ This changes acquisition and distribution, not workspace or work-stream
 semantics. Download authorization is not account authorization. There is no approved-account list or invitation-only account creation/sign-in.
 An already-obtained installer does not require an additional access approval.
 
-## Decision log
-
 ### 2026-09-09 — Ship intake and manual downloads as the first slice
 
 **Decided:** Implement normalized request persistence, frozen acknowledgement
@@ -206,37 +204,6 @@ origins must preserve desktop updates and release verification.
 Bulk invitation sending, regional workspace grants, activation/recovery downloads
 and exclusive artifact distribution remain incomplete. The subsystem reference
 owns concrete migration filenames, deployment prerequisites and erasure operations.
-
-### 2026-09-12 — Ship the workspace-invitation grant Global-only, ahead of the regional handoff
-
-**Decided:** `WorkspaceService.createInvitation` issues a `workspace_invitation`
-grant and puts its link in the invitation email for a Global workspace only. An
-EU workspace invitation gets no download link and no grant. The regional
-handoff this PRD's Regional impact section describes — a download URL carrying
-a non-secret owning-region locator, redeemed through that region's own API —
-is not built; EU redemption stays Global-only, as it was before this change.
-
-**Why:** Rollout step 3 (regional workspace invitation grants) was still
-unimplemented, and a reported lockout — invited teammates with no existing
-Rally install had no way to get the app from the invitation email at all —
-needed the Global majority case fixed now rather than waiting on the full
-regional design. Issuing an EU grant against the EU database without the
-locator/regional-redemption work would produce a link that can never be
-redeemed, which is worse than no link. This is a scope cut on rollout step 3,
-not a reversal of it: the locator design, EU data-residency review, and
-regional redemption endpoint remain the PRD's stated shape for closing this gap.
-
-**Changes:** Narrows rollout step 3 to its Global half; EU workspace invitation
-grants remain future work with the design already on record in this PRD's
-Regional impact section. The revocation-cascade invariant this PRD's Product
-behavior section already states ("revocation or supersession must invalidate
-any still-active grants linked to that invitation") is fully implemented in the
-same change, across all four ways a workspace invitation can end
-(`revokeInvitation`, decline, duplicate-invitation supersession, and workspace
-abandonment) — that invariant is met, not deferred. Shipped in
-[#728](https://github.com/juno-ai-labs/avalon/pull/728); the module reference
-(`docs/private-access.md`) owns the mechanism and carries the fuller changelog
-entry.
 
 ## Key design decisions
 
@@ -265,15 +232,6 @@ entry.
    exclusive distribution. The implementation PR assigns migration filenames
    and records any scope changes when they land.
 
-## Data model
-
-Global regional D1 holds pre-workspace access requests, frozen acknowledgement
-content, and standalone grants. The regional migration chain creates empty
-schema in EU as well. Workspace grants must live in their invitation's region;
-EU invite email addresses must not be copied into Global for convenience.
-Grants store only the token digest, source, optional source identity, timestamps,
-and operator attribution. Raw URLs are returned only to the issuing caller.
-
 ### Data lifecycle and privacy requests
 
 Acquisition records do not inherit workspace deletion: they are collected before
@@ -296,13 +254,6 @@ or invitation, revoke access before deleting attribution, and reconcile/cancel
 pending sends before erasure so a delayed worker cannot recreate the data.
 Global acquisition erasure does not delete a Rally account or workspace.
 
-For a regional workspace invitation, fulfill lookup and erasure in its owning
-region using existing invitation/identity routing. EU addresses, research and
-message content stay in EU; a support operation must not copy them into Global
-as a lookup shortcut. Provider-side deletion follows the provider's supported
-privacy process; record unresolved provider retention separately rather than
-claiming a local deletion erased external copies.
-
 The first intake slice needs an operator runbook for locating and erasing its
 request and manual-grant records through existing administration access. It has
 no background invitation sender or research records. Before the invitation phase
@@ -310,24 +261,6 @@ ships, implement durable invitation suppression and deletion of pending/send
 records, including protection against a sender racing with erasure. Automatic
 age-based cleanup and a self-service privacy UI are deferred; the documented
 operator procedure handles requests in the meantime.
-
-## Regional impact
-
-Pre-workspace access requests and manual grants are Global acquisition data.
-The shared migration chain creates empty schema in both regions; it does not
-make Global intake available in EU. Workspace invitation grants and recipient
-information stay in the invitation's owning region. EU email addresses and
-research must not be copied to Global for operator convenience. Privacy lookup
-and erasure use the regional procedure above without changing workspace routing.
-
-The first Ace issuer writes only Global manual/acquisition grants. Workspace
-invitation grants are issued by the existing authenticated invitation service in
-the workspace's region; this PRD grants Ace no new direct EU D1 write authority.
-A workspace download URL carries a non-secret owning-region locator so the
-shared download page redeems through that region's API. The locator grants no
-access: the selected regional API must validate the bearer token against its own
-grant record, with no cross-region fallback on failure. The invitation phase adds
-that regional handoff; the initial manual-download page targets Global only.
 
 ## Security and trust model
 

@@ -1,3 +1,6 @@
+import { configuredRegions } from "./regions";
+import { RegionSchema } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 /**
  * The one contract a Durable Object migration report is written and read
  * through.
@@ -10,7 +13,7 @@
  * consumer's parse the only thing standing between a changed producer and a
  * corrupted registry.
  *
- * The report crosses a regional boundary: an EU object reports into one
+ * The report crosses a regional boundary: a regional object reports into one
  * account-wide tracker. `docs/regionalization.md` allows exactly one shape of
  * data to make that crossing — a region plus opaque record identifiers — and
  * `OpaqueDurableObjectNameSchema` is what holds the report to it. A Durable
@@ -44,13 +47,13 @@ const NUMERIC_SEGMENT = /^[0-9]{1,12}$/u;
  * against `names.ts` by a test rather than by memory.
  *
  * This is an allowlist rather than a shape. A rule like "any short lowercase
- * word" would admit `eu:acme-corporation:payroll` — a perfectly plausible
+ * word" would admit `enterprise:acme-corporation:payroll` — a perfectly plausible
  * future naming scheme, and one that would carry a customer's name across the
  * regional boundary the moment somebody wrote it. Adding a role word here is a
  * one-line change in a file a reviewer is looking at for exactly this reason,
  * which is the point.
  */
-const FIXED_SEGMENTS = new Set(["global", "eu", "automation", "artifact"]);
+const FIXED_SEGMENTS = new Set(["automation", "artifact"]);
 
 /**
  * Every segment of an Avalon Durable Object name is one of three things: a
@@ -64,7 +67,7 @@ export function isOpaqueDurableObjectName(value: string): boolean {
   if (segments.length > 8) return false;
   return segments.every((segment) => UUID_SEGMENT.test(segment)
     || NUMERIC_SEGMENT.test(segment)
-    || FIXED_SEGMENTS.has(segment));
+    || FIXED_SEGMENTS.has(segment) || configuredRegions.includes(segment));
 }
 
 export const OpaqueDurableObjectNameSchema = z.string().refine(
@@ -112,7 +115,7 @@ export const DurableObjectMigrationReportSchema = z.object({
   className: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/u),
   /** The migration runner's component key — the namespace of `schemaVersion`. */
   component: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   appEnv: z.enum(["development", "test", "staging", "production"]),
   workerVersionId: z.string().min(1).max(64),
   status: DurableObjectMigrationStatusSchema,
@@ -197,7 +200,7 @@ export const DurableObjectMigrationCommandSchema = z.object({
    * bindings to its objects — but a message that states it catches a misrouted
    * producer that the queue's name never would.
    */
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   /**
    * When the operator started the run. Carried rather than derived, and
    * deliberately not read by the consumer: the case it exists for is a message
@@ -223,7 +226,7 @@ export type DurableObjectMigrationCommand = z.infer<typeof DurableObjectMigratio
  * bindings to the objects. The reports converge on one destination and so share
  * one queue; the commands diverge to two fleets and cannot.
  */
-export function durableObjectMigrationCommandQueue(region: "global" | "eu"): string {
+export function durableObjectMigrationCommandQueue(region: Region): string {
   return `avalon-${region}-migration-commands`;
 }
 
@@ -238,6 +241,5 @@ export function durableObjectMigrationCommandQueue(region: "global" | "eu"): str
  * excluded by the same exactness rather than by accident of their suffix.
  */
 export function isDurableObjectMigrationCommandQueue(queue: string): boolean {
-  return queue === durableObjectMigrationCommandQueue("global")
-    || queue === durableObjectMigrationCommandQueue("eu");
+  return configuredRegions.some((region) => queue === durableObjectMigrationCommandQueue(region));
 }

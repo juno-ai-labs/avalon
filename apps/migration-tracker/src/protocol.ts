@@ -1,3 +1,5 @@
+import { RegionSchema } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 /**
  * The shapes the registry Durable Object returns and the queries it accepts.
  *
@@ -43,7 +45,7 @@ export type ObjectStatus = z.infer<typeof ObjectStatusSchema>;
 export const ObjectQuerySchema = z.object({
   status: ObjectStatusSchema.nullish(),
   component: z.string().max(64).nullish(),
-  region: z.enum(["global", "eu"]).nullish(),
+  region: RegionSchema.nullish(),
   scriptName: z.string().max(128).nullish(),
   /** Matches the object ID or name as a prefix; both are what an operator holds. */
   search: z.string().max(128).nullish(),
@@ -258,7 +260,7 @@ export const MigrationRunRequestSchema = z.object({
    * messages that were never going to work.
    */
   className: z.enum(REPORTING_CLASSES),
-  region: z.enum(["global", "eu"]).nullish(),
+  region: RegionSchema.nullish(),
 });
 export type MigrationRunRequest = z.infer<typeof MigrationRunRequestSchema>;
 
@@ -266,7 +268,7 @@ export type MigrationRunRequest = z.infer<typeof MigrationRunRequestSchema>;
 export interface MigrationTarget {
   objectId: string;
   objectName: string | null;
-  region: "global" | "eu";
+  region: Region;
 }
 
 /**
@@ -294,7 +296,7 @@ export interface MigrationTargetSelection {
 /** One class an operator may force, per region, with what it would reach. */
 export interface ForceableComponent {
   className: string;
-  region: "global" | "eu";
+  region: Region;
   /** Live objects of this class in this region — the size of a run. */
   objects: number;
   behind: number;
@@ -307,7 +309,7 @@ export interface MigrationRun {
   runId: string;
   className: string;
   /** Null means every region the class runs in. */
-  region: "global" | "eu" | null;
+  region: Region | null;
   requestedBy: string;
   requestedAt: number;
   matched: number;
@@ -323,5 +325,5 @@ export interface MigrationsOverview {
   components: ForceableComponent[];
   runs: MigrationRun[];
   /** Regions whose command queue this Worker actually holds a binding for. */
-  dispatchableRegions: ("global" | "eu")[];
+  dispatchableRegions: (Region)[];
 }

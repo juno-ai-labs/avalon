@@ -4,14 +4,10 @@
 
 The 2026-08-21 production pass found that Terminal was not release-healthy for multi-step work. Plug-in discovery, lazy loading, a cold scratch command, a same-workstream follow-up command, and read-only repository checkout worked, but repeated Terminal calls in one agent run did not: three independent workstreams produced sub-second Terminal call failures followed by `harness_execution_failed`, and one filesystem write remained `started` until the five-minute run lease was reaped.
 
-The initial fault boundary was between the harness's durable tool receipt and Terminal's newly object-local authority, before (or while entering) the Terminal executor. It was not a Bash, Node, Python, SQLite, Git, or repository-permission failure: the failing attempts had no command output, completed in 454 ms–1 s, and occurred after successful operations against the same sandbox. PR #224 fixed the first reproduced heartbeat ordering and made the remaining failure diagnosable. Its production retest then proved the complete invariant: the resident main SubstreamAgent must not call its own Terminal-operation or generated-resource endpoints over RPC while its alarm owns the model/tool loop. PR #228 keeps both paths in the resident object event. The final signed-in Global production stress test passed every area in the acceptance matrix below across 28 Terminal tool calls, including two generated-resource publications and a publish/import round trip. A later signed-in Global pass cleared the concurrent cold-start, alarm-during-sleep, and timeout/recovery gates. It also exposed a separate fresh-workstream model-targeting authority violation and a documented inline-child limit that disagreed with the enforced contract. The owning Terminal module's separate EU functional gate remains open.
-
-The original QA changed no code or production configuration. The follow-up fixes merged through PRs #224 and #228. Every live test remained confined to private QA workstreams, scratch sandboxes, generated QA resources, and an authorized read-only checkout. The later stop-recovery passes proved PR #249's linked-run lease liveness but exposed a separate accepted-command quiescence failure, described below. PR #251 closed that strict Global no-late-write gate; the broader matrix remains open for EU functional execution, stale-attempt recovery/UX, injected durable-host error guidance, and the exact HQA-08 residual-receipt RPC response-loss fault.
-
 ## 2026-08-22 post-deploy verification correction
 
 PR #224 merged as `19ecb3555a9902a388bc5b57eddfac233eae5b67`; deployment run
-`32580512573` succeeded for that exact merge in EU and Global, including the
+`32580512573` succeeded for that exact merge in configured deployments, including the
 remote migration ledger and two-region health check. A signed-in production
 window then reran the two-command control in private workstream
 `01a02a06-79b0-7328-abe4-b75bf747ab24`. The first command completed; the
@@ -39,15 +35,6 @@ verified the resident path after that follow-up merged and deployed.
 
 ## 2026-08-22 Global production acceptance
 
-PR #228 merged as `e7e0288e0d78c27bd8db069c2c3012dbd669be16`.
-Deployment run `32583865005` checked out that exact revision, found no pending
-remote migrations, deployed EU version `8fd50480-acee-4d3a-aeb7-cdb8227ed2d1`
-and Global version `93358cb0-e6af-4c6c-9b2e-b420cd068d74`, and reported both
-regional health endpoints healthy. The signed-in Computer Use pass ran later
-against successfully deployed main revision
-`523573b39288ff307ea24176b28903dd6dbd294a`, which is a descendant of the #228
-merge.
-
 Fresh private workstream `01a02af9-7c6f-7b85-8738-a8afce00dd99` completed
 harness run `01a02af9-83e0-7f82-97e6-3dbfa1793cc4`. Production Global logs
 record one resident `SubstreamAgent` event with `outcome: ok` across 323,153 ms.
@@ -66,17 +53,6 @@ appeared.
 | Generated resources | PASS | Text resource `01a02afd-499e-7f7b-bfef-669f19061823` and binary resource `01a02afd-7ece-7e61-acdd-9d4c950dd550` published sequentially and were visible in the workstream inspector. |
 | Resource round trip | PASS | Importing the published text resource produced the same 37-byte content and SHA-256 `55d152ee40abc1621f0963b14780a27ca33c9db7b1235660dcd4d7e72d911332`. |
 | Final durable state | PASS | The workstream inspector showed both resources, `Harness status: completed`, and the same run and workstream IDs as the Worker trace. |
-
-Three rejected calls were input-contract failures before execution, not
-recurrences. File mutation tools take sandbox-relative paths rather than an
-absolute `/workspace/...` `filePath`; `apply_patch` takes the documented patch
-envelope rather than a bare multi-file unified diff; and `publish_resource`
-only publishes a file staged under `$AVALON_RESOURCE_DIR`. The model corrected
-each input, after which the operation succeeded. None left an ambiguous write
-receipt. These boundaries are intentional path and patch validation, so no code
-change follows from them. This run clears the reproduced Global sequential
-receipt failure; it does not replace the required EU functional matrix or the
-two-way cold-start concurrency pass with health checks.
 
 ## 2026-08-22 Global concurrency, alarms, subagents, and timeout acceptance
 
@@ -141,45 +117,6 @@ retiring the provider sandbox; every pre-acceptance task takes that path without
 waiting for a later human-linked run. That provider boundary matters because
 `command_outcome_unknown` does not prove the command stopped. The earlier
 command remains ambiguous and must not be replayed or called resolved.
-
-PR #249 merged as `973168279939212fde7eeac181431ee3ad8721bd` and deployment
-run `32624216543` produced healthy Global version
-`2e590149-7543-4e48-a526-77a85b15210b` and EU version
-`53e47151-3a18-4553-b2b2-a074a83687cf`, with both migration ledgers current.
-Fresh private Global workstream `01a02d70-ffe2-71f2-85c9-e5606de0ec92`
-proved the lease-liveness repair: linked reads observed zero `sandbox_busy`.
-It also disproved the original provider proof. Run
-`01a02d7d-2c06-7f3d-ba75-c40d8e570d50` wrote a start marker at
-07:19:43Z, entered a 120-second sleep, and was stopped with invocation
-`01a02d7d-4e9c-7493-8c13-3b8032eb6450` durably
-`command_outcome_unknown`. Linked run
-`01a02d7e-aa4b-7e0b-9648-8c57fcafefb8` saw `START_PRESENT` and initially
-`LATE_ABSENT`; after the original deadline, run
-`01a02d86-2fa1-7f68-931a-b1d388581e9e` read exact content
-`PR249_STRICT_LATE_SHOULD_NOT_EXIST`. Daytona had removed the named session
-while the accepted shell continued in the sandbox. The correction therefore
-requires whole-sandbox stop/restart for a `running` task and provider-sandbox
-retirement for a pre-acceptance task. Runtime and scheduled-lifecycle
-tests both failed before that stop boundary was restored and now prove the task
-stays unsettled and contenders stay fenced across the provider await. This
-Global stop/recovery gate was then closed by the deployed PR #251 sequence.
-
-PR #251 merged as `9c09e4d1683edf268706e4cb5ca5ce7885ee6fa5` and deployment
-run `32629139604` produced healthy Global version
-`7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609` and EU version
-`bba16c1f-a471-4397-89bc-7e988eecdde6`, with both migration ledgers current.
-In fresh private Global workstream `01a02dd3-7328-7a2e-b9d9-31b1a4b902bc`,
-strict run `01a02dd4-6d36-7257-b21b-b78bcc9f0bb5` wrote
-`strict-start.txt` at 08:54:57Z, entered a 120-second sleep, and invocation
-`01a02dd4-7feb-7ab7-ba87-84696df880c0` became `ambiguous` after member stop.
-Immediate linked run `01a02dd5-4b96-7d63-8246-91564414489f` read the start
-marker, received `not_found` for `strict-late.txt`, and observed zero
-`sandbox_busy`. Post-deadline run `01a02dd7-1395-7588-b14d-645b74db5a1a`
-and invocation `01a02dd7-2319-71a5-94a0-36a3a9c45997` again received
-`not_found`. Trace-only run `01a02dda-092e-7c50-b45f-e1a326e0bae9`
-reconfirmed the absence against the exact Global Worker version above. Computer
-Use visibly inspected the ambiguous stopped card and all three linked results.
-No run replayed the unknown command.
 
 Every fresh work stream also emitted an otherwise hidden error before its
 creation request completed:
@@ -260,11 +197,6 @@ Regression evidence is recorded in real-workerd and Node tests. The new heartbea
 
 ## Test results
 
-These are the original 2026-08-21 results. See the later 2026-08-22 Global
-production acceptance above: it subsequently closed the Global concurrency and
-timeout gaps while retaining EU functional, stale-attempt, and injected-error
-follow-up work.
-
 | Area | Result | Production evidence |
 |---|---|---|
 | Plug-in discovery and load | PASS | Terminal loaded in 685 ms–2 s and exposed 9 tools in five QA workstreams. |
@@ -279,8 +211,6 @@ follow-up work.
 | Edit, patch, timeout, sanitization, package install, local Git, resource publish | BLOCKED | The broad matrix could not be completed without repeatedly submitting writes after ambiguous failures. Continuing would have weakened the safety boundary the Terminal contract is designed to enforce. |
 | Concurrent startup | FAIL / confounded | Of concurrently started QA workstreams, some completed a cold operation while B was reaped and C initially produced no tool activity. This is consistent with capacity or lease starvation, but the later sequential reproductions prove a separate non-concurrency defect. |
 | Recovery UX | FAIL | Retry frequently produced another `harness_execution_failed` or a truncated plan without replaying/settling the prior tool card. |
-
-## Issue 1 — P1: Terminal operations fail before usable tool output
 
 ### Reproduction
 
@@ -322,18 +252,12 @@ The receipt rows themselves admit sequential effects correctly. The missing inva
 Implemented validation:
 
 1. Real workerd proves a heartbeat returns rather than joining an active drain.
-2. Real workerd proves both Terminal-operation and runtime-receipt commits remain successful when their follow-up alarm scheduling fails.
-3. Caught object-port and receipt failures log IDs, operation/request, stable code, and a private cause without command, output, or statement text.
-4. Bind retains participant-safe durable-host failure categories.
-5. The first final production Global pass reran the exact two-command control
-   and then continued through 26 additional Terminal tool calls. The deployment
-   workflow verified both regional health endpoints for the exact merge
-   revision. At that checkpoint the EU functional and two-way cold-start
-   concurrency gates remained open; the later 2026-08-22 acceptance above
-   closed the Global concurrency gate, while EU functional execution remains
-   open.
 
-## Issue 2 — P1: a Terminal write can remain “started” until stale-run reaping
+2. Real workerd proves both Terminal-operation and runtime-receipt commits remain successful when their follow-up alarm scheduling fails.
+
+3. Caught object-port and receipt failures log IDs, operation/request, stable code, and a private cause without command, output, or statement text.
+
+4. Bind retains participant-safe durable-host failure categories.
 
 ### Reproduction and evidence
 
@@ -366,8 +290,6 @@ pending write receipt and visible card together. That recovery remains covered
 by real-workerd and migration tests and remains an open production acceptance
 item.
 
-## Issue 3 — P2: reported command duration excludes most user-visible latency
-
 ### Evidence
 
 For the E cold command:
@@ -386,15 +308,6 @@ Confidence: high.
 
 Implemented: `durationMs` remains the provider-command duration for compatibility; Terminal results now add and document `acquisitionDurationMs` and `totalDurationMs`. Tests require all three meanings and require total runtime duration to be at least acquisition duration.
 
-Production status: revalidated in the later 2026-08-22 Global pass above. A
-three-second deadline returned `state=timed_out`, `terminationReason=timed_out`,
-`exitCode=null`, provider `durationMs=5531`, `acquisitionDurationMs=13718`, and
-`totalDurationMs=19447`. Immediate and delayed recovery commands both proved the
-timed-out process stayed terminated, and Computer Use inspected all three clock
-fields in the visible card/report. EU functional execution remains separate.
-
-## Issue 4 — P2: production error reporting prevents exact RCA and safe recovery
-
 ### Evidence
 
 Every fast failure showed the attempted input and generic run code, but no stable Terminal code, causal message, stdout/stderr, receipt state, or retry policy. The participant cannot tell whether the command ran. The agent consequently attempted improvised probes in C and D, while B's retry could not reconcile the prior write. The Global Worker tail remained attached for more than 16 minutes after E's UI had terminalized the run and still emitted neither a correlated `agent_run_outcome` nor the causal exception for that harness ID.
@@ -412,28 +325,6 @@ Several error boundaries collapse distinct faults:
 
 Implemented and deployed: the Terminal object port returns `terminal_operation_not_committed` with `outcome=not_committed` and `retryable=true` only when the transaction rolled back. A later alarm failure is logged but returns the committed result. The shared runtime receipt path applies the same boundary. Bind carries `tool_receipt_persistence_failed` and `run_state_persistence_failed`, while stale write receipts settle the card to `ambiguous` with conservative do-not-repeat guidance.
 
-Production status: the Global pass produced no durable-host failure, so it
-proved the healthy path but did not exercise these participant-safe error
-categories. Deterministic input-contract rejections were safe to correct, but
-they are not evidence for rollback, post-commit alarm, or stale-write guidance.
-The post-PR #251 audit also found that a transient receipt RPC after a stopped or
-reaped run had terminalized was never retried, leaving the run terminal while
-its tool card remained `admitted` or `executing`. The deployed repair uses
-an immutable settlement marker plus the existing bounded activation sweep. It
-also fails soft per warned repair row, preserves the receipt-scoped stopped
-payload, and cannot overwrite a later automation elicitation. Its stopped,
-stale-root, stale-child failure-first, positive BlockDashboard authority,
-unsettleable-row progress, and later-elicitation regressions pass 54/54 in the
-focused runtime file. PR #253 merged as
-`e4311041bc45936137cd318871497c22392e0bff`; deployment run `32633487884`
-produced healthy Global Worker `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU
-Worker `f3c83ce2-e854-49fc-9b05-5819dda1c984`, with no pending migration in
-either region. The exact residual-receipt RPC response-loss fault remains
-unexercised in production because it is not safely injectable through Computer
-Use; the deployed identity and health checks do not pretend to reproduce it. A
-fresh ordinary post-deployment Computer Use inspection was unavailable because
-the Mac relocked after deployment.
-
 ## Additional observations
 
 - Production behavior matches the current lazy-allocation documentation: loading Terminal alone does not start a sandbox. The proposed plug-in-activation prewarm is not production behavior; PR #173 (“Start Terminal sandbox on plugin activation”) remains open and unmerged.
@@ -443,23 +334,3 @@ the Mac relocked after deployment.
   and visually inspected the completed workstream and both generated resources.
 
 ## Release recommendation
-
-The reproduced Global sequential receipt-persistence block is cleared. PR #228
-is merged, its exact revision deployed healthy to EU and Global, and a later
-deployed descendant passed the signed-in Global Computer Use matrix without a
-receipt or resident runtime failure. This Global pass proves sequential
-commands, mutations, expected-failure recovery, local Git, delayed execution,
-binary handling, and generated-resource publication/import. Historical
-production passes remain the evidence for package installation, output
-overflow/sanitization, and authorized read-only checkout; those were not
-repeated in this acceptance run. The later production pass proves two-way cold
-Terminal startup, overlapping sleeps, keep-alive heartbeats, a scheduled wake-up
-due during an active tool, timeout termination, and post-timeout recovery. The
-2026-08-23 follow-ups above closed both the yielded-lease liveness defect and,
-after PR #251, the accepted-command provider-quiescence gate. EU Terminal
-execution, stale-attempt recovery/UX, and injected durable-host error guidance
-remain open,
-so the owning module's broader production acceptance gate remains open; EU
-health alone is not functional Terminal evidence. A future change to resident
-tool authority must retain the rule that the main child uses object-local ports
-while external callers use RPC.

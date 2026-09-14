@@ -15,7 +15,7 @@ if (!fixtureRoot) throw new Error('Missing --fixture-root');
 const generationId = switchValue('fixture-generation-id');
 if (!generationId) throw new Error('Missing --fixture-generation-id');
 const route = switchValue('fixture-route');
-if (route !== 'global' && route !== 'eu') throw new Error('Missing or invalid --fixture-route');
+if (!route) throw new Error('Missing or invalid --fixture-route');
 const now = switchValue('fixture-now');
 if (!now) throw new Error('Missing --fixture-now');
 

@@ -1,7 +1,7 @@
 # Feature flags
 
 Rally evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
-through the `FLAGS` binding on both regional Workers. The binding owns two
+through the `FLAGS` binding on configured regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
@@ -58,9 +58,6 @@ The rest:
 | `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream or substream being started, and the locked pill inside one that already exists. |
 | `apps/api/src/services/substream-creation-service.ts` | Where a substream's pin is written, on the confirmation that creates it. See [`substream-creation.md`](substream-creation.md). |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
-| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
-
-## How it works
 
 ### Why a flag rather than a Worker variable
 
@@ -323,7 +320,6 @@ A caller supplies only these, and only what it knows:
 | Attribute | Value |
 | --- | --- |
 | `agent` | The role key, e.g. `workstream` |
-| `region` | `AVALON_REGION` — `global` or `eu` |
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
 | `workstreamId` | Present on work-stream, subagent, and classifier evaluations |
@@ -363,10 +359,10 @@ that were sent.
 
 `userPlatformId` is the one to reach for when a rollout is per *person* rather
 than per workspace. `userId` names a regional `users` row, and one person with
-workspaces in both regions has one in each — bucketing on it would place them in
+workspaces in configured deployments has one in each — bucketing on it would place them in
 a different bucket per region and hand them a half-rolled-out feature on one of
 them. The platform id is established once by the Global control plane and is
-immutable in both regions ([`regionalization.md`](regionalization.md)). It is
+immutable in configured deployments ([`regionalization.md`](regionalization.md)). It is
 absent only for an account predating that control plane, and an absent attribute
 does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
@@ -391,7 +387,7 @@ loader, not at the rule author's discretion:
 - **One carve-out: `workspaceSlug`.** It is user-authored text — the workspace
   name typed at onboarding, slugified, with eight characters of the workspace id
   appended (`workspace-service.ts`) — so it can name a company, a team, or, on a
-  solo account, a person, and it crosses from both regions. It is sent anyway,
+  solo account, a person, and it crosses from configured deployments. It is sent anyway,
   because the alternative is rules written against uuids, and a rule nobody can
   read six weeks later is a rollout nobody can safely revert. This is the one
   exception; a second one is a decision, not a precedent.
@@ -693,7 +689,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
   that were sent.
 - **Bucket a per-person rollout on `userPlatformId`, never `userId`.** `userId`
-  names a regional row, and one person with workspaces in both regions has one in
+  names a regional row, and one person with workspaces in configured deployments has one in
   each; bucketing on it hands them a half-rolled-out feature on one region.
 - **What may leave the Worker is decided at the loader, not by the rule author.**
   Ids, counts, ages, schema enums, and the *domain* half of an email address —
@@ -843,8 +839,6 @@ attribute test is deliberately scoped to the fields its rule covers rather than
 asserting over the whole payload — a broad assertion passes by accident on the
 `workspaceSlug` carve-out.
 
-## Operations
-
 ### Provisioning
 
 Both regional Workers bind the **one** `avalon-api` Flagship app
@@ -862,14 +856,6 @@ isolation those resources need does not apply to what is stored, and splitting
 would mean maintaining two copies of every flag that are meant to stay
 identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
-
-What both regions do send this one app is the evaluation context, and since the
-attributes above it carries facts about EU workspaces, work streams, and people
-as well as Global ones. That is the reason the attribute boundary is drawn where
-it is rather than left to whoever adds the next rule: what crosses is a slug, a
-count, an age, a schema-declared enum, an id, and an email domain — never a
-name, an address, or anything a person wrote. Widening that set is a data
-decision about both regions at once, not a local change to a loader.
 
 Ace automatically ensures all ten `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
@@ -970,7 +956,7 @@ to, so `set … -V on` would hand the section to everyone regardless of the rule
 
 To stage it among staff, roll out within that rule and bucket by
 `userPlatformId` — not `userId`, which would bucket a person with workspaces in
-both regions twice. There is no workspace worth keeping consistent here, because
+configured deployments twice. There is no workspace worth keeping consistent here, because
 the section describes one person's device:
 
 ```bash
@@ -1039,13 +1025,8 @@ Bucket the rollout by `workspaceId` rather than `workstreamId` or `userId`: it
 keeps every agent in a workspace on one generation, so a work-stream run and the
 subagents and classifiers around it stay consistent.
 
-Because both regions share the app, a rollout reaches both unless you scope it.
+Because configured deployments share the app, a rollout reaches both unless you scope it.
 To stage one region first, target `region` instead:
-
-```bash
-pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
-  --add-rule "serve=next; when=region equals eu"
-```
 
 The same shape reaches any attribute in the table above — the dogfooding
 workspaces before anyone else, then the teams, then everybody:
@@ -1137,7 +1118,7 @@ To exercise a real flag locally you need Cloudflare credentials and
    Ace keeps a key that does not end in `-enabled`, the way `developer-settings`
    does — the suffix is the rule, not a list.
 6. Add the flag to the table above and create the rules that scope it. There is
-   one app for both regions, so it is created once — and a flag created without
+   one app for configured deployments, so it is created once — and a flag created without
    its rule is live and unscoped until the rule lands. Ace provisions with no
    rules at the default variation, so for a feature that is off for everyone
    until the rule lands, which is the safe order.
@@ -1337,7 +1318,7 @@ wrong — the feature was simply off for everyone with no way to change it.
 
 **Considered and rejected:** Making the Worker create an absent flag on first
 evaluation. That puts flag provisioning on a request path, needs Flagship write
-credentials in both regional Workers where only read access belongs, and would
+credentials in configured regional Workers where only read access belongs, and would
 create a flag with no rule — live and unscoped — at whatever moment the first
 poll arrives.
 

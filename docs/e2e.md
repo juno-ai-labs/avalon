@@ -117,11 +117,12 @@ result must not steal focus. Search Send invitation/Save digest with a populated
 form and verify search does not submit it. These are renderer checks, not proof
 of backend authorization; [settings search](settings-search.md) owns the contract.
 
-1. Start from an empty desktop profile. Enter a workspace name and verify the region choices use the descriptions **US-Jurisdiction storage** and **EU-jurisdiction storage**, with no routing or sign-in copy, and that both selectors change the target API. Select European Union and confirm there is no secondary notice listing unavailable capabilities — Terminal is enabled in both regions. Select Global again and confirm the same. Type the workspace name through an IME and confirm the `Enter` that commits the composition does not create the workspace, while a second `Enter` does. Create a development workspace or complete Google sign-in in a provider test account.
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Rally** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
+
 3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
-4. While signed into a Global workspace, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.
+
 5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate invitation controls. Confirm **Internet access** sits indented under **Workspace** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
+
 6. The Developer section is served by the `developer-settings` flag, whose
 targeting rule matches on the account's **email domain**. Start signed in as a
 **non-staff** account and open **Application**: confirm the section is absent
@@ -155,83 +156,92 @@ work-stream one copies its canonical
 link, that **Details** gains the origin, automation, harness, and identifier rows
 in the same window, and that the choice survives a restart. Turn it off and
 confirm all three actions and the extra rows disappear again.
+
 7. Open **Application → Appearance** and confirm the only choices are **System**, **Light**, and **Dark** — there is no Theme family row or palette shelf. Choose Light and confirm the main window uses the `#fcfcfc` conversation canvas, `#f7f7f7` sidebar, dark human bubbles, and a light compact composer. Choose Dark and confirm the canvas becomes `#070707`, the sidebar `#111111`, raised controls `#2f2f2f`, and the selected work-stream row `#313131`; the compact composer must remain legible and its voice/send circle must invert. Confirm dropdowns and tooltips invert correctly in both modes. Restart Rally and confirm the chosen appearance is applied before the first frame, with no flash of the other mode. Under System, change the Mac between Light and Dark and confirm every open Rally window follows; after pinning either Light or Dark, changing the Mac must do nothing.
+
 8. Open **Digest**. Confirm it opens off with weekdays selected at 9:00 AM and no timezone picker — the row states your account timezone and links to Account. Press **Weekends**, confirm only Saturday and Sunday stay lit and the preset reads as pressed, then add 12:00 and 16:30 and confirm the chips sort ascending and read as `Noon` and `4:30 PM`. Confirm **Save digest** is inert until something changes, and that an enabled digest with no time or no destination cannot be saved. Turn on **Send me a digest** and **Email**, save, and confirm the next-run line is stated in your account timezone rather than the machine's. Reopen Settings and confirm the schedule came back from the service unchanged. Change your timezone in **Account** and confirm the digest's next run moves to the same wall-clock time in the new zone. With a workspace Slack installation linked to your own Slack identity, confirm a **Slack DM** destination appears in **Deliver to**; with no such link, confirm only Email and the "connect a tool" row are offered.
+
 9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
+
 10. Install a workspace Google Drive connection, open a fresh work stream as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
+
 11. Open **Connections** with both personal and workspace credentials installed. Confirm they appear in separate **Personal connections** and **Workspace connections** tables, and that either empty table invites you to connect a connector below. Confirm personal owners can refresh their own OAuth connection and members cannot delete workspace credentials. Workspace administrators can open **Manage events** for Ashby, Fireflies and Granola, see plain status and the last event, open **Advanced** for technical recovery and **Refresh status** to read saved state, and use the explained **Test** action to adopt an existing Granola installation or attempt supported repair before checking health. Opening the panel or displaying rotation guidance must not mutate provider state. Verify Ashby setup asks only for the API key and has no event checkboxes; it explains automatic organization subscriptions. Verify registration status, last delivery, friendly event names, exact-ID reconciliation for an unknown create, API-key replacement, and cleanup recovery; verify management actions are unavailable offline. Confirm refresh and delete each require **Continue** in a dialog before making a request, while **Cancel** leaves the connection untouched; for generic inbound webhook creation or secret replacement, confirm the dialog cannot close before the one-time secret appears. Force deletion to fail and confirm its error is visible inside the dialog. Hover or focus every available **Connect for me** and **Connect for workspace** action, including disabled actions, and confirm the focus target has a name, disabled semantics, and a tooltip explaining that button's personal or workspace scope. Confirm the catalog filter order is **Not connected**, **Connected**, **All**, and that a dual-scope provider remains under **Not connected** when only one installable scope is connected.
+
 12. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Rally**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Rally before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
+
 13. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
 
 ### Multiple workspaces
 
-Use two disposable accounts with pre-provisioned Global and EU memberships. Enable
+Use two disposable accounts with pre-provisioned configured deployments memberships. Enable
 `multiple-workspaces-enabled` except where a step says otherwise.
 
 1. Have account A invite B. While B is already signed in to another workspace,
    open the emailed link, confirm the modal names the workspace, inviter, and
    role, choose **Join**, and confirm B lands in it with both workspaces retained.
-2. Confirm B's account menu omits About, Help Center, Send Feedback, and Create
-   a workspace. Existing members cannot create another workspace from this menu;
-   first-workspace creation is covered by onboarding acceptance. Switch
-   Global → European Union → Global and confirm sidebar, transcript, Settings,
-   meeting window, menu bar, and the singleton workspace socket follow the active
-   workspace. Background traffic to the region left must be attention reads only.
+
 3. Leave unsent text and attachments in composers in two workspaces, switch both
    directions, and confirm each restores only its own draft. Leave one workspace
    and confirm only that workspace's draft rows disappear.
-4. In same-region workspace A, start each OAuth connector in turn, switch to
-   same-region workspace B before accepting provider consent, and complete it.
-   Confirm Rally returns to A, the connection appears only in A, and B never
-   shows a completion or attempt-confirmation error. Repeat once from EU to
-   Global to cover the cross-region session change.
+
 5. Copy a current work-stream link from A, switch to B, and open it. Confirm Rally
    activates A before navigating and the URL names A's region and workspace UUID.
    Repeat with a random workspace UUID and with a workspace the account has left:
    Rally must remain in B, must not navigate, and must show an access failure
    without exposing the target's name or contents.
+
 6. From a linked Slack installation for A, follow **Create automation**,
    **Manage connections**, a result work-stream link, and a freshly minted
    **Connect Rally** challenge while B is active. Each must return to A before
    acting. An ID-only link already in history remains active-workspace-relative
    for compatibility and is never emitted by a current surface.
+
 7. Mention B in a background workspace. Confirm the account trigger gains a dot,
    its row shows a reason-coloured count, the active row shows no duplicate, and
    opening the workspace clears both. With unread activity but nothing addressed,
    confirm the row shows only the ordinary unread dot.
+
 8. Take the device offline after counts have loaded. Confirm the last values stay
    visible with **Counts last updated <relative time>**; selecting a background
    row reads **Connect to open this workspace**, keeps the active surface, and
    discards no credential. Restore connectivity and confirm focus/menu-open
    refreshes recover. The periodic cadence remains unset.
+
 9. Remove B from a background workspace as A. Confirm B's next attention or
    refresh refusal removes that row without a dialog, discovery marks the route
    inactive, and activation cannot reopen it. Repeat while B is active there and
    confirm socket revocation selects the most recent remaining workspace.
+
 10. As the sole owner with other active members, try to leave and confirm Rally
    says another owner must exist. As the only active member of a different
    workspace, choose **Leave and close**, confirm another device's sockets close,
    invitations cannot race acceptance, and signing in again never surfaces it.
+
 11. Start a meeting recording, then try switching, creating, joining, and leaving.
    Each must read **Finish or stop the recording before switching workspaces** and
    leave capture plus the active workspace untouched. End capture and repeat one
    switch successfully. Delay a workspace transition after it starts and try to
    begin recording from the meeting window; confirm recording is refused and the
    transition remains the only pending operation.
+
 12. Sign out online with the account credential and three workspace credentials.
    Confirm every server logout is attempted and the credential, profile, and
    draft stores are empty. Repeat with one regional Worker unreachable: local
    stores still empty, while cleanup reports the failed server revocation.
-13. Enable Lockdown with several credentials, restart, and confirm Global and EU
+
+13. Enable Lockdown with several credentials, restart, and confirm configured deployments
     switching still works from the encrypted set. Disable Lockdown or clear
     credentials and confirm no sibling credential/profile copy remains.
+
 14. Turn `multiple-workspaces-enabled` off with two memberships. Confirm the menu
     shows Settings, one divider, and Log out; the device-local active workspace
     remains usable. Open the account with an older desktop build and confirm the
     singular compatibility workspace opens instead of onboarding failing.
+
 15. Open an invitation addressed to another email while signed in. Confirm the
     modal names the exact required address, signing in with the current account
     cannot consume it, and changing to the matching account can accept it.
+
 16. Seed a version-1 workspace-only credential envelope, launch Rally, and complete
     one Google exchange. Confirm the same regional workspace reconnects in place
     rather than sending the account through setup. With enough workspace and
@@ -241,7 +251,7 @@ Use two disposable accounts with pre-provisioned Global and EU memberships. Enab
 
 ## Regional telemetry acceptance
 
-Use disposable Global and EU accounts plus a private test PostHog project. Never
+Use disposable configured deployments accounts plus a private test PostHog project. Never
 use a customer dump for this acceptance run.
 
 1. Start from a fresh profile with product analytics on by default. Confirm
@@ -254,6 +264,7 @@ use a customer dump for this acceptance run.
    display context, and a stable `$window_id` plus viewport dimensions for one
    renderer window. Confirm `$device_id` is not used as `$anon_distinct_id` and
    that the anonymous history merge uses only the current login epoch.
+
 2. Exercise workspace creation, work-stream creation and a run, and connector
    setup. Confirm the semantic client request and authoritative API outcome share
    `operation_id`, and desktop events use `$session_id`. Reload and repeat an
@@ -274,52 +285,12 @@ use a customer dump for this acceptance run.
    such a native callback. Upgrading a profile created before this
    instrumentation must establish a baseline without emitting
    `Application Installed`.
-3. Open **Settings → Application → Privacy & diagnostics**. Confirm **Product
-   analytics** is on and its disclosure says Global may include verified name and
-   email, EU stays in Rally's EU platform, and essential content-free reliability
-   continues when off. Turn it off while offline, exercise product actions, and
-   restart before reconnecting. Confirm no product event, detailed JavaScript
-   exception, profile update, or native dump from that interval is delivered;
-   essential lifecycle/reliability may still be accepted. Turn it back on and
-   confirm collection starts only after the regional preference write succeeds.
+
 4. Disable analytics while Crashpad is active. Confirm Settings immediately says
    crash upload stopped and restart is required to remove local dumps. Restart and
    confirm the invalidated generation is purged before a new Crashpad handler can
    start. A failure to write the local preference must leave the toggle disabled
    and must not resume upload.
-5. For a fresh pre-workspace session, test Cloudflare country inputs at the
-   bootstrap boundary. An affirmative EU country must route the anonymous epoch
-   immediately to EU and create no native crash generation. A non-EU, absent,
-   malformed, failed, or timed-out country signal must route immediately to
-   Global. Confirm neither IP nor country is retained and no pending holding row
-   exists. Select a different workspace region later and confirm prior events do
-   not move or relabel.
-6. Repeat the semantic flow in an explicit EU workspace. Confirm the events are
-   queryable from the EU internal projection with release/platform/channel and
-   operation/session correlation, but no event, profile, exception, dump, or
-   aggregate appears in PostHog or Analytics Engine. Confirm the raw dump,
-   artifacts, and processor remain in the EU-jurisdiction telemetry bucket and
-   EU-pinned compute.
-7. Run `pnpm --filter @rally/desktop test:crashpad` on the supported macOS-arm64
-   release host. It must package the pinned Electron version, produce two real
-   renderer Crashpad reports, and prove that the first inactive database survives
-   whole-directory rotation before the second handler starts. Then exercise the
-   packaged Rally release separately: confirm its production generation
-   controller rotates only on the following launch, authenticates upload to the
-   fixed route, and requests the private artifact identity published by the
-   release workflow. In Global, confirm PostHog receives the full sanitized structured exception with the same
-   `$session_id`, release, build, platform, architecture, process, channel, and
-   fingerprint, while raw bytes, absolute paths, memory fragments, and source
-   excerpts stay internal. In EU, confirm the occurrence and independently
-   expiring fingerprint contribution are internal-only.
-8. Configure disposable, different `support` and `security` operator tokens in
-   each region. Confirm unauthenticated and wrong-token requests to
-   `/internal/telemetry/status` fail, while each regional token sees only its own
-   fixed snapshot. Verify support can retrieve one synthetic dump only with
-   `customer_support`, security can retrieve it only with `incident_response`, and
-   each attempt creates the fixed regional audit row. Confirm only security can
-   replay a terminal Global event, and that the EU-only issue/crash-free paths are
-   `404` in Global. Remove the disposable tokens after the run.
 
 ## Desktop menu bar acceptance
 
@@ -604,18 +575,15 @@ Finally, revoke a test provider grant and repeat an affected read. Confirm the c
 
 Pass evidence: two independently selectable preset connections, exact stored capability sets, bounded native Docs and Sheets operations, Mail/Calendar and Drive cursors, one Drive-derived Doc activity, one Drive-derived Sheet activity, one authorized automation run per tested connection, and a sanitized reconnect state. Sending email is not required for this flow.
 
-
 ## Flow 9 — inbound work-stream email
 
-1. Create one Global and one EU work stream and confirm each exposes an immutable four-segment address at `automation.rallywith.ai`.
 2. Send plain text to both addresses. Confirm one verified `email.received` event creates one regional email resource and one system transcript message in each target.
 3. Replay the same Resend delivery and confirm no duplicate resource or message is created.
 4. Send to an unknown alias and confirm the webhook is acknowledged without attaching it anywhere. Send HTML containing script-like content and confirm Rally never renders or executes it.
-5. Confirm the Global database does not contain the EU email body and that inbound mail does not automatically start an agent run.
 
 ## Flow 10 — inbound automation email
 
-1. Create personal and workspace automations in both Global and EU and confirm each exposes a permanent four-segment address from the same account-wide namespace as work streams.
+1. Create personal and workspace automations in both configured deployments and confirm each exposes a permanent four-segment address from the same account-wide namespace as work streams.
 2. Send one message to each address. Confirm each owning region stores the untrusted email resource, creates exactly one work stream and automation run, records the automation owner as creator and participant, and passes only that labelled opening message to the harness. Confirm personal automations create private work streams another workspace member cannot list or read, while workspace automations create workspace-scoped work streams and resources that member can read.
 3. Replay the same Resend email ID while processing and after completion. Confirm an active lease returns a retryable response, an expired lease can be reclaimed, and the completed replay returns the original work-stream and run IDs without launching again.
 4. Pause an automation and confirm its route is disabled and mail cannot start a run. Resume it and confirm the exact same address is active again.
@@ -631,21 +599,29 @@ Pass evidence: two independently selectable preset connections, exact stored cap
 
 Pass evidence: the planned work-stream ID is reused, the uniqueness key on subscription plus planned time prevents a duplicate, pre-run context reaches the harness, and the next local occurrence is correct.
 
-## Flow 11 — Slack Agent connector
-
 1. Validate `config/provider-apps/slack.json` with Slack CLI 4.4.0 or later and install the development app in two Slack test workspaces.
+
 2. Connect both Slack installations to one Rally workspace. Confirm two `Slack · <team>` workspace connections exist and each bot durably joins every existing public channel. Reconnect one installation and confirm the idempotent sync runs again. Attempt to connect either Slack team to a different Rally workspace and confirm `slack_workspace_already_connected`.
+
 3. Open each app Home as an unlinked user. Confirm onboarding, privacy/help, and a **Connect Rally** button that carries no link of its own — copying its address must offer nothing. Leave Home open for more than fifteen minutes, then click it: confirm a modal opens with one **Open Rally** handoff, and that the handoff still works, because nothing on the published view expires. Click **Connect Rally** a second time and confirm the earlier modal's link is refused as already used rather than as expired. Mark the installation for reconnect and confirm the click explains the reconnect instead of offering a link that cannot be redeemed. Link one Rally member and confirm Home changes to quick actions, active tasks, automations, and notifications.
+
 4. Create a public Slack channel and confirm the `channel_created` ingress job makes Rally join it. Send a new Agent DM, a threaded follow-up, and a channel mention. Confirm Rally adds `👀` to each exact triggering message before a workstream or model run starts, each root maps to one `slack_agent_sessions` row, follow-ups reuse the workstream, status appears, and completion stops the stream or posts the fallback thread reply. Replay a claimed job after the reaction succeeds and confirm Slack's `already_reacted` response does not duplicate or fail the task.
 4a. Watch the reaction through a whole run. Confirm the triggering message carries `👀` and nothing else within a second; that the reaction changes at least once while the run is live and each value comes from the working set; and that when the run ends the message carries exactly one reaction matching its outcome — `✅` completed, `❓` needs input, `⚠` failed, `🛑` stopped. React to the same message yourself with an unrelated emoji and confirm it is still there at the end. Reply again in the same thread and confirm the reaction moves to the new message and the rotation restarts. Force a run to fail after acknowledgement and confirm the outcome reaction still lands, since delivery rather than the rotation applies it.
 4b. Configure a workspace reaction override on the installation's `config_json`. Confirm a partial override changes only the states it names; confirm an override naming a nonexistent emoji falls back to Rally's default for that state, logs the rejected name, and does not fail the run.
 4c. Post an automation result containing a heading, an ordered list, a table, and a fenced code block. Confirm all four render as formatted content in the Agent DM with no literal `#` or `**` characters, and that the title is a header above the body rather than a line of it. Compare a streamed reply and a fallback reply carrying the same content and confirm they render identically. Post a result long enough to split and confirm the break lands on a paragraph seam and that a code block spanning the break arrives as two valid blocks rather than one severed one.
+
 5. Mention one linked Rally teammate and one unlinked teammate whose verified email matches exactly one active member across the installed Slack teams. Confirm both receive one bot-authored Agent DM and the unlinked teammate does not gain a `slack_user_links` record. Repeat with no match, matches in two teams, a cross-team result, and a missing `users:read.email` grant; confirm each falls back to the existing mention email, and the additive missing scope does not disable existing Agent features.
+
 6. Invoke both shortcuts and `/rally`; confirm the modal opens in under three seconds, submissions create tasks, and malformed/replayed signatures are rejected.
+
 8. Mention Rally in a **public** channel from a linked member, then reply in the same thread as (a) a second linked member, (b) a member with no Slack link whose verified email matches an active Rally member, and (c) a member Rally cannot map at all. Confirm every reply is taken — none is refused — that the first two are recorded under their own Rally identities and the third under its Slack actor, and that the work stream is `public` in Rally. Repeat the whole case in a **private** channel: confirm the work stream is `private`, that it opens already holding the channel's mappable members, that a member who was not in it when it started is seated by their first reply, and that a member of the workspace who is *not* in the Slack channel cannot open it in Rally.
+
 7. Redeliver the same Events API `event_id` and body; confirm it is acknowledged once. Reuse the ID with different bytes and confirm the conflict is recorded. Force the first regional worker attempt to fail and confirm the durable queue retries the same ingress job instead of permanently deduplicating the failed receipt.
+
 9. From an Agent DM and an app mention, ask Rally to find a message, identify a user/channel, read message/channel/thread/file/member context, and cite the returned permalink. Confirm `assistant.search.context` receives the event's `action_token`, public-only channel types, and a maximum of 20 results; confirm the token is absent from model prompts and tool arguments. Start the same search outside Slack with only the workspace connection and confirm it fails with a user-initiated-search explanation. Confirm specific reads still work without an action token when the bot can access the target conversation.
+
 10. Ask Rally to send a message, add a reaction, and create a public channel, a private channel, a DM, and a group DM through the workspace installation. Confirm the normal write execution/receipt policy without a confirmation prompt, bot attribution, stable `client_msg_id` on messages, idempotent `already_reacted` handling, and no duplicate provider mutation after a workflow retry.
+
 11. Add a personal Slack connection and confirm the row carries
 `slack.personal.mcp`. Load it from a work stream and compare the exposed names
 and input schemas with Slack's current `tools/list` response rather than a
@@ -653,6 +629,7 @@ checked-in expected list. Exercise one tool with `readOnlyHint` and one without;
 confirm both receive write execution safeguards and a record-before-execute receipt,
 because provider annotations never downgrade Rally policy. Confirm another
 Rally member cannot load or use the connection.
+
 12. Copy a work-stream link from the desktop header and confirm it is the
 canonical
 `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`.
@@ -678,9 +655,11 @@ says so instead of offering a dead button. Paste a legacy
 within the Slack installation's own workspace; paste a bare
 `rallywithai://workstreams/<uuid>` and confirm no unfurl is expected, since Slack
 delivers no event for it.
+
 13. Create “Check my Gmail every morning and send me the stack-ranked top 3 emails in Slack,” select one Slack Agent DM destination, and inspect the stored frozen target. Run it with three, one, and zero qualifying emails. Confirm the complete ranked Slack output and controls, fewer-than-three behavior, and default empty suppression.
+
 14. Revoke Gmail, then Slack. Confirm each run/destination moves to `needs_input`; no alternate account or Slack installation is selected.
-14. Repeat an Agent DM and automation delivery for an EU Rally workspace. Confirm Global stores only the opaque team route, the EU WorkspaceDO owns links/session/delivery state, and the EU work-stream objects own the task and result.
+
 15. Expire a rotating Slack credential and start two simultaneous connector operations. Confirm exactly one `oauth.v2.*.access` refresh consumes the old refresh token and both operations continue with the newly persisted token pair.
 
 ## Flow 12 — Notion personal MCP and workspace connector

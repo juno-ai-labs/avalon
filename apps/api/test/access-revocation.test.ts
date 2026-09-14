@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { Hono } from "hono";
 import type { DatabaseSync } from "node:sqlite";
@@ -838,7 +839,7 @@ describe("recognizing this protocol's queue", () => {
   it("accepts each region's queue and refuses the ones beside it", () => {
     expect([
       "avalon-global-access-revocations",
-      "avalon-eu-access-revocations",
+      "avalon-enterprise-access-revocations",
       "avalon-do-runtime-test-access-revocations",
     ].every(isAccessRevocationQueue)).toBe(true);
 
@@ -848,7 +849,7 @@ describe("recognizing this protocol's queue", () => {
     // queue the same Worker handler serves.
     expect([
       "avalon-global-access-revocations-dead-letter",
-      "avalon-eu-access-revocations-dead-letter",
+      "avalon-enterprise-access-revocations-dead-letter",
       "avalon-global-activities",
       "avalon-migration-reports",
     ].some(isAccessRevocationQueue)).toBe(false);

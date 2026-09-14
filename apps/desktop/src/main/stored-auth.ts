@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import {
   IdSchema,
   RefreshTokenSchema,
@@ -50,7 +51,7 @@ const storedAuthSetSchema = z.object({
   if (value.account?.binding.workspaceId !== null && value.account !== null) {
     context.addIssue({ code: 'custom', path: ['account'], message: 'must be identity-scoped' });
   }
-  if (value.account?.binding.region === 'eu') {
+  if (value.account !== null && value.account.binding.region !== 'global') {
     context.addIssue({ code: 'custom', path: ['account'], message: 'must use the Global identity route' });
   }
   if (workspaceReferences.some(({ workspaceId }) => workspaceId === null)) {
@@ -119,9 +120,17 @@ export function parseStoredProfile(value: unknown): StoredProfile | null {
 /** Read v2 directly or losslessly wrap the one credential an earlier build wrote. */
 export function parseStoredAuthSet(value: unknown): StoredAuthSet | null {
   const current = storedAuthSetSchema.safeParse(value);
-  if (current.success) return current.data;
+  if (current.success) {
+    const auth = current.data;
+    return {
+      ...auth,
+      workspaces: auth.workspaces.filter((entry) => isConfiguredRegion(entry.binding.region)),
+      workspaceRecency: auth.workspaceRecency.filter((entry) => isConfiguredRegion(entry.region)),
+      activeWorkspace: auth.activeWorkspace && isConfiguredRegion(auth.activeWorkspace.region) ? auth.activeWorkspace : null,
+    };
+  }
   const legacy = storedAuthSchema.safeParse(value);
-  if (!legacy.success) return null;
+  if (!legacy.success || !isConfiguredRegion(legacy.data.binding.region)) return null;
   const workspaceId = legacy.data.binding.workspaceId;
   return {
     version: 2,
@@ -135,9 +144,12 @@ export function parseStoredAuthSet(value: unknown): StoredAuthSet | null {
 /** Read v2 directly or losslessly wrap the disposable v1 profile cache. */
 export function parseStoredProfileSet(value: unknown): StoredProfileSet | null {
   const current = storedProfileSetSchema.safeParse(value);
-  if (current.success) return current.data;
+  if (current.success) return {
+    ...current.data,
+    workspaces: current.data.workspaces.filter((profile) => profile.workspace && isConfiguredRegion(profile.workspace.region)),
+  };
   const legacy = storedProfileSchema.safeParse(value);
-  if (!legacy.success) return null;
+  if (!legacy.success || (legacy.data.workspace && !isConfiguredRegion(legacy.data.workspace.region))) return null;
   return {
     version: 2,
     account: legacy.data.workspace === null ? legacy.data : null,

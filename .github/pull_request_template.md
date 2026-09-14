@@ -92,8 +92,6 @@ Reviewer notes.
 Required in spirit for identity, the Global registry, cross-region bridges,
 provider ingress routing, or data residency. See docs/regionalization.md.
 
-- <what changes in Global, in the EU, or in the routing between them>
-
 ## Security and trust model
 
 Required in spirit whenever the change touches renderer isolation, connector

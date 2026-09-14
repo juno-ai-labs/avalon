@@ -75,29 +75,6 @@ covers dependency installation, the local D1 database, starting both regional
 Workers, and running the Electron client headlessly. The container it assumes is
 defined in [`docs/sandbox.md`](docs/sandbox.md).
 
-- **Node.js 22 and pnpm 11.13.0.** The pnpm version is pinned by
-  `packageManager`; run `corepack enable` rather than using whatever pnpm the
-  image ships.
-- **In a sandbox, start the API with `pnpm dev:api:local`, not `pnpm dev:api`.**
-  The `ai` binding forces a remote proxy session that cannot be established
-  without Cloudflare credentials, and its failure takes both regions down.
-- When an outbound HTTPS request fails in a way that does not look like a
-  network error, read [`docs/sandbox-proxy.md`](docs/sandbox-proxy.md) before
-  retrying. Never disable TLS verification or unset `HTTPS_PROXY`.
-- **Debugging a production model run?** Start with
-  [`docs/runbook.md`](docs/runbook.md#inspecting-a-runs-raw-inference). Raw
-  inference for Global workspaces is in the Global lakehouse, not D1 or Workers
-  Logs; use the R2 SQL and Object HTTP APIs (not the web dashboard), filter by
-  canonical work-stream and substream IDs (`"0"` is the main feed), and keep
-  retrieved user content out of logs, tickets, commits, and agent responses.
-  EU inference is intentionally not archived, so stop after resolving an EU
-  workspace rather than falling back to D1, logs, or a cross-region query.
-  For backend or client analytics events, use
-  [`docs/runbook.md`](docs/runbook.md#querying-analytics-events-in-production):
-  the `avalon.analytics_events` lakehouse is Global-only, queried through R2 SQL
-  and Queue/D1 APIs rather than the web dashboard, and EU stays on the restricted
-  regional telemetry API without a Global fallback.
-
 ## Quality gates
 
 Run lint and typecheck locally as well — both cache, so a warm run is seconds

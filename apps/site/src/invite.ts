@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from '@rally/contracts/regions';
 import { reportDesktopHandoff } from './telemetry';
 
 const button = document.querySelector<HTMLAnchorElement>('#open-rally');
@@ -13,7 +14,7 @@ const valid =
   && parameters.getAll('region').length === 1
   && token !== null
   && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
-  && (region === 'global' || region === 'eu');
+  && isConfiguredRegion(region);
 
 // Remove the bearer-like invitation token from browser history/address UI as
 // soon as it has been copied into local variables. It is never sent to the

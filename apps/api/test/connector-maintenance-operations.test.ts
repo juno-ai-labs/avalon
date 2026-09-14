@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app';
 import { ConnectorMaintenanceOperationSchema } from '../src/services/connector-maintenance-service';
@@ -26,7 +27,7 @@ describe('connector maintenance operator boundary', () => {
       expect((await preview(null)).status).toBe(401);
       expect((await preview(support)).status).toBe(401);
       expect((await preview(misplaced)).status).toBe(403);
-      expect((await preview(ace, { provider: 'ashby', region: 'eu', version: 1 })).status).toBe(409);
+      expect((await preview(ace, { provider: 'ashby', region: 'enterprise', version: 1 })).status).toBe(409);
       expect((await preview(ace, { provider: 'ashby', region: 'global', version: 1, destination: 'https://unapproved.example.test' })).status).toBe(400);
       const accepted = await preview(ace);
       expect(accepted.status).toBe(200);

@@ -38,8 +38,6 @@ choreography takes, or before adding motion to another list.
 | [`apps/desktop/src/renderer/components/sidebar.tsx`](../apps/desktop/src/renderer/components/sidebar.tsx) | The one caller today. Marks each work-stream and note row with `data-motion-key`, marks the **Pinned** heading and every recency-group heading as a held row so they travel with the column, holds the row being dragged, resolves a drag's target through `layoutRowAt`, names the compact toggle as the layout and reports — from the aside's own transition events — whether the rows are still travelling to it, attaches the hook to the scroll box, and attaches a second instance to the command bar above it, whose New work stream row is marked `data-motion-insert`. |
 | [`apps/desktop/src/renderer/components/project-sidebar-section.tsx`](../apps/desktop/src/renderer/components/project-sidebar-section.tsx) | Gives each project's member list its own `data-motion-scope`, since a member is the same row the recent list shows, and marks each project row as held so a reordered project glides with its members. |
 
-## How it works
-
 ### The contract a list makes
 
 A row is any element under the container that carries `data-motion-key`. The
@@ -412,8 +410,6 @@ The motion itself is judged in a real window, per
 work stream from its right-click menu, then pause every animation with
 `document.getAnimations()` and step `currentTime` through the phases to capture
 each one.
-
-## Changelog
 
 ### 2026-09-10 — Marked rows are seen arriving and leaving, and the hook holds while a layout travels
 

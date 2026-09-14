@@ -21,6 +21,7 @@ on:
     # to compute for very large pushes; when it cannot, the workflow runs, and
     # the planner's check for work since the last release decides instead.
     paths:
+      - 'config/regions.json'
       - 'apps/desktop/**'
       - 'packages/contracts/**'
       - 'package.json'
@@ -245,7 +246,6 @@ jobs:
       # from hiding the identity in a transient keychain that the final DMG
       # signing hook cannot see.
       CSC_NAME: Juno AI Labs Inc. (7ZLT6A8W25)
-      RALLY_MAC_PROVISIONING_PROFILE_PATH: ${{ runner.temp }}/rally.provisionprofile
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -257,7 +257,6 @@ jobs:
       # that uploads nowhere rather than as an error.
       RALLY_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
       RALLY_GLOBAL_TELEMETRY_R2_BUCKET: ${{ vars.RALLY_GLOBAL_TELEMETRY_R2_BUCKET || vars.AVALON_GLOBAL_TELEMETRY_R2_BUCKET }}
-      RALLY_EU_TELEMETRY_R2_BUCKET: ${{ vars.RALLY_EU_TELEMETRY_R2_BUCKET || vars.AVALON_EU_TELEMETRY_R2_BUCKET }}
       RALLY_RELEASE_BASE_URL: https://downloads.rallywith.ai
       RALLY_RELEASE_PREFIX: stable/darwin/arm64
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -284,6 +283,8 @@ jobs:
         env:
           RALLY_MAC_PROVISIONING_PROFILE: ${{ secrets.RALLY_MAC_PROVISIONING_PROFILE }}
         run: |
+          RALLY_MAC_PROVISIONING_PROFILE_PATH="$RUNNER_TEMP/rally.provisionprofile"
+          echo "RALLY_MAC_PROVISIONING_PROFILE_PATH=$RALLY_MAC_PROVISIONING_PROFILE_PATH" >> "$GITHUB_ENV"
           test -n "$RALLY_MAC_PROVISIONING_PROFILE"
           printf '%s' "$RALLY_MAC_PROVISIONING_PROFILE" | openssl base64 -d -A > "$RALLY_MAC_PROVISIONING_PROFILE_PATH"
 
@@ -434,7 +435,7 @@ jobs:
       # reaches the update channel.
       - name: Verify regional API health before distributing
         if: ${{ !inputs.skip_health_gate }}
-        run: node scripts/check-regional-health.mjs eu global
+        run: node scripts/check-regional-health.mjs
 
       - name: Publish immutable payloads and promote the release manifest
         shell: bash

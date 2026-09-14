@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
@@ -14,7 +15,7 @@ const principal: AccessPrincipal = {
   audience: "engineering-mcp-audience",
 };
 
-function regionalBinding(region: "global" | "eu"): EngineeringInspectionRpcBinding {
+function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
       async () => ({ region, items: [] }),
@@ -73,7 +74,7 @@ describe("Rally engineering MCP tools", () => {
   it.each(hostedClients.originHostnames)("admits the %s hosted origin to the MCP transport", async (hostname) => {
     const env: Env = {
       GLOBAL_INSPECTION: regionalBinding("global"),
-      EU_INSPECTION: regionalBinding("eu"),
+      ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
     };
 
     const response = await rpc(env, "tools/list", {}, `https://${hostname}`);
@@ -83,7 +84,7 @@ describe("Rally engineering MCP tools", () => {
   it("publishes the six initial tools with mutation annotations on SQL", async () => {
     const env: Env = {
       GLOBAL_INSPECTION: regionalBinding("global"),
-      EU_INSPECTION: regionalBinding("eu"),
+      ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
     };
 
     const response = await rpc(env, "tools/list");
@@ -112,7 +113,7 @@ describe("Rally engineering MCP tools", () => {
     };
     const global = regionalBinding("global");
     vi.mocked(global.listWorkspaces).mockResolvedValue({ region: "global", items: [workspace] });
-    const env: Env = { GLOBAL_INSPECTION: global, EU_INSPECTION: regionalBinding("eu") };
+    const env: Env = { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: regionalBinding("enterprise") };
 
     const response = await rpc(env, "tools/call", {
       name: "list_workspaces",
@@ -127,21 +128,21 @@ describe("Rally engineering MCP tools", () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb2");
     const value = { region: "global" as const, workspaceId, items: [] };
     const global = regionalBinding("global");
-    const eu = regionalBinding("eu");
+    const enterprise = regionalBinding("enterprise");
     vi.mocked(global.listWorkstreams).mockResolvedValue({ found: true, value });
-    vi.mocked(eu.listWorkstreams).mockResolvedValue({
+    vi.mocked(enterprise.listWorkstreams).mockResolvedValue({
       found: true,
-      value: { ...value, region: "eu" },
+      value: { ...value, region: "enterprise" },
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, EU_INSPECTION: eu },
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
       "tools/call",
       { name: "list_workstreams", arguments: { workspaceId } },
     );
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toContain("exists in both Rally regions");
+    expect(result.content[0]!.text).toContain("exists in multiple Rally regions");
   });
 
   it("routes bound substream SQL to exactly one regional authority", async () => {
@@ -149,21 +150,21 @@ describe("Rally engineering MCP tools", () => {
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000eb4");
     const substreamId = asSubstreamId("0");
     const global = regionalBinding("global");
-    const eu = regionalBinding("eu");
-    vi.mocked(eu.resolveSubstream).mockResolvedValue({
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(enterprise.resolveSubstream).mockResolvedValue({
       found: true,
       value: {
-        region: "eu",
+        region: "enterprise",
         workspaceId,
         workstreamId,
         substreamId,
         authorityGeneration: 7,
       },
     });
-    vi.mocked(eu.runSubstreamSql).mockResolvedValue({
+    vi.mocked(enterprise.runSubstreamSql).mockResolvedValue({
       found: true,
       value: {
-        region: "eu",
+        region: "enterprise",
         workspaceId,
         workstreamId,
         substreamId,
@@ -177,7 +178,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, EU_INSPECTION: eu },
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
       "tools/call",
       {
         name: "run_substream_sql",
@@ -192,10 +193,10 @@ describe("Rally engineering MCP tools", () => {
     );
     const result = response.result as { content: Array<{ text: string }> };
     expect(JSON.parse(result.content[0]!.text)).toMatchObject({
-      region: "eu",
+      region: "enterprise",
       result: { rows: [{ answer: 42 }] },
     });
-    expect(eu.runSubstreamSql).toHaveBeenCalledWith({
+    expect(enterprise.runSubstreamSql).toHaveBeenCalledWith({
       workspaceId,
       workstreamId,
       substreamId,
@@ -203,7 +204,7 @@ describe("Rally engineering MCP tools", () => {
       query: { sql: "SELECT ? AS answer", bindings: [42] },
     });
     expect(global.runSubstreamSql).not.toHaveBeenCalled();
-    expect(eu.runSubstreamSql).toHaveBeenCalledTimes(1);
+    expect(enterprise.runSubstreamSql).toHaveBeenCalledTimes(1);
   });
 
   it("does not execute SQL when both regions resolve the target", async () => {
@@ -211,7 +212,7 @@ describe("Rally engineering MCP tools", () => {
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000eb6");
     const substreamId = asSubstreamId("0");
     const global = regionalBinding("global");
-    const eu = regionalBinding("eu");
+    const enterprise = regionalBinding("enterprise");
     vi.mocked(global.resolveSubstream).mockResolvedValue({
       found: true,
       value: {
@@ -222,10 +223,10 @@ describe("Rally engineering MCP tools", () => {
         authorityGeneration: 7,
       },
     });
-    vi.mocked(eu.resolveSubstream).mockResolvedValue({
+    vi.mocked(enterprise.resolveSubstream).mockResolvedValue({
       found: true,
       value: {
-        region: "eu",
+        region: "enterprise",
         workspaceId,
         workstreamId,
         substreamId,
@@ -234,7 +235,7 @@ describe("Rally engineering MCP tools", () => {
     });
 
     const response = await rpc(
-      { GLOBAL_INSPECTION: global, EU_INSPECTION: eu },
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
       "tools/call",
       {
         name: "run_substream_sql",
@@ -248,8 +249,8 @@ describe("Rally engineering MCP tools", () => {
     );
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toContain("exists in both Rally regions");
+    expect(result.content[0]!.text).toContain("must resolve to one region");
     expect(global.runSubstreamSql).not.toHaveBeenCalled();
-    expect(eu.runSubstreamSql).not.toHaveBeenCalled();
+    expect(enterprise.runSubstreamSql).not.toHaveBeenCalled();
   });
 });

@@ -27,8 +27,6 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The root route: resolves to the first pin, else the most recent row, else the composer. |
 | `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
 
-## How it works
-
 ### Pinning
 
 The sidebar's right-click menu offers **Pin** on an unpinned work stream and
@@ -383,8 +381,6 @@ indexed on `(user_id, position)`: a reorder
 rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
-
-## Changelog
 
 ### 2026-09-09 — Warm the root landing before workspace details finish
 

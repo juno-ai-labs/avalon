@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryBootstrapService } from '../src/telemetry/bootstrap';
@@ -16,29 +17,6 @@ describe('PostHog profile job delivery', () => {
     vi.unstubAllGlobals();
   });
 
-  it('has no destination path in EU', async () => {
-    const database = migratedSqliteDatabase();
-    database.prepare(`INSERT INTO telemetry_profile_jobs
-      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
-       properties_json, version, state, created_at, delete_at)
-      VALUES ('job-eu-guard', NULL, 'person_profile', 'person-1', NULL,
-              '{"name":"Ada"}', 1, 'pending', ?, ?)`)
-      .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
-    const deliverProfileBatch = vi.fn();
-    const env = createTestEnv({
-      DB: sqliteD1(database), AVALON_REGION: 'eu',
-      POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      TELEMETRY_DELIVERY: { deliverProfileBatch },
-    });
-
-    await expect(processProfileOutbox(env)).resolves.toEqual({
-      selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0,
-    });
-    expect(deliverProfileBatch).not.toHaveBeenCalled();
-    expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get())
-      .toEqual({ state: 'pending' });
-    database.close();
-  });
 
   it('delivers the non-supersedable epoch transition exactly once before later person work', async () => {
     const database = migratedSqliteDatabase();
@@ -59,7 +37,7 @@ describe('PostHog profile job delivery', () => {
       TELEMETRY_DELIVERY: { deliverProfileBatch },
     });
     const capability = (await new TelemetryBootstrapService(env).bootstrap(
-      '018f22f2-4c22-7abc-8def-0123456789ab', 'US',
+      '018f22f2-4c22-7abc-8def-0123456789ab',
     )).capability;
     await linkAnonymousTelemetry(env, { userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'global' }, capability);
     await expect(processProfileOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });

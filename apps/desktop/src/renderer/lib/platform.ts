@@ -1,3 +1,5 @@
+import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import type {
   RallyDesktopBridge,
@@ -47,7 +49,7 @@ const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicatio
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
 const browserAuthAttempts = new Map<string, {
   apiBaseUrl: string;
-  region: 'global' | 'eu';
+  region: Region;
   verifier: string;
   expiresAt: number;
 }>();
@@ -62,7 +64,7 @@ function randomBase64Url(size: number): string {
   return base64Url(crypto.getRandomValues(new Uint8Array(size)));
 }
 
-async function createBrowserAuthAttempt(apiBaseUrl: string, region: 'global' | 'eu'): Promise<DesktopAuthAttempt> {
+async function createBrowserAuthAttempt(apiBaseUrl: string, region: Region): Promise<DesktopAuthAttempt> {
   if (region !== 'global' || normalizeApiBaseUrl(apiBaseUrl) !== normalizeApiBaseUrl(browserGlobalApiBaseUrl())) {
     throw new Error('Rally sign-in must use the Global identity service.');
   }
@@ -130,9 +132,10 @@ function browserGlobalApiBaseUrl(): string {
   return import.meta.env.VITE_API_GLOBAL_URL ?? 'http://127.0.0.1:8787';
 }
 
-function browserApiBaseUrl(region: 'global' | 'eu'): string {
+function browserApiBaseUrl(region: Region): string {
   if (region === 'global') return browserGlobalApiBaseUrl();
-  return import.meta.env.VITE_API_EU_URL ?? 'http://127.0.0.1:8788';
+  const config = regionConfiguration(region);
+  return import.meta.env[`VITE_API_${config.bindingPrefix}_URL`] ?? config.localApiUrl;
 }
 
 function normalizeApiBaseUrl(value: unknown): string | null {
@@ -164,7 +167,7 @@ async function browserOnboardingRequest<T>(
 async function browserOnboardingSession(
   path: string,
   body: unknown,
-  expected: { region: 'global' | 'eu'; workspaceId?: string },
+  expected: { region: Region; workspaceId?: string },
 ): Promise<DesktopSession> {
   // Regional databases use a local shadow user ID linked to the immutable
   // Global platform identity. The verified email is the stable value that is
@@ -195,10 +198,7 @@ const browserBridge: RallyDesktopBridge = {
       appVersion: 'development',
       isPackaged: false,
       platform: 'browser',
-      api: {
-        global: import.meta.env.VITE_API_GLOBAL_URL ?? 'http://127.0.0.1:8787',
-        eu: import.meta.env.VITE_API_EU_URL ?? 'http://127.0.0.1:8788',
-      },
+      api: Object.fromEntries(configuredRegions.map((region) => [region, browserApiBaseUrl(region)])),
       webBaseUrl: import.meta.env.VITE_PUBLIC_WEB_BASE_URL ?? 'http://127.0.0.1:5174',
       devAuthEnabled: import.meta.env.DEV,
     } as RuntimeConfig;

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asWorkspaceId } from "@rally/contracts";
 import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -516,11 +517,11 @@ describe("workspace invitation lifecycle", () => {
     expect(JSON.stringify(database.runs)).not.toContain(downloadToken);
   });
 
-  it("does not issue a download link for an EU workspace invitation, since redemption is Global-only", async () => {
-    const euRow = { ...invitationRow, workspace_region: "eu" as const };
+  it("does not issue a download link for an enterprise workspace invitation, since redemption is Global-only", async () => {
+    const enterpriseRow = { ...invitationRow, workspace_region: "enterprise" as const };
     const database = new StubDatabase(({ sql }) => {
       if (sql.includes("SELECT 1 AS present")) return null;
-      if (sql.includes("WHERE i.id = ?")) return euRow;
+      if (sql.includes("WHERE i.id = ?")) return enterpriseRow;
       return undefined;
     });
     const resend = vi.fn(async () => new Response(JSON.stringify({ id: "resend-email-id" }), {
@@ -530,12 +531,12 @@ describe("workspace invitation lifecycle", () => {
     vi.stubGlobal("fetch", resend);
 
     // A session's own region always matches its workspace's (middleware/auth.ts
-    // rejects a mismatch), so an EU invitation is only ever created by the EU
-    // Worker: pair the region override with the EU row for a realistic case.
+    // rejects a mismatch), so an enterprise invitation is only ever created by the enterprise
+    // Worker: pair the region override with the enterprise row for a realistic case.
     await new WorkspaceService(environment(database, {
       APP_ENV: "production",
       RESEND_API_KEY: "re_test_send_only",
-      AVALON_REGION: "eu",
+      AVALON_REGION: "enterprise",
     }), ownerAuth).createInvitation(invitationRow.email, "member");
 
     expect(database.runs.some((run) => run.sql.includes("INSERT INTO download_grants"))).toBe(false);

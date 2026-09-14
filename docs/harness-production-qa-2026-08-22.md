@@ -34,23 +34,6 @@ The post-deployment pass found a sixth Rally defect: a
 Terminal's exclusive operation lease for sixteen minutes, blocking every linked
 recovery run.
 
-PR #247 merged and deployed the first five repairs. Fresh Global Computer Use
-verified the reproduced failure-protocol, discovery, attachment-validation,
-stopped-receipt, and HyperSight paths; migration 0093 is applied to both
-regional D1 databases. The EU functional and meeting-notes payload paths remain
-open. PR #249 merged and deployed the sixth defect's lease-liveness repair.
-Fresh Global Computer Use proved linked runs no longer receive `sandbox_busy`,
-but the required post-deadline read exposed a seventh defect: Daytona named-
-session deletion removed observation without stopping the accepted shell, which
-wrote after handoff. PR #251 merged and deployed the whole-sandbox quiescence
-repair. A fresh strict Global Computer Use sequence stopped an accepted
-120-second command, completed immediate linked reads without `sandbox_busy`,
-and still found the late marker absent after the original deadline. Granola also
-failed a second fresh activation because its hosted MCP authorization could not
-be verified. The evidence still does not isolate Rally code from
-provider/session/transport state, so Granola remains an unresolved live
-acceptance blocker rather than a confirmed code defect.
-
 The audit of the previously merged PR #247 receipt path then found an eighth
 defect: a transient residual-receipt RPC after terminalization had no retry
 owner. PR #253 merged and deployed the marker-backed activation repair to both
@@ -59,34 +42,25 @@ injectable in production; deterministic fail-before-commit and
 commit-but-response-lost regressions prove the recovery path, while deployment
 identity, migrations, and regional health prove the repaired code is live.
 
-## Environment and safety boundary
-
 - Date: 2026-08-22–23 PDT / 2026-08-23 UTC.
+
 - Desktop: production `/Applications/Rally.app`; original pass 1.132.0,
   PR #247 post-deployment pass 1.133.0, and PR #249 reproduction plus PR #251
   HQA-07 acceptance pass 1.135.0.
+
 - Region: Global production API, application version 0.24.0 in the correlated
   Worker records.
+
 - Model observed in the correlated runs: `google/gemini-3.7-flash`.
+
 - UI driver: macOS Computer Use against the signed-in production application.
+
 - Correlation: read-only `wrangler tail` for `avalon-api-global`.
-- Exact correlated Worker script version:
-  `d1662f96-02b9-4367-97f3-00c6a98e962d` before the repair. PR #247 deployed
-  Global `00b5ed2e-8abe-46a5-b648-c66f495de50a` and EU
-  `0f665acb-cfbd-415c-b437-5d662e244d9f` from merge commit
-  `22d2fc101934e45c6628fd97eb25074ccf22b9de` in workflow run `32614933942`.
-  PR #249 then deployed Global `2e590149-7543-4e48-a526-77a85b15210b`
-  and EU `53e47151-3a18-4553-b2b2-a074a83687cf` from merge commit
-  `973168279939212fde7eeac181431ee3ad8721bd` in workflow run `32624216543`.
-  PR #251 deployed Global `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609` and EU
-  `bba16c1f-a471-4397-89bc-7e988eecdde6` from merge commit
-  `9c09e4d1683edf268706e4cb5ca5ce7885ee6fa5` in workflow run `32629139604`.
-  PR #253 deployed Global `c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU
-  `f3c83ce2-e854-49fc-9b05-5819dda1c984` from merge commit
-  `e4311041bc45936137cd318871497c22392e0bff` in workflow run `32633487884`.
+
 - Local checkout baseline before the repairs: `fbe7f512`. Production Worker
   logs exposed `build_sha: null`; the local commit is therefore a source-review
   baseline, not the identity of the deployed Worker revision above.
+
 - External tools were read-only. GitHub, Linear, Gmail, Drive, Slack, X, Web,
   and Granola received no external mutations. Terminal writes were confined to
   private QA workstreams and a scratch sandbox. Memory/table records and one
@@ -109,11 +83,6 @@ acceptance row ran against `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609`.
 | Accepted-command quiescence | PASS in Global after PR #251 | Private workstream `01a02dd3-7328-7a2e-b9d9-31b1a4b902bc`. Strict run `01a02dd4-6d36-7257-b21b-b78bcc9f0bb5` wrote its start marker at 08:54:57Z, entered a 120-second sleep, and invocation `01a02dd4-7feb-7ab7-ba87-84696df880c0` became `ambiguous` after member stop. Linked run `01a02dd5-4b96-7d63-8246-91564414489f` immediately read the start marker and received `not_found` for the late marker with zero `sandbox_busy`. Post-deadline run `01a02dd7-1395-7588-b14d-645b74db5a1a`, invocation `01a02dd7-2319-71a5-94a0-36a3a9c45997`, again received `not_found`; the command was never replayed. Trace-only run `01a02dda-092e-7c50-b45f-e1a326e0bae9` reconfirmed the missing marker against exact Worker version `7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609`. |
 | Parallel children, alarm, and sleep | PASS | Workstream `01a02cab-74f9-7536-8b97-7623305b3c88`, root run `01a02cab-7c72-702f-9506-2aaeeea06001`. Three same-turn children completed independently in 4–5 seconds. A 40-second Terminal sleep completed in 42,813 ms while wake-up `01a02cab-abcc-7ae2-8e12-c9b5a7fbae37` became due; it fired once afterward in linked run `01a02cad-1c92-76d8-84bd-b328ad2a4ca7` and returned `PR247_ALARM_OK 2026-08-23T03:32:27.718Z`. |
 | Granola | UNRESOLVED LIVE BLOCKER | Fresh workstream `01a02cbd-3593-74ab-89c1-8241f4015b76`, run `01a02cbd-3b75-7c34-a5f2-49e2e33a3226`. `load_plugin` rendered a failed row in 897 ms with `success: false`, `kind: external`, code `plugin_authorization_unavailable`, and bounded retry guidance. No Granola content tool was exposed or called. |
-
-The Global HyperSight artifact proves both sides of the repaired D1/R2 commit.
-Migration and health are verified in EU, but no signed-in EU workspace was
-available for a fresh EU inference payload, so this report does not substitute
-Global functional evidence for that regional UI/artifact gate.
 
 ## Production catalog coverage
 
@@ -158,8 +127,6 @@ adapter is covered by the local connector library suite.
 | HyperSight | PARTIAL; payload-log defect found | Source workstream `01a02bf2-a4b5-78ae-a676-63faddc80487`, block `351faecd-995a-4cd7-bc03-d7eafd61d33a`, harness request `01a02bf5-5b41-749d-a4c6-fdb9f57fb2aa`. The QA block rendered a compact Markdown evidence table, but every opt-in D1 payload-log write failed the stale source check for `block_dashboard`; the logger then deleted the corresponding R2 object, so no payload capture remained. |
 | Automation architect | PASS, intentionally not activated | Draft `01a02bf6-fbcf-7b2b-b3b5-0ffe55c1e505`, request `3bad0071-9269-4165-a93a-492cd1ab08ce`. The compiler elicited the missing URL, local time, and timezone, accepted `https://example.com/`, `9:07 AM`, and `America/Los_Angeles`, and produced the inactive draft “Harness QA public-page monitor.” No external delivery or subscription was created. |
 | Parallel children, cold sandboxes, alarms, and sleeps | PASS at enforced bounds | The same production acceptance window recorded three parallel children starting within 272 ms and the fourth refused at the documented root-plus-three chain ceiling; two cold Terminal sandboxes overlapped; a 75-second command crossed both keep-alive windows; a wake-up due during the sleep fired once after the active run; and timeout recovery returned `LATE_ABSENT`. Exact workstream/run evidence remains in [`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md#2026-08-22-global-concurrency-alarms-subagents-and-timeout-acceptance). |
-
-## Finding HQA-01 — P1: deterministic refusals are stored as successes
 
 ### Reproduction
 
@@ -207,8 +174,6 @@ skill code is `skill_not_available`, not `skill_not_found`.
 
 Status: production-verified after PR #247. All three refusals rendered failed
 rows and model-visible `success: false` with their stable codes.
-
-## Finding HQA-02 — P1: member stop strands the in-flight Terminal receipt
 
 ### Root cause
 
@@ -264,8 +229,6 @@ reopened the provider-quiescence half after a post-deadline late marker. PR #251
 then closed that half with the strict no-late-write acceptance recorded below.
 The earlier command remains ambiguous and is never replayed.
 
-## Finding HQA-03 — P2: argument rejection creates a false attachment-content gap
-
 ### Root cause
 
 Confidence: high.
@@ -295,8 +258,6 @@ corresponding repair was deliberately reverted.
 Status: production-verified after PR #247. The malformed call rendered as a
 validation failure and did not produce `Attachment content unverified`.
 
-## Finding HQA-04 — P2: plugin discovery requires one literal full phrase
-
 ### Root cause
 
 Confidence: high.
@@ -325,8 +286,6 @@ Status: production-verified after PR #247 for ranked discovery and the
 model-visible count: X preceded Web and `totalMatches` was 2. The broader
 26-match/20-return cap remains mutation-proven in the library regression.
 
-## Finding HQA-05 — P2: HyperSight payload logs violate the D1 source vocabulary
-
 ### Root cause
 
 Confidence: high; the production exception named the failed constraint and the
@@ -350,12 +309,6 @@ migration test applies the real history through 0092, preserves rows for all
 three previously valid sources, admits both missing sources, rejects `unknown`,
 and verifies foreign keys. The test failed when either a prior or new source was
 deliberately removed from the migration before the repair was restored.
-
-Status: migration 0093 is applied to Global and EU. Fresh Global HyperSight
-verification found both the D1 row and its exact 44,510-byte R2 object. A fresh
-EU functional payload and meeting-notes payload remain unexercised.
-
-## Finding HQA-06 — P1: `needs_input` retains Terminal's operation lease
 
 ### Reproduction and root cause
 
@@ -461,18 +414,6 @@ status rule, retained-task or phase-specific submission fence, lifecycle-claim
 fence, late-publication guard, expiry settlement, transient-failure cleanup, or
 lifecycle status repair made the corresponding test fail before restoration.
 
-Status: PR #249 merged as `973168279939212fde7eeac181431ee3ad8721bd` and
-deployment run `32624216543` produced healthy Global Worker version
-`2e590149-7543-4e48-a526-77a85b15210b` and EU version
-`53e47151-3a18-4553-b2b2-a074a83687cf`, with both migration ledgers current.
-Fresh Global workstream `01a02d70-ffe2-71f2-85c9-e5606de0ec92` confirmed the
-lease-liveness half: every linked read acquired with zero `sandbox_busy`.
-Finding HQA-07 below records why provider quiescence failed under PR #249 and
-how PR #251 closed the fresh strict production gate. The ambiguous command
-remains unresolved and is never replayed.
-
-## Finding HQA-07 — P1: named-session deletion does not stop an accepted command
-
 ### Reproduction and root cause
 
 Confidence: high; reproduced twice through signed-in Rally 1.135.0 Computer
@@ -531,13 +472,6 @@ an earlier-sorting `running` residue, remains retirement-bound even when its
 late provider callback changes it to `running`, and prevents stop/restart reuse
 of that generation.
 
-Status: PR #251 merged as `9c09e4d1683edf268706e4cb5ca5ce7885ee6fa5`.
-Deployment run `32629139604` produced healthy Global Worker version
-`7fbfa5ff-d4ec-4b55-89cf-d9763ce4a609` and EU version
-`bba16c1f-a471-4397-89bc-7e988eecdde6`, with no pending migration in either
-region. The fresh Global sequence above passed the exact post-deadline Computer
-Use gate. The repair does not replay or declare the ambiguous command resolved.
-
 ## Finding HQA-08 — P2: a transient receipt RPC can outlive terminalization
 
 The post-merge audit of PR #247 found a second failure window in the stopped and
@@ -565,40 +499,6 @@ new run claim. The older root-only
 `abandonRunReceipts` operation was removed in favor of the one residual
 settlement path. This reuses the current ledger, receipt operation, and sweep
 limit; it adds no schema, queue, alarm, timer, or recovery owner.
-
-Three regressions inject the receipt-port failure after the terminal write and
-prove a later retry or sweep closes the exact receipt and records the marker;
-the stopped case loses the response after settlement commits and proves retry
-does not add another checkpoint. A fourth regression proves the
-BlockDashboard-only sweep positively reaps and reconciles a stale HyperSight
-root while its ordinary-automation negative case remains fenced. Two more
-causal cases prove an unsettleable oldest repair does not block the stale root
-behind it and an earlier root cannot fail a later automation elicitation. The
-payload-less stopped case also pins the existing receipt-scoped
-`{"code":"run_cancelled"}` checkpoint. The focused harness runtime file passes
-54/54, and it passes 115/115 together with the
-receipt-storage unit suite. Mutations disabling the direct
-retry or terminal-row scan made the named regressions fail with the receipt
-still `executing`; replacing the block-origin allowance made the positive
-BlockDashboard regression fail. Mutations restoring the empty stopped payload,
-allowing `needs_input` automation settlement, or rethrowing a per-row repair
-failure made their causal regressions fail. Historical marker backfill is
-synchronous on run admission and may attempt up to 25 rows per activation; it
-drains as markers accumulate, while a warned failed attempt does not consume the
-ordinary stale-reaping budget. The follow-up full root run passed 1,748 API Node tests, 234
-API real-workerd tests, and 1,234 desktop tests. Root lint, typecheck,
-`docs:check`, all 357 script tests, all 110 desktop release invariants, both
-regional dry-run builds, and `git diff --check` also passed. Status: PR #253
-merged as `e4311041bc45936137cd318871497c22392e0bff`. Deployment run
-`32633487884` produced healthy Global Worker version
-`c6eca610-7549-4658-9ce4-ca2b5fe370a1` and EU version
-`f3c83ce2-e854-49fc-9b05-5819dda1c984`; both migration listings reported no
-pending migration, and both EU and Global health endpoints passed. The exact
-residual-receipt RPC response-loss fault remains unexercised in production
-because it is not safely injectable through Computer Use; no UI-only claim
-substitutes for that fault. A fresh ordinary post-deployment Computer Use
-inspection was also unavailable because the Mac relocked after deployment, so
-regional health is not presented as UI evidence.
 
 ## Review-driven durable-authority hardening
 
@@ -661,23 +561,11 @@ defects were coverage gaps rather than already-failing gates.
 | `@rally/connectors` library | 218 tests passed across 13 files. |
 | Targeted API harness matrix | 189 tests passed across 14 files. |
 | Root production build | PASS. |
-| EU Wrangler dry-run build | PASS. |
 | Root lint | PASS, zero warnings. |
 | Root typecheck | PASS. |
 | Full root tests | PASS. |
 | Repository script tests | 357 passed. |
 | Desktop release invariants | 110 passed. |
-
-After the repairs, the focused harness suites pass 114 tests, the focused API
-durability, dispatch, wake-up, attachment, and cancellation suites pass 178 tests, and the
-six-test attachment-receipt suite and the new database migration test pass. The
-new search, failure-classification,
-wake-up, attachment, cancellation, and migration regressions were each proven
-capable of failing through a deliberate implementation mutation before
-restoration. The final branch source and documentation passed root lint with
-zero warnings, typecheck, the full root test command, all 357 repository script
-tests, all 110 desktop release-invariant tests, the root production build, the
-EU Wrangler dry-run build, `docs:check`, and `git diff --check`.
 
 The HQA-06 follow-up initially left the full Terminal authority file at 37/37
 and the four focused files at 61/61 (22 runtime, 11 lifecycle, 9 coordinator,
@@ -692,7 +580,7 @@ the repair was restored. After the final provider-quiescence repair, root lint
 passed with zero warnings, typecheck and `docs:check` passed, the full root test
 command passed (including 1,742 API Node tests, 234 API real-workerd tests, and
 1,234 desktop tests), repository script tests passed 357/357, desktop release
-invariants passed 110/110, and both Global and EU Worker dry-run builds passed.
+invariants passed 110/110, and both configured deployments Worker dry-run builds passed.
 
 An earlier full-test run also exposed a workerd fixture race in three dispatch
 lifecycle cases: each posted a dispatch and parked its one-millisecond alarm in
@@ -705,34 +593,20 @@ the complete root test command then passed, including all 233 workerd tests at
 that point; the later final run above includes 234 after the added authority
 regression.
 
-## Remaining acceptance work
-
 - Granola has failed twice, including after PR #247. Continue with
   provider-aware diagnostics; do not report a revoked connection unless
   authorization actually returns denied.
+
 - A production Notion connection was absent, so only adapter/library coverage is
   available for Notion in this pass.
+
 - External write happy/error paths were intentionally not stress-tested because
   this QA did not authorize email, calendar, Slack, GitHub, Linear, X, Drive, or
   other third-party mutations.
-- The prior Terminal acceptance still owns EU functional execution,
-  stale-attempt recovery, and injected durable-host-error guidance; health checks
-  alone do not close those gates.
+
 - The exact HQA-08 residual-receipt RPC response-loss fault remains unexercised
   in production because it is not safely injectable through Computer Use. Run
   a fresh ordinary post-PR #253 UI inspection when the Mac is unlocked; neither
   that inspection nor regional health substitutes for the fault-injection gate.
 
 ## Release recommendation
-
-Do not describe the current production harness as fully accepted yet. PR #247's
-failure receipts, ranked discovery, attachment validation, stopped receipt, and
-Global HyperSight payload commit are production-verified. PR #249 production-
-verified that linked runs no longer wait behind the yielded lease. PR #251
-production-verified the strict whole-sandbox stop, linked-read, and
-post-original-deadline no-late-write sequence. PR #253 is deployed and healthy
-in both regions; deterministic tests verify its transient receipt-reconciliation
-repair, while the exact residual-receipt RPC response-loss fault remains
-unexercised in production. Granola remains unavailable. The prior EU Terminal,
-stale-attempt, injected-error, fresh EU payload, and meeting-notes payload gates
-remain explicit regional or targeted follow-up work.

@@ -16,6 +16,7 @@ export const FIXED_DESKTOP_RELEASE_INPUTS = Object.freeze([
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
   'tsconfig.base.json',
+  'config/regions.json',
   '.github/workflows/release-desktop-macos.yml',
 ]);
 

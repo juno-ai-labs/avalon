@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { newId } from '@rally/db';
 import type { LinkAnonymousTelemetryResponse } from '@rally/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
@@ -10,14 +11,14 @@ export async function linkAnonymousTelemetry(
 ): Promise<LinkAnonymousTelemetryResponse> {
   if (auth.region !== env.AVALON_REGION) throw new Error('telemetry_link_route_mismatch');
   const localVerifier = env.AVALON_REGION === 'global' ? new TelemetryBootstrapService(env) : null;
-  let claims: { route: 'global' | 'eu'; anonymousEpochId: string; closed: boolean };
+  let claims: { route: Region; anonymousEpochId: string; closed: boolean };
   if (localVerifier) {
     claims = await localVerifier.authorizeLink(capability, 'global');
   } else {
     if (!env.GLOBAL_TELEMETRY_CONTROL) throw new Error('telemetry_control_unavailable');
     claims = await env.GLOBAL_TELEMETRY_CONTROL.authorizeJourneyLink({
       capability,
-      expectedRoute: 'eu',
+      expectedRoute: 'global',
     });
   }
   const user = await env.DB.prepare(
@@ -40,7 +41,7 @@ export async function linkAnonymousTelemetry(
   if (!resolved?.analytics_person_id) throw new Error('telemetry_link_user_missing');
   const existing = await env.DB.prepare(
     'SELECT analytics_person_id, route FROM telemetry_identity_links WHERE anonymous_epoch_id = ?',
-  ).bind(claims.anonymousEpochId).first<{ analytics_person_id: string; route: 'global' | 'eu' }>();
+  ).bind(claims.anonymousEpochId).first<{ analytics_person_id: string; route: Region }>();
   if (existing) {
     if (existing.analytics_person_id !== resolved.analytics_person_id || existing.route !== env.AVALON_REGION) {
       throw new Error('telemetry_link_conflict');
@@ -67,8 +68,7 @@ export async function linkAnonymousTelemetry(
     now.toISOString(),
     deleteAt,
   )];
-  if (env.AVALON_REGION === 'global') {
-    statements.push(env.DB.prepare(
+  statements.push(env.DB.prepare(
       `INSERT INTO telemetry_profile_jobs
         (id, subject_user_id, workspace_id, job_kind, destination_analytics_id,
          anonymous_epoch_id, properties_json, version, state, created_at, delete_at)
@@ -82,7 +82,6 @@ export async function linkAnonymousTelemetry(
       now.toISOString(),
       deleteAt,
     ));
-  }
   await env.DB.batch(statements);
   await closeJourney(env, localVerifier, capability);
   return { result: 'linked' };
@@ -98,5 +97,5 @@ async function closeJourney(
     return;
   }
   if (!env.GLOBAL_TELEMETRY_CONTROL) throw new Error('telemetry_control_unavailable');
-  await env.GLOBAL_TELEMETRY_CONTROL.closeJourney({ capability, expectedRoute: 'eu' });
+  await env.GLOBAL_TELEMETRY_CONTROL.closeJourney({ capability, expectedRoute: 'global' });
 }

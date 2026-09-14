@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -11,7 +12,7 @@ interface SignalConfig {
 /**
  * `destinations` and `persist` are signal-scoped in Wrangler's schema — there is
  * no `observability.destinations`. They are declared at the top level here
- * anyway, as `unknown`, so the "EU names no destination" assertion can check a
+ * anyway, as `unknown`, so the "enterprise names no destination" assertion can check a
  * misplaced key rather than being unable to express it.
  */
 interface ObservabilityConfig {
@@ -34,12 +35,12 @@ function config(fileName: string): WorkerConfig {
 
 /**
  * An OTLP destination is account configuration, but the opt-in is not: these
- * two files decide which Worker sends telemetry out of Cloudflare, and the EU
- * Worker's abstention is the whole of what keeps EU telemetry in the EU.
+ * two files decide which Worker sends telemetry out of Cloudflare, and the enterprise
+ * Worker's abstention is the whole of what keeps enterprise telemetry in the enterprise.
  *
  * That abstention is otherwise held up by a comment, which is exactly the kind
  * of thing a later edit removes without noticing. `docs/telemetry.md` records
- * the decision that Global exports and EU does not; this is that decision as a
+ * the decision that Global exports and enterprise does not; this is that decision as a
  * check.
  */
 describe('regional telemetry export', () => {
@@ -64,24 +65,6 @@ describe('regional telemetry export', () => {
     expect(observability?.traces?.persist).toBeUndefined();
   });
 
-  it('names no destination for the EU Worker, in either signal', () => {
-    const observability = config('wrangler.eu.jsonc').observability;
 
-    // Both are asserted, not just the one that exists today: adding a `logs`
-    // block to the EU config with a destination in it is the failure this
-    // guards against, and it would pass a check that only looked at `traces`.
-    expect(observability?.logs?.destinations).toBeUndefined();
-    expect(observability?.traces?.destinations).toBeUndefined();
-    expect(observability?.destinations).toBeUndefined();
-  });
 
-  it('still collects EU telemetry — the abstention is about export, not observability', () => {
-    const observability = config('wrangler.eu.jsonc').observability;
-
-    // The EU Worker is fully observable inside its own region; what it does not
-    // do is ship any of it to a US project. A change that disabled EU
-    // observability to satisfy the rule above would pass the wrong test.
-    expect(observability?.enabled).toBe(true);
-    expect(observability?.traces?.enabled).toBe(true);
-  });
 });

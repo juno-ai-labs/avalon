@@ -1,3 +1,5 @@
+import { RegionSchema } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import {
@@ -1843,6 +1845,6 @@ function validIso(value: string | null): string | null {
   return value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 }
 
-function regionFromConnection(connection: ConnectorConnectionContext): "global" | "eu" {
-  return connection.config.region === "eu" ? "eu" : "global";
+function regionFromConnection(connection: ConnectorConnectionContext): Region {
+  return RegionSchema.parse(connection.config.region ?? "global");
 }

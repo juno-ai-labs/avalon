@@ -262,8 +262,6 @@ a function that eats every dollar sign in the product.
 Both entry points are asserted against the same input where they differ, so the
 escaping rule is visible as a difference rather than stated only in prose.
 
-## Changelog
-
 ### 2026-08-28 — The code splitter moved out, and picked up indented blocks on the way
 
 **What changed:** `CODE_OR_TEXT` — the single regex that recognised a fenced

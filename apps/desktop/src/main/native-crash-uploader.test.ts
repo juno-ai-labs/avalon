@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,11 +51,11 @@ afterEach(async () => {
 });
 
 describe('NativeCrashUploader', () => {
-  it('uploads an explicit EU generation only to an authenticated EU API', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-eu-'));
+  it('uploads an explicit enterprise generation only to an authenticated enterprise API', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-enterprise-'));
     roots.push(root);
     const first = await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: generationTime(0),
+      rootDirectory: root, route: 'enterprise', now: generationTime(0),
       generationId: '018f0000-0000-7000-8000-000000000021',
       runtime,
     });
@@ -63,7 +64,7 @@ describe('NativeCrashUploader', () => {
     bytes.set(new TextEncoder().encode('MDMP'));
     await writeFile(join(first.activeCrashpadDirectory!, 'completed', 'renderer.dmp'), bytes);
     await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: generationTime(1),
+      rootDirectory: root, route: 'enterprise', now: generationTime(1),
       generationId: '018f0000-0000-7000-8000-000000000022',
       runtime,
     });
@@ -74,14 +75,14 @@ describe('NativeCrashUploader', () => {
       rootDirectory: root, enabled: () => true,
       identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
       authenticatedSession: async () => ({
-        apiBaseUrl: 'https://eu.api.rallywith.ai', accessToken: 'eu-secret', route: 'eu',
+        apiBaseUrl: 'https://enterprise.api.rallywith.ai', accessToken: 'enterprise-secret', route: 'enterprise',
       }),
       anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
       eventId: () => '018f0000-0000-7000-8000-000000000023',
     });
     await uploader.flush();
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://eu.api.rallywith.ai/telemetry/crashes');
-    expect(JSON.parse(String((fetch.mock.calls[0]?.[1]?.body as FormData).get('metadata')))).toMatchObject({ route: 'eu' });
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://enterprise.api.rallywith.ai/telemetry/crashes');
+    expect(JSON.parse(String((fetch.mock.calls[0]?.[1]?.body as FormData).get('metadata')))).toMatchObject({ route: 'enterprise' });
   });
 
   it('uploads an inactive dump with normal regional auth and removes it only after acknowledgement', async () => {
@@ -126,23 +127,23 @@ describe('NativeCrashUploader', () => {
     expect(onState.mock.calls.map(([state]) => state)).toEqual(['queued', 'uploading', 'accepted']);
   });
 
-  it('uses a Global onboarding capability and leaves a valid EU-designated generation untouched', async () => {
+  it('uses a Global onboarding capability and leaves a valid enterprise-designated generation untouched', async () => {
     const { root, dump } = await fixture();
-    const euFirst = await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: generationTime(2),
+    const enterpriseFirst = await prepareNativeCrashGeneration({
+      rootDirectory: root, route: 'enterprise', now: generationTime(2),
       generationId: '018f0000-0000-7000-8000-000000000098', runtime,
     });
-    const euActiveDump = join(euFirst.activeCrashpadDirectory!, 'completed', 'eu.dmp');
-    await mkdir(join(euFirst.activeCrashpadDirectory!, 'completed'), { recursive: true });
-    const euBytes = new Uint8Array(32);
-    euBytes.set(new TextEncoder().encode('MDMP'));
-    await writeFile(euActiveDump, euBytes);
+    const enterpriseActiveDump = join(enterpriseFirst.activeCrashpadDirectory!, 'completed', 'enterprise.dmp');
+    await mkdir(join(enterpriseFirst.activeCrashpadDirectory!, 'completed'), { recursive: true });
+    const enterpriseBytes = new Uint8Array(32);
+    enterpriseBytes.set(new TextEncoder().encode('MDMP'));
+    await writeFile(enterpriseActiveDump, enterpriseBytes);
     await prepareNativeCrashGeneration({
       rootDirectory: root, route: 'global', now: generationTime(3),
       generationId: '018f0000-0000-7000-8000-000000000099', runtime,
     });
-    const euDirectory = join(root, 'upload', 'eu', '018f0000-0000-7000-8000-000000000098');
-    const euDump = join(euDirectory, 'crashpad', 'completed', 'eu.dmp');
+    const enterpriseDirectory = join(root, 'upload', 'enterprise', '018f0000-0000-7000-8000-000000000098');
+    const enterpriseDump = join(enterpriseDirectory, 'crashpad', 'completed', 'enterprise.dmp');
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
       result: 'accepted', uploadId: '018f0000-0000-7000-8000-000000000010',
     }), { status: 202 }));
@@ -160,7 +161,7 @@ describe('NativeCrashUploader', () => {
     expect(fetch.mock.calls[0]?.[0]).toBe('https://api.rallywith.ai/telemetry/crashes/anonymous');
     expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('x-rally-telemetry-capability')).toBe('c'.repeat(64));
     await expect(access(dump)).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(access(euDump)).resolves.toBeUndefined();
+    await expect(access(enterpriseDump)).resolves.toBeUndefined();
     expect(fetch).toHaveBeenCalledOnce();
   });
 

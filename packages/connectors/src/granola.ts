@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import type { ConnectorInstallationManagement } from "./installation";
 import type { ToolDefinition } from "@rally/contracts";
@@ -594,7 +595,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         }[verified.event_type];
         return {
           workspaceId: connection.workspaceId,
-          region: connection.config.region === "eu" ? "eu" : "global",
+          region: RegionSchema.parse(connection.config.region ?? "global"),
           connectionId: connection.id,
           connectionScope: connection.scope,
           connectionOwnerUserId: connection.ownerUserId,

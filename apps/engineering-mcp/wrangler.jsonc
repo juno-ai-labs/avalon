@@ -18,11 +18,6 @@
       "binding": "GLOBAL_INSPECTION",
       "service": "avalon-api-global",
       "entrypoint": "EngineeringInspectionBridge"
-    },
-    {
-      "binding": "EU_INSPECTION",
-      "service": "avalon-api-eu",
-      "entrypoint": "EngineeringInspectionBridge"
     }
   ],
   "observability": { "enabled": true, "head_sampling_rate": 1 }

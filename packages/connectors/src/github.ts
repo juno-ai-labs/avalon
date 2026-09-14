@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
@@ -2659,7 +2660,7 @@ export function normalizeGitHubWebhook(
 
   return {
     workspaceId: connection.workspaceId,
-    region: connection.config.region === "eu" ? "eu" : "global",
+    region: RegionSchema.parse(connection.config.region ?? "global"),
     connectionId: connection.id,
     connectionScope: connection.scope,
     connectionOwnerUserId: connection.ownerUserId,

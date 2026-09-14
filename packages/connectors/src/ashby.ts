@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { AshbyEventTypes, AshbyEventLabels } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
@@ -185,7 +186,7 @@ export function createAshbyConnector(config: AshbyConnectorConfig): ConnectorAda
           : null;
         const resourceType = application?.id ? "ashby_application" : emailCandidate ? "ashby_candidate" : null;
         const resourceId = application?.id ?? emailCandidate?.id ?? null;
-        return { workspaceId: connection.workspaceId, region: connection.config.region === "eu" ? "eu" : "global",
+        return { workspaceId: connection.workspaceId, region: RegionSchema.parse(connection.config.region ?? "global"),
           connectionId: connection.id, connectionScope: "workspace", connectionOwnerUserId: null,
           provider: "ashby", providerEventId: envelope.deliveryId, eventType: envelope.eventType,
           resourceType, providerResourceId: resourceId,

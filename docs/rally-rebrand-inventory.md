@@ -106,19 +106,9 @@ Cloudflare resource names: **174 distinct names, 764 occurrences, 185 files**.
 records what exists so an `avalon-` string can be recognized as an
 infrastructure name and left alone.
 
-- **Workers**: `avalon-api-global`, `avalon-api-eu`, `avalon-site`,
-  `avalon-ace`, `avalon-migration-tracker`, `avalon-release-retention`,
-  and their `-dev` / `-test` / `-dry-run` variants.
-- **Queues**: the `avalon-{global,eu}-*` families — `activities`,
-  `access-revocations`, `migration-commands`, `product-feature-flags`,
-  `connector-event`, `connector-poll`, `work-opportunity`, `memory`,
-  `inference-lakehouse`, `analytics-events-lakehouse` — each with its
-  `-dead-letter` pair.
-- **R2 buckets**: `avalon-{global,eu}-{telemetry,payloads,observability}`,
-  `avalon-desktop-releases`, `avalon-desktop-releases-archive`,
-  `avalon-migration-reports`.
 - **Lakehouse / catalog names**: `avalon.analytics_events`,
   `avalon_agent_runs`, `avalon-global-inference-lakehouse`.
+
 - **Analytics Engine datasets**: `avalon_agent_runs` and
   `avalon_terminal_operations`, bound as `RUN_ANALYTICS` and
   `TERMINAL_ANALYTICS`. These read as ordinary snake-case identifiers rather
@@ -127,15 +117,6 @@ infrastructure name and left alone.
   binding does not rename anything at Cloudflare — it starts writing to a new,
   empty dataset, and unlike a PostHog event name there is no destination-side
   alias for an Analytics Engine dataset.
-- Declared in `apps/api/wrangler.{global,eu,test}.jsonc`,
-  `apps/{site,ace,migration-tracker,release-retention}/wrangler*.jsonc`,
-  `config/{analytics,inference}-lakehouse.json`, and asserted by the
-  provisioning scripts and their tests under `scripts/`.
-
-One typo is already in the tree: `avalon-eu-access-revocaitons` appears
-alongside `avalon-eu-access-revocations`. That is a real defect rather than
-rebrand debt, and is unaffected by the no-rename decision — but it is still a
-provisioning change, so it belongs to whatever next touches those queues.
 
 ### 3. Externally-observable identifiers — renamed to Rally
 
@@ -187,23 +168,7 @@ Environment variables and Worker bindings: **~950 occurrences, 277 files**.
   every test that constructs an env. Heaviest: `connection-service.ts` (42),
   `durable-object-namespace.ts` (19), `auth-service.ts` (16),
   `workspace-do.ts` (15).
-- **49 other `AVALON_*` names, 207 occurrences.** Three groups:
-  - *Sandbox/terminal contract* — `AVALON_RESOURCE_DIR`, `AVALON_WORKSPACE_ID`,
-    `AVALON_CONNECTION_ID`, `AVALON_GIT_BRANCH`, `AVALON_GIT_BASE_BRANCH`,
-    `AVALON_BRANCH_PATTERN`, `AVALON_DIFF_SUMMARY`, `AVALON_COMMAND_TIMED_OUT`,
-    `AVALON_BOOTSTRAP_INSTALLED`, `AVALON_REMOTE_ACCESS`. These are injected
-    into the Daytona sandbox and read by scripts running *inside* it, so they
-    are a contract with the sandbox image, not purely internal.
-  - *Agent harness* — `AVALON_TOOL_PROSE`, `AVALON_SKILL_TOOL_DEFINITIONS`,
-    `AVALON_DISCOVERY_TOOL_DEFINITIONS`, `AVALON_SKILLS_SYSTEM_MESSAGE`,
-    `AVALON_CURRENT_TIME_TOOL_DEFINITION`,
-    `AVALON_REQUEST_ELICITATION_TOOL_DEFINITION`, and the `AVALON_*_PLUGIN_ID`
-    set.
-  - *Build, release, and CI* — `AVALON_RELEASE_R2_BUCKET`,
-    `RALLY_RELEASE_DISCOVERY`, `AVALON_SITE_BUILD__*`, `AVALON_SITE_RELEASE__*`,
-    `AVALON_SMOKE_*`, `AVALON_E2E_*`, `AVALON_HEALTH_*`,
-    `AVALON_GLOBAL_API_URL`, `AVALON_EU_API_URL`,
-    `AVALON_{GLOBAL,EU}_TELEMETRY_R2_BUCKET`, `AVALON_DEV_AUTH`.
+
 - Also in the untracked local `.env.local` (20), which `pnpm env:sync`
   regenerates — worth checking that whatever generates it moves too.
 
@@ -343,7 +308,7 @@ pass did not reach, and they are section 7's remainder rather than this
 section's.
 
 The two **person-notification** emails — `participant-` and
-`mention-email-service.ts` — have moved, along with both regions'
+`mention-email-service.ts` — have moved, along with configured deployments'
 `RESEND_FROM_EMAIL` and `RESEND_NOTIFICATION_FROM_EMAIL` display names, which
 front every template including the four above. They were taken out of order
 because their Slack halves had already moved, so one event arrived as "Open in
@@ -424,8 +389,6 @@ with this repository. The two halves of that line have different owners.
   nothing in this repository can alias the old event names at the destination.
 - **Ordering and batching.** The categories above are ordered by coupling cost,
   which is not the same as the order the work should happen in.
-
-## Changelog
 
 ### 2026-08-25 — The person-notification emails and both Resend senders
 

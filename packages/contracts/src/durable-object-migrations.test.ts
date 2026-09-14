@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import {
   DurableObjectMigrationCommandSchema,
@@ -14,9 +15,9 @@ describe("isOpaqueDurableObjectName", () => {
   it("accepts every name shape apps/api mints", () => {
     for (const name of [
       `global:${WORKSPACE}`,
-      `eu:${WORKSPACE}:${WORKSTREAM}`,
-      `eu:${WORKSPACE}:${WORKSTREAM}:0`,
-      `eu:${WORKSPACE}:${WORKSTREAM}:0192f3a0-1c4d-7000-8000-0000000000a3`,
+      `enterprise:${WORKSPACE}:${WORKSTREAM}`,
+      `enterprise:${WORKSPACE}:${WORKSTREAM}:0`,
+      `enterprise:${WORKSPACE}:${WORKSTREAM}:0192f3a0-1c4d-7000-8000-0000000000a3`,
     ]) {
       expect(isOpaqueDurableObjectName(name)).toBe(true);
     }
@@ -24,7 +25,7 @@ describe("isOpaqueDurableObjectName", () => {
 
   it("refuses a name carrying anything legible", () => {
     for (const name of [
-      `eu:acme-corporation:payroll`,
+      `enterprise:acme-corporation:payroll`,
       `global:${WORKSPACE}:operator@with-avalon.com`,
       `global:${WORKSPACE}:Some Workspace`,
       "",
@@ -40,10 +41,10 @@ describe("DurableObjectMigrationReportSchema", () => {
   const report = {
     reportId: "0192f3a0-1c4d-7000-8000-0000000000b1",
     objectId: "a".repeat(64),
-    objectName: `eu:${WORKSPACE}:${WORKSTREAM}`,
+    objectName: `enterprise:${WORKSPACE}:${WORKSTREAM}`,
     className: "SubstreamAgent",
     component: "substream_agent_do",
-    region: "eu",
+    region: "enterprise",
     appEnv: "production",
     workerVersionId: "0.24.0",
     status: "applied",
@@ -72,7 +73,7 @@ describe("DurableObjectMigrationReportSchema", () => {
 
   it("refuses a name that is not opaque", () => {
     expect(DurableObjectMigrationReportSchema
-      .safeParse({ ...report, objectName: "eu:acme-corporation" }).success).toBe(false);
+      .safeParse({ ...report, objectName: "enterprise:acme-corporation" }).success).toBe(false);
   });
 
   it("bounds the failure message", () => {
@@ -97,7 +98,7 @@ describe("DurableObjectMigrationReportSchema", () => {
   });
 
   it("refuses an unknown region or environment", () => {
-    expect(DurableObjectMigrationReportSchema.safeParse({ ...report, region: "apac" }).success)
+    expect(DurableObjectMigrationReportSchema.safeParse({ ...report, region: "not a region" }).success)
       .toBe(false);
     expect(DurableObjectMigrationReportSchema.safeParse({ ...report, appEnv: "prod" }).success)
       .toBe(false);
@@ -126,7 +127,7 @@ describe("DurableObjectMigrationCommandSchema", () => {
   });
   it("refuses a name that is not opaque", () => {
     expect(DurableObjectMigrationCommandSchema
-      .safeParse({ ...command, objectName: "eu:acme-corporation:payroll" }).success).toBe(false);
+      .safeParse({ ...command, objectName: "enterprise:acme-corporation:payroll" }).success).toBe(false);
   });
 
   it("refuses a malformed object ID, class name, or region", () => {
@@ -135,14 +136,14 @@ describe("DurableObjectMigrationCommandSchema", () => {
     expect(DurableObjectMigrationCommandSchema
       .safeParse({ ...command, className: "not a class" }).success).toBe(false);
     expect(DurableObjectMigrationCommandSchema
-      .safeParse({ ...command, region: "apac" }).success).toBe(false);
+      .safeParse({ ...command, region: "not a region" }).success).toBe(false);
   });
 });
 
 describe("the forced migration command queues", () => {
   it("names one queue per region", () => {
     expect(durableObjectMigrationCommandQueue("global")).toBe("avalon-global-migration-commands");
-    expect(durableObjectMigrationCommandQueue("eu")).toBe("avalon-eu-migration-commands");
+    expect(durableObjectMigrationCommandQueue("enterprise")).toBe("avalon-enterprise-migration-commands");
   });
 
   /**
@@ -153,12 +154,12 @@ describe("the forced migration command queues", () => {
   it("recognizes both regions' queues and nothing beside them", () => {
     expect([
       durableObjectMigrationCommandQueue("global"),
-      durableObjectMigrationCommandQueue("eu"),
+      durableObjectMigrationCommandQueue("enterprise"),
     ].every(isDurableObjectMigrationCommandQueue)).toBe(true);
 
     expect([
       "avalon-global-migration-commands-dead-letter",
-      "avalon-eu-migration-commands-dead-letter",
+      "avalon-enterprise-migration-commands-dead-letter",
       "avalon-migration-reports",
       "avalon-global-activities",
       "avalon-global-access-revocations",

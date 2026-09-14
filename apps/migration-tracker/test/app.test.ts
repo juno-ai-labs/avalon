@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
@@ -293,15 +294,15 @@ describe("the operator site", () => {
 describe("parseObjectQuery", () => {
   it("reads every filter the site offers", () => {
     const query = parseObjectQuery(
-      "https://x/objects?status=behind&component=substream_agent_do&region=eu&script=avalon-api-eu"
+      "https://x/objects?status=behind&component=substream_agent_do&region=enterprise&script=avalon-api-enterprise"
       + "&search=abc&limit=10&offset=20",
     );
 
     expect(query).toMatchObject({
       status: "behind",
       component: "substream_agent_do",
-      region: "eu",
-      scriptName: "avalon-api-eu",
+      region: "enterprise",
+      scriptName: "avalon-api-enterprise",
       search: "abc",
       limit: 10,
       offset: 20,
@@ -330,11 +331,11 @@ describe("parseObjectQuery", () => {
    */
   it("keeps the filters that are valid when one value is not", () => {
     const query = parseObjectQuery(
-      "https://x/objects?component=substream_agent_do&region=eu&status=nonsense&limit=99999",
+      "https://x/objects?component=substream_agent_do&region=enterprise&status=nonsense&limit=99999",
     );
 
     expect(query.component).toBe("substream_agent_do");
-    expect(query.region).toBe("eu");
+    expect(query.region).toBe("enterprise");
     expect(query.status).toBeUndefined();
     expect(query.limit).toBe(50);
   });
@@ -355,7 +356,7 @@ describe("the queue consumer", () => {
   });
 
   it("refuses a report whose object name is not opaque", async () => {
-    const delivery = await deliver({ ...report(), objectName: "eu:acme-corporation:payroll" });
+    const delivery = await deliver({ ...report(), objectName: "enterprise:acme-corporation:payroll" });
 
     expect(delivery.messages[0]?.acked).toBe(true);
     const page = await withRegistry((registry) => registry.listObjects(ObjectQuerySchema.parse({})));
@@ -411,7 +412,7 @@ describe("the queue consumer", () => {
  * writes anything.
  */
 describe("the force a migration page", () => {
-  function sweepIn(className: string, region: "global" | "eu", ids: string[]): Promise<void> {
+  function sweepIn(className: string, region: string, ids: string[]): Promise<void> {
     return withRegistry((registry) => {
       registry.recordSweep({
         startedAt: 1_700_000_000_000,
@@ -568,12 +569,12 @@ describe("the force a migration page", () => {
   });
 
   it("serves the same run list as JSON", async () => {
-    await sweepIn("WorkspaceDO", "eu", [OBJECT_ID]);
+    await sweepIn("WorkspaceDO", "enterprise", [OBJECT_ID]);
 
     const body = await (await get("/api/migrations")).json();
 
     expect(body).toMatchObject({
-      components: [{ className: "WorkspaceDO", region: "eu", objects: 1 }],
+      components: [{ className: "WorkspaceDO", region: "enterprise", objects: 1 }],
       runs: [],
       dispatchableRegions: [],
     });

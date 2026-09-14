@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -223,7 +224,7 @@ describe("Terminal snapshot manifest", () => {
       "raw.githubusercontent.com",
       "objects.githubusercontent.com",
       "api.rallywith.ai",
-      "eu.api.rallywith.ai",
+      "enterprise.api.with-avalon.com",
       "astral.sh",
       "get.pnpm.io",
       "pypi.org",

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,6 +20,19 @@ const auth: IdentityAuthContext = {
 };
 
 describe('authoritative onboarding outcome telemetry', () => {
+  it('rejects an unavailable deployment before starting workspace creation', async () => {
+    const app = new Hono<HonoAppEnv>();
+    app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
+    app.route('/', onboardingRoutes);
+    app.onError((error, c) => c.json({ error: error instanceof ApiError ? error.code : error.message },
+      error instanceof ApiError ? error.status : 500));
+    const response = await app.request('/workspace', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-rally-operation-id': operationId },
+      body: JSON.stringify({ name: 'Research', region: 'missing-region' }),
+    }, createTestEnv({}));
+    expect(response.status).toBe(400);
+  });
+
   it('emits a bounded failure outcome when a valid workspace creation operation conflicts', async () => {
     const database = migratedSqliteDatabase();
     database.prepare(`
@@ -58,10 +72,10 @@ describe('authoritative onboarding outcome telemetry', () => {
       APP_ENV: 'production',
       APP_VERSION: '1.96.0',
       BUILD_SHA: 'build-1',
-      EU_IDENTITY_BRIDGE: {
+      REGION_ENTERPRISE_IDENTITY_BRIDGE: {
         discover: async () => ({
           ok: true,
-          value: { region: 'eu', workspaces: [], invitations: [] },
+          value: { region: 'enterprise', workspaces: [], invitations: [] },
         }),
       },
     });

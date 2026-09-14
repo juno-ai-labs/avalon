@@ -1,3 +1,5 @@
+import { configuredRegions } from "@rally/contracts/regions";
+import { regionalDatabase, regionalFlagQueue } from "./regional-api";
 import {
   ProductFeatureFlagFanoutMessageSchema,
   ProductFeatureFlagKeySchema,
@@ -58,8 +60,7 @@ export async function consumeFlagChanges(batch: MessageBatch<unknown>, env: Env)
   const flagKeys = [...new Set(valid.map((entry) => entry.flagKey))];
   try {
     await Promise.all([
-      fanOutRegion(env.GLOBAL_DB, env.GLOBAL_PRODUCT_FLAG_QUEUE, flagKeys),
-      fanOutRegion(env.EU_DB, env.EU_PRODUCT_FLAG_QUEUE, flagKeys),
+      ...configuredRegions.map((region) => fanOutRegion(regionalDatabase(env, region), regionalFlagQueue(env, region), flagKeys)),
     ]);
     for (const { message } of valid) message.ack();
   } catch {

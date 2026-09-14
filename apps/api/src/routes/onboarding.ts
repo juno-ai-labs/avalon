@@ -1,3 +1,5 @@
+import { regionalBindings } from "../lib/regional-bindings";
+import type { Region } from "@rally/contracts/regions";
 import { publishWorkspaceSync } from '../services/workspace-realtime-service';
 import { AccountOnboardingService } from '../services/account-onboarding-service';
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
@@ -32,7 +34,7 @@ function deferOnboardingOutcome(
   auth: IdentityAuthContext,
   session: Session | null,
   name: 'workspace_create_completed' | 'workspace_activation_completed',
-  selectedRegion: 'global' | 'eu',
+  selectedRegion: Region,
   operationId: string | null,
   result: 'success' | 'validation_error' | 'conflict' | 'denied' | 'unavailable' | 'failed',
 ): void {
@@ -56,13 +58,13 @@ function deferOnboardingOutcome(
         role: workspaceIdentity.role,
       }
     : auth;
-  const work = selectedRegion === 'eu'
-    ? c.env.EU_TELEMETRY_BRIDGE?.acceptApiOutcome({
+  const work = selectedRegion !== c.env.AVALON_REGION
+    ? regionalBindings(c.env, selectedRegion).telemetry?.acceptApiOutcome({
       event,
-      route: 'eu',
+      route: selectedRegion,
       subjectUserId: session?.user.id ?? auth.userId,
       workspaceId: workspaceIdentity?.id ?? null,
-    }) ?? Promise.reject(new Error('telemetry_eu_bridge_unavailable'))
+    }) ?? Promise.reject(new Error('telemetry_region_unavailable'))
     : emitAuthenticatedApiTelemetry(c.env, outcomeAuth, event);
   requestDeferral(c)(Promise.resolve(work).catch(() => undefined));
 }
@@ -160,7 +162,7 @@ onboardingRoutes.get('/account', async (c) =>
 onboardingRoutes.patch('/account', zValidator('json', UpdateAccountOnboardingSchema), async (c) => {
   const auth = getIdentityAuth(c);
   const result = await new AccountOnboardingService(c.env, auth).update(c.req.valid('json'));
-  // Notify Global members independently: an unavailable EU discovery must not
+  // Notify Global members independently: an unavailable regional discovery must not
   // suppress realtime delivery for an already-committed Global profile.
   requestDeferral(c)((async () => {
     const memberships = await c.env.DB.prepare(
@@ -169,7 +171,7 @@ onboardingRoutes.patch('/account', zValidator('json', UpdateAccountOnboardingSch
     await Promise.all(memberships.results.map((workspace) =>
       publishWorkspaceSync(c.env, workspace.workspace_id, ['workspace_profile', 'member_directory'])));
   })());
-  // Discovery projects the narrow identity preferences into EU and publishes
+  // Discovery projects the narrow identity preferences into regional and publishes
   // that region's member invalidations after its projection commits.
   requestDeferral(c)(new PlatformOnboardingService(c.env, auth).state());
   return c.json(AccountOnboardingSchema.parse(result));

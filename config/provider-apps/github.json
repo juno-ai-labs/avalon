@@ -8,9 +8,7 @@
   },
   "callback_urls": [
     "https://api.rallywith.ai/connections/github/callback",
-    "https://eu.api.rallywith.ai/connections/github/callback",
-    "https://api.with-avalon.com/connections/github/callback",
-    "https://eu.api.with-avalon.com/connections/github/callback"
+    "https://api.with-avalon.com/connections/github/callback"
   ],
   "setup_url": "https://github.rallywith.ai/connections/github/setup",
   "setup_on_update": false,

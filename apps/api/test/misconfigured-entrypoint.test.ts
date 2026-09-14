@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
@@ -79,7 +80,7 @@ describe("the health probe under a misconfigured environment", () => {
     const env = createInvalidTestEnv({
       DB: { prepare: () => ({ bind: () => ({ first: async () => ({ ok: 1 }) }), first: async () => ({ ok: 1 }) }) },
       PAYLOADS: { list: async () => ({ objects: [] }) },
-      AVALON_REGION: "eu-west-1",
+      AVALON_REGION: "enterprise-west-1",
       APP_ENV: "prod",
     });
 
@@ -92,7 +93,7 @@ describe("the health probe under a misconfigured environment", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({
       ok: false,
-      region: "eu-west-1",
+      region: "enterprise-west-1",
       environment: "prod",
       checks: { d1: { ok: true } },
     });
@@ -171,7 +172,7 @@ describe("the health probe under a misconfigured environment", () => {
     // deliberately names nothing, because the keys are secrets. This probe is
     // the exemption to that refusal, so it is the place the names belong — and
     // it has to go `ok: false` here, or `health:regions` reports a Worker that
-    // cannot serve a request as healthy. That is what let a real EU outage sit.
+    // cannot serve a request as healthy. That is what let a real enterprise outage sit.
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
     const response = await app.request("/health", undefined, createInvalidTestEnv({
@@ -196,10 +197,10 @@ describe("the health probe under a misconfigured environment", () => {
     expect(body.checks.envContract.message).not.toContain("GOOGLE_OAUTH_CLIENT_ID");
   });
 
-  it("reports the Global-only login secrets as required in every region but EU", async () => {
+  it("reports the Global-only login secrets as required in every region but enterprise", async () => {
     // The exemption `/health` relies on cuts both ways: it is the one endpoint
     // still answering when `AVALON_REGION` is wrong, so it must not report the
-    // key the entrypoint is failing on as fine. Only EU — the region the
+    // key the entrypoint is failing on as fine. Only enterprise — the region the
     // architecture says never carries this pair — takes the relaxed reading.
     const app = new Hono<HonoAppEnv>();
     app.route("/health", healthRoutes);
@@ -218,14 +219,14 @@ describe("the health probe under a misconfigured environment", () => {
     };
 
     expect(await report("global")).toEqual({ ok: false, message: "not configured" });
-    expect(await report("eu")).toEqual({ ok: true, message: "not required outside Global" });
+    expect(await report("enterprise")).toEqual({ ok: true, message: "not required outside Global" });
     // A typo'd region is the case this exists for: it must read like Global,
-    // not like EU, or the probe reassures an operator about the exact key
+    // not like enterprise, or the probe reassures an operator about the exact key
     // `env_contract_failed` is naming.
     expect(await report("gobal")).toEqual({ ok: false, message: "not configured" });
-    expect(await report("eu-west-1")).toEqual({ ok: false, message: "not configured" });
-    // And EU holding the pair is a secret outside its blast radius, not a pass.
-    expect(await report("eu", true))
+    expect(await report("enterprise-west-1")).toEqual({ ok: false, message: "not configured" });
+    // And enterprise holding the pair is a secret outside its blast radius, not a pass.
+    expect(await report("enterprise", true))
       .toEqual({ ok: false, message: "configured outside Global; remove it from this region" });
     expect(await report("global", true)).toEqual({ ok: true, message: "configured" });
   });
