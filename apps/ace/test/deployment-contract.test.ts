@@ -65,6 +65,8 @@ describe('Ace deployment contract', () => {
     const paths = pushPaths(workflow);
 
     expect(paths).toEqual([
+      'config/regions.json',
+      'scripts/regions.mjs',
       'apps/ace/**',
       '!apps/ace/test/**',
       'apps/migration-tracker/src/access.ts',

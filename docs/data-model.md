@@ -1006,7 +1006,7 @@ its rows.
 
 ## Push devices
 
-Migration 0106 adds regional `user_push_devices`, `user_push_device_sessions`, and
+Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, and
 `push_delivery_receipts`. Devices belong to a person and installation; live
 sessions bound by registration establish delivery eligibility. Receipts identify
 one workspace intent and device. Notification content remains in WorkspaceDO,

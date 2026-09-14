@@ -223,8 +223,8 @@ describe("the health probe under a misconfigured environment", () => {
     // A typo'd region is the case this exists for: it must read like Global,
     // not like enterprise, or the probe reassures an operator about the exact key
     // `env_contract_failed` is naming.
-    expect(await report("gobal")).toEqual({ ok: true, message: "not required outside Global" });
-    expect(await report("enterprise-west-1")).toEqual({ ok: true, message: "not required outside Global" });
+    expect(await report("gobal")).toEqual({ ok: false, message: "not configured" });
+    expect(await report("enterprise-west-1")).toEqual({ ok: false, message: "not configured" });
     // And enterprise holding the pair is a secret outside its blast radius, not a pass.
     expect(await report("enterprise", true))
       .toEqual({ ok: false, message: "configured outside Global; remove it from this region" });
