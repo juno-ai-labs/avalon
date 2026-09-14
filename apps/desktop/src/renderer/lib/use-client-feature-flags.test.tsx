@@ -21,6 +21,7 @@ describe('useClientFeatureFlags', () => {
       multipleWorkspacesEnabled: true,
       liveArtifactsEnabled: true,
       digestsEnabled: true,
+      pushNotificationsEnabled: false,
       controlTowerRefreshSeconds: 60,
     }));
     const { Wrapper } = wrapper();

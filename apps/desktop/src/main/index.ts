@@ -1,3 +1,5 @@
+import { DesktopPushNotifications } from "./push-notifications";
+import { workstreamHttpsDeepLink } from "./deep-links";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
@@ -846,6 +848,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
+  if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
   // Whether Developer may be offered belongs to the signed-in account, so a
@@ -1310,12 +1313,40 @@ const menuBarController = new MenuBarController({
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
+const desktopPush = new DesktopPushNotifications({
+  credentials: async () => (await loadStoredAuthSet())?.workspaces ?? [],
+  request: async (credential, path, init = {}) => {
+    const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
+      ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
+    });
+    let response = await ask(credential);
+    if (response.status === 401) {
+      await response.body?.cancel();
+      const renewed = await refreshStoredCredential(credential);
+      response = await ask(storedAuthFromSession(renewed, regionForStoredSession(renewed)));
+    }
+    return response;
+  },
+  clicked: (url) => {
+    applicationOpenObserver.opened('push_notification');
+    const link = url ? workstreamHttpsDeepLink(url) : null;
+    if (link) sendDeepLink(link, 'notification');
+    else if (app.isReady()) void createMainWindow();
+  },
+  changed: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  warn: () => logWarn('rally', 'Push notifications could not register on this Mac'),
+});
+
+// Install the response delegate before ready so a notification cold launch is retained.
+desktopPush.installNativeBridge();
+
 function desktopApplicationSettings(
   lockdown: DesktopLockdownSettings = lockdownModeController.state(),
 ): DesktopApplicationSettings {
   const developerSettingsAvailable = developerSettingsFlagController.enabled();
   return {
     ...lockdown,
+    ...desktopPush.state(),
     developerSettingsAvailable,
     // The effective preference, not the stored one. Debug enabled is a
     // per-device choice inside a section the service decides exists at all, so
@@ -1391,6 +1422,7 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   }
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
+  void desktopPush.reconcile();
   if (!parsed.success) throw new Error('Rally returned an unreadable feature flag response');
   return parsed.data.developerSettings;
 }
@@ -2700,6 +2732,7 @@ async function logout(): Promise<void> {
   const failures: unknown[] = [];
   try {
     const stored = await loadStoredAuthSet();
+    await desktopPush.signOut();
     try {
       await clearStoredSession();
     } catch (error) {
@@ -3114,6 +3147,16 @@ function registerIpc(): void {
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);
     return applicationForegrounded ?? BrowserWindow.getFocusedWindow() !== null;
+  });
+  ipcMain.handle('application-settings:set-push-notifications', async (event, enabled: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof enabled !== 'boolean') throw new Error('Invalid notification preference');
+    await desktopPush.set(enabled);
+    return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:open-notifications', async (event) => {
+    assertTrustedIpcSender(event);
+    await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');
   });
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
@@ -4513,6 +4556,15 @@ if (!singleInstanceLock) {
     }
   });
 
+  app.on('continue-activity', (event, type, _userInfo, details) => {
+    if (type !== 'NSUserActivityTypeBrowsingWeb' || !details.webpageURL) return;
+    const link = workstreamHttpsDeepLink(details.webpageURL);
+    if (!link) return;
+    event.preventDefault();
+    applicationOpenObserver.opened('deep_link');
+    sendDeepLink(link, 'deep_link');
+  });
+
   app.on('open-url', (event, url) => {
     event.preventDefault();
     if (emitDeepLink(url)) observeAcceptedDeepLinkOpen();
@@ -4568,6 +4620,7 @@ if (!singleInstanceLock) {
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
     const launchAuth = await loadStoredAuth();
+    await desktopPush.initialize();
     try {
       // The durable device choice admits early events to the local spool. A
       // cold regional preference read is reconciliation, not a launch

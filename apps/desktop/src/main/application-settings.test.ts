@@ -109,7 +109,7 @@ describe('desktop application settings', () => {
         version: 1,
         lockdownMode: true,
         debugEnabled: true,
-        menuBarEnabled: true,
+        pushNotificationsEnabled: true, pushInstallationId: null, menuBarEnabled: true,
         launchAtLoginDefaultApplied: false,
         productAnalyticsEnabled: true,
         productAnalyticsPreferenceVersion: 0,

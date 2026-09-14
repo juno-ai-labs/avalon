@@ -141,6 +141,13 @@ services and Electron IPC are existing test doubles, not assertions about live
 authorization. Real Electron checks cover positioning, keyboard navigation,
 scrolling and both appearances.
 
+## Notifications
+
+The `notifications` section is available only when the served
+`pushNotificationsEnabled` flag is true. Its device-level switch is registered
+in the same settings catalogue; unsigned builds explain that an installed release
+is required. Permission denial exposes a System Settings action.
+
 ## Changelog
 
 ### 2026-09-12 — Separate Ashby personal setup from shared event installation

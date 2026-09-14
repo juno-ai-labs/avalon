@@ -27,6 +27,7 @@
     "./citations": "./src/citations.ts",
     "./message-mentions": "./src/message-mentions.ts",
     "./search": "./src/search.ts",
+    "./push-notifications": "./src/push-notifications.ts",
     "./private-access": "./src/private-access.ts"
   },
   "scripts": {

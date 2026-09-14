@@ -71,8 +71,8 @@ queue serve it.
    push dead-letter queue, a `/health` line saying the key is absent, a log
    reason that distinguishes *turned off* from *no session* from *never
    registered*, and one operator notice when APNs rejects the provider token.
-6. The feature ships dark behind `push-notifications-enabled`, defaults off for
-   everyone, and is turned on per cohort from Ace.
+6. The feature ships enabled for everyone from day one.
+   `push-notifications-enabled` remains the operator off switch in Ace.
 
 ## Non-goals
 
@@ -175,7 +175,15 @@ the aggregate attention they expose today.
 
 ## Decision log
 
-None yet.
+- 2026-09-14: Enable push for everyone from day one, replacing the staff-only
+  rollout. Keep the existing product flag as an operator off switch.
+
+- 2026-09-14: Build code first and require signed-Mac verification before release.
+  Implement an explicit native notification-response bridge, and retain undelivered
+  alerts for 24 hours. Use per-intent/device receipts: a device-wide timestamp
+  can suppress unrelated retries. Keep existing intent identifiers and existing
+  session/access primitives. Implement HTTPS links in the same effort, preserving
+  the site-before-desktop deployment gate.
 
 ## Key design decisions
 
@@ -370,31 +378,26 @@ released before items 1 to 4 exist, and nothing on the backend can send before
    the ordinary chain; nothing manual.
 9. **KV.** The provider-token cache uses the regional KV namespace each API
    Worker already binds; no new namespace.
-10. **Flag.** `push-notifications-enabled` is created in Flagship by Ace's
-    deploy once the flag lands in code; targeting rules are written in Ace,
-    staff first.
+10. **Flag.** `push-notifications-enabled` is enabled for everyone. Ace's
+    deployment provisions it with default `on` if absent; existing definitions
+    are preserved.
 
 **Local development.** `pnpm env:sync` copies `APNS_AUTH_KEY` and
 `APNS_KEY_ID` from `.env.local` into `.dev.vars.*` for anyone who has them; a
 local Worker still answers `skipped` (the `APP_ENV` guard), which is deliberate.
-End-to-end verification is against the deployed staff cohort, with a locally
+End-to-end verification uses test accounts on the deployed feature, with a locally
 packaged build that carries the profile.
 
 ## Rollout
 
-Ships behind **`push-notifications-enabled`**, a client-visible product flag that
-defaults off for everyone and is registered in Ace in the change that introduces
-it. The same flag gates delivery server-side, the way `digests-enabled` does,
-so an operator turning it off stops sends as well as hiding the section. The
-Apple-side configuration and the profile-carrying desktop release land before
-any flag is turned on, staff first, then per workspace.
+Ships enabled for everyone from day one through **`push-notifications-enabled`**.
+The flag gates both delivery and the desktop setting; it remains an operator
+off switch. This supersedes the earlier staff-first rollout.
 
-The build starts with the spike `design.md` § The spike describes, because two
-of its questions decide the click strategy and the provider-token cadence, and
-both are cheaper to learn on a Mac with a `.p8` than in a deployed region.
-The backend lands dark first, then the producer, then the desktop and its
-packaging; a `plan.md` with the phase gates follows approval, per
-[`prds.md`](../../prds.md).
+Build code first using the approved `plan.md`. Publish the association files
+before the profile-carrying desktop release, and complete signed-Mac acceptance
+before release. Code completion, deployment, and live verification remain
+separate milestones.
 
 Turning it off: the flag. Backing out fully: revert the transport branch in the
 intent processor; the migration and queues stay, empty and harmless.

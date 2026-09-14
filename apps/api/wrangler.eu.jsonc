@@ -237,6 +237,7 @@
       // per region because the payload names a workspace and only that
       // region's objects hold its sockets. See docs/access-revocation.md.
       { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-eu-access-revocations" },
+      { "binding": "PUSH_DELIVERY_QUEUE", "queue": "avalon-eu-push-deliveries" },
       // Durable Object migration reports. A queue rather than a service
       // binding to the tracker: the whole fleet converges on one registry
       // object, nothing waits on the outcome, and a queue is a resource both
@@ -270,6 +271,17 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-eu-access-revocations-dead-letter"
+      },
+      {
+        "queue": "avalon-eu-push-deliveries",
+        // One message is one person losing access, and each is handled
+        // independently, so a batch buys fewer invocations and nothing else.
+        // The short timeout matters here: the message is the only thing
+        // standing between a revoked session and an open socket.
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-eu-push-deliveries-dead-letter"
       },
       {
         "queue": "avalon-eu-product-feature-flags",

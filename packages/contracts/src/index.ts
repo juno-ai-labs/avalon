@@ -452,6 +452,7 @@ export const ClientFeatureFlagsSchema = z.object({
    * combined with this one in application code.
    */
   digestsEnabled: z.boolean().default(true),
+  pushNotificationsEnabled: z.boolean().default(false),
   /**
    * Control Tower's refresh cadence in seconds. `catch` rather than a bare
    * bound: a value outside the range is a provisioning mistake, and degrading
@@ -471,6 +472,7 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "digests-enabled",
+  "push-notifications-enabled",
   "live-artifacts-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
