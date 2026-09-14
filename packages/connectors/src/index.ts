@@ -1154,12 +1154,16 @@ function emailInputSchema(): Record<string, unknown> {
         minLength: 1,
         description: "Place this message inside an existing Gmail thread, as that thread's `threadId` copied from a search hit. Omit it to start a new conversation. It is refused without `inReplyTo`, and the two must come from the same thread: a `threadId` from one conversation with an `inReplyTo` from another is accepted by Gmail and files the message where nobody is reading it.",
       },
-      inReplyTo: { type: "string", minLength: 1, description: "RFC Message-ID header of the message being replied to" },
+      inReplyTo: {
+        type: "string",
+        minLength: 1,
+        description: "The replied-to message's RFC Message-ID in angle brackets, copied from a search hit's `messageIdHeader`, for example `<CAF=7h2s@mail.gmail.com>`. Omit it to start a new conversation; it is needed only alongside `threadId`, and the two must come from the same hit. This value is produced by a search hit and by nothing else: a constructed or remembered Message-ID is accepted by Gmail and files the message where nobody is reading it, so never invent one.",
+      },
       references: {
         type: "array",
         items: { type: "string", minLength: 1 },
         maxItems: 50,
-        description: "RFC Message-ID reference chain for a threaded reply"
+        description: "Earlier RFC Message-IDs in the thread being replied to, each in angle brackets and copied from a search hit. Optional even for a reply — `inReplyTo` alone threads the message — and omitted entirely when starting a new conversation.",
       }
     },
     required: ["to", "subject", "body"]

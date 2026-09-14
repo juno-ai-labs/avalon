@@ -6294,10 +6294,19 @@ function forgetCredentialPluginActivation(
  *
  * Each example exists because its absence produced a real failure: an address
  * invented rather than looked up, a bare keyword query over an operator one, a
- * threaded reply rejected for the Message-ID it never fetched, and a guest list
+ * threaded reply rejected for the Message-ID it never fetched, a brand-new
+ * email threaded into a conversation that does not exist, and a guest list
  * replaced when a guest was meant to be added. Every example is gated on the
  * capability it calls, because demonstrating a tool this credential cannot
  * invoke teaches the model a call that will only ever be refused.
+ *
+ * The new-email call is shown first and in full, because it is the common one
+ * and because the threaded call was for a long time the only mail write example
+ * here. A model composing a brand-new email had nothing else to copy, so it
+ * copied the reply — filling in `threadId` and `inReplyTo` for a conversation
+ * that does not exist, and then reporting the tool as demanding reply fields.
+ * An example is the strongest instruction on this surface: the shape that is
+ * shown is the shape that gets sent, so every shape a caller needs is shown.
  */
 function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<string>): string {
   const examples: string[] = [];
@@ -6309,7 +6318,8 @@ function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<strin
   }
   if (granted.has("gmail.draft")) {
     examples.push(
-      `Reply inside a thread by threading both identifiers out of that hit — \`${wirePrefix}_gmail_create_draft {"to": ["dana@example.com"], "subject": "Re: Renewal", "body": "…", "threadId": "<hit.threadId>", "inReplyTo": "<hit.messageIdHeader>"}\`. A \`threadId\` sent without its \`inReplyTo\` is rejected, and the two must come from the same hit.`,
+      `Start a new conversation by sending no threading fields at all — \`${wirePrefix}_gmail_create_draft {"to": ["dana@example.com"], "subject": "Renewal", "body": "…"}\` is the whole call. \`threadId\`, \`inReplyTo\`, and \`references\` address an existing conversation, so an email that starts one has no value to put in them and leaves all three out.`,
+      `Reply inside a thread by threading both identifiers out of that hit — \`${wirePrefix}_gmail_create_draft {"to": ["dana@example.com"], "subject": "Re: Renewal", "body": "…", "threadId": "…", "inReplyTo": "…"}\`, filling \`threadId\` from the hit's \`threadId\` and \`inReplyTo\` from that same hit's \`messageIdHeader\`. A \`threadId\` sent without its \`inReplyTo\` is rejected, and the two must come from the same hit.`,
     );
   }
   if (granted.has("calendar.write") && granted.has("calendar.read")) {
@@ -6446,6 +6456,7 @@ function connectorPluginPresentation(
         : []),
       ...(granted.has("gmail.draft") || granted.has("gmail.send")
         ? [
+          "Start a new email by sending only to, subject, and body: threadId, inReplyTo, and references address a conversation that already exists, so a message that begins one omits all three rather than filling them with a placeholder or a guessed identifier.",
           "Reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId.",
           "A draft or message body is delivered as plain text exactly as written, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
         ]

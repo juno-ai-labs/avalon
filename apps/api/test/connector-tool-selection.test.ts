@@ -558,6 +558,23 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
  * example compiling, passing a substring assertion, and teaching a call that
  * now fails.
  */
+/**
+ * The concrete calls a plugin's system message demonstrates, parsed back into
+ * the wire tool name and the arguments each one teaches.
+ *
+ * One parser for both checks below, because they ask different questions of the
+ * same text: whether every demonstrated parameter exists, and whether a
+ * demonstrated call would survive the tool's own validator.
+ */
+function workedExampleCalls(
+  systemMessage: string,
+): { wireName: string; arguments: Record<string, unknown> }[] {
+  return [...systemMessage.matchAll(/`(google[a-z0-9_]*) (\{.*?\})`/gu)].map((match) => ({
+    wireName: match[1]!,
+    arguments: JSON.parse(match[2]!) as Record<string, unknown>,
+  }));
+}
+
 function workedExampleCallsAgainstSchemas(
   plugin: {
     modelId: string;
@@ -580,16 +597,15 @@ function workedExampleCallsAgainstSchemas(
   }));
   const problems: string[] = [];
   let found = 0;
-  for (const match of systemMessage.matchAll(/`(google[a-z0-9_]*) (\{.*?\})`/gu)) {
-    const [, wireName, json] = match;
-    const properties = schemas.get(wireName!);
+  for (const call of workedExampleCalls(systemMessage)) {
+    const properties = schemas.get(call.wireName);
     if (!properties) {
-      problems.push(`${wireName} is not a tool on this plugin`);
+      problems.push(`${call.wireName} is not a tool on this plugin`);
       continue;
     }
     found += 1;
-    for (const key of Object.keys(JSON.parse(json!) as Record<string, unknown>)) {
-      if (!properties.has(key)) problems.push(`${wireName} has no ${key} parameter`);
+    for (const key of Object.keys(call.arguments)) {
+      if (!properties.has(key)) problems.push(`${call.wireName} has no ${key} parameter`);
     }
   }
   if (found === 0) problems.push("no worked example calls were found to check");
@@ -1582,6 +1598,45 @@ describe("connector tools selected for harness runs", () => {
     expect(drive?.systemMessage).toContain("writableByRally=true");
     expect(drive?.systemMessage).not.toContain("Gmail search");
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+  });
+
+  it("demonstrates a new Gmail email with no threading fields, and a reply whose identifiers the tool refuses verbatim", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(
+        OWNER_CONNECTION_ID,
+        "personal",
+        USER_ID,
+        GOOGLE_MAIL_CALENDAR_CAPABILITIES,
+        "2026-07-01T00:00:00.000Z",
+      ),
+    ]);
+
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
+    const draft = mail?.tools.find((tool) => tool.definition.name === "gmail.create_draft");
+    const drafted = workedExampleCalls(mail?.systemMessage ?? "")
+      .filter((call) => call.wireName === "google_gmail_create_draft")
+      .map((call) => call.arguments);
+
+    // The reply was once the only draft example on this surface. A model
+    // composing a brand-new email had nothing else to copy, so it copied the
+    // reply, filled in identifiers a new conversation does not have, and
+    // reported the tool as requiring reply fields. The non-threaded shape is
+    // demonstrated as its own call, and it is a call the tool accepts.
+    const newEmail = drafted.filter((call) =>
+      !("threadId" in call) && !("inReplyTo" in call) && !("references" in call));
+    expect(newEmail).toHaveLength(1);
+    expect(draft?.validateInput?.(newEmail[0])).toBeNull();
+
+    // And the reply example's identifiers are placeholders this tool itself
+    // refuses. That is the point of them: a placeholder that parses — the
+    // angle-bracketed `<hit.messageIdHeader>` that stood here satisfied the
+    // Message-ID rule exactly — is forwarded to Gmail, which rejects the call
+    // without naming a field. One that does not parse is refused here, against
+    // the field to fill in.
+    const reply = drafted.filter((call) => "threadId" in call);
+    expect(reply).toHaveLength(1);
+    expect(draft?.validateInput?.(reply[0])).toBeInstanceOf(Error);
   });
 
   it("preloads an explicitly attached workspace identity without dropping another eligible personal plugin", async () => {

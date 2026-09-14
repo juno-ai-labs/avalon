@@ -1128,6 +1128,54 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-14 — A new Gmail email is demonstrated, not only described
+
+**What changed:** The non-threaded mail shape is present on every surface a
+model reads before a Gmail write, rather than on one of them. `gmail.draft`
+gains a worked example that starts a conversation — `to`, `subject`, `body`
+and nothing else — shown before the threaded reply; the mail guidance gains
+the matching sentence; and `inReplyTo` and `references` describe what omitting
+them does and which tool produces their value, which only `threadId` did. The
+reply example's identifiers are now the `…` the rest of the file uses, not
+`<hit.threadId>` and `<hit.messageIdHeader>`.
+
+**Why:** A run failed to draft a brand-new email twice, and reported the tool
+as requiring reply fields. The threading rule was never the fault and the tool
+descriptions had already been fixed to say so; the two surfaces that outrank a
+description had not. The only `create_draft` call ever demonstrated was a
+threaded reply, and the only guidance sentence about threading described
+replying, so a model composing a new email had the reply as its sole model of
+the call and filled in identifiers the conversation does not have. An example
+is the strongest instruction here: the shape that is shown is the shape that
+gets sent.
+
+The placeholders are the second half of the same report — *"Google rejects the
+resulting malformed request"*. `<hit.messageIdHeader>` satisfies
+`RfcMessageIdSchema` exactly: angle-bracketed, no inner brackets, no
+whitespace. Copied verbatim it passed the JSON Schema, the harness, the
+cross-field rule and the connector's parse, and was refused only by Gmail —
+which names no argument on a body field, so the model could not tell which of
+its arguments was at fault and blamed the schema. A placeholder that fails
+Rally's own parse is refused against the field to fill in instead.
+
+**Considered and rejected:** Validating `threadId`'s id family at the boundary
+per agent-tools principle 12. Gmail thread ids are bare hex in every example
+Rally shows, but that alphabet is asserted nowhere and the adapter's own
+fixtures use `thread-1`, so the check would have been a guess that rejects
+valid replies. Relaxing the `threadId`-without-`inReplyTo` rule: it is correct,
+and Gmail accepts that pair and files the mail where nobody is reading it.
+
+**Consequences:** A Gmail write rejected by Google still fails without naming
+an argument. `googleRejectedArgument` reads Google's `locationType:
+"parameter"`, which covers the query-parameter rejections the paginated read
+tools earn and not a body field like `threadId`, so `gmail.create_draft` and
+`gmail.send` pass no mapping at all. Closing that needs an observed Google
+rejection body for a bad draft `threadId`; until then the boundary is what has
+to catch a wrong value, which is why the placeholders must keep failing the
+parse. `workedExampleCalls` in `connector-tool-selection.test.ts` pins both:
+the new-email example must validate, and the reply example's identifiers must
+not.
+
 ### 2026-09-13 — Fireflies' test event verifies the installation
 
 **What changed:** A signed Fireflies delivery whose event is `test` — what the
