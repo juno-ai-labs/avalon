@@ -867,7 +867,8 @@ describe('MeetingNotesScreen', () => {
 
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
     expect(await screen.findByRole('button', { name: 'End' })).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent('Recording microphone only');
+    // Found by its words: the screen's copy controls each carry a live region too.
+    expect(screen.getByText(/Recording microphone only/u)).toHaveAttribute('role', 'status');
     expect(screen.getByText('Listening to your microphone')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Open System Settings' }));
     await waitFor(() => expect(state.openMeetingAudioSettings).toHaveBeenCalledWith('system-audio'));
