@@ -1,7 +1,6 @@
 import clsx from 'clsx';
 import { IconAirTrafficControl, IconWaveSine } from '@tabler/icons-react';
 import {
-  Copy,
   Globe2,
   LoaderCircle,
   Lock,
@@ -18,7 +17,8 @@ import type {
   DesktopMeetingAudioPermissions,
   MeetingAudioPermissionKind,
 } from '../../common/desktop';
-import { Button, IconButton, InlineError, Modal } from '../components/primitives';
+import { CopyButton } from '../components/copy-button';
+import { Button, InlineError, Modal } from '../components/primitives';
 import { MarkdownBody } from '../components/workstream-blocks';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -803,9 +803,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
     });
   };
 
-  const copy = async (value: string, contentType: 'note_summary' | 'note_transcript'): Promise<void> => {
-    if (!value) return;
-    await desktopBridge().copyText(value);
+  const reportCopied = (contentType: 'note_summary' | 'note_transcript'): void => {
     reportTelemetryProductIntent({ kind: 'content_copied', contentType, resourceType: 'note', resourceId: noteId });
   };
 
@@ -928,9 +926,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           <section aria-labelledby="live-notes-heading" className="meeting-live-notes">
             <header>
               <span><IconAirTrafficControl aria-hidden="true" size={17} /><h2 id="live-notes-heading">Control Tower</h2></span>
-              <IconButton disabled={!notes || notesPending} label="Copy Control Tower" onClick={() => void copy(notes, 'note_summary')}>
-                <Copy size={15} />
-              </IconButton>
+              <CopyButton disabled={!notes || notesPending} label="Copy Control Tower" onCopied={() => reportCopied('note_summary')} size={15} value={notes} />
             </header>
             <div aria-live="polite" className="meeting-notes-body" ref={notesBodyRef}>
               {generatedAt && <p className="meeting-updated-at">Updated {new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(generatedAt))}</p>}
@@ -957,9 +953,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           <section aria-labelledby="live-transcript-heading" className="meeting-transcript-card">
             <header>
               <span><IconWaveSine aria-hidden="true" size={18} /><h2 id="live-transcript-heading">Live transcript</h2></span>
-              <IconButton disabled={!transcript} label="Copy transcript" onClick={() => void copy(transcript, 'note_transcript')}>
-                <Copy size={15} />
-              </IconButton>
+              <CopyButton disabled={!transcript} label="Copy transcript" onCopied={() => reportCopied('note_transcript')} size={15} value={transcript} />
             </header>
             <div aria-live="polite" className="meeting-transcript-body" ref={transcriptBodyRef}>
               {transcript ? transcript.split(/\n{2,}/u).map((paragraph, index) => (
