@@ -1170,11 +1170,17 @@ an argument. `googleRejectedArgument` reads Google's `locationType:
 "parameter"`, which covers the query-parameter rejections the paginated read
 tools earn and not a body field like `threadId`, so `gmail.create_draft` and
 `gmail.send` pass no mapping at all. Closing that needs an observed Google
-rejection body for a bad draft `threadId`; until then the boundary is what has
-to catch a wrong value, which is why the placeholders must keep failing the
-parse. `workedExampleCalls` in `connector-tool-selection.test.ts` pins both:
-the new-email example must validate, and the reply example's identifiers must
-not.
+rejection body for a bad draft `threadId`.
+
+Only one of the two placeholders is caught by the boundary in the meantime, and
+it is not the one that needs catching. `inReplyTo` is refused by
+`RfcMessageIdSchema`; `threadId` is an unformatted `min(1)` string, so a
+half-substituted reply — a real `inReplyTo` beside a `threadId` still reading
+`…` — validates cleanly and reaches Gmail, which is the same nameless rejection
+one field over. Both are therefore pinned as literals in
+`connector-tool-selection.test.ts` rather than left to the validator, and that
+test is the only thing stopping a later change from restoring realistic-looking
+values. It also pins the other direction: the new-email example must validate.
 
 ### 2026-09-13 — Fireflies' test event verifies the installation
 

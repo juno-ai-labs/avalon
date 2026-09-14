@@ -6456,7 +6456,7 @@ function connectorPluginPresentation(
         : []),
       ...(granted.has("gmail.draft") || granted.has("gmail.send")
         ? [
-          "Start a new email by sending only to, subject, and body: threadId, inReplyTo, and references address a conversation that already exists, so a message that begins one omits all three rather than filling them with a placeholder or a guessed identifier.",
+          "Start a new email by sending no threading fields: threadId, inReplyTo, and references address a conversation that already exists, so a message that begins one omits all three rather than filling them with a placeholder or a guessed identifier.",
           "Reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId.",
           "A draft or message body is delivered as plain text exactly as written, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
         ]

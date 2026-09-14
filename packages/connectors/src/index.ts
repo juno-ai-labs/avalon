@@ -1157,13 +1157,13 @@ function emailInputSchema(): Record<string, unknown> {
       inReplyTo: {
         type: "string",
         minLength: 1,
-        description: "The replied-to message's RFC Message-ID in angle brackets, copied from a search hit's `messageIdHeader`, for example `<CAF=7h2s@mail.gmail.com>`. Omit it to start a new conversation; it is needed only alongside `threadId`, and the two must come from the same hit. This value is produced by a search hit and by nothing else: a constructed or remembered Message-ID is accepted by Gmail and files the message where nobody is reading it, so never invent one.",
+        description: "The replied-to message's RFC Message-ID in angle brackets, copied from the `messageIdHeader` of a search hit, a read message, or the chosen message inside a read thread — for example `<CAF=7h2s@mail.gmail.com>`. A search hit that reports `headersUnavailable` carries no `messageIdHeader`, so read that message to get it. Omit this to start a new conversation; it is needed only alongside `threadId`, and the two must describe the same thread. Every source of this value is a Gmail tool result: a constructed or remembered Message-ID is accepted by Gmail and files the message where nobody is reading it, so never invent one.",
       },
       references: {
         type: "array",
         items: { type: "string", minLength: 1 },
         maxItems: 50,
-        description: "Earlier RFC Message-IDs in the thread being replied to, each in angle brackets and copied from a search hit. Optional even for a reply — `inReplyTo` alone threads the message — and omitted entirely when starting a new conversation.",
+        description: "Earlier RFC Message-IDs in the thread being replied to, as an array with each id in its own angle brackets. Omit it: `inReplyTo` alone threads the reply, and a new conversation has nothing to reference. A search hit does not carry this chain at all — only a read message or a read thread does, and each returns it as one `references` header holding every id, which has to be split on whitespace into separate array entries rather than passed across as the single string it arrives as.",
       }
     },
     required: ["to", "subject", "body"]
