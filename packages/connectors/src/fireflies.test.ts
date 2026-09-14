@@ -107,8 +107,25 @@ describe('Fireflies protocol', () => {
     }, neverAborts())).rejects.toMatchObject({ code: 'unsupported_capability' });
     await expect(management.remove(connection(), 'anything', neverAborts())).rejects.toMatchObject({ code: 'unsupported_capability' });
     expect(management.manualInstructions).toContain('https://app.fireflies.ai/integrations/api/webhook');
-    expect(management.manualInstructions).toContain('meeting.bot_joined');
     expect(management.manualInstructions).toContain('test event');
+    // The labels Fireflies puts on its own form, not the wire names: an
+    // administrator is matching words to a screen, and `meeting.transcribed`
+    // appears nowhere on it.
+    expect(management.manualInstructions).toContain('Meeting Transcribed');
+    expect(management.manualInstructions).toContain('Meeting Summarized');
+    expect(management.manualInstructions).toContain('Meeting Bot Joined');
+    // The trap worth failing a test over: Fireflies marks the signing secret
+    // optional and Rally rejects every unsigned delivery, so instructions that
+    // do not say so send somebody away with a webhook that silently sends
+    // nothing Rally will accept.
+    expect(management.manualInstructions).toContain('Fireflies labels that field optional');
+    expect(management.manualInstructions).toContain('Rally requires it');
+    // The wire names this string keeps for the other surface it reaches: it is
+    // the registration error Settings shows while an installation is
+    // action_required, which is the moment somebody is reading Fireflies'
+    // delivery History and seeing `meeting.transcribed` rather than a label.
+    expect(management.manualInstructions).toContain('meeting.transcribed');
+    expect(management.manualInstructions).toContain('meeting.summarized');
   });
 
   it('records the connected account from validate so Settings can name it', async () => {

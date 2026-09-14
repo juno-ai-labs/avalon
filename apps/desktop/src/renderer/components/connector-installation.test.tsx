@@ -253,6 +253,19 @@ describe('Fireflies workspace setup', () => {
     expect(screen.getByLabelText('Fireflies signing secret')).toHaveValue(manualRegistration.signingSecret);
     expect(screen.getByText(/Rally will not show it again/u)).toBeVisible();
     expect(screen.getByText(/Fireflies holds one per account/u)).toBeVisible();
+    // Fireflies' own labels, because that is what the administrator is reading
+    // off the form — and the one field its form calls optional that Rally will
+    // not work without.
+    expect(screen.getByText('Configure')).toBeVisible();
+    expect(screen.getByText('Webhook Configuration')).toBeVisible();
+    expect(screen.getByText('Event Subscriptions')).toBeVisible();
+    expect(screen.getByText('Meeting Transcribed')).toBeVisible();
+    expect(screen.getByText('Meeting Summarized')).toBeVisible();
+    expect(screen.getByText('Meeting Bot Joined')).toBeVisible();
+    // The step that confirms the setup without waiting for a meeting. It is the
+    // form's fifth action, so the list that mirrors the form has to carry it.
+    expect(screen.getByText('Send test event')).toBeVisible();
+    expect(screen.getByText(/labels the signing secret optional/u)).toBeVisible();
     expect(screen.getByText(/the connection changes to/u)).toHaveTextContent('changes to Connected as soon as the test event arrives');
     // Closing is the administrator's, not the setup's: the secret must not be
     // taken off screen by the mutation that produced it.
