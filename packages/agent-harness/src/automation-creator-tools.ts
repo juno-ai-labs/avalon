@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-  AutomationSetEvaluatorRulesInputV1Schema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
   automationTriggersAdmitResourceType,
@@ -382,7 +382,9 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         // pointing at it so the two can never drift.
         const issues = evaluatorRuleIssues(raw);
         if (issues) throw issues;
-        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
+        // The model's spelling in, the stored shape out; everything below and
+        // downstream of here is the stored shape.
+        const rules = AutomationSetEvaluatorRulesModelInputV1Schema.parse(raw);
         const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
         draftState.evaluatorRules = rules;
         // What the submitted draft's triggers currently declare, echoed back so
@@ -414,7 +416,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     },
   ];
   function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
-        const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
+        const parsed = AutomationSetEvaluatorRulesModelInputV1Schema.safeParse(raw);
         if (!parsed.success) return parsed.error;
         const issues: z.core.$ZodIssue[] = [];
         for (const [index, evaluator] of parsed.data.evaluators.entries()) {
@@ -483,7 +485,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
                 input: evaluator.source.resourceId,
               });
             }
-            if (!descriptor || evaluator.when.kind !== "matching") continue;
+            if (!descriptor || evaluator.when.kind !== "all") continue;
             {
               for (const [leafIndex, leaf] of evaluator.when.allOf.entries()) {
                 const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);

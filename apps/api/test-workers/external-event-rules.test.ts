@@ -215,7 +215,7 @@ describe("external event rules across connectors", () => {
   it("combines string, string-set, number, boolean and presence leaves as one AND group", async () => {
     await register(AUTOMATIONS.urgentLinear, [
       rule(AUTOMATIONS.urgentLinear, 1, "linear", "linear.issue.updated", {
-        kind: "matching",
+        kind: "all",
         allOf: [
           { kind: "string", attribute: "state", operator: "in", value: ["In Progress", "Todo"] },
           { kind: "string_array", attribute: "labels", operator: "has_any", value: ["urgent", "p0"] },
@@ -247,7 +247,7 @@ describe("external event rules across connectors", () => {
     // the snippet as `messageText`; a nested object is not addressable.
     await register(AUTOMATIONS.roadmapNotion, [
       rule(AUTOMATIONS.roadmapNotion, 1, "notion", "notion.page.updated", {
-        kind: "matching",
+        kind: "all",
         allOf: [
           { kind: "string", attribute: "pageTitle", operator: "contains", value: "Roadmap" },
           { kind: "number", attribute: "changedProperties", operator: "greater_than", value: 2 },
@@ -257,7 +257,7 @@ describe("external event rules across connectors", () => {
     ]);
     await register(AUTOMATIONS.deployChat, [
       rule(AUTOMATIONS.deployChat, 1, "slack", "slack.message.posted", {
-        kind: "matching",
+        kind: "all",
         allOf: [
           { kind: "string", attribute: "messageText", operator: "contains", value: "deploy" },
           { kind: "string", attribute: "channel", operator: "starts_with", value: "eng-" },
@@ -301,7 +301,7 @@ describe("external event rules across connectors", () => {
   it("delivers one event to every destination whose rule holds, across event types of one connector", async () => {
     await register(AUTOMATIONS.slowDeploys, [
       rule(AUTOMATIONS.slowDeploys, 1, "generic_webhook", "deploy.finished", {
-        kind: "matching",
+        kind: "all",
         allOf: [
           { kind: "string", attribute: "service", operator: "equals", value: "checkout" },
           { kind: "number", attribute: "durationMs", operator: "greater_than", value: 300_000 },
@@ -327,7 +327,7 @@ describe("external event rules across connectors", () => {
   it("names people by id, and keeps a restricted event away from an automation its audience cannot read", async () => {
     await register(AUTOMATIONS.assignedToAuthor, [
       rule(AUTOMATIONS.assignedToAuthor, 1, "github", "github.issue.assigned", {
-        kind: "matching",
+        kind: "all",
         allOf: [
           { kind: "person_id", attribute: "assigneePersonId", operator: "equals", value: AUTHOR_ID },
           { kind: "person_id_array", attribute: "reviewerPersonIds", operator: "has_none", value: [OTHER_MEMBER_ID] },
@@ -382,11 +382,11 @@ describe("external event rules across connectors", () => {
   it("treats a missing attribute as a miss for every leaf but presence, and a type mismatch as a miss", async () => {
     await register(AUTOMATIONS.unlabelled, [
       rule(AUTOMATIONS.unlabelled, 1, "slack", "slack.reaction.added", {
-        kind: "matching",
+        kind: "all",
         allOf: [{ kind: "number", attribute: "count", operator: "greater_than", value: 1 }],
       }),
       rule(AUTOMATIONS.unlabelled, 2, "slack", "slack.message.posted", {
-        kind: "matching",
+        kind: "all",
         allOf: [{ kind: "presence", attribute: "threadTs", operator: "not_exists" }],
       }),
     ]);
