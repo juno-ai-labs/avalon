@@ -729,6 +729,19 @@ export interface ConnectorAdapter {
    * Omitted capabilities inherit `manifest.supportedScopes`.
    */
   capabilityConnectionScopes?: Readonly<Record<string, readonly Scope[]>>;
+  /**
+   * The connection scopes this connector's *activity* can arrive in, where
+   * that is narrower than the connector itself.
+   *
+   * Separate from `capabilityConnectionScopes` because events are not a
+   * capability: a provider that lends its tools to a personal token can still
+   * deliver its events only to an administrator's install, which is exactly
+   * Granola's, Fireflies' and Ashby's shape. Their `normalize` refuses a
+   * personal connection outright, so a trigger advertised on one is an event
+   * that can never be received. Omitted means the connector's own
+   * `manifest.supportedScopes`.
+   */
+  activityConnectionScopes?: readonly Scope[];
   nativeAgent?: ConnectorNativeAgentAdapter;
   messagingAgent?: ConnectorMessagingAgentAdapter;
   beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
@@ -824,6 +837,38 @@ export function zodToolInputValidationError(
   if (!schema) return null;
   const result = schema.safeParse(input);
   return result.success ? null : result.error;
+}
+
+/** What the two helpers below read: an adapter, or a narrower view of one. */
+export interface ConnectorActivityScopeSource {
+  manifest: { supportedScopes: readonly Scope[] };
+  activityConnectionScopes?: readonly Scope[] | undefined;
+}
+
+/**
+ * The connection scopes this connector's events can arrive in.
+ *
+ * The one place the default is applied, so a caller that wants to *name* the
+ * scope a connection is missing and one that only asks whether it has it
+ * cannot answer differently.
+ */
+export function connectorActivityScopes(
+  adapter: ConnectorActivityScopeSource,
+): readonly Scope[] {
+  return adapter.activityConnectionScopes ?? adapter.manifest.supportedScopes;
+}
+
+/**
+ * Whether a connection in this scope can receive this connector's events.
+ *
+ * The one place the question is answered, so the drafting catalog, the accept
+ * path and any later event surface cannot disagree about it.
+ */
+export function connectorActivitySupportsScope(
+  adapter: ConnectorActivityScopeSource,
+  scope: Scope,
+): boolean {
+  return connectorActivityScopes(adapter).includes(scope);
 }
 
 export function connectorCapabilitySupportsScope(
