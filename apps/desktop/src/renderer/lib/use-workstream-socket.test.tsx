@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DesktopRealtimeSocketHandshakePhase } from '../../common/realtime-socket';
 import type { Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
@@ -113,6 +114,18 @@ class FakeWebSocket extends EventTarget {
 
   rawMessage(value: string): void {
     this.dispatchEvent(new MessageEvent('message', { data: value }));
+  }
+
+  handshakePhase(
+    phase: DesktopRealtimeSocketHandshakePhase,
+    durationMs: number,
+  ): void {
+    this.dispatchEvent(Object.assign(new Event('handshakephase'), {
+      phase,
+      durationMs,
+      routeIndex: 0,
+      proxied: false,
+    }));
   }
 }
 
@@ -3845,18 +3858,24 @@ describe('useWorkstreamSocket', () => {
 
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.handshakePhase('tls', 24.6));
     act(() => socket.open());
     act(() => socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId } })));
     await flushPromises();
 
     const line = debug.mock.calls
       .filter((call) => String(call[0]).startsWith('[perf]'))
-      .map((call) => call[1] as { phases: Record<string, number>; sinceEffectMs: number })
+      .map((call) => call[1] as {
+        phases: Record<string, number>;
+        sinceEffectMs: number;
+        tlsMs?: number;
+      })
       .at(-1)!;
     // `dial` closes on the line that constructs the WebSocket and `handshake`
     // on its open event. Collapsing them back into one number is what made a
     // blocked renderer indistinguishable from a slow connection.
     expect(Object.keys(line.phases)).toEqual(['socket_ticket', 'dial', 'handshake', 'first_frame']);
+    expect(line.tlsMs).toBe(24.6);
     // Dead time before the first request, which the trace cannot cover: it does
     // not exist until `connect` runs.
     expect(line.sinceEffectMs).toEqual(expect.any(Number));
