@@ -182,6 +182,8 @@ const ConnectorWebhookIngestionSchema = z.object({
   duplicate: z.boolean(),
   activityId: IdSchema.nullable().optional(),
 });
+/** A Fireflies delivery is an activity, or the dashboard's test event answered on its own. */
+const FirefliesWebhookResponseSchema = z.union([z.strictObject({ ping: z.literal(true) }), ConnectorWebhookIngestionSchema]);
 
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
@@ -581,7 +583,7 @@ webhookIngestionRoutes.post("/fireflies/:id", zValidator("param", idParam), asyn
     body,
     c.req.raw.headers,
   );
-  return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
+  return c.json(FirefliesWebhookResponseSchema.parse(result), "ping" in result || result.duplicate ? 200 : 202);
 });
 webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestGranolaWebhook(

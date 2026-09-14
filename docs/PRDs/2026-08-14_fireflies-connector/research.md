@@ -111,7 +111,11 @@ targets:
 - Delivery: 2xx required within 10 s; retry behavior is not documented, and
   there is no test ping — the PRD makes a missed delivery visible rather than
   compensating for it (non-goal 8), and the meeting an admin records after
-  setup is the verification.
+  setup is the verification. **Corrected 2026-09-13:** the configuration page
+  has a **Send test event** button. It delivers `{ event: "test", timestamp,
+  meeting_id: "test_00000000" }`, signed with the configured secret and with
+  an `X-Webhook-Delivery-Id: test-…` header, none of it documented; the
+  ingress accepts it as the verifying delivery.
 
 The Super Admin tier additionally offers team-wide webhooks configured in
 Developer settings.
