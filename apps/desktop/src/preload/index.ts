@@ -134,6 +134,8 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('application-settings:set-lockdown-mode', enabled) as Promise<DesktopApplicationSettings>,
   setDebugEnabled: (enabled) =>
     ipcRenderer.invoke('application-settings:set-debug-enabled', enabled) as Promise<DesktopApplicationSettings>,
+  setPushNotificationsEnabled: (enabled) => ipcRenderer.invoke('application-settings:set-push-notifications', enabled) as Promise<DesktopApplicationSettings>,
+  openNotificationSettings: () => ipcRenderer.invoke('application-settings:open-notifications') as Promise<void>,
   setMenuBarEnabled: (enabled) =>
     ipcRenderer.invoke('application-settings:set-menu-bar-enabled', enabled) as Promise<DesktopApplicationSettings>,
   setLaunchAtLogin: (enabled) =>

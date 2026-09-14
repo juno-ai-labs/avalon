@@ -245,6 +245,7 @@ jobs:
       # from hiding the identity in a transient keychain that the final DMG
       # signing hook cannot see.
       CSC_NAME: Juno AI Labs Inc. (7ZLT6A8W25)
+      RALLY_MAC_PROVISIONING_PROFILE_PATH: ${{ runner.temp }}/rally.provisionprofile
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -279,6 +280,16 @@ jobs:
       # not pushed until the release has actually published. A failed run
       # therefore leaves no tag behind and the next attempt can retry the same
       # version.
+      - name: Prepare Apple provisioning profile
+        env:
+          RALLY_MAC_PROVISIONING_PROFILE: ${{ secrets.RALLY_MAC_PROVISIONING_PROFILE }}
+        run: |
+          test -n "$RALLY_MAC_PROVISIONING_PROFILE"
+          printf '%s' "$RALLY_MAC_PROVISIONING_PROFILE" | openssl base64 -d -A > "$RALLY_MAC_PROVISIONING_PROFILE_PATH"
+
+      - name: Verify live Apple association before desktop release
+        run: node scripts/check-apple-app-association.mjs
+
       - name: Create the release tag locally
         if: needs.plan.outputs.create_tag == 'true'
         shell: bash

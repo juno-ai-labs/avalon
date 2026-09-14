@@ -1,3 +1,5 @@
+import { readNotificationIntentForDelivery as readStoredPushIntent } from "./workspace-notification-intent-storage";
+import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import { InstallationCredentialReplaceSchema, type InstallationCredentialReplace } from './connector-installation-protocol';
 import { replaceInstallationCredentials } from './connector-installation-storage';
 import { InstallationMaintenanceSchema, InstallationMaintenanceCancelSchema, type InstallationMaintenance, type InstallationMaintenanceCancel } from './connector-installation-protocol';
@@ -6837,6 +6839,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.refreshProductAlarm();
     }
     return WorkspaceRegionalEffectApplyResultSchema.parse(result);
+  }
+
+  async readNotificationIntentForDelivery(input: WorkspaceNotificationIntentRequest): Promise<WorkspaceNotificationIntentDelivery | null> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return readStoredPushIntent(this.state.storage, request);
   }
 
   /** Claim one notification intent without exposing SQL or physical write counters. */

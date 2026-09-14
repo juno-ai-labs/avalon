@@ -183,6 +183,7 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),
     message: c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL ? "configured" : "not configured",
   };
+  checks.pushDelivery = { ok: Boolean(c.env.APNS_AUTH_KEY && c.env.APNS_KEY_ID), message: c.env.APNS_AUTH_KEY && c.env.APNS_KEY_ID ? "configured" : "not configured" };
   checks.opsNotifications = opsNotificationsConfigured(c.env)
     ? { ok: true, message: "configured" }
     : c.env.OPS_SLACK_BOT_TOKEN?.trim() || c.env.OPS_SLACK_CHANNEL_ID?.trim()

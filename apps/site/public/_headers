@@ -50,3 +50,7 @@
 /download/*
   Cache-Control: no-store
   Referrer-Policy: no-referrer
+
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600

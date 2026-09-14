@@ -1,3 +1,4 @@
+const PUSH_NOTIFICATIONS_FLAG_KEY = "push-notifications-enabled";
 import type { ClientFeatureFlags, ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -186,6 +187,7 @@ export async function resolveClientFeatureFlagsForSubject(
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
+    pushNotificationsEnabled,
     controlTowerRefreshSeconds,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
@@ -202,6 +204,7 @@ export async function resolveClientFeatureFlagsForSubject(
     subject.workspaceId
       ? resolveDigestsEnabled(env, { userId: subject.userId, workspaceId: subject.workspaceId })
       : Promise.resolve(true),
+    resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
     // Resolved through its own module: a cadence fails to a working default
     // rather than to off. It reuses this request's loaded attributes through
     // the loader's isolate cache rather than being handed `context`, so both
@@ -219,6 +222,14 @@ export async function resolveClientFeatureFlagsForSubject(
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
+    pushNotificationsEnabled,
     controlTowerRefreshSeconds,
   };
+}
+
+export async function resolvePushNotificationsEnabled(env: Env, subject: ClientFeatureFlagSubject): Promise<boolean> {
+  const attributes = await loadFlagTargetingAttributes(env, subject);
+  return resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, {
+    ...attributes, region: env.AVALON_REGION, appEnv: env.APP_ENV, ...subject,
+  });
 }

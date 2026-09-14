@@ -321,7 +321,26 @@ origin, work-stream update time, recency, archive, and harness status are not
 copied into this table; they come from `WorkspaceDO.workspace_workstream_directory`.
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
+## Apple universal links
+
+Both Rally hosts serve `/.well-known/apple-app-site-association`, claiming only
+`/app/workspaces/*` and `/app/workstreams/*` for `7ZLT6A8W25.ai.rallywith.desktop`.
+The main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
+uses existing scheme navigation. Legacy origins and other path families remain
+in the browser. The site must deploy first; `scripts/check-apple-app-association.mjs`
+checks both hosts after site deployment and before desktop release. Push clicks
+use the same adapter with notification attribution. See [push](push-notifications.md).
+
 ## Changelog
+
+### 2026-09-14 — Adapt HTTPS links into desktop navigation
+
+Both Rally hosts now publish the Apple association file, and desktop universal
+link events adapt supported work-stream paths into the existing scheme parser
+and navigation dispatch. This keeps one navigation contract while preserving
+the browser handoff page for clients without an associated app. Association
+publication and signed-Mac acceptance must precede the desktop release.
+
 
 ### 2026-09-08 — Preserve private-child destinations
 

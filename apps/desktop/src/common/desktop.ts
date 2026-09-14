@@ -80,6 +80,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
   /** Whether the Rally status item is in the macOS menu bar. On by default. */
+  pushNotificationsEnabled: boolean;
+  pushNotificationStatus: string;
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Rally can live in at all. The
    * preference is still stored where it is not, so moving the same profile to a
@@ -395,6 +397,8 @@ export interface RallyDesktopBridge {
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setPushNotificationsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  openNotificationSettings: () => Promise<void>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;

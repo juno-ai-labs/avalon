@@ -1,9 +1,9 @@
 # Ace internal administration
 
 Ace is Avalon's internal administration Worker at
-`https://ace.internal.rallywith.ai`. Its feature-flag surface manages six
-Boolean product flags in Cloudflare Flagship: five presentation controls for
-Electron and one operational control for scheduled digest delivery. Its Queues
+`https://ace.internal.rallywith.ai`. Its feature-flag surface manages
+Boolean product flags in Cloudflare Flagship: presentation controls for
+Electron and operational controls for scheduled digest and Apple push delivery. Its Queues
 surface lists every actively configured Cloudflare dead-letter queue, its live
 backlog, and a non-consuming peek at its messages. Its Models surface manages
 the primary model and ordered fallback array for every model-using agent role.
