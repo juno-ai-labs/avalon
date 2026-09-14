@@ -81,9 +81,12 @@ test('the macOS runner is only claimed after the frozen release commit passes Ub
   assert.match(releaseJob, /ref: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
 
   for (const step of ['Lint', 'Typecheck', 'Test', 'Run release invariants']) {
-    assert.match(verifyJob, new RegExp(`- name: ${step}`, 'u'), `${step} must run on Ubuntu`);
-    assert.doesNotMatch(releaseJob, new RegExp(`- name: ${step}`, 'u'), `${step} must not spend macOS time`);
+    assert.match(verifyJob, new RegExp(`- name: ${step}$`, 'mu'), `${step} must run on Ubuntu`);
+    assert.doesNotMatch(releaseJob, new RegExp(`- name: ${step}$`, 'mu'), `${step} must not spend macOS time`);
   }
+  const macTests = releaseJob.indexOf('run: pnpm --filter @rally/desktop test:release');
+  assert.ok(macTests !== -1 && macTests < releaseJob.indexOf('- name: Import the Developer ID identity'),
+    'Platform-specific release tests must run before signing');
 });
 
 test('the app is health-gated against the regional APIs before it is distributed', async () => {

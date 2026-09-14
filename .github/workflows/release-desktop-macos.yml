@@ -336,6 +336,9 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test release tooling on macOS before signing
+        run: pnpm --filter @rally/desktop test:release
+
       # This is a separate minimal packaged Electron app. It proves the exact
       # Electron version can collect a renderer minidump without a submission
       # URL, then relinquish the database so a later launch can rotate it before
