@@ -649,7 +649,6 @@ surface consumes attempt-scoped server status rather than timing the whole run,
 so tool work cannot look like model slowness and a completed warning does not
 linger through an exit animation.
 
-
 ### 2026-09-14 — An admitted answer closes its question before the loop promotes it
 
 **What changed:** `pendingTranscriptInputOverlay` projects a pending input whose

@@ -4769,7 +4769,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             maxCostCents: limits.maxCostCents,
             maxCatalogTokens: limits.maxCatalogTokens,
             requestEstablishmentTimeoutMs: numericEnv(options.env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
-            ttftTimeoutMs: numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 180_000),
+            // The child has its own bounded run budget; retain its provider allowance.
+            ttftTimeoutMs: Math.min(45_000, numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 180_000)),
             streamIdleTimeoutMs: numericEnv(options.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
             sameModelRetries: 0,
             transportRetries: countEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),

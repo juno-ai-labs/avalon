@@ -1579,7 +1579,8 @@ active flag. Both root and inline child calls publish to their own conversation.
 The object checks the running root/execution and current execution lease before
 accepting a notice. A cleared attempt cannot become active again; terminal run
 status removes its checkpoints. First output publishes the attempt-scoped clear before its answer delta.
-Snapshots and resyncs expose `activeInferenceDelays`, filtering out settled,
+Snapshots and resyncs use the same store query for `activeInferenceDelays`, selecting
+the current root of a running conversation and filtering out settled,
 expired, or superseded executions. Old snapshots default to an empty list.
 
 ## Changelog
@@ -1591,7 +1592,6 @@ surviving the inference itself. Conversation-owned checkpoints, lease checks,
 and settlement tombstones replace a client elapsed-time guess: old callbacks
 cannot resurrect a warning, and concurrent calls clear independently. These
 rows are runtime status, never transcript history or workspace-wide broadcasts.
-
 
 ### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
 

@@ -1194,14 +1194,18 @@ silently return every test to the shared key while each still passes alone.
 
 ## Slow inference status
 
-Streaming Azure and OpenRouter calls allow 180,000 ms for first answer text or
-tool-call output after the response stream opens. The independent establishment
-and inter-chunk deadlines remain in force; the overall timer reserves the
-establishment allowance so it cannot shorten the first-output window. Empty
+Root conversation Azure and OpenRouter calls allow 180,000 ms for first answer text or
+tool-call output after the response stream opens. Bounded inline child and meeting-note
+callers retain their existing 45,000 ms provider allowance (or a lower deployment
+setting) so their total run budgets and transport retries remain meaningful. The
+independent establishment and inter-chunk deadlines remain in force. Total work
+is governed by the caller run deadline; summing idle budgets into an absolute
+stream cap would truncate healthy output after a slow first token. Empty
 chunks and metadata do not restart that window. A shared per-stream observer
 notifies `onInferenceDelay` after 30,000 ms, then clears on first output or any
 settlement, including cancellation. Its timer and queued notifications are
-attempt-local and disposed before provider traversal or tool execution.
+attempt-local and disposed before provider traversal or tool execution. Notification
+failures are swallowed by the observer and cannot replace provider output or errors.
 
 ## Changelog
 
@@ -1213,8 +1217,10 @@ those numbers are product decisions, not measured provider guarantees. The
 warning follows each inference, never elapsed run time, and clears before
 output/tool execution or settlement. Keepalives no longer restart the first-token
 clock; doing so would let an empty stream avoid the stated deadline. Existing
-establishment and inter-chunk limits remain independent.
-
+establishment and inter-chunk limits remain independent. Bounded child and meeting
+callers keep their prior first-output allowance rather than silently losing retries
+to their shorter total budgets. Healthy output has no synthetic cap derived from idle
+timeouts; the caller owns total duration.
 
 ### 2026-09-14 — The queue, not Bind, decides what an open question may be followed by
 

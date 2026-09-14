@@ -6,7 +6,7 @@ afterEach(() => vi.useRealTimers());
 
 for (const provider of ['azure', 'openrouter'] as const) {
   describe(`${provider} first-output delay`, () => {
-    function stream(headDelay = 0, streamIdleTimeoutMs = 15_000) {
+    function stream(headDelay = 0, streamIdleTimeoutMs = 15_000, rejectNotice = false) {
       vi.useFakeTimers();
       const abort = new AbortController();
       const changes: boolean[] = [];
@@ -17,7 +17,7 @@ for (const provider of ['azure', 'openrouter'] as const) {
         init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), { once: true });
         return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
       };
-      const input = { model: 'test/model', messages: [], signal: abort.signal, onInferenceDelay: (active: boolean) => { changes.push(active); } };
+      const input = { model: 'test/model', messages: [], signal: abort.signal, onInferenceDelay: (active: boolean) => { changes.push(active); if (rejectNotice) throw new Error("socket unavailable"); } };
       const client = provider === 'azure'
         ? new AzureOpenAIClient({ endpoint: 'https://test.openai.azure.com', apiKey: 'key', streamIdleTimeoutMs, fetch: fetcher })
         : new OpenRouterClient({ apiKey: 'key', primaryModel: 'test/model', sameModelRetries: 0, streamIdleTimeoutMs, fetch: fetcher });
@@ -76,6 +76,31 @@ for (const provider of ['azure', 'openrouter'] as const) {
       await s.result.catch(() => undefined);
       await vi.advanceTimersByTimeAsync(180_000);
       expect(s.changes).toEqual([]);
+    });
+
+    it('allows continued output after a slow first token beyond the former total cap', async () => {
+      const s = stream();
+      await vi.advanceTimersByTimeAsync(170_000);
+      for (let index = 0; index < 10; index += 1) {
+        s.send({ content: 'Still producing output' });
+        await vi.advanceTimersByTimeAsync(10_000);
+      }
+      s.controller.close();
+      await expect(s.result).resolves.toMatchObject({ content: expect.stringContaining('Still producing output') });
+      expect(s.changes).toEqual([true, false]);
+    });
+
+    it.each(['text', 'error'] as const)('preserves provider %s when status publishing throws', async (kind) => {
+      const s = stream(0, 15_000, true);
+      await vi.advanceTimersByTimeAsync(30_000);
+      if (kind === 'text') {
+        s.send({ content: 'Provider result' });
+        s.controller.close();
+        await expect(s.result).resolves.toMatchObject({ content: 'Provider result' });
+      } else {
+        s.controller.error(new Error('provider disconnected'));
+        await expect(s.result).rejects.toThrow('provider disconnected');
+      }
     });
 
     it('does not warn after a fast response', async () => {
@@ -151,4 +176,14 @@ it('gives a replacement attempt a fresh thirty-second window', async () => {
   await vi.advanceTimersByTimeAsync(1);
   expect(changes).toEqual(['first:true', 'first:false', 'retry:true']);
   await retry.finish();
+});
+
+it('keeps rejected notifications from replacing output or provider errors', async () => {
+  vi.useFakeTimers();
+  const observer = createInferenceDelayObserver(async () => { throw new Error('socket unavailable'); });
+  observer.open();
+  await vi.advanceTimersByTimeAsync(30_000);
+  await expect(observer.flush()).resolves.toBeUndefined();
+  observer.observedOutput();
+  await expect(observer.finish()).resolves.toBeUndefined();
 });

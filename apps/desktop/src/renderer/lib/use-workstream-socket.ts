@@ -7,6 +7,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type AgentCompactionState,
   type InferenceDelayState,
+  InferenceDelayStateSchema,
   type ActiveStreamCheckpoint,
   type ClientSocketEvent,
   type WorkstreamSocketCommandResult,
@@ -1343,7 +1344,7 @@ export function useWorkstreamSocket(
           'The work stream resynchronized while loading transcript ranges.',
         );
         setActiveCompaction(event.activeCompaction);
-        setActiveInferenceDelays(event.activeInferenceDelays);
+        setActiveInferenceDelays((current) => current.length === 0 && event.activeInferenceDelays.length === 0 ? current : event.activeInferenceDelays);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
@@ -1514,7 +1515,7 @@ export function useWorkstreamSocket(
         if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
-        setActiveInferenceDelays(event.activeInferenceDelays);
+        setActiveInferenceDelays((current) => current.length === 0 && event.activeInferenceDelays.length === 0 ? current : event.activeInferenceDelays);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1713,7 +1714,7 @@ export function useWorkstreamSocket(
       } else if (event.type === 'inference_delay_changed') {
         setActiveInferenceDelays((current) => {
           const others = current.filter((delay) => delay.inferenceRequestId !== event.inferenceRequestId);
-          return event.active ? [...others, event] : others;
+          return event.active ? [...others, InferenceDelayStateSchema.parse(event)] : others;
         });
       } else if (event.type === 'compaction_started') {
         setActiveCompaction(event.compaction);
