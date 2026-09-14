@@ -3355,7 +3355,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       };
     }
 
-    const pending = this.loop.pendingInputs()[0];
+    // Not the head of the queue: while a question the model asked is still
+    // withheld, Bind takes only its answer, whatever was queued ahead of it.
+    const pending = this.transcript.nextActivationInput(loop.loop_id);
     if (pending) {
       const identity = this.objectStore.identity();
       const projection = this.transcript.readBindProjection(loop.loop_id);
