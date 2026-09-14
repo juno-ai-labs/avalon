@@ -7,6 +7,7 @@ import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
+import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
 
 /**
@@ -96,6 +97,10 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     onSuccess: (_result, action) => {
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
       if (action === 'archive') {
+        // Archiving stops open runs, including one provisioned ahead of its
+        // planned time, so refresh the work-stream directory as well as the
+        // Sidekick library.
+        void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
         // Replacing rather than pushing, so Back cannot return to an
         // automation that is no longer served.
         queryClient.removeQueries({ queryKey: ['automation', id] });
