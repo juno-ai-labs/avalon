@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -56,7 +57,6 @@ describe('Ace deployment contract', () => {
     expect(workflow).toContain('secrets.CLOUDFLARE_API_TOKEN');
     expect(workflow).toContain('secrets.ACE_FLAGSHIP_API_TOKEN');
     expect(workflow).toContain('secrets.ACE_RALLY_OPERATOR_TOKEN');
-    expect(workflow).toContain('secrets.ACE_RALLY_EU_OPERATOR_TOKEN');
     expect(workflow).toContain('https://ace.internal.rallywith.ai/');
   });
 
@@ -135,7 +135,6 @@ describe('Ace deployment contract', () => {
     expect(deploy).toContain('variations: { current: { model, fallbackModels } }');
     expect(deploy).toContain('await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken })');
     expect(deploy).toContain("'secret', 'put', 'RALLY_OPERATOR_TOKEN'");
-    expect(deploy).toContain("'secret', 'put', 'RALLY_EU_OPERATOR_TOKEN'");
   });
 
   it("provisions every managed flag with the default variation its own catalog entry declares", async () => {

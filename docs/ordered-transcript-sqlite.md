@@ -34,8 +34,6 @@ conversations are for. This document owns the shared module itself.
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Installs the array as `SubstreamAgent` migration 27. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | The work-stream host adapter: every richer read and write over these tables — blocks, attachments, mentions, activities, Bind states — lives here, not in the shared module. |
 
-## How it works
-
 ### One schema, one ledger today
 
 `ORDERED_TRANSCRIPT_SCHEMA_V1` is a `readonly string[]` of `CREATE TABLE`,
@@ -171,8 +169,6 @@ by the other.
 The trap: a test that asserts on a migration *hash* is asserting on the bytes of
 this file, which is the intent — if such an assertion fails after an edit here,
 the edit is wrong, not the test.
-
-## Changelog
 
 ### 2026-09-03 — The second host is gone
 

@@ -57,40 +57,47 @@ capability and requires launch telemetry for selection rate, sandbox starts,
 active minutes, command outcomes, resources published, PR attempts, and idle
 expiry so the example cost assumptions can be replaced with observed values.
 
-## Goals
-
 1. A participant can ask Rally to inspect, edit, validate, and locally commit a
    change to one authorized GitHub repository from an ordinary work stream.
+
 2. For a connector repository configured with full access, Rally prepares and
    switches to a stable work-stream branch, then the model can use ordinary
    `git` and `gh` commands for multiple commits and PR updates.
+
 3. The model receives familiar typed file tools, a bounded non-interactive shell,
    and real `git` and `gh` CLIs whose remote authority matches connector policy.
+
 4. No sandbox starts because the plugin loads or code is mentioned. The first
    sandbox-dependent tool call creates or explicitly starts it exactly once.
+
 5. One current sandbox preserves a work stream's files across turns, stop/start,
    and short-term Daytona archive/restore.
+
 6. Commands are bounded, cancellable, observable, and reconciled after a Worker
    failure without spending model turns polling or blindly replaying a command.
+
 7. The model can write and execute Bash, Python, JavaScript, TypeScript, and
    SQLite for common calculation, transformation, analysis, automation, and
    generation tasks.
+
 8. The supported package-manager set is `apt`/`dpkg`, `pip`, `uv`, `npm`, and
    `pnpm`.
+
 9. The plugin system prompt makes the supported languages, managers, and useful
    task patterns conspicuous so the model chooses one when code is the clearest
    reliable solution.
+
 10. Attached work-stream resources can become guarded local files for code, and
     generated graphs, images, tables, datasets, reports, and archives can become
     durable regional resources using the attachment and visibility subsystem
     merged in PR #144.
+
 11. An owner or administrator can select Trusted only or Full internet. Trusted
     only is the default and accepts additional exact or wildcard domains.
+
 12. Trusted only always includes a non-removable, server-managed baseline for
     platform and package access without exposing its targets to participants or
     the model.
-13. Secrets, repository content, command data, outputs, and audit records remain
-    in the workspace's selected region; EU availability waits for vendor assurance.
 
 ## Non-goals
 
@@ -111,8 +118,6 @@ expiry so the example cost assumptions can be replaced with observed values.
 7. An expired sandbox is not transparently rebuilt from an R2 filesystem backup.
    Durable outputs survive, but unpublished local filesystem state may expire.
 8. Daytona persistence is not Rally's receipt or audit system.
-
-## Product behavior
 
 ### Plugin availability and repository selection
 
@@ -1301,29 +1306,14 @@ instead of silently substituting another environment.
 5. Validate Daytona's essential-service interaction, 20-entry domain limit,
    wildcard behavior, blocked-target behavior, WebSocket command completion,
    archive/restore, and regional location against the provider contract.
-6. Bind both regional Workers to the dedicated account-level
+6. Bind configured regional Workers to the dedicated account-level
    `avalon_terminal_operations` Analytics Engine dataset. Record separate
    provider-create, policy-read-back, compatibility-install, manifest-verify,
    stopped-warm, and archived-restore timings without tenant or operation IDs.
    Provide a sampling-aware human-readable report before deciding that an
    Rally-owned image is worth its build/activation/update lifecycle.
 
-Each regional Wrangler configuration declares the non-secret static capability
-`TERMINAL_REGION_CAPABILITY` as `supported` or `unsupported`; local development
-defaults to `unsupported`. A regional Worker may declare `supported` only when
-its `DAYTONA_API_KEY`, managed snapshot/location, native-policy probes, and
-publisher health checks pass. The checked-in Global and EU configurations start
-`unsupported`; Global changes to `supported` in the shipping configuration only
-after its named acceptance flow passes, while EU remains `unsupported` until its
-residency gate passes. A missing or unknown value fails closed during startup.
-
 ## Rollout
-
-There is no plugin feature flag, per-user rollout, or read/edit/publish mode. A
-supported region always registers the complete tool family. Global becomes a
-supported region after synthetic repository and provider acceptance tests pass.
-EU remains unsupported until legal and technical review confirms compute,
-persistence, backup, deletion, and subprocessor residency.
 
 Provider operations retain a regional emergency circuit breaker. It blocks new
 sandbox leases and publication starts, cancels unstarted work, lets bounded
@@ -1331,8 +1321,6 @@ active commands finish or reach deadline, captures final diffs, and stops
 sandboxes. It does not hide the plugin, alter its tool family, or delete retained
 work. A call blocked by the breaker returns the normal model-visible
 `sandbox_unavailable` failure with operator-supplied retry guidance when known.
-
-## Acceptance
 
 1. Every workspace in a supported region is eligible without a feature flag.
    Loading the plugin or discussing code creates no sandbox. Two concurrent first
@@ -1343,37 +1331,46 @@ work. A call blocked by the breaker returns the normal model-visible
    `TERMINAL_REGION_CAPABILITY` value. A region marked supported but missing any
    Daytona credential, endpoint, target, or snapshot degrades to unsupported
    without failing Worker startup.
+
 2. Bash, Python, JavaScript, TypeScript, and SQLite fixtures run, fail once in a
    controlled way, are revised, and pass. Snapshot verification fails on version
    drift.
+
 3. `apt`/`dpkg`, `pip`, `uv`, `npm`, and `pnpm` fixtures install from their
    baseline groups in Trusted only.
    Unsupported languages/managers fail explicitly without conversion.
+
 4. Prompt evaluation shows that the agent recognizes calculation, transformation,
    analysis, repository validation, graph/image generation, and archive tasks as
    candidates for one of the five languages without starting a sandbox for an
    unrelated request.
+
 5. Traversal, symlink escape, oversized files/output, detached descendants,
    inherited listeners, timeout bypass, and forbidden egress return stable
    failures and do not escape bounds. Success, nonzero exit, timeout,
    cancellation, output overflow, stream loss, and adapter failure all leave no
    command descendant; failed cleanup stops the sandbox.
+
 6. A short command returns directly. A long command suspends Bind, streams on the
    host, auto-resumes once on exit, and gives the model one final result without a
    polling tool. Workflow restart, ambiguous provider submission, WebSocket loss,
    and duplicate exit delivery reconcile the stable provider task and emit
    exactly one continuation without rerunning the command.
+
 7. A private fixture repository can clone, edit, validate, diff, and commit with
    real Git while token-exposure attacks reveal at most opaque placeholders.
+
 8. Every Terminal tool is exposed together whenever the plugin is loaded; there
    are no read/edit or publication tool subsets. Read-only repository credentials
    reject push and GitHub mutation. Full-access credentials let standard `git`
    and `gh` update the automatically prepared word-based branch and its PR over
    multiple commits and sessions.
+
 9. Before every model-facing repository operation, bootstrap restores or creates
    the recorded branch, checks it out, sets `AVALON_GIT_BRANCH`, and rotates a
    stale or policy-invalidated credential. The optional typed publisher still
    rejects dirty/wrong/conflicting state and reconciles a response-loss retry.
+
 10. Attached text, image, and dataset resources import at an automatic path. An
     explicit destination is create-only unless the model supplies
     `overwrite: true`; existing, missing, unauthorized, detached, oversized, or
@@ -1384,36 +1381,36 @@ work. A call blocked by the breaker returns the normal model-visible
     in the right sidebar and current-principal inventory and are usable through
     the existing read/search/view/summarize tools as their kind permits.
     Oversized/excessive resources fail explicitly.
+
 11. New and existing workspaces default to Trusted only. An owner/admin can add
     and remove exact and wildcard domains; members cannot. Settings hide the
     server-managed baseline and show remaining capacity plus canonical
     before/after workspace domains and their download. With active
     work, save requires confirmation, exposes pending/verified/failure states,
     preserves a conflicted typed domain, and reports stopped sandboxes.
+
 12. Trusted only denies an unlisted domain and Full internet admits it after
     confirmation. Any policy change cancels active commands, stops the sandbox,
     applies the new native policy, and the next tool explicitly starts it.
+
 13. Provider tests prove essential targets still work with `domainAllowList` and
     that no implicit provider destination exists outside the manifest. Unlisted
     domains, direct IP, redirects, metadata targets, alternate-host secret
     substitution, and a TTL-changing allowed hostname that resolves to private
     or special-use addresses do not bypass the effective policy.
+
 14. Five-minute stop, 60-minute archive, archive restore within 30 days,
     cancellation, disconnect/reconnect, and explicit fresh start after expiry
     match the transcript and retention UI. Expiry preserves published resources,
     outputs, final diff, and receipts but not arbitrary local files. The right
     rail shows exact state/expiry, seven-day and 24-hour warnings, durable versus
     local-only outputs, final-diff access, and **Start fresh** after expiry.
+
 15. Durable receipts exist for resource import, resource publication, branch
     publication, and network policy changes. Internal file-hash and command-task
     tests prove that concurrent mutating runs serialize and local operations
     reconcile without a second general receipt framework or blind replay.
-16. Two named regional flows are finite: Global is `unsupported` until the
-    Global synthetic clone/edit/test/resource/publish/cleanup flow and data-location
-    assertion pass, then its checked-in capability becomes `supported`; EU stays
-    `unsupported`, renders the disabled-region explanation, and rejects provider
-    creation until the EU residency evidence and the same flow pass. Cross-region
-    D1, R2, Queue, Workflow, Daytona, and GitHub-token assertions remain empty.
+
 17. Generated JSON-schema snapshots exactly match every required, optional, and
     forbidden argument and every success/failure envelope in the model-facing
     tool contracts, plus the catalog's wire name, capability, mode,
@@ -1424,12 +1421,14 @@ work. A call blocked by the breaker returns the normal model-visible
     Every failed-tool snapshot asserts that `error` itself contains the shortest
     safe recovery or stop action and that contextual remediation survives Bind's
     detail allowlist.
+
 18. Evaluation on the configured medium fallback model completes schema-only
     create, read/edit/edit, complete replacement, multi-file patch, automatic
     import, explicit binary replacement, command-failure diagnosis, and
     dirty-tree publication recovery fixtures. It uses shell-native discovery,
     rereads after exact-match or patch-context failures, and stops on
     authorization/policy failures instead of looping.
+
 19. Resource integration tests use PR #144's shared visibility loader, inventory
     revision, derivative tools, receipt reauthorization, and deletion outbox.
     Detach/revoke/delete makes old IDs and replay results unavailable without
@@ -1437,16 +1436,19 @@ work. A call blocked by the breaker returns the normal model-visible
     rediscovery exposes only the currently authorized inventory. Complete logs
     and final diffs use generated-resource ownership and its deletion outbox, so
     lifecycle tests leave no orphan Terminal R2 key.
+
 20. Product tests and visible-window QA cover the dynamic GitHub connector
     settings row, all/selected policy, repository search, read-only/full remote
     labels, model checkout, backup success/failure, revoked policy, and absence
     of a participant chooser; unsupported region Settings; command
     running/offline/reconnecting/full-log states; and publication
     publishing/created/updated/unchanged/failed states.
+
 21. In the implementation change, this durable tool material moves into the
     owning subsystem documents and their running changelogs, and every shipped
     descriptor is rechecked against [`../../agent-tools.md`](../../agent-tools.md)
     and the required tool/plugin documentation in [`../../prds.md`](../../prds.md).
+
 22. Every Daytona create, managed bootstrap, and lifecycle start emits one
     non-blocking `terminal_platform_v1` Analytics Engine point with operation,
     outcome, region, configured snapshot, source state, failed phase, release,
@@ -1459,12 +1461,10 @@ work. A call blocked by the breaker returns the normal model-visible
     workspace, work-stream, run, user, sandbox, repository, resource, command,
     path, output, or credential identifier.
 
-## Open questions
-
-1. **Does Daytona provide a contractually acceptable EU compute and persistence
-   location for Rally's selected-region promise?** This blocks EU availability,
-   not Global implementation, and requires vendor evidence.
 2. **Do Daytona essential services and a custom `domainAllowList` compose exactly
    as the launch policy assumes?** The provider test is a release gate. If the
    answer is no, product scope must change; a custom gateway is not an implicit
    fallback in this PRD.
+
+
+## Open questions

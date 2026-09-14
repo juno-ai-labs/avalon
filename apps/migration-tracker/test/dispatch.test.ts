@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -45,7 +46,7 @@ async function sweepIn(namespaces: InventoryNamespace[]): Promise<void> {
 }
 
 function namespaceOf(
-  region: "global" | "eu",
+  region: string,
   className: string,
   objectIds: string[],
 ): InventoryNamespace {
@@ -61,24 +62,24 @@ function namespaceOf(
 interface Queues {
   env: Env;
   global: RecordingQueue<DurableObjectMigrationCommand>;
-  eu: RecordingQueue<DurableObjectMigrationCommand>;
+  enterprise: RecordingQueue<DurableObjectMigrationCommand>;
 }
 
 function boundEnv(options: {
-  regions?: ("global" | "eu")[];
+  regions?: (string)[];
   failAfter?: number;
 } = {}): Queues {
-  const regions = options.regions ?? ["global", "eu"];
+  const regions = options.regions ?? ["global", "enterprise"];
   const global = createRecordingQueue<DurableObjectMigrationCommand>(
     options.failAfter === undefined ? {} : { failAfter: options.failAfter },
   );
-  const eu = createRecordingQueue<DurableObjectMigrationCommand>();
+  const enterprise = createRecordingQueue<DurableObjectMigrationCommand>();
   const bound: Env = { ...env };
   if (regions.includes("global")) bound.GLOBAL_MIGRATION_COMMAND_QUEUE = global.queue;
   else delete bound.GLOBAL_MIGRATION_COMMAND_QUEUE;
-  if (regions.includes("eu")) bound.EU_MIGRATION_COMMAND_QUEUE = eu.queue;
-  else delete bound.EU_MIGRATION_COMMAND_QUEUE;
-  return { env: bound, global, eu };
+  if (regions.includes("enterprise")) bound.ENTERPRISE_MIGRATION_COMMAND_QUEUE = enterprise.queue;
+  else delete bound.ENTERPRISE_MIGRATION_COMMAND_QUEUE;
+  return { env: bound, global, enterprise };
 }
 
 beforeEach(async () => {
@@ -100,7 +101,7 @@ describe("dispatchMigrationRun", () => {
   it("sends one command per object, to the queue of the region that owns it", async () => {
     await sweepIn([
       namespaceOf("global", "WorkspaceDO", [objectId("a"), objectId("b")]),
-      namespaceOf("eu", "WorkspaceDO", [objectId("c")]),
+      namespaceOf("enterprise", "WorkspaceDO", [objectId("c")]),
     ]);
     const queues = boundEnv();
 
@@ -116,33 +117,33 @@ describe("dispatchMigrationRun", () => {
     expect(run.status).toBe("dispatched");
     expect(queues.global.sent.map((command) => command.objectId).sort())
       .toEqual([objectId("a"), objectId("b")].sort());
-    expect(queues.eu.sent.map((command) => command.objectId)).toEqual([objectId("c")]);
+    expect(queues.enterprise.sent.map((command) => command.objectId)).toEqual([objectId("c")]);
     // Every message carries the region of the queue it went on, so a misrouted
     // producer is catchable by the consumer rather than only by the queue name.
     expect(queues.global.sent.every((command) => command.region === "global")).toBe(true);
-    expect(queues.eu.sent[0]?.region).toBe("eu");
+    expect(queues.enterprise.sent[0]?.region).toBe("enterprise");
     // One run, one `runId`, distinct `commandId`s.
     expect(new Set(queues.global.sent.map((command) => command.runId))).toEqual(new Set([run.runId]));
-    expect(new Set([...queues.global.sent, ...queues.eu.sent].map((c) => c.commandId)).size).toBe(3);
+    expect(new Set([...queues.global.sent, ...queues.enterprise.sent].map((c) => c.commandId)).size).toBe(3);
   });
 
   it("sends only the region the run asked for", async () => {
     await sweepIn([
       namespaceOf("global", "WorkstreamDO", [objectId("a")]),
-      namespaceOf("eu", "WorkstreamDO", [objectId("b")]),
+      namespaceOf("enterprise", "WorkstreamDO", [objectId("b")]),
     ]);
     const queues = boundEnv();
 
     const run = await dispatchMigrationRun(
       queues.env,
       registryStub(),
-      { className: "WorkstreamDO", region: "eu" },
+      { className: "WorkstreamDO", region: "enterprise" },
       "operator@example.test",
     );
 
     expect(run.dispatched).toBe(1);
     expect(queues.global.sent).toEqual([]);
-    expect(queues.eu.sent.map((command) => command.objectId)).toEqual([objectId("b")]);
+    expect(queues.enterprise.sent.map((command) => command.objectId)).toEqual([objectId("b")]);
   });
 
   /**
@@ -153,7 +154,7 @@ describe("dispatchMigrationRun", () => {
   it("counts a region with no bound queue as unroutable rather than sent", async () => {
     await sweepIn([
       namespaceOf("global", "WorkspaceDO", [objectId("a")]),
-      namespaceOf("eu", "WorkspaceDO", [objectId("b")]),
+      namespaceOf("enterprise", "WorkspaceDO", [objectId("b")]),
     ]);
     const queues = boundEnv({ regions: ["global"] });
 
@@ -179,7 +180,7 @@ describe("dispatchMigrationRun", () => {
   it("counts both causes of unroutable exactly once", async () => {
     await sweepIn([
       namespaceOf("global", "WorkspaceDO", [objectId("a")]),
-      namespaceOf("eu", "WorkspaceDO", [objectId("b")]),
+      namespaceOf("enterprise", "WorkspaceDO", [objectId("b")]),
       // Region resolvable from neither a report nor a known script name.
       {
         namespaceId: "ns-elsewhere",
@@ -234,13 +235,13 @@ describe("dispatchMigrationRun", () => {
   /**
    * The two regions are separate queues, so one refusing says nothing about the
    * other. Failing both because Global was walked first would turn one region's
-   * outage into two, and the EU objects would go unreached with nothing in the
+   * outage into two, and the enterprise objects would go unreached with nothing in the
    * run row explaining why.
    */
   it("still reaches the healthy region when the other one refuses", async () => {
     await sweepIn([
       namespaceOf("global", "WorkspaceDO", [objectId("a")]),
-      namespaceOf("eu", "WorkspaceDO", [objectId("b")]),
+      namespaceOf("enterprise", "WorkspaceDO", [objectId("b")]),
     ]);
     const queues = boundEnv({ failAfter: 0 });
 
@@ -252,7 +253,7 @@ describe("dispatchMigrationRun", () => {
     );
 
     expect(queues.global.sent).toEqual([]);
-    expect(queues.eu.sent.map((command) => command.objectId)).toEqual([objectId("b")]);
+    expect(queues.enterprise.sent.map((command) => command.objectId)).toEqual([objectId("b")]);
     expect(run.dispatched).toBe(1);
     expect(run.status).toBe("failed");
     // Named, so the gap between matched and dispatched has an explanation.

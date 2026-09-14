@@ -6,15 +6,11 @@ import { isEntryPoint } from './entry-point.mjs';
 const execFile = promisify(execFileCallback);
 
 const DIRECT_DEPLOY_PATHS = new Set([
-  'apps/api/wrangler.documents.eu.jsonc',
   'apps/api/wrangler.documents.global.jsonc',
-  'apps/api/wrangler.eu.jsonc',
   'apps/api/wrangler.global.jsonc',
   'apps/api/wrangler.telemetry.global.jsonc',
   'apps/api/wrangler.pricing.global.jsonc',
-  'apps/api/wrangler.terminal.eu.jsonc',
   'apps/api/wrangler.terminal.global.jsonc',
-  'apps/api/wrangler.artifacts.eu.jsonc',
   'apps/api/wrangler.artifacts.global.jsonc',
 ]);
 

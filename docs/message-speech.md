@@ -123,7 +123,7 @@ prove that the label fits, remains visible while speaking, or is not covered.
 
 ## Regional impact
 
-The desktop calls the API region selected by the workspace. Global and EU each
+The desktop calls the API region selected by the workspace. configured deployments each
 use their own configured Azure inference endpoint and secret, and message text
 does not cross Rally regions or enter a Durable Object. The same code supports a
 future West production endpoint through that regional Worker configuration.
@@ -152,8 +152,6 @@ stream backpressure and keeps only the current provider reader plus one
 prefetched provider promise. That prefetch can synthesize one chunk a person
 later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
-
-## Changelog
 
 ### 2026-09-10 — Speak says *Speak response*, and the AI disclosure leaves with the native title
 

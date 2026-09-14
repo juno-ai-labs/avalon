@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import {
   ConnectorError,
   joinAllSlackPublicChannels,
@@ -3821,7 +3822,7 @@ function unlinkedHome(): Record<string, unknown>[] {
   ];
 }
 
-function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, region: "global" | "eu", workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
+function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, region: Region, workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
   const automationsTarget = addWorkspaceTarget(new URL("rallywithai://automations/new"), { region, workspaceId }).toString();
   const connectionsTarget = addWorkspaceTarget(new URL("rallywithai://settings/connections"), { region, workspaceId }).toString();
   const blocks: Record<string, unknown>[] = [
@@ -3882,7 +3883,7 @@ function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
     }));
 }
 
-function responseActionBlocks(workstreamId: string, webBase: string, region: "global" | "eu", workspaceId: string): Record<string, unknown>[] {
+function responseActionBlocks(workstreamId: string, webBase: string, region: Region, workspaceId: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
     { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_task" },
     { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },

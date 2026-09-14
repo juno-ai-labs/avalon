@@ -15,7 +15,7 @@ written.
 - Make create and invitation acceptance replay one client operation id to the
   same destination, and remove the single-membership guards.
 
-Acceptance gate: the migrated schema holds Global and EU routes for one account
+Acceptance gate: the migrated schema holds configured deployments routes for one account
 without rewriting either placement affinity; a lost create response followed by
 the same operation id returns one workspace; a changed request under that id is
 rejected; older singular onboarding parsing remains valid.
@@ -44,7 +44,7 @@ attention response distinguishes addressed work from unread activity.
 - Scope drafts by workspace and clear only the workspace that is left.
 
 Acceptance gate: legacy one-session storage migrates without credential loss;
-Global and EU sessions coexist; switching changes only the active selection;
+configured deployments sessions coexist; switching changes only the active selection;
 terminal refresh failure removes one entry; Lockdown migration and sign-out
 cover the complete set even when one regional revocation fails.
 
@@ -59,7 +59,7 @@ cover the complete set even when one regional revocation fails.
   internal compatibility vocabulary.
 
 Acceptance gate: component tests cover the state matrix and the end-to-end
-flows are walked in a real desktop window across Global and EU local Workers.
+flows are walked in a real desktop window across configured deployments local Workers.
 The periodic background-count guard remains open (`LIMIT UNSET`) until the team
 chooses a cadence; focus and menu-open refreshes are active.
 

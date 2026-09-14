@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS,
@@ -180,7 +181,7 @@ describe('developer settings flag controller', () => {
 
     // Onboarding swaps a Global identity session for a regional one without
     // passing through signed-out, so this is an account change with no `stop()`.
-    flag.observeSession('regional@https://eu.api.example.com');
+    flag.observeSession('regional@https://enterprise.api.example.com');
 
     expect(flag.enabled()).toBe(false);
     expect(onChange.mock.calls).toEqual([[true], [false]]);

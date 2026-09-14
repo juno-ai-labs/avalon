@@ -134,7 +134,7 @@ do, unbounded result sets, and Node built-ins that the Worker runtime does not
 provide.
 
 **Absolute URLs come from configuration, not the request.** Public bases are
-`PUBLIC_API_BASE_URL`, `EU_PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, and the
+`PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, and the
 per-provider `*_INGRESS_BASE_URL` values. A URL derived from the inbound request is
 wrong for anything reached through the Global ingress bridges or a tunnel — flag
 callback URLs, invitation and work-stream links, and OAuth `redirect_uri` values built
@@ -433,21 +433,18 @@ trigger for reaping and scheduled work.
   exists only in a DO, and replay/presence caches that grow past their stated bounds
   (the room's window is deliberately memory-only, 256 events or 512 KB).
 
-**2. Regional correctness.** The same Worker code is deployed as Global and EU, and the
-two configurations must stay in step.
+**2. Deployment correctness.** Global is the only configured deployment; region
+identifiers are configured for isolation, independently of provider geography.
 
-- Anything added to `apps/api/wrangler.global.jsonc` — a var, binding, queue, DO,
-  workflow, migration path, cron — needs its EU counterpart in `wrangler.eu.jsonc`
-  (which additionally carries `jurisdiction`). A **secret** goes in neither file: it is
-  installed per region with Wrangler and documented in `docs/runbook.md`, which is also
-  where a deliberately Global-only secret is recorded. Flag a one-region binding, a
-  Global-only value (`EU_PUBLIC_API_BASE_URL` is the legitimate case) used
-  unconditionally, and a secret proposed as a plaintext var.
+- Review `config/regions.json` with the corresponding Wrangler bindings. Preserve
+  existing Global resource names, IDs, jurisdiction, and placement. Additional
+  deployments need provisioned resources and configured bindings, not new
+  region-specific application branches. Secrets remain deployed with Wrangler.
 - Cross-region traffic goes only through the named RPC service bindings. Read the
   current set off `Env` in `apps/api/src/env.ts` rather than from a list that ages —
   today it is the identity, GitHub, Linear, Notion, Slack, and inbound-email bridges
-  going Global→EU, plus the EU→Global routers, including `GLOBAL_EMAIL_ROUTER`
-  (`WorkstreamEmailRoutingBridge`), which is how EU reserves a globally unique
+  going between configured deployments and the Global routers, including `GLOBAL_EMAIL_ROUTER`
+  (`WorkstreamEmailRoutingBridge`), which is how a deployment reserves a globally unique
   work-stream address in the Global registry (`docs/regionalization.md`). Flag a new
   public internal route, a direct fetch to the other region, or a read of another
   region's data.
@@ -608,9 +605,9 @@ configures from.
   queues, workflows, and the RPC service bindings are declared in the Wrangler configs,
   not in `.env.example`, so a new binding needs no entry there.
 - **Where it goes next depends on what it is, and conflating the three is itself a
-  finding.** Non-secret Worker configuration belongs in `vars` in **both**
-  `wrangler.global.jsonc` and `wrangler.eu.jsonc`. A Worker **secret** never appears in
-  either file — it is set per region with Wrangler per `docs/runbook.md`, which also
+  finding.** Non-secret Worker configuration belongs in `vars` in the configured
+  deployment’s Wrangler file. A Worker **secret** never appears in
+  the file — it is set per region with Wrangler per `docs/runbook.md`, which also
   records the few that are deliberately one-region (the `GOOGLE_OAUTH_*` login pair,
   `RESEND_WEBHOOK_SIGNING_SECRET`, and `WORKSTREAM_EMAIL_ADDRESS_KEY` are Global-only).
   And a value that is not the Worker's at all — a renderer `VITE_*` variable, or the

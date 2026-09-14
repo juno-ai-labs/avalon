@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { AuthService } from "../src/services/auth-service";
@@ -49,7 +50,7 @@ const invitation = {
   id: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0",
   workspace_id: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1",
   workspace_name: "Europe Research",
-  workspace_region: "eu" as const,
+  workspace_region: "enterprise" as const,
   email: "invitee@example.com",
   role: "admin" as const,
   invited_by_name: "Ada",
@@ -60,12 +61,12 @@ const invitation = {
   created_at: "2026-08-01T00:00:00.000Z",
 };
 
-function environment(database: RecordingDatabase, region: "global" | "eu"): Env {
+function environment(database: RecordingDatabase, region: string): Env {
   return createTestEnv({
     DB: database.binding,
     AVALON_REGION: region,
-    PUBLIC_API_BASE_URL: region === "eu"
-      ? "https://eu.api.with-avalon.com"
+    PUBLIC_API_BASE_URL: region === "enterprise"
+      ? "https://enterprise.api.with-avalon.com"
       : "https://api.with-avalon.com",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
@@ -78,23 +79,23 @@ function environment(database: RecordingDatabase, region: "global" | "eu"): Env 
 afterEach(() => vi.useRealTimers());
 
 describe("organization region bindings", () => {
-  it("returns the invitation's EU region from the EU preview service", async () => {
+  it("returns the invitation's enterprise region from the enterprise preview service", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T01:00:00.000Z"));
     const database = new RecordingDatabase(invitation);
 
-    await expect(previewInvitation(environment(database, "eu"), "p".repeat(32)))
+    await expect(previewInvitation(environment(database, "enterprise"), "p".repeat(32)))
       .resolves.toEqual({
         workspaceId: invitation.workspace_id,
         workspaceName: invitation.workspace_name,
-        region: "eu",
+        region: "enterprise",
         email: invitation.email,
         role: "admin",
         expiresAt: invitation.expires_at,
       });
   });
 
-  it("refuses to preview an EU invitation through the global service", async () => {
+  it("refuses to preview an enterprise invitation through the global service", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T01:00:00.000Z"));
     const database = new RecordingDatabase(invitation);
@@ -105,7 +106,7 @@ describe("organization region bindings", () => {
 
   it("refuses a second regional identity login", async () => {
     const database = new RecordingDatabase(invitation);
-    await expect(new AuthService(environment(database, "eu")).beginIdentity({
+    await expect(new AuthService(environment(database, "enterprise")).beginIdentity({
       returnUri: "avalon://auth/complete",
       desktopAttemptId: "a".repeat(43),
       desktopCodeChallenge: "c".repeat(43),

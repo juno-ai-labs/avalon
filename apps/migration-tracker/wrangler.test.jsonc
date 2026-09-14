@@ -6,7 +6,7 @@
     "APP_ENV": "test",
     "APP_VERSION": "workerd-test",
     "ACCESS_TEAM_DOMAIN": "rally.cloudflareaccess.com",
-    "ACCESS_APPLICATION_AUD": "test-audience",
+    "ACCESS_APPLICATION_AUD": "test-audience"
   },
   "durable_objects": {
     "bindings": [

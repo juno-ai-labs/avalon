@@ -67,7 +67,7 @@ After Flagship accepts a PUT, Ace places only the flag key on
 `avalon-product-feature-flag-changes` after Flagship's documented
 [up-to-30-second propagation window](https://developers.cloudflare.com/flagship/concepts/).
 Its
-consumer keyset-pages every workspace from Global and EU D1, then sends one
+consumer keyset-pages every workspace from configured deployments D1, then sends one
 key-and-workspace message to the owning regional queue. The regional API
 consumer RPCs to that workspace's `WorkspaceDO`. The object evaluates the
 complete client flag contract per connected user and privately sends the values
@@ -122,7 +122,7 @@ home-screen destination, so there is no link to fabricate
 reaches the page as the API's own code and message, and a response the shared
 contract cannot parse is named as a contract mismatch rather than an outage.
 
-**Workspaces.** The tab searches both regions' directories and retires the
+**Workspaces.** The tab searches configured deployments' directories and retires the
 selected workspace in the region that owns it, through
 `POST /api/workspaces/:id/retire`, which relays to the regional API's
 `/internal/workspaces/:id/retire` over that region's operator credential,
@@ -253,23 +253,6 @@ page separately issues `download_grants` in Global D1, through its existing
 operator authentication and same-origin write boundary. Regional API Workers own
 their Durable Object namespaces and the socket protocol.
 
-Ace does not manage the Control Tower cadence or targeted model-rollout
-variations. Those retain their existing operational paths in
-[`feature-flags.md`](feature-flags.md); Ace edits only each model flag's current
-default variation while preserving those advanced configurations.
-Adding a new Ace page does not automatically grant it a new Cloudflare API
-capability; its route, environment type, credential, and component reuse must be
-reviewed as a new boundary. The Demos page and the workspaces tab were: their
-routes relay to the regional API and read no D1; their environment adds
-`RALLY_API_BASE_URL`, `RALLY_EU_API_BASE_URL` and the `RALLY_OPERATOR_TOKEN`
-and `RALLY_EU_OPERATOR_TOKEN` secrets; their credential is a Rally operator
-token in the `demos` role, one per region, rather than a Cloudflare token; and
-they reuse the queue page's list-and-detail layout and the shared controls. The
-demo lifecycle itself — the operation, the seeder, the barrier — is owned by
-[`demo-workspaces.md`](demo-workspaces.md) and retirement by
-[`workspace-retirement.md`](workspace-retirement.md); Ace is their operator
-surface only.
-
 ## Failure modes and limits
 
 - Missing or invalid Access configuration returns 403. The development bypass
@@ -335,31 +318,10 @@ fixtures when visually exercising the component library.
 
 ## Regional impact
 
-There is one Ace Worker and one Flagship application for both regions. For an
-Access-authorized operator's directory search, Ace reads each regional D1
-directly and transiently returns matching names, full email addresses, slugs,
-and opaque IDs to that operator's browser. Those lookup fields therefore cross
-the EU data-plane boundary into the shared Ace runtime; Ace does not persist
-them or write them to Flagship. Fan-out sends only opaque workspace IDs and flag
-keys to regional queues, and each regional API alone resolves its Durable
-Object namespace. Workspace content, memberships, sockets, and effective flag
-values do not cross through Ace. The separately approved Flagship attributes do
-cross to the one global evaluation service as documented in
-[`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
-
 Demos are prepared in Global, and the Demos page talks to the Global API only.
 The workspaces tab retires in the region that owns the workspace, through that
 region's API, so no retirement crosses a region; the directory search that
 finds the workspace is the existing cross-regional lookup described above.
-
-The Queues page is account-wide and therefore shows both Global and EU DLQs in
-the same Access-protected Ace runtime. Current Queue contracts carry operational
-pointers and identifiers rather than product content, but EU dead letters can
-include EU workspace, user, session, object, and activity IDs. Displaying those
-identifiers to an authorized internal operator in shared Ace is an explicit
-cross-regional administration boundary. It does not load referenced D1, R2, or
-Durable Object content, and it must not grow such a dereference without a new
-regional review.
 
 ## Security and trust model
 
@@ -383,24 +345,6 @@ deploy Workers, change Access policy, read D1, or administer other account
 products. No token is compiled into the Vite bundle or stored as a plain Worker
 variable.
 
-The Demos page and the workspaces tab present `RALLY_OPERATOR_TOKEN` to the
-Global regional API and `RALLY_EU_OPERATOR_TOKEN` to the EU one — two
-encrypted secrets, each mapped to the `demos` operator role by that region's
-own `DEMO_OPERATORS_JSON` and known to no other region, so one leaked
-token is destructive authority in one jurisdiction rather than both. That role
-can prepare and retire demo workspaces and read the template's members, and
-nothing else — every regional operator router names the roles it admits, so
-the telemetry router refuses `demos` and the demo routers refuse the telemetry
-roles. Abandoning a preparation retires its candidate the same way as the tab
-does and takes a typed operation id. Retirement is irreversible and takes any
-workspace, so the typed workspace-id confirmation is the whole of the
-protection between an operator and the close, and it is enforced twice: in
-Ace, and again by the regional API, which also refuses an id its region does
-not own. The tab shows a failed directory search as a failure, never as "no
-matches", because a stale result list is how the wrong workspace gets retired
-with full ceremony; and a workspace it has retired stays marked for the
-session, because the directory it searches does not know.
-
 ## Operations
 
 A merge to `main` starts `deploy-ace.yml` when it changes Ace runtime or
@@ -420,23 +364,6 @@ signed desktop release start from their existing `packages/**` and
 `apps/desktop/**` triggers in the same merge.
 There is no per-release manual command or dashboard step.
 
-The `api-production` GitHub environment must hold the existing
-`CLOUDFLARE_ACCOUNT_ID` variable, deployment `CLOUDFLARE_API_TOKEN`, Ace
-runtime `ACE_FLAGSHIP_API_TOKEN`, and `ACE_RALLY_OPERATOR_TOKEN` and
-`ACE_RALLY_EU_OPERATOR_TOKEN` — the Rally operator tokens the Demos page and
-the workspaces tab present to Global and to EU, installed as the `RALLY_OPERATOR_TOKEN` and
-`RALLY_EU_OPERATOR_TOKEN` secrets. Each value must be present in that region's
-`DEMO_OPERATORS_JSON` under the `demos` role, which is a regional API
-secret ([`runbook.md`](runbook.md)), and in no other region's; otherwise the
-page answers "operator authentication invalid". The GitHub secret keeps its historical name to
-avoid a credential-name migration, while the token stored in it now needs
-Flagship Write and Queues Edit. The deployment token needs Access Apps
-and Policies Write in addition to the existing Worker, Queue, D1-binding, and
-route permissions. `ACE_FLAGSHIP_API_TOKEN` must not receive deployment,
-Access, D1, R2, or Worker permissions.
-These are one-time environment prerequisites, not values committed to the
-repository; once present, releases have no per-merge manual step.
-
 When a save succeeds but clients do not change, inspect in order:
 
 1. Flagship's changelog for the enabled-named key.
@@ -449,8 +376,6 @@ When a save succeeds but clients do not change, inspect in order:
 Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
-
-## Changelog
 
 ### 2026-09-12 — Use the existing operator identity for connector maintenance
 
@@ -506,9 +431,6 @@ filter follows shared DB runtime changes so issuer fixes cannot leave Ace stale.
 
 **Why:** Operators need to track early-access interest and supply downloads
 without coupling the UI to a future invitation sender.
-
-**Considered and rejected:** A separate Ace-only token generator would duplicate
-download authority. New workspace/EU write privileges are outside this slice.
 
 **Consequences:** Ace writes Global `download_grants` only; identity and membership
 remain read-only. Generation sends no mail. [Private access](private-access.md)
@@ -567,14 +489,6 @@ one.
 pattern for anything irreversible on these pages.
 
 ### 2026-09-07 — Workspaces
-
-**What changed:** A Workspaces tab, which finds any workspace in either region
-and retires it behind a typed-id confirmation. `regional-api.ts` is the relay
-to `/internal/workspaces/:id/retire` over two new secrets,
-`RALLY_OPERATOR_TOKEN` and `RALLY_EU_OPERATOR_TOKEN`, and two base-URL vars,
-installed by the deploy script from `ACE_RALLY_OPERATOR_TOKEN` and
-`ACE_RALLY_EU_OPERATOR_TOKEN`. The relay is the seam the Demos page that
-follows this will reuse.
 
 **Why:** The demo workspace PRD puts the operator surface in Ace, behind the
 Access policy that already admits operators, and needs a credential to reach
@@ -736,16 +650,6 @@ relationship is the provider's authority. Finally, giving Ace the deployment
 token was rejected because Queue inspection does not justify Worker, Access,
 D1, route, or other account-administration permissions.
 
-**Consequences:** Cloudflare assigns peek to Queues Edit rather than Queues
-Read, so the runtime credential is no longer Flagship-only and must be rotated
-to add that account permission before deployment can succeed. Ace
-exposes no Queue mutation route and drops peek's purge refs at the Worker
-boundary, but a runtime compromise has the provider-level Queue write capability
-Cloudflare requires. Peek has no cursor or published batch maximum, so the UI
-uses the provider-defined batch and the independent backlog count instead of
-inventing a ceiling. EU Queue identifiers can now be read in the shared internal
-Ace runtime; product content is not dereferenced.
-
 ### 2026-08-25 — Targeting rules gain drag-to-reorder
 
 **What changed:** Each rule card in the flag editor now has a drag handle;
@@ -879,11 +783,6 @@ meeting controls consume live socket-backed values; queue batches deduplicate
 keys and prove cursor pagination; deployment follows changes to the shared
 Access verifier. Misleading partial local-Ace commands were removed, and the
 regional section now describes the directory fields Ace transiently reads.
-
-**Why:** Review reproduced stale or fail-open application surfaces and showed
-that the earlier residency text contradicted Ace's direct EU D1 binding. It also
-found duplicate full-account enumerations and a deployment trigger that could
-leave Ace on an older verifier after a merge.
 
 **Considered and rejected:** Routing Ace directory search through a new regional
 RPC. The product requirement deliberately makes this internal Access-gated

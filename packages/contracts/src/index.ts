@@ -133,7 +133,8 @@ export {
 export { parseDesktopDeepLinkIntent, type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
-export const RegionSchema = z.enum(["global", "eu"]);
+export { RegionSchema, configuredRegions, regionConfiguration, isConfiguredRegion } from "./regions";
+import { RegionSchema } from "./regions";
 
 /**
  * Branded identifiers.
@@ -1171,7 +1172,7 @@ export const WorkstreamContextSchema = z.object({
    * it out fails the whole response. `.default([])` is what puts it on the wire.
    *
    * New client, old server: a Worker that predates this release still returns
-   * real rows here, and EU deploys before Global, so one region runs the old
+   * real rows here, and regional deploys before Global, so one region runs the old
    * Worker for part of every rollout and indefinitely if the other half fails.
    * The element type is therefore permissive rather than `never`: rejecting a
    * populated array would fail the whole response for the same reason, one

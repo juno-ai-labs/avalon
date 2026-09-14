@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
@@ -58,10 +59,10 @@ describe('authoritative onboarding outcome telemetry', () => {
       APP_ENV: 'production',
       APP_VERSION: '1.96.0',
       BUILD_SHA: 'build-1',
-      EU_IDENTITY_BRIDGE: {
+      REGION_ENTERPRISE_IDENTITY_BRIDGE: {
         discover: async () => ({
           ok: true,
-          value: { region: 'eu', workspaces: [], invitations: [] },
+          value: { region: 'enterprise', workspaces: [], invitations: [] },
         }),
       },
     });

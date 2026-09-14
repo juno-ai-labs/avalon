@@ -121,7 +121,7 @@ export function createTestDurableObjectId(value: string): DurableObjectId {
 
 export function createTestJurisdictionalDurableObjectId(
   value: string,
-  jurisdiction: "eu" | "us",
+  jurisdiction: "us" | "eu",
 ): DurableObjectId {
   return {
     toString: () => value,

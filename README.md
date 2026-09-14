@@ -9,7 +9,6 @@ The product includes:
 - Versioned natural-language automations with calendar, interval, connector-activity, semantic-activity, and manual triggers.
 - Google Mail + Calendar and Google Drive + Docs + Sheets presets backed by one incrementally scoped Google connector family; smart-routed public GitHub, Linear, and Slack apps; public Notion connection; and signed generic webhooks.
 - Firecrawl-backed public web search and clean-markdown page fetch tools, available only from the server-side agent harness.
-- Global and European Union workspace regions with separate deployment configurations.
 - Hibernating work-stream WebSockets with bounded room replay, turn/epoch stream resets, duplicate suppression, and REST resynchronization.
 - Electron organization signup, Resend-delivered regional invitations, and a native Settings window available with **Command-,**.
 - A contextual right sidebar for people and resources, run history, and focused item details.
@@ -36,15 +35,12 @@ Prerequisites are Node.js 22 or newer and pnpm 11.
 3. Create the local database with `pnpm db:migrate`.
 4. Add the explicit development records with `pnpm db:seed`.
 5. Start the API and desktop together with `pnpm dev`.
-6. Sign in to the single Rally platform. After authentication, existing members enter their workspace, invited users can accept or decline pending invitations, and only users with neither choose an organization name and Global or European Union storage.
 
 `pnpm env:sync` copies only the server allowlist from `.env.local` into an ignored, owner-readable Worker file. Missing development signing and encryption values are generated once and then retained across restarts.
 
 The default primary model is `x-ai/grok-4.3` through OpenRouter. Classifier and structured-output work remains on `google/gemini-2.5-flash-lite`. Override the three `OPENROUTER_*_MODEL` values in `.env.local` when testing other models; the API key remains server-only.
 
 ## Desktop identity and settings
-
-Fresh installs first sign in to the single Rally platform. Google authentication opens in the system browser, briefly passes through `https://with-avalon.com/auth/desktop/`, and returns one opaque, single-use ticket to `avalon://auth/complete`; the browser handoff validates and immediately removes its fragment. Each ticket is bound to a native S256 challenge and can be redeemed only with the verifier retained in Electron main-process memory. After sign-in, Rally discovers existing memberships and email-bound invitations across both regions. Existing members enter their workspace, invited users can accept or decline, and only users with neither see organization setup and the immutable Global/European Union selector.
 
 Open **Rally → Settings…** or press **Command-,** on macOS. The native Settings window exposes account/session controls, application and regional diagnostics, the locked organization region, members, and role-gated invitation sending, copy, history, and revocation. Production invitations are sent through Resend from `invites@with-avalon.com`; the fragment-protected one-time link remains available as a copyable fallback.
 
@@ -80,7 +76,5 @@ Version policy: every new Rally release advances the minor version by exactly on
 [The documentation index](docs/README.md) is the single registry: it lists every product, architecture, agent, connector, development, and operations document with the scope each one owns, and which to read before touching an area. Start there rather than looking for a reading list here.
 
 ## Hosted deployment
-
-`with-avalon.com`, `api.with-avalon.com`, and `eu.api.with-avalon.com` are deployed. The Global and EU D1 migrations are current, both regional infrastructure health checks pass, and Firecrawl, Resend invitation delivery, and inbound work-stream and automation email are configured. Base Google OAuth credentials and callbacks are configured; the expanded Google APIs, consent-screen review, and both preset acceptance flows remain release gates. The public `Rally With AI` GitHub App and public Linear app are deployed with their regional secrets, callbacks, and signed ingress. A user-started GitHub installation/OAuth acceptance run and the regional Notion registrations remain provider-acceptance gates. Follow the provider-app runbook before end-user acceptance.
 
 Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Google provider credentials are stored only as encrypted Worker secrets. Follow the operations runbook for regional secret management, migrations, health verification, deployment, and provider acceptance.

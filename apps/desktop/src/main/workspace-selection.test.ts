@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it, vi } from 'vitest';
 import { claimActiveWorkspace } from './workspace-selection';
 
@@ -24,7 +25,7 @@ describe('claiming the active workspace for a link', () => {
 
   it.each([
     { name: 'another workspace', target: { region: 'global' as const, workspaceId: '00000000-0000-7000-8000-000000000002' } },
-    { name: 'the same id in another region', target: { region: 'eu' as const, workspaceId } },
+    { name: 'the same id in another region', target: { region: 'enterprise' as const, workspaceId } },
   ])('yields to platform activation for $name without taking an intent', ({ target }) => {
     const nextSelectionIntent = vi.fn(() => 5);
 

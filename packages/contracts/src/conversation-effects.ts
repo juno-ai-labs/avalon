@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { ConversationParentKindSchema } from "./conversation-parent";
@@ -15,7 +16,7 @@ import { HttpUrlSchema } from "./url-schemas";
  * nothing acknowledges one to it.
  */
 
-const RegionSchema = z.enum(["global", "eu"]);
+
 const TimestampSchema = z.string().datetime({ offset: true });
 const NullableTimestampSchema = TimestampSchema.nullable();
 const ShortTextSchema = z.string().max(500);

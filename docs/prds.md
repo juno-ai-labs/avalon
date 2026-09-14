@@ -298,7 +298,7 @@ provenance rather than guidance.
 - **Data model** — The tables, columns, and relationships the change implies,
   and whether existing rows need backfilling. Sketch level is fine; the
   authoritative record is the migration and [`data-model.md`](data-model.md).
-- **Regional impact** — What differs between Global and the European Union, what
+- **Regional impact** — What differs between configured deployments, what
   crosses the boundary, and where the data comes to rest. **Required in spirit**
   for anything touching identity, the Global registry, cross-region bridges,
   provider ingress routing, or data residency; read

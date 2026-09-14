@@ -518,8 +518,6 @@ Run the focused suites with the package-local Vitest paths per
 [testing](testing.md), then full lint and typecheck. Runtime tests are not a
 substitute for real-provider latency or window-level acceptance.
 
-## Changelog
-
 ### 2026-09-11 — The rail holds a row for a substream being created
 
 **What changed:** From the keystroke that submits the launch composer until the

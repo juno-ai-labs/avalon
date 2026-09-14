@@ -1,3 +1,6 @@
+import { configuredRegions } from "@rally/contracts/regions";
+import { RegionSchema } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -8,7 +11,7 @@ import { uuidV7 } from './telemetry-identity';
 const ManifestSchema = z.object({
   version: z.literal(1),
   generationId: z.string(),
-  route: z.enum(['global', 'eu']),
+  route: RegionSchema,
   createdAt: z.string().datetime({ offset: true }),
   deleteAfter: z.string().datetime({ offset: true }),
   invalidatedAt: z.string().datetime({ offset: true }).nullable(),
@@ -33,12 +36,12 @@ export interface NativeCrashUploaderOptions {
   authenticatedSession: () => Promise<{
     apiBaseUrl: string;
     accessToken: string;
-    route: 'global' | 'eu';
+    route: Region;
   } | null>;
-  anonymousSession: () => { capability: string; route: 'global' | 'eu'; expiresAt: string } | null;
+  anonymousSession: () => { capability: string; route: Region; expiresAt: string } | null;
   refreshAnonymousSession?: () => Promise<{
     capability: string;
-    route: 'global' | 'eu';
+    route: Region;
     expiresAt: string;
   } | null>;
   globalApiBaseUrl: string;
@@ -91,7 +94,7 @@ export class NativeCrashUploader {
     await this.enforceBounds();
     if (!this.options.enabled()) return;
     let remaining = 5;
-    for (const route of ['global', 'eu'] as const) {
+    for (const route of configuredRegions) {
       const routeDirectory = join(this.options.rootDirectory, 'upload', route);
       for (const generationId of await directories(routeDirectory)) {
         if (remaining <= 0) return;
@@ -128,7 +131,7 @@ export class NativeCrashUploader {
 
   private async enforceBounds(): Promise<void> {
     const reports: Array<{ path: string; bytes: number; modifiedAt: number }> = [];
-    for (const route of ['global', 'eu'] as const) {
+    for (const route of configuredRegions) {
       for (const path of (await filesBelow(join(this.options.rootDirectory, 'upload', route)))
         .filter((candidate) => candidate.endsWith('.dmp'))) {
         try {
@@ -176,7 +179,6 @@ export class NativeCrashUploader {
       anonymous = await this.options.refreshAnonymousSession?.().catch(() => null) ?? null;
     }
     if (authenticated?.route !== route && anonymous?.route !== route) return;
-    if (route === 'eu' && !authenticated) return;
     const endpoint = authenticated
       ? `${authenticated.apiBaseUrl}/telemetry/crashes`
       : `${this.options.globalApiBaseUrl}/telemetry/crashes/anonymous`;

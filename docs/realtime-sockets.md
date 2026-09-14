@@ -714,8 +714,6 @@ what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
-## Changelog
-
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
 An appearance query flag caused installed desktop validation to block the entire

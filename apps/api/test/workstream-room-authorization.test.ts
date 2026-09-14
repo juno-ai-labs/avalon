@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,7 +131,7 @@ function fakeSocket(userId: string): FakeSocket {
 function roomFor(
   database: DatabaseSync,
   sockets: FakeSocket[] = [],
-  region: "global" | "eu" = "global",
+  region: string = "global",
 ): SubstreamAgent {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
@@ -571,16 +572,16 @@ describe("what authority the product API accepts", () => {
   });
 
   it("refuses a connector principal when the workspace is not this region's", async () => {
-    // The room here is the EU deployment; the seeded workspace's row says
+    // The room here is the enterprise deployment; the seeded workspace's row says
     // global. This isolates the `workspace.region` clause — the one that
     // stops a connector principal being honored by an object in the wrong
     // jurisdiction, and the one most tempting to "simplify away" because the
     // product layer re-checks membership without it. The asserted region
     // matches the room's on purpose: without the SQL clause, the membership
     // row alone would admit this request and the equality check would pass.
-    const result = await roomFor(seededDatabase(), [], "eu").handleProductRequest({
+    const result = await roomFor(seededDatabase(), [], "enterprise").handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", region: "eu" }),
+      auth: productAuth({ principal: "connector", region: "enterprise" }),
     });
 
     expect(result.status).toBe(401);
@@ -590,7 +591,7 @@ describe("what authority the product API accepts", () => {
   it("refuses a connector principal that asserts another region", async () => {
     const result = await roomFor(seededDatabase()).handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", region: "eu" }),
+      auth: productAuth({ principal: "connector", region: "enterprise" }),
     });
 
     expect(result.status).toBe(401);

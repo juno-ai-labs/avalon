@@ -86,7 +86,7 @@ Azure itself. Rally's ordinary correctness gates remain in
 The workflow depends on GitHub-hosted Ubuntu runners, GitHub CLI, npm, Cline,
 GitHub pull-request refs, and an Azure AI Foundry OpenAI-compatible endpoint. It
 is repository-scoped rather than regional product infrastructure; Rally's
-Global and EU runtime boundary does not apply.
+configured deployments runtime boundary does not apply.
 
 ## Failure modes and limits
 
@@ -162,8 +162,6 @@ Foundry route does not accept.
 
 Use the Actions run for checkout, installation, endpoint-validation, provider,
 and model errors.
-
-## Changelog
 
 ### 2026-09-08 — Disable three reviewers and adjust Sol's and Terra's budgets
 

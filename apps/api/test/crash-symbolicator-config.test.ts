@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -26,30 +27,20 @@ function symbolicator(configValue: WorkerConfig) {
 }
 
 describe('crash symbolicator deployment', () => {
-  it('isolates telemetry bytes in distinct region-owned R2 buckets', () => {
+  it('isolates telemetry bytes in separate payload and telemetry R2 buckets', () => {
     const globalBuckets = config('wrangler.global.jsonc').r2_buckets ?? [];
-    const euBuckets = config('wrangler.eu.jsonc').r2_buckets ?? [];
 
     expect(globalBuckets).toContainEqual({
       binding: 'TELEMETRY_PAYLOADS',
       bucket_name: 'avalon-global-telemetry',
     });
-    expect(euBuckets).toContainEqual({
-      binding: 'TELEMETRY_PAYLOADS',
-      bucket_name: 'avalon-eu-telemetry',
-      jurisdiction: 'eu',
-    });
     expect(globalBuckets.find(({ binding }) => binding === 'PAYLOADS')?.bucket_name)
       .not.toBe(globalBuckets.find(({ binding }) => binding === 'TELEMETRY_PAYLOADS')?.bucket_name);
-    expect(euBuckets.find(({ binding }) => binding === 'PAYLOADS')?.bucket_name)
-      .not.toBe(euBuckets.find(({ binding }) => binding === 'TELEMETRY_PAYLOADS')?.bucket_name);
   });
 
-  it('deploys distinct non-SSH processor applications with their regional Workers', () => {
+  it('deploys the Global processor application', () => {
     const global = config('wrangler.global.jsonc');
-    const eu = config('wrangler.eu.jsonc');
     const globalProcessor = symbolicator(global);
-    const euProcessor = symbolicator(eu);
 
     expect(globalProcessor).toMatchObject({
       name: 'avalon-global-crash-symbolicator',
@@ -59,18 +50,9 @@ describe('crash symbolicator deployment', () => {
       constraints: { regions: ['ENAM', 'WNAM'] },
       ssh: { enabled: false },
     });
-    expect(euProcessor).toMatchObject({
-      name: 'avalon-eu-crash-symbolicator',
-      image: './crash-symbolicator/Dockerfile',
-      max_instances: 5,
-      instance_type: 'basic',
-      constraints: { jurisdiction: 'eu', regions: ['EEUR', 'WEUR'] },
-      ssh: { enabled: false },
-    });
-    expect(globalProcessor?.name).not.toBe(euProcessor?.name);
   });
 
-  it.each(['wrangler.global.jsonc', 'wrangler.eu.jsonc'])(
+  it.each(['wrangler.global.jsonc'])(
     '%s binds and migrates the processor Durable Object',
     (fileName) => {
       const value = config(fileName);

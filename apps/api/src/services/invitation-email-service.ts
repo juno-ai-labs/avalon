@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { addWorkspaceTarget } from "@rally/contracts";
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
@@ -13,7 +14,7 @@ export interface WorkspaceInvitationEmail {
   workspaceName: string;
   inviterName: string;
   role: "admin" | "member";
-  region: "global" | "eu";
+  region: Region;
   expiresAt: string;
   inviteUrl: string;
   /** A Rally download link, repeatable until the invitation expires, when one was issued. */
@@ -29,7 +30,7 @@ export interface WorkspaceInvitationResolutionEmail {
   inviteeEmail: string;
   inviteeName?: string;
   role: "admin" | "member";
-  region: "global" | "eu";
+  region: Region;
 }
 
 export type InvitationEmailDelivery = "sent" | "skipped";
@@ -40,7 +41,7 @@ export async function sendWorkspaceInvitationEmail(
   request: typeof fetch = fetch,
 ): Promise<InvitationEmailDelivery> {
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
+  const regionLabel = invitation.region;
   const expiration = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "long",
@@ -91,7 +92,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const workspaceName = singleLine(invitation.workspaceName);
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
+  const regionLabel = invitation.region;
   const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
     region: invitation.region,
     workspaceId: invitation.workspaceId,

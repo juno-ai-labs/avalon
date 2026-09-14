@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import type { Region } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
@@ -110,7 +111,7 @@ describe("shared Linear app routing", () => {
       },
     });
     await service.registerConnection(route("global", "workspace-global", "connection-global"));
-    await service.registerConnection(route("eu", "workspace-eu", "connection-eu"));
+    await service.registerConnection(route("enterprise", "workspace-enterprise", "connection-enterprise"));
 
     const delivery = await signedDelivery(ORGANIZATION_ID);
     await expect(service.ingestLinear(delivery.bytes, delivery.headers)).resolves.toEqual({
@@ -118,7 +119,7 @@ describe("shared Linear app routing", () => {
       duplicate: false,
       activityCount: 2,
     });
-    expect(dispatches.map((entry) => entry.region)).toEqual(["eu", "global"]);
+    expect(dispatches.map((entry) => entry.region)).toEqual(["enterprise", "global"]);
     expect(dispatches.every((entry) => bytesEqual(entry.bytes, delivery.bytes))).toBe(true);
   });
 

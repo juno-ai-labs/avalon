@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
@@ -146,7 +147,7 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
   authority_generation: number;
   workspace_id: string;
   workstream_id: string;
-  region: "global" | "eu";
+  region: Region;
   title: string;
   description: string;
   preview: string;
@@ -565,6 +566,16 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE conversation_children ADD COLUMN lifecycle_delivered_version INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE conversation_children ADD COLUMN lifecycle_not_before INTEGER NOT NULL DEFAULT 0`,
   ],
+}, { version: 11, description: "allow configured deployment identifiers", statements: [
+  "PRAGMA defer_foreign_keys = ON",
+  "CREATE TABLE \"_region_copy_workstream_metadata\" AS SELECT * FROM \"workstream_metadata\"",
+  "DELETE FROM \"workstream_metadata\"",
+  "DROP TABLE \"workstream_metadata\"",
+  "CREATE TABLE workstream_metadata (\n      id INTEGER PRIMARY KEY CHECK (id = 1),\n      workspace_id TEXT NOT NULL,\n      workstream_id TEXT NOT NULL UNIQUE,\n      region TEXT NOT NULL,\n      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),\n      revision INTEGER NOT NULL DEFAULT 0,\n      title TEXT NOT NULL,\n      description TEXT NOT NULL,\n      preview TEXT NOT NULL,\n      email_address TEXT,\n      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),\n      exact_state TEXT NOT NULL CHECK (exact_state IN (\n        'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',\n        'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',\n        'idle', 'archived', 'deleting', 'restoring'\n      )),\n      origin_type TEXT NOT NULL DEFAULT 'ad_hoc'\n        CHECK (origin_type IN ('ad_hoc', 'automation')),\n      created_by_user_id TEXT,\n      automation_subscription_id TEXT,\n      automation_run_id TEXT,\n      planned_for INTEGER CHECK (planned_for IS NULL OR planned_for >= 0),\n      title_status TEXT NOT NULL DEFAULT 'settled'\n        CHECK (title_status IN ('naming', 'automatic', 'settled')),\n      system_kind TEXT CHECK (system_kind IS NULL OR system_kind = 'digest'),\n      last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= 0),\n      completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),\n      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),\n      latest_attention_ordinal INTEGER NOT NULL DEFAULT 0\n        CHECK (latest_attention_ordinal >= 0),\n      unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0\n        CHECK (unread_tracking_start_ordinal >= 0),\n      next_wakeup_due_at INTEGER CHECK (next_wakeup_due_at IS NULL OR next_wakeup_due_at >= 0),\n      next_wakeup_prompt TEXT,\n      next_terminal_action_at INTEGER\n        CHECK (next_terminal_action_at IS NULL OR next_terminal_action_at >= 0),\n      source_created_at INTEGER NOT NULL DEFAULT 0 CHECK (source_created_at >= 0),\n      source_updated_at INTEGER NOT NULL DEFAULT 0 CHECK (source_updated_at >= 0),\n      created_at INTEGER NOT NULL,\n      updated_at INTEGER NOT NULL\n    ) STRICT",
+  "INSERT INTO \"workstream_metadata\" SELECT * FROM \"_region_copy_workstream_metadata\"",
+  "DROP TABLE \"_region_copy_workstream_metadata\"",
+  "PRAGMA defer_foreign_keys = OFF"
+]
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {

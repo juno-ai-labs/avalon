@@ -52,8 +52,6 @@ and run queries. This matters when authoring happens in a different window: its
 local query cache cannot invalidate the library's cache. The existing workspace
 push supplies that signal without an additional broadcast channel or polling.
 
-## How it works
-
 ### The topology
 
 ```text
@@ -389,7 +387,6 @@ move WorkspaceDO or dictation transport into Node.
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
-
 The broker tests use a socket factory double because they prove Electron
 ownership and event routing, not workerd behavior. Upgrade construction and
 hibernation assertions belong in `apps/api/test-workers/`; Node's `Response`
@@ -414,10 +411,10 @@ after a send, not to verify socket or WorkspaceDO command admission.
 ## Regional impact
 
 The renderer obtains ticket URLs from the workspace's existing regional API
-client, and main accepts only origins derived from the configured Global and EU
+client, and main accepts only origins derived from the configured configured deployments
 API base URLs. The broker neither chooses nor changes a workspace's region. The
 regional Worker verifies the ticket's region before resolving the Durable Object
-binding, and no socket payload crosses between Global and EU.
+binding, and no socket payload crosses between configured deployments.
 
 ## Security and trust model
 
@@ -476,8 +473,6 @@ uses platform resources. The selection policy bounds recency to five unpinned
 rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
-## Changelog
-
 ### 2026-09-10 — The feed hook paints from the local cache and treats a seed as no opening
 
 **What changed:** `useWorkstreamSocket` reads the conversation's row from the
@@ -522,7 +517,6 @@ while successful completion promotes the same sockets. The speculative flag does
 not omit transcript data: it suppresses viewing effects, so background freshness
 still uses the normal snapshot path.
 
-
 ### 2026-09-09 — Overlap cold-open workspace and conversation admission
 
 Workspace details previously blocked the workspace socket, and the shell then
@@ -535,7 +529,6 @@ A mounted feed consumer, rather than a route alone, now admits viewing, so an
 opening deep link cannot mark unread work viewed behind a loading/onboarding
 screen. Account/workspace changes still tear down the complete connection scope.
 
-
 ### 2026-09-08 — Ignore protocol additions at every receive boundary
 
 Unknown event types are no-ops on workspace, control, conversation, and dictation
@@ -543,7 +536,6 @@ streams. The shared receive parser strips additive fields while preserving known
 field validation; outgoing and stored schemas remain strict. Ticket URLs and
 broker handshakes discard query configuration, so a new metadata capability can
 no longer prevent the entire connection from opening. Appearance is unconditional.
-
 
 ### 2026-09-08 — Refresh Sidekick surfaces through workspace synchronization
 

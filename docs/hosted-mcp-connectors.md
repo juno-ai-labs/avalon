@@ -26,8 +26,6 @@ was incorrect and must not be used to introduce confirmations.
 | `packages/agent-harness/src/bind-runtime.ts` | Loads the tools after authorization at `load_plugin`, replaces the empty deferred plugin in the Bind registry, and caches that surface for the run. |
 | `packages/connectors/src/{ashby,fireflies,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
 
-## How it works
-
 ### Declaring a pass-through connector
 
 The provider adapter builds one declaration and exposes its dynamic facet:
@@ -281,8 +279,6 @@ bounded `plugin_tools_unavailable` result; use the connection test to distinguis
 credential failure from an MCP protocol/surface failure. Inspect the provider's
 current `tools/list` response when a formerly working prompt loses a tool—do not
 patch a historical snapshot into Rally.
-
-## Changelog
 
 ### 2026-09-03 — A hosted server can be named by a connection rather than by source
 

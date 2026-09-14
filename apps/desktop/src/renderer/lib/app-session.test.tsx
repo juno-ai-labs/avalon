@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -88,21 +89,21 @@ const rememberedRows = defineLocalCacheSlice<{ remembered: boolean }>({
     : null,
 });
 
-const euSession: DesktopSession = {
+const enterpriseSession: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
   expiresAt: futureExpiry,
-  apiBaseUrl: 'https://eu.api.rallywith.ai',
+  apiBaseUrl: 'https://enterprise.api.rallywith.ai',
   user: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee' },
   workspace: {
-    id: 'workspace-eu',
+    id: 'workspace-enterprise',
     name: 'European Research',
-    region: 'eu',
+    region: 'enterprise',
     role: 'member',
   },
 };
 
 const globalIdentitySession: DesktopSession = {
-  ...euSession,
+  ...enterpriseSession,
   apiBaseUrl: 'https://api.rallywith.ai',
   workspace: null,
 };
@@ -191,7 +192,7 @@ function resetDesktopBridge(): void {
     platform: 'darwin',
     api: {
       global: 'https://api.rallywith.ai',
-      eu: 'https://eu.api.rallywith.ai',
+      enterprise: 'https://enterprise.api.rallywith.ai',
     },
     webBaseUrl: 'https://rallywith.ai',
     devAuthEnabled: false,
@@ -260,7 +261,7 @@ describe('single-platform desktop identity routing', () => {
   beforeEach(resetDesktopBridge);
 
   it('accepts a callback only from the Global identity service', async () => {
-    window.localStorage.setItem('rally:selected-region', 'eu');
+    window.localStorage.setItem('rally:selected-region', 'enterprise');
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
     await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`);
@@ -282,13 +283,13 @@ describe('single-platform desktop identity routing', () => {
   );
 
   it('signs the account in from an active workspace and settles once the browser callback has landed', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     // Main answers a reconnect under an active workspace with that same session.
-    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     const beginGoogleLogin = vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     client.setQueryData(WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY, { identity: 'reconnect_required' });
 
     let settled = false;
@@ -316,17 +317,17 @@ describe('single-platform desktop identity routing', () => {
 
     expect(settled).toBe(true);
     expect(client.getQueryState(WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY)?.isInvalidated).toBe(true);
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
   });
 
   it('lands a switch that had to sign the account in first, and tells the row about the detour', async () => {
     const nextSession: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
-      workspace: { ...euSession.workspace!, id: 'workspace-global', name: 'Global Studio', region: 'global' },
+      workspace: { ...enterpriseSession.workspace!, id: 'workspace-global', name: 'Global Studio', region: 'global' },
     };
-    bridge.getSession.mockResolvedValue(euSession);
-    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace
       .mockRejectedValueOnce(missingIdentity())
       .mockResolvedValueOnce(nextSession);
@@ -337,7 +338,7 @@ describe('single-platform desktop identity routing', () => {
       currentUser: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee', timezone: 'America/New_York', role: 'member' },
     });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const onSignInRequired = vi.fn();
     let landed = false;
@@ -347,7 +348,7 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledOnce());
     expect(bridge.activateWorkspace).toHaveBeenCalledTimes(1);
     expect(landed).toBe(false);
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(ticketCallback);
     await act(async () => { await activation; });
@@ -362,12 +363,12 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('fails the waiting switch with the sign-in failure when the browser callback reports one', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const failure = observedActivateWorkspace!('global', 'workspace-global', undefined, { onSignInRequired: vi.fn() })
       .then(() => null, (error: unknown) => error);
@@ -381,16 +382,16 @@ describe('single-platform desktop identity routing', () => {
     // The row shows it; the window does not also raise a dialog for it.
     expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
     expect(bridge.activateWorkspace).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
   });
 
   it('reports a sign-in that never reached the browser under the row, not as a workspace outage', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockRejectedValue(new Error('Google authentication is not configured'));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const onSignInRequired = vi.fn();
     const error = await observedActivateWorkspace!('global', 'workspace-global', undefined, { onSignInRequired })
@@ -405,15 +406,15 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('stands an earlier sign-in waiter down when a newer sign-in is started', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
-    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.createDesktopAuthAttempt
       .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
       .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const first = observedReconnectAccount!();
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(1));
@@ -427,19 +428,19 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('lets a callback from a superseded attempt say nothing to the sign-in now waiting', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.createDesktopAuthAttempt
       .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
       .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
     // Main honours only the newest attempt: the earlier tab's ticket is refused.
     bridge.exchangeDesktopTicket.mockImplementation(async ({ attemptId }: { attemptId: string }) => {
       if (attemptId !== 'b'.repeat(43)) throw new Error('This sign-in attempt expired. Start sign-in again.');
-      return euSession;
+      return enterpriseSession;
     });
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const first = observedReconnectAccount!();
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(1));
@@ -461,7 +462,7 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('stands the earlier waiter down as soon as main honours a newer attempt, even when the browser never opens', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.createDesktopAuthAttempt
       .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
       .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
@@ -469,7 +470,7 @@ describe('single-platform desktop identity routing', () => {
       .mockResolvedValueOnce('https://accounts.google.com/o/oauth2/v2/auth?state=opaque')
       .mockRejectedValueOnce(new Error('Google authentication is not configured'));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const first = observedReconnectAccount!();
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledTimes(1));
@@ -485,9 +486,9 @@ describe('single-platform desktop identity routing', () => {
   it('keeps the newer activation\'s mark when the earlier one it superseded unwinds', async () => {
     const workspaceGlobal = 'workspace-global';
     const activated: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
-      workspace: { ...euSession.workspace!, id: workspaceGlobal, name: 'Global Studio', region: 'global' },
+      workspace: { ...enterpriseSession.workspace!, id: workspaceGlobal, name: 'Global Studio', region: 'global' },
     };
     const record = {
       id: workspaceGlobal, name: 'Global Studio', region: 'global' as const, timezone: 'America/New_York',
@@ -497,8 +498,8 @@ describe('single-platform desktop identity routing', () => {
     const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace').mockImplementation(
       () => new Promise((resolve) => { resolveRecord = resolve; }),
     );
-    bridge.getSession.mockResolvedValue(euSession);
-    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.createDesktopAuthAttempt
       .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
       .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
@@ -514,7 +515,7 @@ describe('single-platform desktop identity routing', () => {
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     const first = observedActivateWorkspace!('global', workspaceGlobal, undefined, { onSignInRequired: vi.fn() })
       .then(() => null, (error: unknown) => error);
@@ -531,7 +532,7 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(getWorkspace).toHaveBeenCalledTimes(1));
     // The early announcement did not take the previous workspace down: the
     // superseded attempt's unwinding left the newer attempt's mark in place.
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
     await act(async () => { resolveRecord(record); await second; });
 
     expect(await screen.findByText('global:Global Studio')).toBeVisible();
@@ -541,17 +542,17 @@ describe('single-platform desktop identity routing', () => {
   it('signs in in place for an addressed link into another workspace, and opens it once the sign-in lands', async () => {
     const workspaceGlobal = '00000000-0000-7000-8000-000000000030';
     const activated: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
-      workspace: { ...euSession.workspace!, id: workspaceGlobal, name: 'Global Studio', region: 'global' },
+      workspace: { ...enterpriseSession.workspace!, id: workspaceGlobal, name: 'Global Studio', region: 'global' },
     };
-    bridge.getSession.mockResolvedValue(euSession);
-    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity()).mockResolvedValueOnce(activated);
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(`rallywithai://workspace/global/${workspaceGlobal}/workstreams/00000000-0000-7000-8000-000000000031`);
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledOnce());
@@ -568,13 +569,13 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('abandons the action waiting on a sign-in, and still keeps the sign-in that then lands', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
-    bridge.exchangeDesktopTicket.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
+    bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
     vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     client.setQueryData(WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY, { identity: 'reconnect_required' });
 
     const activation = observedActivateWorkspace!('global', 'workspace-global', undefined, { onSignInRequired: vi.fn() })
@@ -596,19 +597,19 @@ describe('single-platform desktop identity routing', () => {
 
   it('moves to the next stored workspace after active membership is revoked', async () => {
     const nextSession: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
       workspace: {
-        ...euSession.workspace!,
+        ...enterpriseSession.workspace!,
         id: 'workspace-global',
         name: 'Global Studio',
         region: 'global',
       },
     };
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.surrenderActiveWorkspace.mockResolvedValue(nextSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await act(async () => { await observedSurrenderActiveWorkspace?.(); });
 
@@ -668,7 +669,7 @@ describe('single-platform desktop identity routing', () => {
       platform: 'darwin',
       api: {
         global: 'https://api.rallywith.ai',
-        eu: 'https://eu.api.rallywith.ai',
+        enterprise: 'https://enterprise.api.rallywith.ai',
       },
       webBaseUrl: 'https://rallywith.ai',
       devAuthEnabled: false,
@@ -775,7 +776,7 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('keeps the session when an unauthorized read leaves the native credential intact', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.hasStoredCredential.mockResolvedValue(true);
 
     renderProvider();
@@ -787,7 +788,7 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('drops the session when an unauthorized read follows a surrendered credential', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.hasStoredCredential.mockResolvedValue(false);
 
     renderProvider();
@@ -828,7 +829,7 @@ describe('single-platform desktop identity routing', () => {
   it('rejects a regional authentication callback instead of creating a second login surface', async () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
-    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=eu&attempt=${'a'.repeat(43)}`);
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=enterprise&attempt=${'a'.repeat(43)}`);
 
     expect(bridge.exchangeDesktopTicket).not.toHaveBeenCalled();
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('identity service');
@@ -839,11 +840,11 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
     await dispatchDeepLink(
-      'rallywithai://invitations/accept?token=private-invitation-token-long-enough&region=eu',
+      'rallywithai://invitations/accept?token=private-invitation-token-long-enough&region=enterprise',
     );
 
     expect(await screen.findByText('global:invite')).toBeVisible();
-    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.rallywith.ai');
+    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://enterprise.api.rallywith.ai');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workspace-onboarding'] });
     invalidate.mockRestore();
@@ -851,19 +852,19 @@ describe('single-platform desktop identity routing', () => {
 
   it('previews a cross-region invitation on its own API without moving the active session', async () => {
     const globalSession: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
-      workspace: { ...euSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
+      workspace: { ...enterpriseSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
     };
     bridge.getSession.mockResolvedValue(globalSession);
     renderProvider();
     expect(await screen.findByText('global:Global Research')).toBeVisible();
     await dispatchDeepLink(
-      'rallywithai://invitations/accept?token=private-invitation-token-long-enough&region=eu',
+      'rallywithai://invitations/accept?token=private-invitation-token-long-enough&region=enterprise',
     );
 
     expect(await screen.findByText('global:invite')).toBeVisible();
-    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.rallywith.ai');
+    expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://enterprise.api.rallywith.ai');
     expect(readDevicePreferences().selectedRegion).toBe('global');
   });
 
@@ -874,8 +875,8 @@ describe('single-platform desktop identity routing', () => {
     const signedOutApi = observedApi;
 
     client.setQueryData(['private-workspace-data'], 'signed-out-cache');
-    act(() => sessionListener?.(euSession));
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    act(() => sessionListener?.(enterpriseSession));
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     expect(client.getQueryData(['private-workspace-data'])).toBeUndefined();
     expect(observedApi).not.toBe(signedOutApi);
 
@@ -888,15 +889,15 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('preserves cached and transient API state across routine access-token rotation', async () => {
-    bridge.getSession.mockResolvedValueOnce(euSession);
+    bridge.getSession.mockResolvedValueOnce(enterpriseSession);
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await waitFor(() => expect(sessionListener).not.toBeNull());
     const initialApi = observedApi;
     client.setQueryData(['private-workspace-data'], 'still-mounted');
 
     const refreshedSession: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       accessToken: 'rotated-access-token-longer-than-twenty-characters',
       expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     };
@@ -921,7 +922,7 @@ describe('single-platform desktop identity routing', () => {
     const now = new Date('2026-08-07T12:00:00.000Z');
     vi.setSystemTime(now);
     const initialSession: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       accessToken: 'initial-scheduled-access-token-longer-than-twenty-characters',
       expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(),
     };
@@ -937,7 +938,7 @@ describe('single-platform desktop identity routing', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
     const initialApi = observedApi;
     client.setQueryDefaults(['private-workspace-data'], { gcTime: Infinity });
     client.setQueryData(['private-workspace-data'], 'still-mounted');
@@ -963,12 +964,12 @@ describe('single-platform desktop identity routing', () => {
 
   it('clears cached data and replaces the API client after a role-only demotion', async () => {
     const adminSession: DesktopSession = {
-      ...euSession,
-      workspace: { ...euSession.workspace!, role: 'admin' },
+      ...enterpriseSession,
+      workspace: { ...enterpriseSession.workspace!, role: 'admin' },
     };
     bridge.getSession.mockResolvedValueOnce(adminSession);
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await waitFor(() => expect(sessionListener).not.toBeNull());
     expect(screen.getByTestId('session-role')).toHaveTextContent('admin');
     const adminApi = observedApi;
@@ -1011,7 +1012,7 @@ describe('single-platform desktop identity routing', () => {
 
   it('activates the connector attempt workspace before applying its completion', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000019';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
@@ -1022,7 +1023,7 @@ describe('single-platform desktop identity routing', () => {
       },
     });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${targetWorkspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=granola`,
@@ -1085,16 +1086,16 @@ describe('single-platform desktop identity routing', () => {
 
   it('keeps the route when the chosen workspace is the one already open', async () => {
     window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000034';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
-    bridge.activateWorkspace.mockResolvedValueOnce({ ...euSession, accessToken: 'renewed-access-token-longer-than-twenty' });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({ ...enterpriseSession, accessToken: 'renewed-access-token-longer-than-twenty' });
     const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace').mockResolvedValue({
-      id: 'workspace-eu', name: 'European Research', region: 'eu', timezone: 'Europe/Berlin',
+      id: 'workspace-enterprise', name: 'European Research', region: 'enterprise', timezone: 'Europe/Berlin',
       currentUser: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee', timezone: 'Europe/Berlin', role: 'member' },
     });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
-    await act(async () => { await observedActivateWorkspace!('eu', 'workspace-eu'); });
+    await act(async () => { await observedActivateWorkspace!('enterprise', 'workspace-enterprise'); });
 
     expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000034');
     getWorkspace.mockRestore();
@@ -1177,18 +1178,18 @@ describe('single-platform desktop identity routing', () => {
   it.each([
     {
       name: 'work-stream',
-      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
       assertDestination: async () => expect(window.location.hash)
         .toBe('#/workstreams/00000000-0000-7000-8000-000000000031'),
     },
     {
       name: 'settings',
-      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/settings/connections',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/settings/connections',
       assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
     },
     {
       name: 'automation',
-      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/automations/new',
+      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/automations/new',
       // Lands where drafting happens now that the builder is gone. What this
       // case is really about is the workspace activation before the hop, which
       // is unchanged: the link still addresses a workspace, and that workspace
@@ -1197,19 +1198,19 @@ describe('single-platform desktop identity routing', () => {
     },
     {
       name: 'connector result',
-      url: `rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&attempt=${'a'.repeat(43)}&provider=google`,
+      url: `rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&attempt=${'a'.repeat(43)}&provider=google`,
       assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
     },
   ])('activates an addressed $name link from an identity-only session', async ({ url, assertDestination }) => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValue({
-      ...euSession,
+      ...enterpriseSession,
       expiresAt: futureExpiry,
       workspace: {
         id: targetWorkspaceId,
         name: 'Addressed Workspace',
-        region: 'eu',
+        region: 'enterprise',
         role: 'member',
       },
     });
@@ -1219,7 +1220,7 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink(url);
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
-      region: 'eu',
+      region: 'enterprise',
       workspaceId: targetWorkspaceId,
     }));
     await assertDestination();
@@ -1231,7 +1232,7 @@ describe('single-platform desktop identity routing', () => {
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
     const activations: Array<{ resolve: (session: DesktopSession) => void }> = [];
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockImplementation(() => new Promise<DesktopSession>((resolve) => {
       activations.push({ resolve });
     }));
@@ -1245,7 +1246,7 @@ describe('single-platform desktop identity routing', () => {
       mainActiveSession?.workspace?.id === target.workspaceId ? mainActiveSession : null
     ));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
@@ -1275,7 +1276,7 @@ describe('single-platform desktop identity routing', () => {
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
     const childId = '00000000-0000-7000-8000-000000000099';
     const activations: Array<{ resolve: (session: DesktopSession) => void }> = [];
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockImplementation(() => new Promise<DesktopSession>((resolve) => {
       activations.push({ resolve });
     }));
@@ -1289,7 +1290,7 @@ describe('single-platform desktop identity routing', () => {
       mainActiveSession?.workspace?.id === target.workspaceId ? mainActiveSession : null
     ));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
@@ -1315,10 +1316,10 @@ describe('single-platform desktop identity routing', () => {
 
   it('continues serialized deep-link delivery after one action rejects', async () => {
     const workstreamId = '00000000-0000-7000-8000-000000000036';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.openSettings.mockRejectedValueOnce(new Error('Settings could not be opened'));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink('rallywithai://settings/connections');
     await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
@@ -1329,27 +1330,27 @@ describe('single-platform desktop identity routing', () => {
   it('does not apply a connector result when its workspace cannot be activated', async () => {
     const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000025';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${targetWorkspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=notion`,
     );
 
     await waitFor(() => expect(lastDeepLinkFailure()).toContain('access'));
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['connections'] });
     invalidate.mockRestore();
   });
 
   it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     const before = window.location.hash;
 
     await dispatchDeepLink(
@@ -1366,13 +1367,13 @@ describe('single-platform desktop identity routing', () => {
 
   it('accepts a regional server-owned connector result and surfaces denial', async () => {
     bridge.getSession.mockResolvedValueOnce({
-      ...euSession,
+      ...enterpriseSession,
       expiresAt: futureExpiry,
     });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await dispatchDeepLink(
-      `rallywithai://auth/complete?provider=linear&region=eu&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
+      `rallywithai://auth/complete?provider=linear&region=enterprise&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
     );
 
     expect(lastDeepLinkFailure()).toContain('Linear authorization was cancelled');
@@ -1404,11 +1405,11 @@ describe('single-platform desktop identity routing', () => {
 
   it('rejects a connector result from a different regional server', async () => {
     bridge.getSession.mockResolvedValueOnce({
-      ...euSession,
+      ...enterpriseSession,
       expiresAt: futureExpiry,
     });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await dispatchDeepLink(
       `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
@@ -1418,7 +1419,7 @@ describe('single-platform desktop identity routing', () => {
 
   it('consumes a Slack link token only through the authenticated regional session', async () => {
     bridge.getSession.mockResolvedValueOnce({
-      ...euSession,
+      ...enterpriseSession,
       expiresAt: futureExpiry,
     });
     bridge.openSettings.mockResolvedValueOnce(undefined);
@@ -1442,7 +1443,7 @@ describe('single-platform desktop identity routing', () => {
         attemptId: 'b'.repeat(43),
       }), { status: 200, headers: { 'content-type': 'application/json' } }));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
@@ -1450,12 +1451,12 @@ describe('single-platform desktop identity routing', () => {
     const [previewUrl, previewInit] = fetchRequest.mock.calls[0]!;
     const [linkUrl, linkInit] = fetchRequest.mock.calls[1]!;
     const [startUrl, startInit] = fetchRequest.mock.calls[2]!;
-    expect(previewUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link/preview');
-    expect(linkUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link');
+    expect(previewUrl).toBe('https://enterprise.api.rallywith.ai/connections/slack/link/preview');
+    expect(linkUrl).toBe('https://enterprise.api.rallywith.ai/connections/slack/link');
     expect(startUrl).toBe(
-      'https://eu.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2',
+      'https://enterprise.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2',
     );
-    expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
+    expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${enterpriseSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(JSON.parse(String(startInit?.body))).toMatchObject({ scope: 'personal' });
@@ -1520,7 +1521,7 @@ describe('single-platform desktop identity routing', () => {
   it('keeps the link when the personal Slack authorization cannot be started', async () => {
     // The link committed and is useful on its own, so the failure is reported
     // without retracting what already succeeded.
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.openSettings.mockResolvedValueOnce(undefined);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const fetchRequest = vi.spyOn(globalThis, 'fetch')
@@ -1539,7 +1540,7 @@ describe('single-platform desktop identity routing', () => {
         headers: { 'content-type': 'application/json' },
       }));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
@@ -1552,7 +1553,7 @@ describe('single-platform desktop identity routing', () => {
 
   it('does not consume a Slack link token when the user rejects its identity preview', async () => {
     bridge.getSession.mockResolvedValueOnce({
-      ...euSession,
+      ...enterpriseSession,
       expiresAt: futureExpiry,
     });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
@@ -1562,7 +1563,7 @@ describe('single-platform desktop identity routing', () => {
       workspaceName: 'Acme',
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
@@ -1621,7 +1622,7 @@ describe('single-platform desktop identity routing', () => {
 
   it('activates a workspace-addressed settings destination before opening it', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000026';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
@@ -1632,7 +1633,7 @@ describe('single-platform desktop identity routing', () => {
       },
     });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${targetWorkspaceId}/settings/digest`,
@@ -1646,16 +1647,16 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('preserves a pending connector attempt while another workspace is active', async () => {
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await waitFor(() => expect(observedSetPendingConnectorOAuth).not.toBeNull());
 
     act(() => observedSetPendingConnectorOAuth?.({
       attemptId: 'a'.repeat(43),
       provider: 'slack',
-      region: 'eu',
-      workspaceId: euSession.workspace!.id,
+      region: 'enterprise',
+      workspaceId: enterpriseSession.workspace!.id,
     }));
     expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('a'.repeat(43));
 
@@ -1670,18 +1671,18 @@ describe('single-platform desktop identity routing', () => {
     }));
 
     expect(await screen.findByText('global:Workspace B')).toBeVisible();
-    expect(observedPendingConnectorOAuth?.workspaceId).toBe(euSession.workspace!.id);
+    expect(observedPendingConnectorOAuth?.workspaceId).toBe(enterpriseSession.workspace!.id);
     expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('a'.repeat(43));
   });
 
   it('distinguishes a retryable workspace activation outage from denied access', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000038';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(
       new Error('Rally could not reach the selected regional service.'),
     );
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     const before = window.location.hash;
 
     await dispatchDeepLink(
@@ -1691,7 +1692,7 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(lastDeepLinkFailure()).toContain('Check your connection'));
     expect(lastDeepLinkFailure()).toContain('reopen this link');
     expect(window.location.hash).toBe(before);
-    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(screen.getByText('enterprise:European Research')).toBeVisible();
   });
 
   it('opens a link to the active workspace without re-activating it', async () => {
@@ -1723,14 +1724,14 @@ describe('single-platform desktop identity routing', () => {
 
   it('activates a workspace that is not the active one, even when its credential is stored', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000045';
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: { id: targetWorkspaceId, name: 'Fresh Workspace', region: 'global', role: 'member' },
     });
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    client.setQueryData(['members'], ['from-eu']);
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    client.setQueryData(['members'], ['from-enterprise']);
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000046`,
@@ -1748,18 +1749,18 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('keeps the query cache when a same-workspace session is applied', async () => {
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValueOnce({
-      ...euSession,
+      ...enterpriseSession,
       accessToken: 'renewed-token-longer-than-twenty-characters',
       expiresAt: futureExpiry,
     });
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     client.setQueryData(['members'], ['cached']);
 
     await act(async () => {
-      await observedActivateWorkspace!('eu', euSession.workspace!.id);
+      await observedActivateWorkspace!('enterprise', enterpriseSession.workspace!.id);
     });
 
     await waitFor(() => expect(screen.getByTestId('session-token'))
@@ -1768,13 +1769,13 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('clears the query cache when a sign-in completes for another account', async () => {
-    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.exchangeDesktopTicket.mockResolvedValueOnce({
       ...globalIdentitySession,
       user: { id: 'user-2', email: 'other@example.com', name: 'Other' },
     });
     const client = renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     client.setQueryData(['members'], ['first-account']);
 
     await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'d'.repeat(43)}`);
@@ -1907,23 +1908,23 @@ describe('draft cache lifetime across a session', () => {
   });
 
   it('keeps the drafts a previous run left behind when a session arrives', async () => {
-    await writeDraftText('new-workstream:workspace-eu', 'written before the last quit');
-    bridge.getSession.mockResolvedValue(euSession);
+    await writeDraftText('new-workstream:workspace-enterprise', 'written before the last quit');
+    bridge.getSession.mockResolvedValue(enterpriseSession);
 
     renderProvider();
 
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await waitFor(() => expect(observedApi).not.toBeNull());
     await waitFor(async () => expect((await readDraftText(
-      newWorkstreamDraftKey('eu', 'workspace-eu'),
+      newWorkstreamDraftKey('enterprise', 'workspace-enterprise'),
     ))?.text).toBe('written before the last quit'));
   });
 
   it('drops every draft when the session ends without going through signOut', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    const draftKey = workstreamDraftKey('eu', 'workspace-eu', '1');
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const draftKey = workstreamDraftKey('enterprise', 'workspace-enterprise', '1');
     await writeDraftText(draftKey, 'half a thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
@@ -1934,9 +1935,9 @@ describe('draft cache lifetime across a session', () => {
   });
 
   it('abandons an opening attempt when the session that owns it ends', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     await waitFor(() => expect(sessionListener).not.toBeNull());
     const workstreamId = '00000000-0000-4000-8000-000000000213';
     const operationId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
@@ -1955,10 +1956,10 @@ describe('draft cache lifetime across a session', () => {
   });
 
   it('drops every remembered conversation when the session ends without going through signOut', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    const scope = localCacheScope('user-1', 'eu', 'workspace-eu');
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const scope = localCacheScope('user-1', 'enterprise', 'workspace-enterprise');
     await rememberedRows.write(scope, 'ws:0', { remembered: true });
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
@@ -1968,27 +1969,27 @@ describe('draft cache lifetime across a session', () => {
   });
 
   it('drops every remembered conversation when another account takes over the device', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    const scope = localCacheScope('user-1', 'eu', 'workspace-eu');
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const scope = localCacheScope('user-1', 'enterprise', 'workspace-enterprise');
     await rememberedRows.write(scope, 'ws:0', { remembered: true });
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
     act(() => sessionListener?.({
-      ...euSession,
-      user: { ...euSession.user, id: 'user-2', email: 'another@example.com' },
+      ...enterpriseSession,
+      user: { ...enterpriseSession.user, id: 'user-2', email: 'another@example.com' },
     }));
 
     await waitFor(async () => expect(await rememberedRows.read(scope, 'ws:0')).toBeNull());
   });
 
   it('forgets a workspace the account is refused when activating it fails, and keeps the active one', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     const refused = localCacheScope('user-1', 'global', 'workspace-global');
-    const active = localCacheScope('user-1', 'eu', 'workspace-eu');
+    const active = localCacheScope('user-1', 'enterprise', 'workspace-enterprise');
     await rememberedRows.write(refused, 'ws:0', { remembered: true });
     await rememberedRows.write(active, 'ws:0', { remembered: true });
     await waitFor(() => expect(observedActivateWorkspace).not.toBeNull());
@@ -2001,16 +2002,16 @@ describe('draft cache lifetime across a session', () => {
   });
 
   it('drops every draft when another account takes over the device', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    const draftKey = workstreamDraftKey('eu', 'workspace-eu', '1');
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const draftKey = workstreamDraftKey('enterprise', 'workspace-enterprise', '1');
     await writeDraftText(draftKey, 'half a thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
     act(() => sessionListener?.({
-      ...euSession,
-      user: { ...euSession.user, id: 'user-2', email: 'another@example.com' },
+      ...enterpriseSession,
+      user: { ...enterpriseSession.user, id: 'user-2', email: 'another@example.com' },
     }));
 
     await waitFor(async () => expect(await readDraftText(draftKey)).toBeNull());
@@ -2018,47 +2019,47 @@ describe('draft cache lifetime across a session', () => {
 
   it('preserves both workspace draft scopes while switching within one account', async () => {
     const globalSession: DesktopSession = {
-      ...euSession,
+      ...enterpriseSession,
       apiBaseUrl: 'https://api.rallywith.ai',
-      workspace: { ...euSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
+      workspace: { ...enterpriseSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
     };
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    const euDraft = workstreamDraftKey('eu', 'workspace-eu', '1');
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const enterpriseDraft = workstreamDraftKey('enterprise', 'workspace-enterprise', '1');
     const globalDraft = workstreamDraftKey('global', 'workspace-global', '2');
-    await writeDraftText(euDraft, 'eu thought');
+    await writeDraftText(enterpriseDraft, 'enterprise thought');
     await writeDraftText(globalDraft, 'global thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
     act(() => sessionListener?.(globalSession));
 
     expect(await screen.findByText('global:Global Research')).toBeVisible();
-    expect((await readDraftText(euDraft))?.text).toBe('eu thought');
+    expect((await readDraftText(enterpriseDraft))?.text).toBe('enterprise thought');
     expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });
 
   it('clears only the departed workspace draft scope after leave succeeds', async () => {
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.leaveWorkspace.mockResolvedValue({ outcome: 'left' });
     renderProvider();
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
-    const euDraft = workstreamDraftKey('eu', 'workspace-eu', '1');
-    const globalDraft = workstreamDraftKey('global', 'workspace-eu', '2');
-    await writeDraftText(euDraft, 'eu thought');
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const enterpriseDraft = workstreamDraftKey('enterprise', 'workspace-enterprise', '1');
+    const globalDraft = workstreamDraftKey('global', 'workspace-enterprise', '2');
+    await writeDraftText(enterpriseDraft, 'enterprise thought');
     await writeDraftText(globalDraft, 'global thought');
     await waitFor(() => expect(observedLeaveWorkspace).not.toBeNull());
 
     await act(async () => {
-      await observedLeaveWorkspace?.('workspace-eu', 'left');
+      await observedLeaveWorkspace?.('workspace-enterprise', 'left');
     });
 
     expect(bridge.leaveWorkspace).toHaveBeenCalledWith({
       expectedOutcome: 'left',
-      region: 'eu',
-      workspaceId: 'workspace-eu',
+      region: 'enterprise',
+      workspaceId: 'workspace-enterprise',
     });
-    expect(await readDraftText(euDraft)).toBeNull();
+    expect(await readDraftText(enterpriseDraft)).toBeNull();
     expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });
 
@@ -2071,14 +2072,14 @@ describe('draft cache lifetime across a session', () => {
       const draft = useDraftText('workstream:1');
       return <button onClick={() => draft.setText('typed just before signing out')} type="button">type</button>;
     }
-    bridge.getSession.mockResolvedValue(euSession);
+    bridge.getSession.mockResolvedValue(enterpriseSession);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
         <AppSessionProvider><SessionProbe /><ComposerProbe /></AppSessionProvider>
       </QueryClientProvider>,
     );
-    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(await screen.findByText('enterprise:European Research')).toBeVisible();
     // Typed inside the save debounce, so the write is still pending when the
     // session ends and the composer unmounts.
     act(() => screen.getByRole('button', { name: 'type' }).click());

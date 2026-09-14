@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId } from '@rally/contracts';
@@ -45,7 +46,7 @@ describe('superseded product header spellings', () => {
     // to *fail* the region check, or a pre-rename client silently reaches the
     // wrong region's data.
     const mismatched = await app.request('https://api.example.com/health', {
-      headers: { 'x-avalon-region': 'eu' },
+      headers: { 'x-avalon-region': 'enterprise' },
     }, createTestEnv({ AVALON_REGION: 'global', LOG_LEVEL: 'error' }));
     expect(mismatched.status).toBe(409);
   });

@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import { parseThemeChoice, type ThemeChoice } from '../../common/themes';
 import type { Region } from './types';
 
@@ -27,7 +28,7 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
     const workspaceName = candidate['workspaceName'];
     const microphoneDeviceId = candidate['microphoneDeviceId'];
     const theme = parseThemeChoice(candidate['theme']);
-    if (selectedRegion !== undefined && selectedRegion !== 'global' && selectedRegion !== 'eu') return null;
+    if (selectedRegion !== undefined && !isConfiguredRegion(selectedRegion)) return null;
     if (workspaceName !== undefined && typeof workspaceName !== 'string') return null;
     if (microphoneDeviceId !== undefined && typeof microphoneDeviceId !== 'string') return null;
     return {
@@ -59,7 +60,7 @@ export function readDevicePreferences(): DevicePreferences {
   const legacyWorkspaceName = window.localStorage.getItem(LEGACY_WORKSPACE_NAME_STORAGE_KEY)?.trim();
   const migrated: DevicePreferences = {
     version: 1,
-    ...(legacyRegion === 'global' || legacyRegion === 'eu' ? { selectedRegion: legacyRegion } : {}),
+    ...(isConfiguredRegion(legacyRegion) ? { selectedRegion: legacyRegion } : {}),
     ...(legacyWorkspaceName !== undefined ? { workspaceName: legacyWorkspaceName } : {}),
   };
   if (migrated.selectedRegion !== undefined || migrated.workspaceName !== undefined) {

@@ -38,11 +38,11 @@ test('the snapshot name is validated before it names anything', async () => {
   assert.match(workflow, /grep -Eq '\^\[a-z0-9\]\[a-z0-9\._-\]\{0,62\}\$'/u);
 });
 
-test('the adoption pull request can run CI and commits only the two regional configs', async () => {
+test('the adoption pull request can run CI and commits only the configured regional config', async () => {
   const workflow = await readWorkflow();
   // A PR opened with GITHUB_TOKEN starts no workflows; the fallback is explicit
   // so a missing token degrades to a warning in the step summary, not silence.
   assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.TERMINAL_SNAPSHOT_PR_TOKEN \|\| secrets\.GITHUB_TOKEN \}\}/u);
-  assert.match(workflow, /git add apps\/api\/wrangler\.global\.jsonc apps\/api\/wrangler\.eu\.jsonc\n\s+git commit -qm/u);
+  assert.match(workflow, /git add apps\/api\/wrangler\.global\.jsonc\n\s+git commit -qm/u);
   assert.doesNotMatch(workflow, /git commit -a/u);
 });

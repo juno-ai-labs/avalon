@@ -31,7 +31,7 @@ once and passes on a rerun.
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
 | `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
-| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Two real regional Workers under `wrangler dev`, with the local D1 database. |
+| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Configured regional Workers under `wrangler dev`, with the local D1 database. |
 | `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
@@ -888,7 +888,7 @@ touch this area or a change worth making that has not been made.
   production Worker builds behind their configured HTTP routes and works with any
   Node test runner. `scripts/smoke-local.mjs` currently requires a human to have
   started `pnpm dev:api:local` first, which is why it is not in CI; a harness
-  could run both regional Workers in-process and make the smoke check a gate
+  could run the configured regional Workers in-process and make the smoke check a gate
   rather than a manual step.
 
 ## Staging a race against an object operation

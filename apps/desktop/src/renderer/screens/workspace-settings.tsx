@@ -1246,13 +1246,6 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Review workspace details and defaults shared by workspace automations.</p></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <SettingCopy setting={settings.workspaceRegion} />
-                    <span className="settings-row-value">
-                      <strong>{workspace.region === 'eu' ? 'European Union' : 'United States'}</strong>
-                      <Badge>Locked</Badge>
-                    </span>
-                  </div>
-                  <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
                     <span className="settings-row-value"><strong>{workspace.name}</strong></span>
                   </div>

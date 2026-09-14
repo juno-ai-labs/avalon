@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { createHash } from "node:crypto";
 import {
   DEFAULT_WORKSTREAM_ICON_KEY,
@@ -137,7 +138,7 @@ describe("prompt renderers", () => {
               authorType: "human",
               authorName: "Morgan",
               occurredAt: "2026-08-03T00:00:00.000Z",
-              text: "EU card payments are failing again.",
+              text: "enterprise card payments are failing again.",
             },
             {
               authorType: "agent",
@@ -153,7 +154,7 @@ describe("prompt renderers", () => {
             },
           ],
         }),
-        hash: "29b71da8a5eaa754d27b9ac132e7755dfb1a3938642a564cd283d1371f72fb69",
+        hash: "9607124da9ca9a7f6f5d485f68fdd564b89152d9e82536396cf73e63b039ef26",
       },
     };
 
@@ -447,7 +448,7 @@ describe("prompt renderers", () => {
     const long = "m".repeat(MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS + 500);
     const rendered = renderWorkstreamDescriptionMessages({
       title: "Investigate checkout failures",
-      currentDescription: "Find and resolve EU checkout authorization failures.",
+      currentDescription: "Find and resolve enterprise checkout authorization failures.",
       descriptionSource: "derived",
       windowTruncated: true,
       messages: [{

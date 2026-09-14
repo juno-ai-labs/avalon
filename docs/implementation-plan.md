@@ -14,7 +14,7 @@
 
 ## Phase 2 — regional auth and persistence
 
-- [x] Add Global/EU onboarding and region-pinned API selection.
+- [x] Add configured deployment onboarding and region-pinned API selection.
 - [x] Add Google login PKCE, single-use desktop tickets, refresh/logout, workspace bootstrap, and invitation contracts.
 - [x] Add complete D1 migrations, R2 metadata boundaries, repositories, and explicit local seed tooling.
 
@@ -51,12 +51,12 @@
 - [x] Add unit, Worker integration, renderer component, and documented E2E coverage for the PRD flows.
 - [x] Add structured/redacted logging, audit events, health checks, error states, retry bounds, and performance safeguards.
 - [x] Verify install, migrations, typecheck, tests, production builds, Electron packaging, and both Wrangler configurations.
-- [x] Deploy the Global and EU Cloudflare resources, apply regional migrations, and verify infrastructure health.
-- [x] Configure Google OAuth credentials in both regional Workers and verify all hosted identity and connector callback registrations with Google.
+- [x] Deploy the configured deployments Cloudflare resources, apply regional migrations, and verify infrastructure health.
+- [x] Configure Google OAuth credentials in configured regional Workers and verify all hosted identity and connector callback registrations with Google.
 - [ ] Enable the expanded Google APIs, complete consent-screen verification and any required restricted-scope security assessment, and pass both Google preset acceptance flows with a provider test account.
 - [x] Deploy regional GitHub, Linear, and Notion callbacks, webhook ingestion, provider manifests, and Firecrawl secrets.
 - [x] Register the one public GitHub App, install its regional Worker secrets, and verify its registration ping through smart ingress.
-- [ ] Register the one public Linear app and the provider-owned Global/EU Notion apps, then install their generated Worker secrets.
+- [ ] Register the one public Linear app and the provider-owned configured deployment Notion apps, then install their generated Worker secrets.
 - [ ] Complete the human test-account identity, invitation, and connector acceptance flow.
 
 ## Release gates

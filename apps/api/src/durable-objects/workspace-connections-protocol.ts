@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { ConnectorOAuthProviders, IdSchema } from "@rally/contracts";
 import { z } from "zod";
 
@@ -23,7 +24,7 @@ import { z } from "zod";
  */
 
 const TimestampSchema = z.string().datetime({ offset: true });
-const RegionSchema = z.enum(["global", "eu"]);
+
 
 /**
  * The providers the attempt table's CHECK constraint admits.

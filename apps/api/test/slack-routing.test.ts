@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
@@ -11,7 +12,7 @@ import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 interface Route {
   teamId: string;
-  region: "global" | "eu";
+  region: string;
   workspaceId: string;
   connectionId: string;
   status: "active" | "disabled";

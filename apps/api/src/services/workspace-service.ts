@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { PersonalPresentationSchema } from '@rally/contracts';
 import {
   asUserId,
@@ -34,7 +35,7 @@ interface InvitationRow {
   id: string;
   workspace_id: string;
   workspace_name: string;
-  workspace_region: "global" | "eu";
+  workspace_region: Region;
   email: string;
   role: WorkspaceInvitationRole;
   invited_by_name: string;
@@ -98,7 +99,7 @@ export interface ResolvedInvitation {
   id: string;
   workspaceId: string;
   workspaceName: string;
-  region: "global" | "eu";
+  region: Region;
   email: string;
   role: WorkspaceInvitationRole;
   expiresAt: string;
@@ -336,7 +337,7 @@ async function notifyInvitationResolution(
     });
   } catch (error) {
     // `workspace_region`, not `region`: the Global control plane resolves
-    // invitations for EU workspaces, so the two can disagree and the logger
+    // invitations for regional workspaces, so the two can disagree and the logger
     // already records the region the Worker ran in.
     logWarn(env, "invitation_resolution_email_delivery_failed", {
       invitation_id: invitation.id,
@@ -739,7 +740,7 @@ export class WorkspaceService {
     let emailDelivery: InvitationEmailDelivery;
     try {
       // Download redemption only exists on the Global Worker today (see
-      // docs/private-access.md#regional-impact); an EU workspace invitation gets
+      // docs/private-access.md#regional-impact); a regional workspace invitation gets
       // no download link until regional redemption is wired. Issuance stays
       // inside this try so a grant failure rolls back the invitation exactly
       // like an email failure does, rather than orphaning it.
@@ -873,7 +874,7 @@ export class WorkspaceOnboardingService {
         normalized,
         slug,
         this.env.AVALON_REGION,
-        this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+        "America/Los_Angeles",
         this.auth.userId,
         at,
         at,

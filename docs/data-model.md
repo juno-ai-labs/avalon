@@ -32,17 +32,6 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
-Migration 0101 adds Global pre-workspace `access_requests` and hashed
-`download_grants`. Their lifecycle and regional boundaries are in
-[private access](private-access.md). The shared migration creates empty EU schema;
-public acquisition writes only in Global. Nullable `expires_at` selects single-use
-admission or repeat downloads until a UTC deadline. `used_at` retains first use.
-Required `acknowledgement_from` freezes the authored sender; permanent provider
-rejection is terminal until operator intervention. `acknowledgement_first_attempt_at`
-anchors safe retries; `sending` owns one call and `review_required` prevents an
-uncertain retry beyond the provider window. The optional rate guard uses
-`access_request_rate_buckets` only when a finite threshold is configured.
-
 ## Personal work-stream access history
 
 WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
@@ -65,15 +54,12 @@ SidekickDO migration 3 adds automation.loadable, atomically maintained with the 
 | `packages/db/test/baseline-migration.test.ts` | Replays every migration in order and proves the checked-in baseline leaves the same schema. |
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
-| `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, and work-stream metadata sockets. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
-
-## How it works
 
 ### Early-access acquisition
 
@@ -131,11 +117,6 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
 
 ### Identity and tenancy
 
-Account presentation and new-user eligibility are added by migration 0099.
-Global identity owns the revisioned name, initials, avatar and color, projected
-narrowly to EU. WorkspaceDO migration 34 owns resumable per-person
-onboarding and confirmed connector selections. See [new-user onboarding](new-user-onboarding.md).
-
 - `users` stores Google identity subjects and display information, plus the
   account's IANA `timezone` and the `timezone_source` that says who put it
   there. `client` means a desktop sign-in seeded it from the machine and a
@@ -145,16 +126,9 @@ onboarding and confirmed connector selections. See [new-user onboarding](new-use
   in that region, and a second region's row keeps its own. `syncRegionalProfile`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
   zone chosen in one region does not cross to another.
-- `workspaces` pins an immutable `global` or `eu` region plus its immutable
-  west/east Durable Object placement affinity. `abandoned_at` closes the
-  workspace without deleting retained authority; application authorization
-  treats a non-null value as unreachable. The Global
-  `platform_workspace_bindings` rows carry the same opaque routes, one per
-  account/workspace/region; `wnam` and `weur` are
-  migration/background/missing-request-metadata defaults only. A partial unique
-  index permits at most one `pending` route per account while any number of
-  `active` or reconciled `inactive` routes coexist.
+
 - `workspace_members` authorizes users as owner, admin, or member.
+
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion. A session that
   simply expires is also marked `revoked_at` by the five-minute reaper, which is
@@ -162,14 +136,10 @@ onboarding and confirmed connector selections. See [new-user onboarding](new-use
   [`access-revocation.md`](access-revocation.md). `oauth_states`
   is the signed pre-workspace callback route/security receipt; the user-visible
   `connector_oauth_attempts` status row lives in the selected WorkspaceDO.
+
 - `workspace_invitations` supports explicit membership growth. Acceptance adds
   one row to the already-many-to-many `workspace_members` authority; it does not
   replace another membership.
-- `platform_workspace_operations` maps one client operation id and request
-  fingerprint to the destination chosen for workspace creation or invitation
-  acceptance. It contains opaque routing identifiers, not workspace names or
-  invited addresses, so replay can resume a regional write without moving EU
-  product data into Global.
 
 Every workspace-scoped table that remains in regional D1 carries `workspace_id`,
 and every D1 repository lookup includes it. Imported compatibility rows inside
@@ -704,8 +674,6 @@ column catalog; what follows is only what WorkspaceDO still holds.
   somebody has already read. Digests never write `workstream_read_states`: a digest
   cursor is what someone has been *told*, a read waterline is what they have *read*.
 
-### Connectors and activities
-
 - `WorkspaceDO.connector_installations` owns a connection's unique setup attempt,
   initiating user and input digest, generation, typed registration document, and
   separate cleanup credential envelope. `connector_installation_steps` records
@@ -717,30 +685,25 @@ column catalog; what follows is only what WorkspaceDO still holds.
   and one active personal connection of each per owner/workspace. Credentials are replaced only
   against the current generation and envelope; cleanup never restores ordinary
   access. See [installation lifecycle](connector-installation-lifecycle.md).
+
 - Global D1 `ashby_connection_routes` maps only connection ID to region, active or
   disabled status, and update time (migration 0104). The regional
   `connector_ingress_routes` projection then resolves the owning workspace.
   Neither directory contains provider credentials or payloads.
+
 - Regional D1 `connector_maintenance_operations` stores an operation ID and a
   validated JSON document with the frozen regional selection, operator identity,
   planned registration changes and per-target progress (migration 0105). This
   administrative operation record is distinct from installation authority.
   Atomic JSON-path updates preserve concurrent target outcomes; cancellation
   fences later lifecycle work.
+
 - `connector_connections` owns scope, encrypted provider credentials,
   capabilities, cursors, and health. Migration
   `0072_notion_connection_scope_split.sql` uses the capability dialect to move
   historical Notion public-integration bot rows from personal to workspace
   scope while preserving new `notion.personal.mcp` ownership.
-- `notion_webhook_setup_nonces` exists in both regional schemas but is used only
-  by Global. It stores a SHA-256 nonce hash, a 30-minute expiry, and — only after
-  consumption — the hash of the Notion verification token that claimed it. Its
-  partial unique index permits exactly one `is_current = 1` setup generation.
-  `provider_webhook_challenges.setup_nonce_hash` links the active encrypted token
-  to the nonce allowed to retry it, and `setup_generation` carries that nonce's
-  monotonic row generation into EU. A newer subscription setup therefore makes
-  older nonce/token pairs unable to restore a superseded signing secret in either
-  region, even when regional RPC calls arrive out of order.
+
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
   remain regional — meaning *per region rather than Global*, not *in regional
@@ -749,26 +712,31 @@ column catalog; what follows is only what WorkspaceDO still holds.
   0090. Reading the distinction the other way is what produced the
   `slackUserIsLinked` incident below, and again the automation delivery-target
   500 of 2026-08-31.
+
 - An automation has no destinations anywhere: `AutomationDO` stores none, and
   a run's loop input is a reference to its definition revision. A room-owned
   automation's result reaches the room through the run's own
   `sidekick_post_result` tool; any other destination is the run's own work,
   sent with its connector tools.
+
 - `slack_unfurled_links` records which Slack message carries which work-stream
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
   rewritten exactly when it would render differently. Slack reports a shared link
   only once, so a row that is not written as the card is posted can never be
   recovered — see [`workstream-links.md`](workstream-links.md).
+
 - `WorkspaceDO.webhook_receipts` stores connection-scoped signed-delivery replay
   receipts for generic, Granola and Ashby webhooks. `provider_webhook_receipts` remains
   in D1 only for a provider-global delivery that may precede/fan out across the
   workspace routes it matches.
+
 - `WorkspaceDO.workspace_connector_events` stores the complete authoritative
   normalized connector event. Its provider identity and connection-scoped dedupe
   constraints select one canonical event; processing status, processing owner,
   claim, error, and settlement timestamps stay beside the body. The separate
   `workspace_connector_event_ingress_receipts` maps each Queue/provider ingress
   UUID and content hash to that canonical event.
+
 - Legacy regional D1 `activities` rows are maintenance import input only. The
   verified cutover imports them into `workspace_connector_events`, scrubs the
   source, and permanently fences D1 writers. Live provider ingress resolves an
@@ -779,7 +747,9 @@ column catalog; what follows is only what WorkspaceDO still holds.
   Large/raw provider bytes stay in R2; D1 is never an event-body relay.
   Global provider receipts and setup routes may remain in D1 only when they
   exist before a workspace can be selected.
+
 - `resource_watches` records explicit direct relationships.
+
 - `audit_events` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
@@ -837,63 +807,35 @@ tombstone is what stops anything reading or draining them.
 
 ### Regional telemetry
 
-Telemetry uses regional D1 as a durable policy boundary, not as product truth.
-`users.analytics_person_id` and `workspaces.analytics_workspace_id` are random,
-immutable destination identities; they are deliberately unrelated to product
-primary keys. The user row also owns the default-on product-analytics preference,
-its compare-and-set version, and an opaque handle through which Global projects a
-preference change to an EU account without copying its regional user ID.
-
 The tables have distinct lifecycles rather than one catch-all event store:
 
-- `telemetry_onboarding_journeys` binds one anonymous login epoch to an immediate
-  coarse Global or EU route while no workspace exists. It is a route record, not a
-  region-pending queue.
-- `telemetry_accepted_events` and `telemetry_delivery_receipts` make event upload
-  idempotent. Global accepted rows are an outbox for PostHog; EU accepted rows are
-  internal-only. Global rows also carry the independent
-  `analytics_lakehouse_state` pointer-outbox lifecycle (`pending`, `queued`,
-  `delivered`, `suppressed`, or terminal `rejected`); EU and pre-feature rows
-  keep it null so no
-  event crosses into the Global Data Catalog. `telemetry_eu_events` is an independently expiring semantic
-  projection with trusted release, platform, channel, launch/session, and
-  operation dimensions for regional funnel and reliability queries.
 - `telemetry_identity_links` records the one anonymous-epoch-to-person link.
   `telemetry_profile_jobs` separates that non-superseding transition from
   coalescible person and workspace profile updates.
-- `telemetry_crash_reports` indexes one raw object and owns processing, retry,
-  destination, launch-correlation, and absolute-deletion state. EU occurrences
-  also contribute one flat row to `telemetry_eu_crash_contributions`; query-time
-  aggregation ages each contribution out independently instead of extending old
-  observations when an issue recurs. `telemetry_crash_access_audit` records
-  reason-coded support access without copying the object key or report.
+
 - `telemetry_destination_state`, `telemetry_ingest_rate_buckets`,
   `telemetry_rejection_buckets`, and `telemetry_replay_audit` hold bounded
   operational control and audit data without product payloads.
-
-Every telemetry row that retains data carries an absolute deadline, and migration
-triggers reject deadline extension. Accepted delivery metadata and full crash
-occurrences live for at most 90 days; EU semantic and minimized crash
-contributions live for at most 13 months. Raw dumps, source maps, and native
-symbols are outside the ordinary regional payload bucket in the region's dedicated
-`TELEMETRY_PAYLOADS` R2 bucket. See [`telemetry.md`](telemetry.md) for routing,
-collection, opt-out, and destination behavior.
-
-## Invariants
 
 1. **Every regional D1 tenant table carries `workspace_id`, and every repository
    lookup includes it. Each Durable Object stores the external route once in its
    singleton identity row and validates requests against it.** Repeating the same
    key on every local child row adds no isolation; omitting the D1 predicate or
    the object-level identity check is a cross-tenant read waiting for an ID leak.
+
 2. A personal connection must have an owner; a workspace connection must not.
+
 3. Passive viewing never creates `workstream_participants` rows.
+
 4. A human authoring a message or elicitation answer is upserted as a participant
    in the same operation.
+
 5. A personal activity is never promoted to workspace scope implicitly.
+
 6. Repeated provider events, Queue deliveries, alarms, workflow steps, client
    messages, and tool calls converge on unique keys. Without that, at-least-once
    delivery becomes at-least-twice side effects.
+
 7. D1/API timestamps are UTC ISO-8601 strings; Durable Object SQL stores Unix
    milliseconds and converts only at the boundary. Every user and workspace
    retains a validated IANA timezone, and an account timezone somebody chose
@@ -906,13 +848,16 @@ collection, opt-out, and destination behavior.
    resolved zone is then frozen on that row and does not follow a later change
    to the account, unlike a digest's, which is re-derived;
    `docs/potential-bugs.md` carries the question of whether it should.
+
 8. R2 objects are addressed through opaque references. Raw/large provider
    payloads never enter Queue or Workflow inputs; the regional Queue carries
    only the bounded normalized connector event needed to reach WorkspaceDO.
+
 9. **Who may read a work stream is decided by Durable Object authority.**
    WorkstreamDO owns scope and participants; WorkspaceDO serves the projected
    viewer decision for cross-work-stream lists and admission. D1 is never a
    visibility fallback.
+
 10. **Migration files are immutable after deployment.** New schema changes receive
     a monotonically numbered SQL file; local and hosted databases are migrated with
     Wrangler *before* code that depends on the new schema is deployed. Editing a
@@ -921,16 +866,15 @@ collection, opt-out, and destination behavior.
     baseline in `packages/db/baselines/` safe to derive — its input cannot change
     under it — and a digest over the subsumed files fails the suite if one ever
     does. See [`d1-baseline-migrations.md`](d1-baseline-migrations.md).
+
 11. **Runtime request handlers never attempt broad schema migration.** A Worker
     that migrates on demand migrates concurrently, once per isolate.
-12. **A telemetry deletion deadline is absolute and immutable.** Delivery,
-    processing, replay, recurrence, or destination acknowledgement may change a
-    state column but never renew the row. EU aggregate queries operate on
-    independently expiring contribution rows rather than a mutable issue lifetime.
+
 13. **A Terminal sandbox row is unique by `(workspace_id, workstream_id)` and its
     provider/stable names are unique inside that workspace.** Two live generations
     for one stream would defeat mutation serialization and make authority
     revocation nondeterministic.
+
 14. **An effect is acknowledged to the Queue only after the owning receiver
     commits the effect and its receipt together, and the sender's outbox row is
     deleted when `sendBatch` accepts the message, because retry is the Queue's.**
@@ -1164,7 +1108,7 @@ schema added fictitious legacy states. One founding migration defines the comple
 shape. Email uniqueness replaces duplicate request rows, and only token hashes
 persist rather than reusable bearer URLs.
 
-**Consequences:** Both regions receive schema; active intake stays Global. Timed
+**Consequences:** Configured deployments receive schema; active intake stays Global. Timed
 grants preserve first admission while allowing repeats until expiry. The lifecycle
 and erasure procedure are in [private access](private-access.md).
 
@@ -1419,12 +1363,6 @@ per account. Removing that key without a setup journal would let an ordinary
 lost create response allocate another workspace on retry; making creation easy
 without a reversible close would leave permanent clutter.
 
-**Considered and rejected:** A single mutable current-workspace route, a Global
-aggregate of regional membership, and immediate data deletion. They respectively
-cannot switch out of an EU-bound session, cross the regional product boundary,
-or require a deletion walk over D1, R2, and five Durable Object families that
-does not exist.
-
 **Consequences:** Global stores multiple opaque routes but regional membership
 remains authoritative. Discovery may mark a missing route inactive only after
 both regional reads succeed. Abandonment must fence every authentication and
@@ -1643,7 +1581,6 @@ split authority the single-owner fact rule above exists to forbid.
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
-
 #### Ambiguous effects remain a first-class activity outcome
 
 **What changed:** The cutover rebuilds the execution-only
@@ -1755,7 +1692,6 @@ Both add a second state machine to facts already owned by the singleton.
 **Consequences:** A safe step is not a lifecycle terminal. Queue delivery becomes
 eligible only after receipt terminalization, and every pending replay compares
 the exact immutable row admitted under its original FIFO sequence.
-
 
 #### Stable substream loops replace per-run compatibility state
 
@@ -1933,12 +1869,6 @@ compatibility column only after the Workflow binding is safely retired.
 
 ### 2026-08-24 — Accepted Global telemetry gains a second durable projection
 
-**What changed:** Migration 0095 adds nullable
-`pending`/`queued`/`delivered`/`suppressed`/`rejected` analytics-lakehouse state
-and a delivery timestamp to `telemetry_accepted_events`, indexes active Global
-projection work newest-first, and seeds new Global inserts. Existing and EU rows
-remain null.
-
 **Why:** A Queue pointer needs a durable source and retry state, while copying
 the already validated envelope into another D1 table would pay twice for the
 same data and create a second policy boundary.
@@ -1947,12 +1877,6 @@ same data and create a second policy boundary.
 and adding the state to `delivery_state`. Those respectively exceed transport
 limits for valid events, duplicate the canonical row, or couple independent
 PostHog and lakehouse delivery lifecycles.
-
-**Consequences:** D1 remains operational telemetry rather than analytical
-authority. New Global acceptance rows start pending; permanent poison rows stop
-at rejected; historical and EU rows plus all product state remain outside this
-projection. Omitting a historical backfill keeps live recovery from waiting
-behind months of accepted rows.
 
 Shipped in the pull request for this change. See
 [`analytics-lakehouse.md`](analytics-lakehouse.md).
@@ -2232,8 +2156,6 @@ the previous Worker still names the removed schema, the deploy workflow applies
 both the through-0089 and final table shapes; the remote pending ledger keeps
 that ordering safe across retries.
 
-
-
 ### 2026-08-20 — The development seed touches no product table
 
 **What changed:** `packages/db/seed.sql` shrank to the regional control plane
@@ -2263,8 +2185,6 @@ phantom the reaper kills), and local automations are visible again on an
 opened stack — they previously existed only in fenced D1. The D1 product
 tables now have no writers outside migrations, which is the precondition the
 drop migration was waiting for.
-
-
 
 ### 2026-08-20 — `agent_run_dispatches` carries a lease in both agent objects
 
@@ -2789,26 +2709,10 @@ remain the idempotency boundary.
 
 ### 2026-08-13 — Telemetry rows enforce independent absolute lifecycles
 
-**What changed:** Migration `0074` adds random analytics identities, the account
-preference, regional accepted/outbox and EU projection rows, ordered
-identity/profile jobs, native crash indexes and contributions, replay/access
-audits, rate buckets, destination circuits, processing leases, and analysis
-context. Immutable-deadline triggers cover every retained telemetry record.
-
-**Why:** Offline Electron delivery, destination retries, and recurring crash
-issues all need durable state, but none may renew old data or turn Global into a
-holding area for an unresolved region. EU analysis also needs useful release and
-launch dimensions without a US destination.
-
 **Considered and rejected:** One polymorphic event table, a mutable crash-issue
 aggregate, product primary keys as PostHog identities, and extending retention on
 retry. Each would either erase distinct policy lifecycles, keep old contributions
 alive indefinitely, leak internal identifiers, or defeat the published ceiling.
-
-**Consequences:** New telemetry schema changes are additive migrations; code must
-preserve the stored random identities and original deadlines. Operators reap D1
-and dedicated R2 together, and EU analysis reconstructs issue and crash-free views
-from surviving rows.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
@@ -2991,20 +2895,7 @@ one current generation, which the operator replaces in one D1 transaction.
 `provider_webhook_challenges.setup_nonce_hash` identifies the setup that owns the
 active ciphertext; the challenge upsert succeeds only when that nonce is still the
 current consumed generation and is bound to the same token hash.
-`setup_generation` records the nonce row's monotonic generation on Global and EU.
-
-**Why:** Notion cannot sign the challenge that establishes its later signing
-secret, while Cloudflare records every webhook query string. A reusable URL guard
-therefore leaked into observability, and a plain consumed flag was insufficient:
-after a subscription rotation, replaying the old valid nonce/token pair could
-otherwise restore the old secret. Rechecking current ownership in the ciphertext
-write preserves a retry if the Worker fails after claiming the nonce while also
-preventing an older paused request from winning after a newer claim. A separate
-public token-retrieval table or endpoint was rejected; the existing encrypted
-challenge row is joined to the current nonce, read, and decrypted only by local
-operator tooling. Replicating the numeric generation rather than relying on RPC
-arrival order lets EU reject an older request that crossed the regional boundary
-more slowly than its replacement.
+`setup_generation` records the nonce row's monotonic generation on configured deployments.
 
 This document predates the changelog rule; reasoning for earlier schema decisions
 beyond the inline prose was not reconstructed. The migrations, `git log`, and the

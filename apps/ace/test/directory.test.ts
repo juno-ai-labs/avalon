@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { searchUsers, searchWorkspaces } from '../src/directory';
@@ -36,14 +37,14 @@ afterEach(() => {
 describe('Ace directory lookup', () => {
   it('matches ASCII names case-insensitively and treats wildcard characters literally', async () => {
     const global = database();
-    const eu = database();
+    const enterprise = database();
     await global.exec(`
       INSERT INTO users VALUES ('user-1', 'PM+Flags@Example.com', 'Casey_100%');
       INSERT INTO users VALUES ('user-2', 'different@example.com', 'CaseyX1000');
       INSERT INTO workspaces VALUES ('workspace-1', 'Launch_100%', 'launch-special');
       INSERT INTO workspaces VALUES ('workspace-2', 'LaunchX1000', 'launch-other');
     `);
-    const env = createTestEnv({ GLOBAL_DB: global, EU_DB: eu });
+    const env = createTestEnv({ GLOBAL_DB: global, ENTERPRISE_DB: enterprise });
 
     await expect(searchUsers(env, 'pm+flags@example.com')).resolves.toMatchObject([
       { id: 'user-1', region: 'global' },
@@ -69,11 +70,11 @@ describe('Ace directory lookup', () => {
       prepare: () => { throw new Error('D1_ERROR: no such table'); },
       exec: async () => ({ count: 0, duration: 0 }),
     });
-    await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: global, EU_DB: down }), 'Launch')).resolves.toEqual({
+    await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: global, ENTERPRISE_DB: down }), 'Launch')).resolves.toEqual({
       results: [{ id: 'workspace-1', name: 'Launch', slug: 'launch', region: 'global' }],
-      unavailableRegions: ['eu'],
+      unavailableRegions: ['enterprise'],
     });
     // Both down is a failure, never an empty list.
-    await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: down, EU_DB: down }), 'Launch')).rejects.toThrow('directory_unavailable');
+    await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: down, ENTERPRISE_DB: down }), 'Launch')).rejects.toThrow('directory_unavailable');
   });
 });

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
@@ -1053,10 +1054,10 @@ describe("the Workstream Durable Object relational schema", () => {
   it("checkpoints live output in bounded relational chunks and clears it at terminal state", async () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
-    const store = new WorkstreamObjectStore(storage, "worker-one", "eu");
+    const store = new WorkstreamObjectStore(storage, "worker-one", "enterprise");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "eu");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "enterprise");
       const at = "2026-08-16T12:00:00.000Z";
       activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({

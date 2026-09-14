@@ -1,3 +1,4 @@
+import { configuredRegions } from "./regions.mjs";
 /**
  * Make every Queue the Wrangler files declare exist, creating any that do not.
  *
@@ -40,8 +41,7 @@ const LISTING_PAGE_SIZE = 100;
 
 /** Every Wrangler file that binds a queue, and the surface each one deploys. */
 const queueConfigs = [
-  { surface: 'api-global', path: join(repositoryDirectory, 'apps/api/wrangler.global.jsonc') },
-  { surface: 'api-eu', path: join(repositoryDirectory, 'apps/api/wrangler.eu.jsonc') },
+  ...configuredRegions.map((region) => ({ surface: `api-${region}`, path: join(repositoryDirectory, `apps/api/wrangler.${region}.jsonc`) })),
   {
     surface: 'migration-tracker',
     path: join(repositoryDirectory, 'apps/migration-tracker/wrangler.jsonc'),

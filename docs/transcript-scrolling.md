@@ -23,8 +23,6 @@ including code that only means to restore a position.
 viewport itself when a measurement replaces an estimate. It is not part of the
 follow — see [Boundary](#boundary).
 
-## How it works
-
 ### Opening a search result
 
 A search result supplies a canonical turn ID and transcript sequence. `conversation-surface.tsx` hydrates that sequence through the existing range protocol when necessary, releases following, and asks the virtualizer to position the matching row. This is an explicit reader-requested reposition, alongside initial unread positioning. Invalid sequence parameters do not suppress normal initial positioning. It does not yet highlight the matching range inside the full message.
@@ -293,8 +291,6 @@ The surface tests render `WorkstreamScreen` with socket and follow doubles,
 so the complete interaction between real row measurements, unread positioning,
 follow, and paging still needs Electron verification. A passing DOM assertion
 does not prove that prepend restoration leaves the same message visible.
-
-## Changelog
 
 ### 2026-09-06 — Load history from viewport position
 

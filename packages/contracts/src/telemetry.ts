@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "./deferred-zod-schema";
 
@@ -94,7 +95,7 @@ interface TelemetryRegistryEntry {
   priority: "critical" | "high" | "normal" | "low";
   localRetention: "none" | "14-days";
   regionalRetention: "90-days" | "13-months";
-  destination: "posthog-and-eu-internal" | "internal-only";
+  destination: "posthog" | "internal-only";
   compatibilityNote: string;
 }
 
@@ -133,7 +134,7 @@ const durationBucket = z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_3
 const journeyDurationBucket = z.enum(["unknown", "lt_1s", "1s_5s", "5s_30s", "30s_2m", "2m_10m", "gte_10m"]);
 const countBucket = z.enum(["zero", "one", "two_to_five", "six_to_twenty", "twenty_one_to_one_hundred", "over_one_hundred"]);
 const resultClass = z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]);
-const region = z.enum(["global", "eu"]);
+const region = RegionSchema;
 const entrypoint = z.enum(["first_run", "settings", "invitation", "workspace_switcher", "composer"]);
 const screen = z.enum([
   "onboarding_welcome",
@@ -238,7 +239,7 @@ const common = {
   reviewGroup: "telemetry-governance",
   sampleRate: 1,
   localRetention: "14-days" as const,
-  destination: "posthog-and-eu-internal" as const,
+  destination: "posthog" as const,
 };
 
 function productEvent<
@@ -2050,7 +2051,7 @@ export const TelemetryBreadcrumbSidecarSchema = deferredZodSchema(() => z.strict
 export type TelemetryBreadcrumbSidecar = z.infer<typeof TelemetryBreadcrumbSidecarSchema>;
 const telemetryContextCommon = memoizedValue(() => ({
   environment: z.enum(["development", "staging", "production"]),
-  region: z.enum(["global", "eu"]).optional(),
+  region: RegionSchema.optional(),
   release: SafeReleaseSchema,
   buildId: SafeReleaseSchema,
   platform: z.enum(["darwin", "win32", "linux"]).optional(),
@@ -2198,7 +2199,7 @@ export const TelemetryBootstrapRequestSchema = deferredZodSchema(() => z.strictO
 export type TelemetryBootstrapRequest = z.infer<typeof TelemetryBootstrapRequestSchema>;
 
 export const TelemetryRouteResponseSchema = deferredZodSchema(() => z.strictObject({
-  route: z.enum(["global", "eu"]),
+  route: RegionSchema,
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   routeToken: z.string().min(32).max(2_048),
 }));
@@ -2206,7 +2207,7 @@ export type TelemetryRouteResponse = z.infer<typeof TelemetryRouteResponseSchema
 
 export const TelemetryBootstrapResponseSchema = deferredZodSchema(() => z.strictObject({
   journeyId: UuidV7Schema,
-  route: z.enum(["global", "eu"]),
+  route: RegionSchema,
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   capability: z.string().min(32).max(2_048),
   expiresAt: z.string().datetime({ offset: true }),

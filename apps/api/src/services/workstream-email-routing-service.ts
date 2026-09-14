@@ -143,7 +143,7 @@ export class WorkstreamEmailRoutingService {
         if (legacy.localPart.toLowerCase() === claimed.localPart) {
           // Rolling-deploy compatibility: the previous Global entrypoint has
           // no full-address claim method because its D1 key is still the local
-          // part. EU deploys first, so preserve the regional owner's exact
+          // part. regional deploys first, so preserve the regional owner's exact
           // address until Global and migration 0097 catch up.
           return { ...input, localPart: claimed.localPart, emailAddress: claimed.emailAddress };
         }

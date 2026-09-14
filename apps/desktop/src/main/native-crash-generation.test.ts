@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -75,7 +76,7 @@ describe('native crash generation lifecycle', () => {
 
     const second = await prepareNativeCrashGeneration({
       rootDirectory,
-      route: 'eu',
+      route: 'enterprise',
       now: new Date('2026-08-12T13:00:00.000Z'),
       generationId: '00000000-0000-7000-8000-000000000002',
       runtime,

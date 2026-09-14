@@ -50,7 +50,7 @@ export function createTestWorkspaceDO(input: {
   workspaceId: string;
   /** The regional database the object's own D1 reads should see. */
   regionalDatabase: DatabaseSync;
-  region?: "global" | "eu";
+  region?: string;
   /** Registered so the caller can close it with its other databases. */
   register?: (database: DatabaseSync) => void;
 }): { instance: WorkspaceDO; objectDatabase: DatabaseSync } {
