@@ -38,6 +38,42 @@ describe("parseRpcInput", () => {
     expect(crossed.message).toContain("evaluators.0.source.connectionId");
   });
 
+  it("keeps a whole-value shape mismatch code-shaped, not only a field-level one", () => {
+    // Version skew sends the wrong shape entirely, and Zod reports that at an
+    // empty path. Spelling it `(root)` put parentheses in the message, which
+    // `scheduledAlarmErrorCode` refuses — so the case that most needs the
+    // detail was the one that silently lost it.
+    for (const input of [null, [], "projection", 7]) {
+      let thrown: unknown;
+      try {
+        parseRpcInput(Projection, input, "projection");
+      } catch (error) {
+        thrown = error;
+      }
+      const code = scheduledAlarmErrorCode(thrown);
+      expect(code).not.toContain("handler_error");
+      expect(code).toContain("projection_invalid");
+      expect(code).toContain("_root_");
+    }
+  });
+
+  it("keeps a path the schema does not control from breaking the code shape", () => {
+    // An open record's keys are the caller's, not the schema's, so a path
+    // segment can carry anything. One character outside the class costs the
+    // whole message: `scheduledAlarmErrorCode` is all-or-nothing, and answers
+    // `handler_error` for a message that is 99% useful.
+    let thrown: unknown;
+    try {
+      parseRpcInput(z.record(z.string(), z.number()), { "seat (row 3)": "x" }, "seating");
+    } catch (error) {
+      thrown = error;
+    }
+    const code = scheduledAlarmErrorCode(thrown);
+    expect(code).not.toContain("handler_error");
+    expect(code).toContain("seating_invalid");
+    expect(code).toContain("seat_");
+  });
+
   it("stays code-shaped, so an alarm failure reaches the operator notice as a code", () => {
     let thrown: unknown;
     try {
