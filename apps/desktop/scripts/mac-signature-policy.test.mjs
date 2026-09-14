@@ -85,8 +85,9 @@ test('push profile must match the app capabilities and remain valid', async () =
     'com.apple.developer.aps-environment': 'production',
     'com.apple.developer.associated-domains': ['applinks:rallywith.ai', 'applinks:www.rallywith.ai'],
   };
-  const profile = { TeamIdentifier: ['7ZLT6A8W25'], ExpirationDate: '2099-01-01', Entitlements: { ...entitlements, 'com.apple.application-identifier': '7ZLT6A8W25.ai.rallywith.desktop' } };
+  const profile = { ProvisionsAllDevices: true, TeamIdentifier: ['7ZLT6A8W25'], ExpirationDate: '2099-01-01', Entitlements: { ...entitlements, 'com.apple.application-identifier': '7ZLT6A8W25.ai.rallywith.desktop' } };
   assert.doesNotThrow(() => assertPushProvisioning(profile, entitlements));
+  assert.throws(() => assertPushProvisioning({ ...profile, ProvisionsAllDevices: false }, entitlements), /Developer ID/);
   assert.throws(() => assertPushProvisioning({ ...profile, ExpirationDate: '2020-01-01' }, entitlements), /expired/);
   assert.throws(() => assertPushProvisioning(profile, { ...entitlements, 'com.apple.developer.aps-environment': 'sandbox' }), /production push/);
 });

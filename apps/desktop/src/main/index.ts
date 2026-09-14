@@ -559,6 +559,7 @@ const applicationOpenObserver = new ApplicationOpenObserver((entrypoint, phase) 
 // ordinary deep links cannot truthfully identify which external surface sent them.
 let applicationLaunchObserved = false;
 let prelaunchDeepLinkObserved = false;
+let prelaunchPushObserved = false;
 const applicationLifecycleTelemetry = new ApplicationLifecycleTelemetry((state) => {
   const reporter = telemetryReporter;
   if (reporter) void reporter.applicationLifecycle(state).catch(() => undefined);
@@ -1101,6 +1102,7 @@ async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
 }
 
 async function clearCredentialsForLockdownRelogin(): Promise<void> {
+  desktopPush.signOut(inMemoryAuthSet?.workspaces);
   sessionLifecycleEpoch += 1;
   desktopAuthAttempts.clear();
   inMemoryAuthSet = null;
@@ -1320,7 +1322,7 @@ const desktopPush = new DesktopPushNotifications({
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
     });
     let response = await ask(credential);
-    if (response.status === 401) {
+    if (response.status === 401 && init.method !== 'DELETE' && !init.signal?.aborted) {
       await response.body?.cancel();
       const renewed = await refreshStoredCredential(credential);
       response = await ask(storedAuthFromSession(renewed, regionForStoredSession(renewed)));
@@ -1328,7 +1330,8 @@ const desktopPush = new DesktopPushNotifications({
     return response;
   },
   clicked: (url) => {
-    applicationOpenObserver.opened('push_notification');
+    if (applicationLaunchObserved) applicationOpenObserver.opened('push_notification');
+    else prelaunchPushObserved = true;
     const link = url ? workstreamHttpsDeepLink(url) : null;
     if (link) sendDeepLink(link, 'notification');
     else if (app.isReady()) void createMainWindow();
@@ -1422,8 +1425,8 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   }
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
-  void desktopPush.reconcile();
   if (!parsed.success) throw new Error('Rally returned an unreadable feature flag response');
+  desktopPush.featureFlagChanged(parsed.data.pushNotificationsEnabled);
   return parsed.data.developerSettings;
 }
 
@@ -2732,7 +2735,7 @@ async function logout(): Promise<void> {
   const failures: unknown[] = [];
   try {
     const stored = await loadStoredAuthSet();
-    await desktopPush.signOut();
+    desktopPush.signOut(stored?.workspaces);
     try {
       await clearStoredSession();
     } catch (error) {
@@ -4561,7 +4564,7 @@ if (!singleInstanceLock) {
     const link = workstreamHttpsDeepLink(details.webpageURL);
     if (!link) return;
     event.preventDefault();
-    applicationOpenObserver.opened('deep_link');
+    observeAcceptedDeepLinkOpen();
     sendDeepLink(link, 'deep_link');
   });
 
@@ -4703,6 +4706,7 @@ if (!singleInstanceLock) {
     const launchEntrypoint = initialApplicationOpenEntrypoint({
       openedAtLogin,
       hasDeepLink: initialDeepLink !== undefined || prelaunchDeepLinkObserved,
+      hasPushNotification: prelaunchPushObserved,
     });
     applicationOpenObserver.launched(launchEntrypoint);
     applicationLaunchObserved = true;
@@ -4734,6 +4738,8 @@ if (!singleInstanceLock) {
     });
 
     if (initialDeepLink) emitDeepLink(initialDeepLink);
+
+    app.on('browser-window-focus', () => desktopPush.refreshPermission());
 
     app.on('activate', () => {
       applicationOpenObserver.activated();

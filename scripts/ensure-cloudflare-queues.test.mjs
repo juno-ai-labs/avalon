@@ -192,7 +192,6 @@ test('refuses a queue only one side names, before anything is created', async ()
         required: [
           { surface: 'api-eu', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-eu-access-revocaitons' },
           { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-access-revocations' },
-    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-push-deliveries' },
         ],
         createdOnDeploy: [],
       },

@@ -32,16 +32,33 @@ those devices already reached for that intent. Sending precedes recording, so an
 uncertain send can alert twice. Collapse identifiers are hashes of workspace and
 intent, because existing intent IDs are not UUIDs. No exactly-once claim is made.
 
+Receipts currently live until their device is deleted. After the existing intent
+retention expires they are inert: no later intent reuses the key. This accepts
+one small row per successful intent/device at the current product size, rather
+than adding a cross-store retention job for launch. Future pruning should join
+existing intent retention, not introduce another scheduler.
+
 Payloads carry the first 1,000 Unicode code points with an ellipsis when shortened,
 fitted further to Apple's 4,096-byte ceiling. APNs retains undelivered alerts for
 24 hours. Provider JWTs are shared through regional KV and refreshed at 50 minutes;
-no coordination object is introduced. Queue retries and dead-letter queues own
+no coordination object is introduced. Enqueue and send share the same
+production/staging availability check. Queue retries and dead-letter queues own
 transient delivery failures. Provider-auth failures notify operations without
-disabling devices; token-update throttling keeps the cached provider token.
+disabling devices; one provider fault stops the remaining batch sends and
+produces one operator notice per batch. Token-update throttling keeps the cached
+provider token.
 
 The main process uses Electron for APNs registration and a small native delegate
 for permission state and explicit notification clicks. The delegate forwards
 unrelated notification callbacks to Electron. Receipt never implies a click.
+Registration waits for an affirmative permission result, and returning to Rally refreshes permission state so denial removes
+server registrations. Session, setting, and feature-flag changes serialize fresh
+registration passes; unchanged flag polls do not register again. Every pass asks
+Electron for the current token, so the registration timestamp corresponds to an
+APNs registration rather than a heartbeat. Sign-out cancels pending work and
+unregisters natively immediately; captured credentials permit best-effort server
+cleanup without delaying local credential removal. Optional push settings I/O
+cannot abort application startup.
 Clicks pass the HTTPS link through the existing work-stream parser and scheme
 navigation, including pending navigation before sign-in or window readiness.
 
@@ -108,5 +125,10 @@ PRD's device-wide timestamp was replaced with per-intent/device receipts because
 an unrelated later send would otherwise swallow a retry. The user chose code-first
 implementation with signed-Mac acceptance before release, explicit native click
 callbacks, and a 24-hour APNs expiration. The subsequent rollout decision enables
-push for everyone from day one; the existing flag remains an operator off switch. Keep the transport small and preserve
-at-least-once delivery rather than adding coordination machinery.
+push for everyone from day one; the existing flag remains an operator off switch.
+Keep the transport small and preserve
+at-least-once delivery rather than adding coordination machinery. Registration is
+serialized and cancelable because permission prompts and network requests can
+outlive session changes; this optional transport must never delay sign-out or
+prevent app startup. Provider credential failures stop the current queue batch
+rather than repeating the same failure and operator alert for every device.

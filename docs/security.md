@@ -1473,8 +1473,9 @@ the Dock disagrees with the product forever.
 the sign-in screen, not a crash, because an undecryptable envelope is already
 caught and treated as no session. Signing is unaffected — a Developer ID
 Application certificate is issued to the team, not to a bundle identifier, and
-none of the entitlements in `resources/entitlements.mac.plist` requires a
-provisioning profile.
+at the time of the rename none of the entitlements required a provisioning
+profile. Apple push and associated domains now require the embedded Developer ID
+profile described in [Apple push](push-notifications.md).
 
 The bundle identifier is the expensive part, and it is not only a TCC and
 login-item reset. **Squirrel.Mac cannot update across a bundle-ID change**, per

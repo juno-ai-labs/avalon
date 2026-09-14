@@ -1,3 +1,4 @@
+import { notifyOps } from "../observability/ops-slack-notifier";
 import { asWorkspaceId } from "@rally/contracts";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
 import { workstreamCanonicalUrl } from "@rally/contracts/workstream-links";
@@ -13,7 +14,7 @@ import { sendApns } from "../services/push/apns-transport";
 import { renderPushPayload, pushCollapseId } from "../services/push/push-payload";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 
-export async function deliverPush(env: Env, message: PushDeliveryMessage, send: typeof sendApns = sendApns): Promise<boolean> {
+export async function deliverPush(env: Env, message: PushDeliveryMessage, send: typeof sendApns = sendApns, providerFailed: (reason: string) => void = () => {}): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
   if (!await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return true;
   const id = asWorkspaceId(message.workspaceId);
@@ -58,22 +59,30 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
       await db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = ? WHERE id = ? AND token = ? AND last_seen_at = ?`)
         .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
     } else if (["transient", "provider_auth_failed", "provider_token_throttled"].includes(result.outcome)) complete = false;
+    const providerFault = result.outcome === "provider_auth_failed" || result.outcome === "provider_token_throttled";
+    if (providerFault) providerFailed(result.reason ?? result.outcome);
     if (result.outcome !== "sent" && result.outcome !== "skipped") {
       await db.prepare(`UPDATE user_push_devices SET last_failure_code = ? WHERE id = ? AND token = ?`)
         .bind(result.reason ?? result.outcome, device.id, device.token).run();
     }
     logInfo(env, "push_delivery_terminal", { intent_id: row.intentId, device_id: device.id, ...result });
+    if (providerFault) break;
   }
   return complete;
 }
-export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env: Env, send: typeof sendApns = sendApns): Promise<void> {
+  let providerFailure: string | undefined;
   for (const message of batch.messages) {
+    if (providerFailure) { message.retry(); continue; }
     try {
-      if (await deliverPush(env, PushDeliveryMessageSchema.parse(message.body))) message.ack();
+      if (await deliverPush(env, PushDeliveryMessageSchema.parse(message.body), send, (reason) => { providerFailure = reason; })) message.ack();
       else message.retry();
     } catch {
       logWarn(env, "push_delivery_failed", { message_id: message.id });
       message.retry();
     }
   }
+  if (providerFailure) await notifyOps(env, {
+    event: "push_provider_auth_failed", summary: "Apple push provider authentication needs attention.", fields: { reason: providerFailure },
+  });
 }
