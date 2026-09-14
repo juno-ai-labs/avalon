@@ -80,6 +80,8 @@ team `7ZLT6A8W25`. Store the base64 Developer ID provisioning profile in the
 its identity, capabilities and expiry. No extra pre-expiry margin is imposed.
 The packager passes the resolved profile path as an electron-builder CLI option;
 the `mac.provisioningProfile` YAML field does not expand environment macros.
+The verifier extracts scalar profile fields as raw values because `plutil` JSON
+output supports dictionaries and arrays, not standalone booleans.
 
 Publish the site association files before desktop release. The desktop release
 preflight checks both live hosts, so independently triggered deployments cannot
