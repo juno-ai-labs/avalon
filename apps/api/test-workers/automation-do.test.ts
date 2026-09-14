@@ -28,7 +28,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
-  AutomationSetEvaluatorRulesInputV1Schema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   type AutomationDraft,
 } from "@rally/contracts";
 import {
@@ -636,7 +636,7 @@ describe("AutomationDO", () => {
             event: { kind: "event_type" as const, eventType: "deploy.finished" },
           },
           when: {
-            kind: "all" as const,
+            kind: "matching" as const,
             allOf: [{ kind: "string" as const, attribute: "service", operator: "equals" as const, value: "checkout" }],
           },
         },
@@ -655,7 +655,10 @@ describe("AutomationDO", () => {
     const submitted = await automationStub().submitDefinition({
       ...addressed(),
       draft: WEBHOOK_DEFINITION,
-      evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse(rules),
+      // Parsed the way the drafting tool parses it, so this exercises the
+      // boundary rather than hand-writing its output: the rules are authored in
+      // the model's spelling and reach the object in the stored one.
+      evaluatorRules: AutomationSetEvaluatorRulesModelInputV1Schema.parse(rules),
       submittedByRunId: null,
     });
     expect(submitted).toEqual({ definitionRevision: 1, ready: true });

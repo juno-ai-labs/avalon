@@ -275,6 +275,14 @@ describe("submitting a draft that needs evaluator rules", () => {
 
     await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
       .rejects.toThrow(/sourceBindingKey and suggestedSourcePluginId must match .* Call set_evaluator_rules again/u);
+    // Both labels are invented, so neither is discoverable from a catalog and
+    // "they must agree" leaves the model guessing which of the two it typed
+    // wrong. The refusal names the set the triggers declare and the rule that
+    // sits outside it, which is the whole repair.
+    await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
+      .rejects.toThrow(/triggers declare notion_source \(plugin_notion\)/u);
+    await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
+      .rejects.toThrow(/page_created names notion_pages \(plugin_notion\)/u);
     expect(state.draftState.submitted).toBeNull();
   });
 
@@ -439,7 +447,7 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
         event: { kind: "event_type", eventType: "deploy.finished" },
       },
       when: {
-        kind: "all",
+        kind: "matching",
         allOf: [{ kind: "string", attribute: "service", operator: "equals", value: "checkout" }],
       },
     }],
@@ -478,6 +486,23 @@ describe("set_evaluator_rules on a trigger whose filter fields are open", () => 
     expect(schema).toContain("pattern");
     expect(schema).not.toContain("00000000-0000-0000-0000-000000000000");
     expect(schema).not.toContain("ffffffff-ffff-ffff-ffff-ffffffffffff");
+  });
+
+  it("offers the model only `matching`, never the pre-rename `all`, as the predicate kind", () => {
+    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS.find(
+      (candidate) => candidate.name === "set_evaluator_rules",
+    );
+    if (!definition) throw new Error("set_evaluator_rules definition missing");
+
+    // `all` reads as "all events", which is what the neighbouring `always`
+    // means; that collision is the whole reason for the rename, and offering
+    // both spellings back to the model would reinstate it. The stored-row
+    // compatibility in `automation-evaluators.ts` is a preprocess rather than a
+    // third union branch precisely so this schema keeps naming one of them.
+    const schema = JSON.stringify(definition.inputSchema);
+    expect(schema).toContain("\"const\":\"matching\"");
+    expect(schema).toContain("\"const\":\"always\"");
+    expect(schema).not.toContain("\"const\":\"all\"");
   });
 });
 
@@ -529,7 +554,7 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
           event: { kind: "event_type", eventType: "deploy.finished" },
         },
         when: {
-          kind: "all",
+          kind: "matching",
           allOf: [{ kind: "string", attribute, operator: "equals", value: "checkout" }],
         },
       }],
@@ -570,5 +595,211 @@ describe("set_evaluator_rules and a resourceId a rule cannot use", () => {
       .execute(rule("00000000-0000-4000-8000-000000000000", "metadata.service"), toolContext))
       .rejects.toThrow(/without a metadata\. prefix/u);
     expect(staged).toHaveLength(0);
+  });
+});
+
+describe("set_evaluator_rules echoes the bindings the submitted draft declares", () => {
+  const DEPLOY_PLUGIN = {
+    pluginId: "plugin_webhook",
+    displayName: "Generic webhook",
+    icon: "webhook" as const,
+    description: "Deliveries on a webhook.",
+    scope: "workspace" as const,
+    searchAliases: [],
+    systemMessage: "",
+    activityTriggers: [{
+      eventType: "deploy.finished",
+      label: "deploy.finished",
+      description: "A delivery of deploy.finished on this webhook.",
+      eventFamilies: [],
+      filterFields: [],
+      resourceRelationships: [],
+      digestible: false,
+    }],
+    tools: [],
+  };
+  /** Partial, so it is admitted without rules and leaves its triggers behind. */
+  const partialDraft = {
+    name: "Deploy watcher",
+    description: "Watches deploys.",
+    overview: "Watches deploys.",
+    instructions: "Report the deploy.",
+    triggers: [{
+      type: "connector_activity",
+      connectorType: "generic_webhook",
+      sourceBindingKey: "deploy_hook",
+      suggestedSourcePluginId: "plugin_webhook",
+      eventTypes: ["deploy.finished"],
+      deterministicFilters: {},
+    }],
+    requiredCapabilities: [],
+    expectedOutputs: [],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: "personal",
+    followUpQuestion: null,
+    elicitation: null,
+    ready: false,
+  };
+  const ruleNaming = (sourceBindingKey: string) => ({
+    schemaVersion: 1,
+    evaluators: [{
+      evaluatorKey: "checkout_deploys",
+      source: {
+        sourceBindingKey,
+        suggestedSourcePluginId: "plugin_webhook",
+        event: { kind: "event_type", eventType: "deploy.finished" },
+      },
+      when: { kind: "always" },
+    }],
+  });
+  function submittedHost(): AutomationCreatorToolHost {
+    return host({
+      catalog: [DEPLOY_PLUGIN],
+      inspectedPluginIds: new Set(["plugin_webhook"]),
+      loadedPluginIds: new Set(["plugin_webhook"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+      },
+    });
+  }
+
+  it("names the rule whose binding no trigger declares, without refusing it", async () => {
+    const tools = createAutomationsPlugin(submittedHost()).tools;
+    await toolNamed(tools, "submit_draft").execute(partialDraft, toolContext);
+
+    // Still staged: rules and triggers are two calls in either order, so a
+    // disagreement now may be a draft the model is about to replace. The echo
+    // is what makes it visible before `submit_draft` refuses on it.
+    await expect(toolNamed(tools, "set_evaluator_rules")
+      .execute(ruleNaming("wrong_hook"), toolContext))
+      .resolves.toMatchObject({
+        output: {
+          accepted: true,
+          declaredSourceBindings: { deploy_hook: "plugin_webhook" },
+          rulesNamingNoTrigger: ["checkout_deploys"],
+        },
+      });
+  });
+
+  it("reports no disagreement when the rule names the trigger's own binding", async () => {
+    const tools = createAutomationsPlugin(submittedHost()).tools;
+    await toolNamed(tools, "submit_draft").execute(partialDraft, toolContext);
+
+    const result = await toolNamed(tools, "set_evaluator_rules")
+      .execute(ruleNaming("deploy_hook"), toolContext);
+    expect(result.output).toMatchObject({ declaredSourceBindings: { deploy_hook: "plugin_webhook" } });
+    expect(result.output).not.toHaveProperty("rulesNamingNoTrigger");
+  });
+
+  it("says nothing about bindings when no draft has been submitted yet", async () => {
+    const tools = createAutomationsPlugin(submittedHost()).tools;
+
+    // The first call of a normal drafting run. There is no draft to compare
+    // against, which is not a disagreement — reporting one here would tell the
+    // model to repair a draft it has not written.
+    const result = await toolNamed(tools, "set_evaluator_rules")
+      .execute(ruleNaming("deploy_hook"), toolContext);
+    expect(result.output).toMatchObject({ accepted: true });
+    expect(result.output).not.toHaveProperty("declaredSourceBindings");
+    expect(result.output).not.toHaveProperty("rulesNamingNoTrigger");
+  });
+});
+
+describe("a composed source binding key is enough on its own", () => {
+  /**
+   * Fireflies' shape: an event the connector declares, and no resource
+   * relationship anywhere, so `resources_search` has nothing to return for it.
+   */
+  const MEETING_PLUGIN = {
+    pluginId: "plugin_fireflies",
+    displayName: "Fireflies",
+    icon: "webhook" as const,
+    description: "Meetings the notetaker recorded.",
+    scope: "workspace" as const,
+    searchAliases: [],
+    systemMessage: "",
+    activityTriggers: [{
+      eventType: "meeting.summarized",
+      label: "Meeting summarized",
+      description: "Fireflies finished a meeting's AI summary.",
+      eventFamilies: [],
+      filterFields: [],
+      resourceRelationships: [],
+      digestible: true,
+    }],
+    tools: [],
+  };
+  const composedDraft = {
+    name: "Meeting recap emailer",
+    description: "Emails a recap when a meeting is summarized.",
+    overview: "Watches Fireflies and emails a recap.",
+    instructions: "Read the summary and send a recap email.",
+    triggers: [{
+      type: "connector_activity",
+      connectorType: "fireflies",
+      // Composed, not looked up: no tool returns this value for any connector,
+      // and this one has no bindable resource to have returned it with.
+      sourceBindingKey: "fireflies_meetings",
+      suggestedSourcePluginId: "plugin_fireflies",
+      eventTypes: ["meeting.summarized"],
+      deterministicFilters: {},
+    }],
+    requiredCapabilities: [],
+    expectedOutputs: ["A recap email"],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: "workspace",
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  };
+
+  it("admits a ready event draft with no resource behind it", async () => {
+    const state = host({
+      catalog: [MEETING_PLUGIN],
+      inspectedPluginIds: new Set(["plugin_fireflies"]),
+      loadedPluginIds: new Set(["plugin_fireflies"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+      },
+    });
+    const tools = createAutomationsPlugin(state).tools;
+    await toolNamed(tools, "set_evaluator_rules").execute({
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "summarized",
+        source: {
+          sourceBindingKey: "fireflies_meetings",
+          suggestedSourcePluginId: "plugin_fireflies",
+          event: { kind: "event_type", eventType: "meeting.summarized" },
+        },
+        when: { kind: "always" },
+      }],
+    }, toolContext);
+
+    // The behaviour the field's description now promises. A connector with no
+    // bindable resource was never actually blocked here — the description said
+    // the label came from a search, so a drafting run searched, found nothing,
+    // and reported a configuration blocker instead of composing one.
+    await expect(toolNamed(tools, "submit_draft").execute(composedDraft, toolContext))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(state.draftState.submitted).not.toBeNull();
+  });
+
+  it("does not send the model looking a binding key up", () => {
+    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS
+      .find((candidate) => candidate.name === "submit_draft")!;
+    const described = JSON.stringify(definition.inputSchema);
+
+    // Two descriptions contradicted each other: resources_search says to omit
+    // resourceId when nothing is bindable, while this field claimed its value
+    // came from that same search. The model followed this one.
+    expect(described).not.toContain("taken from plugin_inspect or resources_search");
+    expect(described).toContain("no tool returns one");
   });
 });

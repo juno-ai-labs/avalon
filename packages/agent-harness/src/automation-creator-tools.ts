@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-  AutomationSetEvaluatorRulesInputV1Schema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
   automationTriggersAdmitResourceType,
@@ -125,6 +125,51 @@ export function rememberAutomationResourceSearchResult(
       });
     }
   }
+}
+
+/**
+ * The rules whose source binding names no trigger in the draft they belong to.
+ *
+ * The same predicate `automationDraftAcceptanceBlocker` refuses on, kept in one
+ * place so the warning `set_evaluator_rules` echoes and the refusal
+ * `submit_draft` throws can never disagree about which rules are unbound — a
+ * warning that cleared a submission the object then rejected would be worse
+ * than no warning, because it would be believed.
+ */
+function unboundEvaluatorRules(
+  triggers: AutomationDraft["triggers"],
+  rules: AutomationSetEvaluatorRulesInputV1 | null,
+): {
+  declared: Record<string, string>;
+  unbound: AutomationSetEvaluatorRulesInputV1["evaluators"];
+} {
+  const declared = automationActivitySourcePluginIds(triggers);
+  return {
+    declared,
+    // `undefined !== string` covers the binding no trigger declares at all, so
+    // this one comparison is both halves of the blocker's `!bound || bound !==`.
+    unbound: (rules?.evaluators ?? []).filter(
+      (evaluator) => declared[evaluator.source.sourceBindingKey] !== evaluator.source.suggestedSourcePluginId,
+    ),
+  };
+}
+
+function describeSourceBindings(declared: Record<string, string>): string {
+  const entries = Object.entries(declared);
+  return entries.length === 0
+    ? "no activity source bindings at all"
+    : entries.map(([key, pluginId]) => `${key} (${pluginId})`).join(", ");
+}
+
+function describeUnboundRules(unbound: AutomationSetEvaluatorRulesInputV1["evaluators"]): string {
+  if (unbound.length === 0) return "Every rule names one of those";
+  const named = unbound
+    .map((evaluator) => (
+      `${evaluator.evaluatorKey} names ${evaluator.source.sourceBindingKey} `
+      + `(${evaluator.source.suggestedSourcePluginId})`
+    ))
+    .join("; ");
+  return `${unbound.length === 1 ? "This rule names something else" : "These rules name something else"}: ${named}`;
 }
 
 export function createAutomationCreatorTools(input: AutomationCreatorToolHost): HarnessTool[] {
@@ -287,10 +332,21 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             );
           }
           if (blocker === "sidekick_activity_source_unbound") {
+            // Both halves are in hand here and nowhere else: the triggers are
+            // in this submission, the rules are the ones already buffered. The
+            // wording used to say only that they had to agree, which leaves a
+            // model to guess *which* of two invented labels it typed wrong —
+            // and a binding key is invented, so neither side is discoverable
+            // from a catalog. Naming the two sets is what turns the refusal
+            // into an edit.
+            const { declared, unbound } = unboundEvaluatorRules(parsed.data.triggers, draftState.evaluatorRules ?? null);
             throw new Error(
               "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
-              + "semantic_activity or webhook trigger in this draft. Call set_evaluator_rules again with rules "
-              + "that name the triggers' bindings, or with [] when the draft no longer has such a trigger",
+              + "semantic_activity or webhook trigger in this draft. "
+              + `This draft's triggers declare ${describeSourceBindings(declared)}. `
+              + `${describeUnboundRules(unbound)}. `
+              + "Call set_evaluator_rules again with rules that name the triggers' bindings, "
+              + "or with [] when the draft no longer has such a trigger",
             );
           }
         }
@@ -326,11 +382,32 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         // pointing at it so the two can never drift.
         const issues = evaluatorRuleIssues(raw);
         if (issues) throw issues;
-        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
+        // The model's spelling in, the stored shape out; everything below and
+        // downstream of here is the stored shape.
+        const rules = AutomationSetEvaluatorRulesModelInputV1Schema.parse(raw);
         const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
         draftState.evaluatorRules = rules;
+        // What the submitted draft's triggers currently declare, echoed back so
+        // a binding key typed two ways is visible now rather than at submit.
+        // Only when a draft exists: rules may be set before one, deliberately —
+        // buffering is what keeps the two calls order-independent — and there
+        // is then nothing to compare against rather than a disagreement to
+        // report. The check that does fire in that case is `submit_draft`'s,
+        // which names both sets for the same reason.
+        const submitted = draftState.submitted;
+        const check = submitted === null
+          ? null
+          : unboundEvaluatorRules(submitted.triggers, rules);
         return {
-          output: result,
+          output: {
+            ...asRecord(result),
+            ...(check === null ? {} : {
+              declaredSourceBindings: check.declared,
+              ...(check.unbound.length > 0
+                ? { rulesNamingNoTrigger: check.unbound.map((evaluator) => evaluator.evaluatorKey) }
+                : {}),
+            }),
+          },
           summary: rules.evaluators.length === 0
             ? "Cleared external event evaluator rules"
             : `Set ${rules.evaluators.length} external event evaluator rule${rules.evaluators.length === 1 ? "" : "s"}`,
@@ -339,7 +416,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     },
   ];
   function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
-        const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
+        const parsed = AutomationSetEvaluatorRulesModelInputV1Schema.safeParse(raw);
         if (!parsed.success) return parsed.error;
         const issues: z.core.$ZodIssue[] = [];
         for (const [index, evaluator] of parsed.data.evaluators.entries()) {
