@@ -2692,6 +2692,7 @@ export const WORKSPACE_SOCKET_SESSION_INACTIVE_CODE = 4401;
 /** Transient status for one provider attempt within an active conversation run. */
 export const InferenceDelayStateSchema = z.object({
   harnessRunId: IdSchema,
+  parentAttemptId: IdSchema.optional(),
   executionId: IdSchema,
   attemptId: IdSchema,
   inferenceRequestId: IdSchema,

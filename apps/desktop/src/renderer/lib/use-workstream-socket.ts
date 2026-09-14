@@ -751,7 +751,7 @@ export function useWorkstreamSocket(
   const [openingError, setOpeningError] = useState<string>();
   const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
   const [sendReady, setSendReady] = useState(false);
-  const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>([]);
+  const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>(resumeState.activeInferenceDelays);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
   const retryOpening = useCallback((): void => {
@@ -835,7 +835,11 @@ export function useWorkstreamSocket(
   useEffect(() => {
     attempts.current = 0;
     setActiveCompaction(null);
-    setActiveInferenceDelays((current) => current.length === 0 ? current : []);
+    setActiveInferenceDelays((current) => current.length === 0 && resumeState.activeInferenceDelays.length === 0 ? current : resumeState.activeInferenceDelays);
+    const updateInferenceDelays = (next: InferenceDelayState[]) => {
+      resumeState.activeInferenceDelays = next;
+      setActiveInferenceDelays((current) => current.length === 0 && next.length === 0 ? current : next);
+    };
     setOpeningError(undefined);
     if (!api || !enabled) {
       setState('idle');
@@ -1344,7 +1348,7 @@ export function useWorkstreamSocket(
           'The work stream resynchronized while loading transcript ranges.',
         );
         setActiveCompaction(event.activeCompaction);
-        setActiveInferenceDelays((current) => current.length === 0 && event.activeInferenceDelays.length === 0 ? current : event.activeInferenceDelays);
+        updateInferenceDelays(event.activeInferenceDelays);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
@@ -1515,7 +1519,7 @@ export function useWorkstreamSocket(
         if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
-        setActiveInferenceDelays((current) => current.length === 0 && event.activeInferenceDelays.length === 0 ? current : event.activeInferenceDelays);
+        updateInferenceDelays(event.activeInferenceDelays);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1699,7 +1703,7 @@ export function useWorkstreamSocket(
         applyHarnessStatus(queryClient, parentId, normalizeHarnessStatus(event.status), substreamId);
         if (event.status !== 'running') {
           setActiveCompaction(null);
-          setActiveInferenceDelays((current) => current.length === 0 ? current : []);
+          updateInferenceDelays([]);
         }
         if (
           event.status === 'running'
@@ -1712,10 +1716,8 @@ export function useWorkstreamSocket(
           requestCanonicalSnapshot();
         }
       } else if (event.type === 'inference_delay_changed') {
-        setActiveInferenceDelays((current) => {
-          const others = current.filter((delay) => delay.inferenceRequestId !== event.inferenceRequestId);
-          return event.active ? [...others, InferenceDelayStateSchema.parse(event)] : others;
-        });
+        const others = resumeState.activeInferenceDelays.filter((delay) => delay.inferenceRequestId !== event.inferenceRequestId);
+        updateInferenceDelays(event.active ? [...others, InferenceDelayStateSchema.parse(event)] : others);
       } else if (event.type === 'compaction_started') {
         setActiveCompaction(event.compaction);
       } else if (event.type === 'compaction_finished') {
@@ -1884,7 +1886,7 @@ export function useWorkstreamSocket(
       resumeState.lastSequence = 0;
       streamCursors.clear();
       setActiveCompaction(null);
-      setActiveInferenceDelays((current) => current.length === 0 ? current : []);
+      updateInferenceDelays([]);
       clearReconnectTimer();
       clearOpeningTimer();
       connectGeneration += 1;

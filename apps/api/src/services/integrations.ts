@@ -4906,10 +4906,12 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             ? undefined
             : childInferenceLogger.onRequest(request),
           onInferenceDelay: async (event) => {
+            if (event.active) await assertChildOwned();
             await publishWorkstreamEvent(options.env, childInput.workspaceId, childInput.parentId, {
               type: "inference_delay_changed",
               ...event,
               harnessRunId: parentInput.harnessRunId,
+              parentAttemptId: options.parentLease().attemptId,
               executionId: childInput.harnessRunId,
               attemptId: childLiveness.lease.attemptId,
             }, childInput.substreamId ?? "0");
