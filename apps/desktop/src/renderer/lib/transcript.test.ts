@@ -3237,7 +3237,7 @@ describe('composer queue overlays', () => {
       ...base,
       id: overlay.message.id,
       authorType: 'agent',
-      elicitation: { ...answered, status: 'open', answer: null, answeredByUserId: null, answeredAt: null },
+      elicitation: { ...overlay.message.elicitation!, status: 'open', answer: null },
     });
     expect(upsertTranscriptMessage([open], overlay.message)[0])
       .toMatchObject({ elicitation: { status: 'answered' } });
