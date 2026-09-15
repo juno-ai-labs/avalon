@@ -4686,7 +4686,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const text = canonicalExternalResultText(message);
     if (!outcome.completedByTool && input.agentExchange && (input.backgroundAgent
       || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))) {
-      const response = outcome.status === "completed" || outcome.status === "needs_input" ? text
+      const response = outcome.status === "completed" ? text
+        : outcome.status === "needs_input"
+          ? text ?? `The agent needs input before continuing (${outcome.error?.code ?? "agent_needs_input"}). ${outcome.error?.message ?? "Ask it what information is needed."}`
         : outcome.status === "failed"
           ? `The agent could not complete this execution (${outcome.error?.code ?? "agent_execution_failed"}).` : null;
       if (response) {
