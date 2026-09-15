@@ -38,6 +38,26 @@ export interface ScheduledAlarmAttemptReport {
   fields: Record<string, string | number | boolean | null>;
 }
 
+/** The longest message `scheduledAlarmErrorCode` will carry through. */
+export const SCHEDULED_ALARM_CODE_MAX_LENGTH = 120;
+
+const OUTSIDE_CODE_SHAPE = /[^A-Za-z0-9_:.-]/gu;
+const CODE_SHAPED = new RegExp(`^[a-z0-9_:.-]{1,${SCHEDULED_ALARM_CODE_MAX_LENGTH}}$`, "iu");
+
+/**
+ * One message reduced to what this module will carry, for a caller composing
+ * a thrown message it wants to survive as a code.
+ *
+ * The bound and the character class live here rather than at each such caller,
+ * because they are this module's contract: a caller restating them is one
+ * regex edit away from silently degrading to `handler_error`, which is the
+ * outcome with no signal in it. `:` survives as the separator a composed code
+ * is built from.
+ */
+export function codeShaped(text: string): string {
+  return text.replace(OUTSIDE_CODE_SHAPE, "_").slice(0, SCHEDULED_ALARM_CODE_MAX_LENGTH);
+}
+
 /**
  * A handler's error, reduced to something that may leave Avalon.
  *
@@ -49,7 +69,7 @@ export interface ScheduledAlarmAttemptReport {
  */
 export function scheduledAlarmErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
-  if (/^[a-z0-9_:.-]{1,120}$/iu.test(message)) return message;
+  if (CODE_SHAPED.test(message)) return message;
   return error instanceof Error && /^[A-Za-z]{1,60}$/u.test(error.name) ? `handler_error:${error.name}` : "handler_error";
 }
 
