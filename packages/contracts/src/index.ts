@@ -2342,6 +2342,8 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   exactState: z.string().min(1).max(80),
   harnessStatus: HarnessStatusSchema,
+  /** Omission means this snapshot does not know the current background count. */
+  backgroundAgentCount: z.number().int().nonnegative().optional(),
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
   lastActivityAt: TimestampSchema,
@@ -2893,6 +2895,8 @@ export const WorkstreamWorkflowInputSchema = z.object({
   automationRun: AutomationRunReferenceV1Schema.optional(),
   /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
   agentExchange: AgentExchangeSchema.optional(),
+  /** Host-derived conversation kind; not a model-selectable execution option. */
+  backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The

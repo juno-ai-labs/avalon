@@ -66,18 +66,18 @@ describe("the receipt a tool's effects are keyed to", () => {
 });
 
 /**
- * The seam above is only worth anything if both harness surfaces are wired to
+ * The seam above is only worth anything if the shared substream harness is wired to
  * it, and that wiring is reachable only by running a whole harness against a
- * provider. Deleting either `record` call leaves every suite green and breaks
+ * provider. Deleting the `record` call leaves every suite green and breaks
  * every Terminal write in production with `tool_receipt_missing`, so the
  * ordering is asserted against the source the way
  * `harness-liveness-monitor-lifecycle.test.ts` asserts the run lifecycle.
  */
-describe("both harness surfaces record and resolve through that seam", () => {
-  it("records the parent run's receipt from the plan, then answers Bind with it", () => {
+describe("the shared substream harness records and resolves through that seam", () => {
+  it("records the substream run's receipt from the plan, then answers Bind with it", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
+      "function azureInferenceConfig(",
     );
 
     expectOrdered(root, [
@@ -89,26 +89,12 @@ describe("both harness surfaces record and resolve through that seam", () => {
     ]);
   });
 
-  it("records the inline child's receipt the same way", () => {
-    const child = section(
-      "function createInlineChildAgentTool(",
-      "async function recordOpenRouterInferenceAttempt(",
-    );
-
-    expectOrdered(child, [
-      "const childToolEffectIntents = createToolEffectIntents();",
-      "resolveToolEffectIntentId: childToolEffectIntents.resolve,",
-      "const receipt = await persistToolExecutionPlan(",
-      "childToolEffectIntents.record(event.toolCallId, receipt.invocationId);",
-    ]);
-  });
-
   it("keeps the recorded value the plan's own answer, not the call coordinate", () => {
     // The whole point of the change: `receipt.invocationId` is the row
     // `persistToolExecutionPlan` settled on, which is not `event.toolCallId`.
     expect(integrationsSource).not.toContain("record(event.toolCallId, event.toolCallId)");
     expect(
       integrationsSource.match(/EffectIntents\.record\(event\.toolCallId, receipt\.invocationId\)/gu),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 });

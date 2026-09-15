@@ -25,6 +25,8 @@ export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;
 /** A child's, or a parent's aggregated, common state. */
 export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   kind: z.literal("directory_common"),
+  /** Internal classification for a parent's aggregate running-agent count. */
+  backgroundAgent: z.boolean().optional(),
   appearance: WorkstreamAppearanceSchema.optional(),
   title: ShortTextSchema,
   description: z.string().max(4_000),
