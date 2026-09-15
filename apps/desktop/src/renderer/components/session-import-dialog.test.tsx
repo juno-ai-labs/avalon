@@ -15,7 +15,7 @@ describe('session import form', () => {
     render(<SessionImportForm open onOpenChange={vi.fn()} onImported={vi.fn()}
       api={{ previewSessionImport, importSession }} />);
     fireEvent.change(screen.getByLabelText('Shared conversation link'), { target: { value: 'https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Import into new work stream' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create a new work stream' }));
     await waitFor(() => expect(importSession).toHaveBeenCalledTimes(1));
     expect(screen.getByLabelText('Shared conversation link')).toBeDisabled();
     expect(screen.queryByLabelText('Work stream title')).not.toBeInTheDocument();
@@ -24,7 +24,7 @@ describe('session import form', () => {
     const firstRequest = importSession.mock.calls[0];
     await act(async () => rejectImport(new Error('Response unavailable')));
     expect(screen.getByLabelText('Shared conversation link')).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Import into new work stream' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create a new work stream' }));
     await waitFor(() => expect(importSession).toHaveBeenCalledTimes(2));
     expect(importSession.mock.calls[1]).toEqual(firstRequest);
     expect(previewSessionImport).toHaveBeenCalledTimes(1);
