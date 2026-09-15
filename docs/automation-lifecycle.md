@@ -739,6 +739,57 @@ run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
+### 2026-09-15 — A rule can name Fireflies
+
+**What changed:** `fireflies` is added to `ConnectorTypeSchema`, and a test in
+`apps/api/test/connector-activity-trigger-vocabulary.test.ts` asserts that every
+connector manifest declaring an activity trigger is accepted by it.
+
+**Why:** It was the only connector with activity triggers missing from that
+enum, so `ExternalEventRegistrationProjectionV1Schema` rejected every Fireflies
+registration at `evaluators.0.source.connectorType`. The projection is built
+from `connection.connector_type` verbatim (`sidekick-do.ts:1880`) and
+`prepareApplication` returns it as `unknown[]`, so nothing typed the value on
+the way out and the rejection happened at the far end of the RPC hop.
+
+The visible behaviour was a Fireflies Sidekick that accepted, showed as
+published, and never fired. `lifecycle` and `accepted_definition_revision`
+commit in the accept's own transaction; registrations are written afterwards by
+`applyEffects`, which threw here on every attempt. Scheduled alarms have no
+retry ceiling, so it retried indefinitely against a deterministic failure while
+`meeting.summarized` arrived, normalized, committed, and matched zero
+destinations. The entry above made that failure readable; this is what it
+turned out to say.
+
+`TELEMETRY_CONNECTOR_TYPES` already listed `fireflies`. Two spellings of the
+registry's membership live in the same package, and the connector was added to
+one of them.
+
+**How it is proved:** The test builds the fully-configured registry and lists
+the connectors that declare an activity trigger but are not nameable in a rule.
+Removing `fireflies` from the enum fails it with
+`expected [ 'fireflies' ] to deeply equal []` — the connector by name, which is
+the whole diagnosis. It also asserts `unconfiguredConnectorTypes` is empty, so a
+connector missing from the fixture cannot pass by never being built.
+
+**What a future change has to respect:** a connector that declares no activity
+trigger is deliberately not required in the enum — it can never produce an event
+for a rule to match. The test encodes that, so widening it to every connector
+would be adding vocabulary for nothing.
+
+**Considered and rejected:** deriving `ConnectorTypeSchema` from
+`TELEMETRY_CONNECTOR_TYPES`. It is the wrong authority — it is a telemetry
+dimension whose membership answers a different question, and it already
+contains `custom_mcp`, which has no activity triggers. The manifests are the
+authority, and `@rally/contracts` cannot see them, so the link is a test rather
+than a derivation. Also rejected: typing `prepareApplication`'s `evaluators` as
+`ExternalEventEvaluatorV1[]` so this failed at compile time. It is the right
+shape and worth doing, but it changes an apply path on the strength of a
+diagnosis made minutes ago; the guard that fails in CI is the cheaper half and
+does not.
+
+Shipped in #765.
+
 ### 2026-09-14 — A publication that cannot parse says which field it choked on
 
 **What changed:** `applyExternalEventRegistrations` parses its input through
