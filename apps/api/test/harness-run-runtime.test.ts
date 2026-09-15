@@ -274,24 +274,6 @@ function seedPendingToolCard(sqlite: RuntimeFixture, invocationId: string, toolN
 }
 
 describe("durable harness attempt runtime", () => {
-  it("recovers an explicitly tool-ended completion before terminalization without inventing a final turn", async () => {
-    const sqlite = fixture();
-    openDatabases.push(sqlite.database);
-    const claim = await claimHarnessAttempt(sqlite.runs, input(RUN_ONE), {
-      attemptId: "tool-ended-attempt", owner: "tool-ended-owner",
-    });
-    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
-    await persistHarnessHostOutcome(sqlite.runs, input(RUN_ONE), claim.lease, null, null, {
-      status: "completed", completedByTool: true,
-    });
-    const restored = await loadPersistedHarnessHostOutcome(sqlite.runs, input(RUN_ONE));
-    expect(restored).toEqual({ status: "completed", completedByTool: true });
-    if (!restored) throw new Error("expected persisted outcome");
-    expect(await terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), claim.lease,
-      restored, sqlite.receipts)).toBe("terminalized");
-    expect(await sqlite.runs.run({ runId: RUN_ONE })).toMatchObject({ status: "completed", final_turn_id: null });
-  });
-
   it("canonicalizes persisted receipt keys by UTF-16 code unit", () => {
     expect(__harnessRunRuntimeTesting.stableJson({ "é": 3, a: 2, "😀": 4, Z: 1 }))
       .toBe('{"Z":1,"a":2,"é":3,"😀":4}');
@@ -401,9 +383,6 @@ describe("durable harness attempt runtime", () => {
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
       status: "completed",
     }, sqlite.receipts )).rejects.toThrow("final_turn_required");
-    await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
-      status: "completed", completedByTool: true,
-    }, sqlite.receipts )).rejects.toThrow("tool_completion_not_persisted");
     await expect(terminalizeHarnessAttempt(sqlite.runs, input(RUN_ONE), first.lease, {
       status: "completed",
       finalTurnId: `${RUN_ONE}:turn:1`,

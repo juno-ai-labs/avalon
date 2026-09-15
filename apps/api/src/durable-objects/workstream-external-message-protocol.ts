@@ -82,12 +82,10 @@ export const AdmitAgentMessageInputSchema = z.strictObject({
   workstreamId: WorkstreamIdSchema,
   messageId: IdSchema,
   clientMessageId: z.string().min(1).max(120),
-  // Model-facing tools validate composed inputs; generated final results are
-  // already durable and must be delivered in full.
-  text: z.string(),
+  text: z.string().max(MESSAGE_MAX_CHARACTERS),
   agentExchange: AgentExchangeSchema,
   recipientAgentId: AgentIdSchema,
-  attachmentIds: z.array(IdSchema).default([]),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
   executionPrincipal: ExecutionPrincipalSchema,
   origin: z.literal("agent_message"),
   now: z.number().int().nonnegative(),

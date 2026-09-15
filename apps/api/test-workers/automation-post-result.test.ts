@@ -21,8 +21,8 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   agentIdForAddress,
@@ -45,6 +45,7 @@ import {
   workstreamDOName,
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createAutomation } from "../src/services/automation-service";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import {
@@ -57,7 +58,7 @@ import {
   deliverParentEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -107,6 +108,23 @@ const DEFINITION: AutomationDraft = {
  */
 const LARGE_RESULT_TEXT = "Detailed finding. ".repeat(7_000).trim();
 let heldBackgroundModel: Promise<void> | null = null;
+function explicitReply(call: ProviderCall, text: string): ProviderReply {
+  const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
+  const current = call.messages.slice(call.messages.lastIndexOf(latestInput!));
+  if (current.some((message) => message.role === "tool"
+    && /"data"\s*:\s*\{\s*"messageId"\s*:/u.test(String(message.content)))) {
+    return { say: "My local work is complete." };
+  }
+  const reply = call.toolNames.find((name) => name.endsWith("reply"));
+  if (reply) {
+    const messageId = /Message ID: ([0-9a-f-]{36})/u.exec(String(latestInput?.content))?.[1];
+    if (!messageId) throw new Error("test_reply_reference_missing");
+    return { callTool: { name: reply, arguments: { messageId, message: text } } };
+  }
+  const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
+  if (!load) throw new Error("agent_plugin_loader_missing");
+  return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
+}
 const provider = useOpenRouterDouble(async (call) => {
   const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
   if (heldBackgroundModel && JSON.stringify(latestInput?.content ?? "").includes("HOLD_BACKGROUND")) await heldBackgroundModel;
@@ -117,7 +135,7 @@ const provider = useOpenRouterDouble(async (call) => {
     }
     const start = call.toolNames.find((name) => name.endsWith("start_agent"));
     if (start) return { callTool: { name: start, arguments: { name: "Model-created researcher",
-      description: "Compare the options independently", message: "HOLD_BACKGROUND: compare these options" } } };
+      description: "Compare the options independently", message: "HOLD_BACKGROUND EXPLICIT_REPLY: compare these options" } } };
     const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
     if (!load) throw new Error("agent_plugin_loader_missing");
     return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
@@ -126,9 +144,9 @@ const provider = useOpenRouterDouble(async (call) => {
     const current = call.messages.slice(call.messages.lastIndexOf(latestInput!));
     const results = current.filter((message) => message.role === "tool")
       .map((message) => typeof message.content === "string" ? message.content : JSON.stringify(message.content)).join("\n");
-    if (/"accepted"\s*:\s*true/u.test(results)) return { say: "The Sidekick configuration is saved." };
+    if (/"accepted"\s*:\s*true/u.test(results)) return explicitReply(call, "The Sidekick configuration is saved.");
     if (!results.includes("currentDefinition")) {
-      const list = call.toolNames.find((name) => name.endsWith("sidekicks_list"));
+      const list = call.toolNames.find((name) => name === "sidekick_sidekicks_list");
       if (!list) throw new Error("sidekick_directory_tool_missing");
       return { callTool: { name: list, arguments: {} } };
     }
@@ -139,17 +157,8 @@ const provider = useOpenRouterDouble(async (call) => {
       name: revised ? "Revised research guide" : "Research guide", triggers: [],
       instructions: revised ? "Compare the options and include their costs." : "Compare the available options." } } };
   }
-  // Model acknowledgment is intentionally terminal. Echoing every agent reply
-  // creates a fresh continuation and makes the stop test race an endless loop.
-  const isAgentAcknowledgment = typeof latestInput?.content === "string"
-    && latestInput.content.startsWith("Message from agent ")
-    && latestInput.content.endsWith("\nAcknowledged.");
-  if (isAgentAcknowledgment || JSON.stringify(latestInput?.content ?? "").includes("NO_REPLY_REQUIRED")) {
-    const endTurn = call.toolNames.find((name) => name.endsWith("end_turn"));
-    if (endTurn) return { callTool: { name: endTurn, arguments: {}, text: "No further response is needed." } };
-    const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
-    if (!load) throw new Error("agent_plugin_loader_missing");
-    return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
+  if (String(latestInput?.content).includes("EXPLICIT_REPLY")) {
+    return explicitReply(call, "Here are the requested findings.");
   }
   const tool = call.toolNames.find((name) => name.endsWith("sidekick_post_result"));
   const toolAnswered = call.messages.some((message) => message.role === "tool");
@@ -421,7 +430,7 @@ describe("sidekick_post_result", () => {
       .toContain(`This conversation configures Sidekick ${sidekickId}`);
   });
 
-  it("delivers a generated reply beyond the composer text ceiling without truncation", async () => {
+  it("keeps a large final response local without creating a parent message", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -441,76 +450,69 @@ describe("sidekick_post_result", () => {
     await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
       "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
     ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
-    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
-      && JSON.stringify(message.content).includes(LARGE_RESULT_TEXT)))).toBe(true);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
+    ).one().n)).toBe(0);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(0);
   });
 
-  it("recovers an uncertain worker reply after eviction without duplicating delivery or inference", async () => {
-    let release = () => {};
-    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+  it("replays an explicit reply after lost admission confirmation and a cold restart", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
       executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
-    const service = new AgentCommunicationService(TEST_ENV, input);
-    try {
-      const started = await service.start({ name: "Recoverable researcher", description: "Deliver one result",
-        message: "HOLD_BACKGROUND: produce a result", attachmentIds: [] }, {
-        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
-        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
-        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
-      });
-      const address = agentAddressForId(started.agentId);
-      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
-      ));
-      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")),
-        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
-      await runInDurableObject(child, (instance) => {
-        const target = instance as unknown as {
-          deliverAgentRunResult: (...args: unknown[]) => Promise<string | null>;
-        };
-        const deliver = target.deliverAgentRunResult.bind(target);
-        target.deliverAgentRunResult = async (...args) => {
-          await deliver(...args);
-          // The real recipient committed the reply, but its successful return
-          // is lost. Eviction removes this injected transport failure.
-          throw new Error("injected_reply_confirmation_loss");
-        };
-      });
-      release();
-      const [run] = await settledRun(child);
-      expect(run).toMatchObject({ status: "completed" });
-      await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ retry_count: number }>(
-        "SELECT retry_count FROM runs WHERE run_id = ?", run!.run_id,
-      ).one().retry_count), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeGreaterThan(0);
-      await settledRun(roomConversation());
-      await runInDurableObject(child, (_instance, state) => {
-        state.storage.sql.exec("UPDATE runs SET execution_available_at = ? WHERE run_id = ?", Date.now() - 1, run!.run_id);
-      });
-      await evictDurableObject(child);
-      await runDurableObjectAlarm(child);
-      await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
-        "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
-      ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-      expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM (
-          SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
-          UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
-        )`,
-      ).one().n)).toBe(1);
-      expect(await runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM runs",
-      ).one().n)).toBe(1);
-    } finally {
-      release();
-      heldBackgroundModel = null;
-    }
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await new AgentCommunicationService(TEST_ENV, input).start({ name: "Researcher",
+      description: "Prepare findings", message: "Prepare findings locally.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const replyService = new AgentCommunicationService(TEST_ENV, childInput);
+    const replyContext = { ...context, effectIntentId: crypto.randomUUID() };
+    const reply = { messageId: childInput.agentExchange!.messageId, message: "Explicit findings.", attachmentIds: [] };
+    await runInDurableObject(roomConversation(), (instance) => {
+      const target = instance as unknown as {
+        product: { admitSystemActivation: (...args: unknown[]) => Promise<unknown> };
+      };
+      const admit = target.product.admitSystemActivation.bind(target.product);
+      target.product.admitSystemActivation = async (...args) => {
+        await admit(...args);
+        target.product.admitSystemActivation = admit;
+        throw new Error("injected_reply_confirmation_loss");
+      };
+    });
+    await expect(replyService.send(reply, replyContext)).rejects.toThrow("injected_reply_confirmation_loss");
+    await settledRun(roomConversation());
+    // Crash only the recipient. Graceful eviction waits for live requests;
+    // aborting every object also resets Miniflare's D1 and breaks isolation.
+    let beforeCrash: unknown;
+    await expect(runInDurableObject(roomConversation(), (instance, state) => {
+      beforeCrash = instance;
+      state.abort("injected_recipient_restart");
+    })).rejects.toThrow("injected_recipient_restart");
+    expect(await runInDurableObject(roomConversation(), (instance) => instance === beforeCrash)).toBe(false);
+    await replyService.send(reply, replyContext);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n)).toBe(1);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(1);
   });
 
-
-  it("notifies the coordinator for a textless needs-input settlement", async () => {
+  it.each(["needs_input", "failed"] as const)("does not synthesize a %s reply to the coordinator", async (status) => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -520,7 +522,7 @@ describe("sidekick_post_result", () => {
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
-      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+      message: "no further action is needed.", attachmentIds: [] }, context);
     const address = agentAddressForId(started.agentId);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
@@ -531,16 +533,18 @@ describe("sidekick_post_result", () => {
     )));
     await runInDurableObject(child, async (instance) => {
       const target = instance as unknown as {
-        deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input"; error: { code: string; message: string } }) => Promise<string | null>;
+        deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" | "failed"; error: { code: string; message: string } }) => Promise<string | null>;
       };
-      await target.deliverAgentRunResult(childInput, { status: "needs_input", error: {
+      await target.deliverAgentRunResult(childInput, { status, error: {
         code: "ambiguous_external_write", message: "An external action's outcome could not be confirmed; do not repeat it.",
       } });
     });
-    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
-    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
-      && JSON.stringify(message.content).includes("ambiguous_external_write")
-      && JSON.stringify(message.content).includes("do not repeat it")))).toBe(true);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(0);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
+    ).one().n)).toBe(0);
   });
 
   it("fences an owner before reading descendants during recursive stop", async () => {
@@ -553,7 +557,7 @@ describe("sidekick_post_result", () => {
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
-      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+      message: "no further action is needed.", attachmentIds: [] }, context);
     const address = agentAddressForId(started.agentId);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
@@ -577,7 +581,7 @@ describe("sidekick_post_result", () => {
           attempted.reached = true;
           try {
             await new AgentCommunicationService(TEST_ENV, childInput).start({
-              name: "Late child", description: "Register during a stop", message: "NO_REPLY_REQUIRED", attachmentIds: [],
+              name: "Late child", description: "Register during a stop", message: "Finish your local work.", attachmentIds: [],
             }, { ...context, effectIntentId: crypto.randomUUID() });
             attempted.created = true;
           } catch (error) {
@@ -602,7 +606,7 @@ describe("sidekick_post_result", () => {
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
-      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+      message: "no further action is needed.", attachmentIds: [] }, context);
     const address = agentAddressForId(started.agentId);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
@@ -620,7 +624,7 @@ describe("sidekick_post_result", () => {
       return result;
     };
     await expect(nestedService.start({ name: "Racing child", description: "Opening admission after stop",
-      message: "NO_REPLY_REQUIRED", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() }))
+      message: "Finish your local work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() }))
       .rejects.toThrow(loseConfirmation ? "opening_confirmation_lost" : "stopped");
     const descendants = await workspaceStub().ownedAgentDescendants({ workspaceId: WORKSPACE_ID, agentId: started.agentId });
     expect(descendants.agentIds).toHaveLength(1);
@@ -631,7 +635,9 @@ describe("sidekick_post_result", () => {
     expect(await nested.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
   });
 
-  it("ends through Bind without an automatic reply and continues on a later message", async () => {
+  it.each(["worker", "sidekick"] as const)("keeps a %s final response local and sends only explicit replies", async (kind) => {
+    const deliveries = vi.spyOn(SlackAgentService.prototype, "deliverWorkstreamOutcome");
+    try {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -640,11 +646,15 @@ describe("sidekick_post_result", () => {
     const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
-    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
-      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+    const started = kind === "worker"
+      ? await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+        message: "Finish your local work.", attachmentIds: [] }, context)
+      : await service.createSidekick("workstream", context);
+    if (kind === "sidekick") await service.send({ agentId: started.agentId,
+      message: "Finish your local work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
     const address = agentAddressForId(started.agentId);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      conversationObjectName("global", WORKSPACE_ID, address.parentId, address.substreamId),
     ));
     const [run] = await settledRun(child);
     expect(run).toMatchObject({ status: "completed", error_json: null });
@@ -654,17 +664,27 @@ describe("sidekick_post_result", () => {
     expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM runs",
     ).one().n)).toBe(0);
+    expect(deliveries.mock.calls.filter((args) => args[3].startsWith(`${run!.run_id}:`))).toEqual([]);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n)).toBe(0);
     expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
-    await service.send({ agentId: started.agentId, message: "Now send a useful result.", attachmentIds: [] },
+    await service.send({ agentId: started.agentId, message: "EXPLICIT_REPLY: send a useful result.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
     expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    } finally {
+      deliveries.mockRestore();
+    }
   });
 
   it("forwards an existing attachment into the worker's canonical message and reply", async () => {
     const resourceId = crypto.randomUUID();
     const imageId = crypto.randomUUID();
-    const extraIds = Array.from({ length: 9 }, () => crypto.randomUUID());
+    const extraIds = Array.from({ length: 8 }, () => crypto.randomUUID());
     const attachmentIds = [resourceId, imageId, ...extraIds];
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     const imageRef = `global/${WORKSPACE_ID}/agent-test/${imageId}.png`;
@@ -955,8 +975,6 @@ describe("sidekick_post_result", () => {
     const [run] = await settledRun(child);
     expect(run).toMatchObject({ status: "completed", error_json: null });
     expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(args.message))).toBe(true);
-    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes(started.agentId)
-      && JSON.stringify(call.messages).includes("Acknowledged.")), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await service.list()).toMatchObject({ agents: [{ agentId: started.agentId, name: args.name, description: args.description }] });
     expect(await child.agentRuntimeInfo()).toMatchObject({ background: true, executionPrincipal: input.executionPrincipal });
     expect(await roomParent().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
@@ -1013,9 +1031,7 @@ describe("sidekick_post_result", () => {
     await settledRun(grandchild);
     await service.stop(started.agentId);
     expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
-    // Suppress a fresh reply to the run's originating teammate: direct messages
-    // legitimately wake stopped recipients, independently of owned continuation.
-    await service.send({ agentId: started.agentId, message: "NO_REPLY_REQUIRED: Continue only your own summary.", attachmentIds: [] },
+    await service.send({ agentId: started.agentId, message: "Continue only your own summary.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Continue only your own summary.")),
       { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);

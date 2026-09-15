@@ -670,6 +670,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   let terminalCompactionInputTokens = 0;
   let terminalCompactionOutputTokens = 0;
   let terminalCompactionModelTimeMs = 0;
+  let completedByTool = false;
   let completedWithoutAcceptedAssistant = false;
   let bindLoopProjection: BindLoopProjectionState | null = null;
   const resolvedAzureModelPricing = new Map<string, AzureModelPricing>();
@@ -1700,7 +1701,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           }),
         );
         if (completed) {
-          return harnessResultOutcome(toolCall.id, completed);
+          return harnessResultOutcome(toolCall.id, completed, () => { completedByTool = true; });
         }
         const executionPlanHash = await canonicalToolInputHash({
           pluginId: dispatched.pluginId,
@@ -1903,7 +1904,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ...(toolResult.providerOperationId ? { providerOperationId: toolResult.providerOperationId } : {}),
         }));
         await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
-        return harnessResultOutcome(toolCall.id, toolResult);
+        return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
       },
       beforeToolMessageAccepted: persistAcceptedToolMessage,
       onStepSettled: ({ wouldEnd }) => settleStep(wouldEnd),
@@ -1980,7 +1981,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             : null,
         };
 
-    if (result.stopReason === "tool_completed") {
+    if (result.stopReason === "resuming_later" && completedByTool) {
       const completedReservation = bindLoopProjection?.lastAssistantReservation;
       if (!completedReservation || completedReservation.status !== "accepted") {
         throw new Error("bind_loop_completed_turn_missing");
@@ -3704,7 +3705,9 @@ function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolea
 function harnessResultOutcome(
   toolCallId: string,
   result: HarnessToolResult,
+  markCompleted: () => void,
 ) {
+  if (result.halt === "completed") markCompleted();
   const jsonMessage = toolResultMessage(toolCallId, { success: true, data: result.output });
   const toolMessage = result.contentParts?.length
     ? {
@@ -3720,7 +3723,7 @@ function harnessResultOutcome(
     ...(result.halt === "needs_input"
       ? { suspend: { toolCallId, reason: "needs_input", resumeKind: "answer" as const } }
       : result.halt === "completed"
-        ? { complete: true as const }
+        ? { suspend: { toolCallId, reason: "completed", resumeKind: "wake" as const } }
       : {}),
     ...((result as HarnessToolResult & { loadedPluginName?: string }).loadedPluginName
       ? { loadedPluginName: (result as HarnessToolResult & { loadedPluginName: string }).loadedPluginName }
