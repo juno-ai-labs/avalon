@@ -59,6 +59,16 @@ detail, transcript, inherited context, streaming overlays, feed source and
 snapshot generation. These leases follow the socket-owning effects, including
 background retention and reconnects, rather than the visible route.
 
+The existing sidebar-list waterline ledger is the exception: its receiver pins
+it for the entire query-client lifetime, independently of the workspace socket.
+That older invariant protects all list writes through the receiver, including
+ones made without a mounted socket. New socket-owned entries use the lease;
+the sidebar ledger's explicit eviction still applies.
+
+`retainQueryData` holds in-memory entries. The adjacent
+`retainConversationParents` / `retainConversationChildren` calls instead prune
+the persisted cache to a keep-set; they do not supply these in-memory leases.
+
 Explicit removal still wins: the lease releases the removed entry without
 recreating it or restoring its old data. If the producer later writes a new
 entry under that key, the lease holds the replacement. This matters both for
@@ -493,7 +503,10 @@ subscription. Retention belongs to the producer, so the shared mechanism applies
 to each socket family rather than adding a special case to the child sidebar.
 
 **Consequences:** Warm subscriptions retain their product state as well as their
-transport. Releasing the owner restores ordinary collection; access revocation,
+transport. The warm set has no ceiling on pinned or running work streams, so
+those streams retain their full loaded transcript range and inherited context
+until the owner releases them. The persisted snapshot's range bound does not
+bound this in-memory state. Releasing the owner restores ordinary collection; access revocation,
 sign-out and snapshot-context removal still remove entries immediately. Adding
 a socket-owned entry requires adding it to that owner's retained family.
 
