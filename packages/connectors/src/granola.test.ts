@@ -115,7 +115,7 @@ describe("Granola connector", () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         url: "https://api.example.test/ingest/granola/connection-id",
         scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        events: ["note.access_granted", "note.edited", "note.generated"],
       });
       return jsonResponse({
         id: "whe_1234567890abcd",

@@ -21,7 +21,6 @@ const installationEventLabels: Record<string, string> = {
   'note.access_granted': 'Note access granted',
   'note.edited': 'Note edited',
   'note.generated': 'Note generated',
-  'note.regenerated': 'Note regenerated',
 };
 const eventLabel = (event: string) => installationEventLabels[event] ?? event;
 
