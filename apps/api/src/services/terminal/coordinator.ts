@@ -292,17 +292,6 @@ export class TerminalSandboxCoordinator {
       }
     }
 
-    try {
-      await assertTerminalSandboxReady(this.provider, row.sandboxId!);
-    } catch {
-      // Metadata and runner availability are separate facts. A subsequent
-      // acquisition probes again even when metadata still reports running.
-      throw new TerminalToolError(
-        "sandbox_unavailable",
-        "The Terminal sandbox is retained, but its command or file service is not ready. Retry the tool.",
-        { reason: "Retry when Daytona can serve both commands and files." },
-      );
-    }
     const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
     if (currentPolicy.verificationState !== "verified" || currentPolicy.revision !== policy.revision) {
       if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
@@ -688,6 +677,20 @@ export class TerminalSandboxCoordinator {
     return { ...row, sandboxId: created.id, lifecycleState: "running", version: row.version + 1 };
   }
 
+  private async assertRestoredSandboxReady(sandboxId: string): Promise<void> {
+    try {
+      await assertTerminalSandboxReady(this.provider, sandboxId);
+    } catch {
+      // Only restore/recovery needs a preflight. Ordinary operations establish
+      // their own availability without treating an endpoint error as deletion.
+      throw new TerminalToolError(
+        "sandbox_unavailable",
+        "The Terminal sandbox is retained, but its command or file service is not ready. Retry the tool.",
+        { reason: "Retry when Daytona can serve both commands and files." },
+      );
+    }
+  }
+
   /** Resume the same identity, or recover its backup, before considering replacement. */
   private async resumeProviderSandbox(
     context: HarnessToolContext,
@@ -725,6 +728,7 @@ export class TerminalSandboxCoordinator {
         await this.refreshDeadlines(context, row, now);
         return { row, action: null };
       }
+      await this.assertRestoredSandboxReady(sandboxId);
       await this.setRunning(context, row, now);
       return {
         row: { ...row, lifecycleState: "running", version: row.version + 1 },
@@ -755,6 +759,7 @@ export class TerminalSandboxCoordinator {
         reason: error instanceof Error ? error.name : "unknown",
       });
     }
+    await this.assertRestoredSandboxReady(sandboxId);
     await this.setRunning(context, row, now);
     return {
       row: { ...row, lifecycleState: "running", version: row.version + 1 },

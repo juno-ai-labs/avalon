@@ -292,6 +292,8 @@ describe("Terminal sandbox coordinator", () => {
         generation: recoverable ? 1 : 2,
       });
       expect(provider.recoverSandbox).toHaveBeenCalledTimes(recoverable ? 1 : 0);
+      expect(provider.runUtilityCommand).toHaveBeenCalledTimes(recoverable ? 1 : 0);
+      expect(provider.readFile).toHaveBeenCalledTimes(recoverable ? 1 : 0);
     }
     expect(provider.deleteSandbox).toHaveBeenCalledTimes(recoverable === false ? 1 : 0);
     expect(provider.createSandbox).toHaveBeenCalledTimes(recoverable === false ? 2 : 1);
@@ -428,12 +430,14 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.startSandbox).toHaveBeenCalledOnce();
   });
 
-  it("rejects acquisition when metadata is running but the command probe fails", async () => {
+  it("does not probe a healthy acquisition before the first real operation", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not ready" });
-    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(provider.runUtilityCommand).not.toHaveBeenCalled();
+    expect(provider.readFile).not.toHaveBeenCalled();
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
