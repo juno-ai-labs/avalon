@@ -7230,18 +7230,4 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 .inference-delay-notice > svg { flex-shrink: 0; }
 
-.session-import-preview ol {
-  max-height: 35vh;
-  overflow: auto;
-  padding-inline-start: 1.5rem;
-}
-.session-import-preview p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .session-import-link-form { display: grid; gap: 10px; }
-.session-import-link-form > .button { justify-self: start; }
-.session-import-export, .session-import-preview { margin-top: 16px; }
-.session-import-export > summary { cursor: pointer; }
-.session-import-export > .form-field { margin-top: 12px; }

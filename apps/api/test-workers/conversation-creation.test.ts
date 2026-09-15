@@ -30,7 +30,7 @@ import { WorkstreamObjectCreationService } from "../src/services/workstream-obje
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 useSelectedModel();
-const provider = useOpenRouterDouble(() => ({ say: "Continuing the imported conversation." }));
+const provider = useOpenRouterDouble((call) => ({ say: call.body.response_format ? JSON.stringify({ title: "Garden irrigation", icon: "lightbulb" }) : "Continuing the imported conversation." }));
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000bb0");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000bb1");
@@ -98,11 +98,30 @@ function creationEnv(): Env {
   return new Proxy(env, {
     get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
       ? "workerd-test-email-address-key-0123456789"
+      : property === "OPENROUTER_CLASSIFIER_MODEL" ? "double/naming"
       : Reflect.get(current, property, receiver),
   });
 }
 
 describe("creating a work stream", () => {
+  it("names prepared history through the standard background naming path without starting a run", async () => {
+    const pending: Promise<unknown>[] = [];
+    const service = new WorkstreamObjectCreationService(creationEnv(), AUTH, (task) => { pending.push(task); });
+    const created = await service.createPrepared({ objective: "Source conversation", clientMessageId: "import-naming", participantUserIds: [] }, {
+      messages: [{ role: "user", text: "How should I water my garden?" }, { role: "assistant", text: "Use drip irrigation for the tomatoes." }],
+    });
+    expect(created.workstream.titleStatus).toBe("naming");
+    expect(created.harnessRunId).toBeNull();
+    await Promise.all(pending);
+    const naming = provider.calls.find((call) => call.body.response_format);
+    expect(JSON.stringify(naming?.messages)).toContain("How should I water my garden?");
+    expect(JSON.stringify(naming?.messages)).toContain("Use drip irrigation for the tomatoes.");
+    const boot = await new WorkstreamObjectClient(creationEnv(), AUTH, created.workstream.id).boot();
+    expect(boot.workstream.title).toBe("Garden irrigation");
+    expect(boot.workstream.titleStatus).toBe("automatic");
+    expect(boot.transcript.ranges.flatMap((range) => range.turns)).toHaveLength(2);
+  });
+
   it("imports user files and assistant artifacts through upload storage and attaches each to its source turn", async () => {
     const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
     const preview: SessionImportPreview = { title: "Imported files", source: { provider: "claude", url: null }, content: { messages: [
