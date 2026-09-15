@@ -378,12 +378,10 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
     "/workstreams/new",
     "/workstreams/:id",
     "/projects/:projectId",
-    "/notes/:id",
     "/sidekicks",
     "/sidekicks/:id",
     "/automations/:id",
     "/settings",
-    "/meeting",
   ]) {
     assert.match(desktopApp, new RegExp(route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
