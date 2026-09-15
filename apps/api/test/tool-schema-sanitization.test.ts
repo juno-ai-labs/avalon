@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   droppedNullableBranches,
   nonObjectRootSchema,
   nonObjectRootUnionBranches,
+  repairRootSchemaForProviders,
   weakenedCompositionBranches,
 } from "@rally/agent-harness";
 import { __integrationTesting } from "../src/services/integrations";
@@ -46,6 +48,54 @@ import { everyAuthoredToolSchema } from "./helpers/authored-tool-schemas";
  * `pnpm test` rather than three days later in a payload log.
  */
 describe("tool schema sanitization", () => {
+  it("keeps Gmail new/reply arguments identical at the model and executor boundaries", () => {
+    const adapter = createTestConnectorRegistry().get("google");
+    const content = { to: ["recipient@example.com"], body: "Hello." };
+    const newMessage = { kind: "new", ...content, subject: "A new conversation" };
+    const reply = { kind: "reply", ...content, messageId: "18f0a2c4d5e6f702" };
+    const cases: Array<{ label: string; message: unknown; accepted: boolean }> = [
+      { label: "new", message: newMessage, accepted: true },
+      { label: "new with null cc", message: { ...newMessage, cc: null }, accepted: true },
+      { label: "new with cc", message: { ...newMessage, cc: ["copied@example.com"] }, accepted: true },
+      { label: "reply", message: reply, accepted: true },
+      { label: "reply with null cc", message: { ...reply, cc: null }, accepted: true },
+      { label: "no kind", message: content, accepted: false },
+      { label: "unknown kind", message: { ...newMessage, kind: "forward" }, accepted: false },
+      { label: "empty subject", message: { ...newMessage, subject: "" }, accepted: false },
+      { label: "long subject", message: { ...newMessage, subject: "a".repeat(999) }, accepted: false },
+      { label: "long body", message: { ...newMessage, body: "a".repeat(500_001) }, accepted: false },
+      { label: "no recipients", message: { ...newMessage, to: [] }, accepted: false },
+      { label: "invalid address", message: { ...newMessage, to: ["recipient"] }, accepted: false },
+      { label: "new with messageId", message: { ...newMessage, messageId: "." }, accepted: false },
+      { label: "reply with subject", message: { ...reply, subject: "Unrelated subject" }, accepted: false },
+      { label: "reply with empty messageId", message: { ...reply, messageId: "" }, accepted: false },
+      { label: "reply without messageId", message: { kind: "reply", ...content }, accepted: false },
+      ...["threadId", "inReplyTo", "references"].flatMap((field) => [
+        { label: `new with stray ${field}`, message: { ...newMessage, [field]: field === "references" ? ["."] : "." }, accepted: false },
+        { label: `reply with supplied ${field}`, message: { ...reply, [field]: field === "references" ? [] : "." }, accepted: false },
+      ]),
+    ];
+    const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft"].includes(tool.name));
+    expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send"]);
+    for (const tool of mailWrites) {
+      const authored = tool.inputSchema;
+      const schemas = [authored, repairRootSchemaForProviders(authored)]
+        .map((schema) => z.fromJSONSchema(schema));
+      for (const { label, message, accepted } of cases) {
+        const args = { message };
+        expect(adapter.validateToolInput?.(tool.name, args) === null, `${tool.name}: ${label}, executor`).toBe(accepted);
+        for (const schema of schemas) {
+          expect(schema.safeParse(args).success, `${tool.name}: ${label}, advertised`).toBe(accepted);
+        }
+      }
+      // The old production failure shape must fail on both sides, including
+      // when it carries the nonempty placeholders the old JSON schema allowed.
+      const legacy = { ...content, subject: "A new conversation", threadId: ".", inReplyTo: ".", references: [] };
+      expect(adapter.validateToolInput?.(tool.name, legacy)).not.toBeNull();
+      for (const schema of schemas) expect(schema.safeParse(legacy).success).toBe(false);
+    }
+  });
+
   it("walks every authored surface, including the conditional and hand-assembled ones", () => {
     // `everyAuthoredToolSchema` throws when the walk stops reaching a surface,
     // so every check below carries the completeness guarantee too; this names

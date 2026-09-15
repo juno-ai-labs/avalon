@@ -6314,13 +6314,9 @@ function forgetCredentialPluginActivation(
  * capability it calls, because demonstrating a tool this credential cannot
  * invoke teaches the model a call that will only ever be refused.
  *
- * The new-email call is shown first and in full, because it is the common one
- * and because the threaded call was for a long time the only mail write example
- * here. A model composing a brand-new email had nothing else to copy, so it
- * copied the reply — filling in `threadId` and `inReplyTo` for a conversation
- * that does not exist, and then reporting the tool as demanding reply fields.
- * An example is the strongest instruction on this surface: the shape that is
- * shown is the shape that gets sent, so every shape a caller needs is shown.
+ * Show both message kinds for each granted write capability. A send-only
+ * connection needs a complete new-email example too; replies additionally
+ * require read access so the adapter can resolve the original headers.
  */
 function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<string>): string {
   const examples: string[] = [];
@@ -6330,11 +6326,16 @@ function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<strin
       `Search with operators rather than keywords — \`${wirePrefix}_gmail_search {"query": "from:(dana) subject:(renewal) newer_than:90d", "maxResults": 10}\`. Each hit already carries \`from\`, \`to\`, \`subject\`, \`date\`, \`snippet\`, and \`messageIdHeader\`, so answer from the hit and open the message only for its body.`,
     );
   }
-  if (granted.has("gmail.draft")) {
+  for (const [capability, tool] of [["gmail.draft", "create_draft"], ["gmail.send", "send"]] as const) {
+    if (!granted.has(capability)) continue;
     examples.push(
-      `Start a new conversation by sending no threading fields at all — \`${wirePrefix}_gmail_create_draft {"to": ["dana@example.com"], "subject": "Renewal", "body": "…"}\` is the whole call. \`threadId\`, \`inReplyTo\`, and \`references\` address an existing conversation, so an email that starts one has no value to put in them and leaves all three out.`,
-      `Reply inside a thread by threading both identifiers out of that hit — \`${wirePrefix}_gmail_create_draft {"to": ["dana@example.com"], "subject": "Re: Renewal", "body": "…", "threadId": "…", "inReplyTo": "…"}\`, filling \`threadId\` from the hit's \`threadId\` and \`inReplyTo\` from that same hit's \`messageIdHeader\`. A \`threadId\` sent without its \`inReplyTo\` is rejected, and the two must come from the same hit.`,
+      `Start a new conversation — \`${wirePrefix}_gmail_${tool} {"message": {"kind": "new", "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana."}}\` is the whole call.`,
     );
+    if (granted.has("gmail.read")) {
+      examples.push(
+        `Reply to an existing message — if a search hit's \`id\` were "18f0a2c4d5e6f702", the call would be \`${wirePrefix}_gmail_${tool} {"message": {"kind": "reply", "messageId": "18f0a2c4d5e6f702", "to": ["dana@example.com"], "body": "Thank you, Dana."}}\`. Replace the example id and address with values from your actual tool results. Rally fetches the subject and threading headers; you choose the recipients explicitly.`,
+      );
+    }
   }
   if (granted.has("calendar.write") && granted.has("calendar.read")) {
     examples.push(
@@ -6478,8 +6479,7 @@ function connectorPluginPresentation(
         : []),
       ...(granted.has("gmail.draft") || granted.has("gmail.send")
         ? [
-          "Start a new email by sending no threading fields: threadId, inReplyTo, and references address a conversation that already exists, so a message that begins one omits all three rather than filling them with a placeholder or a guessed identifier.",
-          "Reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId.",
+          "To start a new email, pass message with kind=new, to, subject, and body. To reply, pass message with kind=reply, messageId copied from a search hit's id, to, and body. Rally resolves the reply's subject and threading headers from that message; choose to and cc explicitly, since Rally does not add recipients automatically. Replying requires this connection's gmail.read capability.",
           "A draft or message body is delivered as plain text exactly as written, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
         ]
         : []),
