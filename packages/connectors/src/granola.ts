@@ -777,7 +777,9 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, signal);
           const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
           if (!webhookEndpointId) {
-            throw new ConnectorError("invalid_configuration", "Granola webhook endpoint identity is missing");
+            throw new ConnectorError("invalid_configuration", "Granola webhook endpoint identity is missing", {
+              reasonCode: "webhook_endpoint_identity_missing",
+            });
           }
           const endpoints = await granolaApi(
             fetcher,
@@ -789,7 +791,9 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           );
           const endpoint = recordArray(endpoints, "webhook_endpoints")
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
-          if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists");
+          if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists", {
+            reasonCode: "webhook_endpoint_absent",
+          });
           if (endpoint.enabled !== true) {
             // Reported, not repaired: re-enabling is a write, and the installation runner
             // owns it. Still `ok` — the authorization is sound and every read
@@ -821,9 +825,16 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         }
         return { ok: true, message: "Granola authorization is healthy" };
       } catch (error) {
+        // The code, not the message. The message may be a caught provider
+        // error's own text and is shown to a person; the code is one of this
+        // adapter's own literals, set where the condition is distinguished.
+        const reasonCode = error instanceof ConnectorError && isRecord(error.details)
+          ? stringValue(error.details, "reasonCode")
+          : null;
         return {
           ok: false,
           message: error instanceof Error ? error.message : "Granola authorization failed",
+          ...(reasonCode === null ? {} : { reasonCode }),
           reconnectRequired: error instanceof ConnectorError && error.code === "unauthorized",
         };
       }
