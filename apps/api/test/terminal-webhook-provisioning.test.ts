@@ -3,7 +3,7 @@ import { provisionDaytonaWebhook } from "../scripts/daytona-webhook-provisioning
 import { verifySvixSignature } from "../src/lib/svix-signature";
 
 function gateway() {
-  let endpoint: { id: string; url: string; disabled: boolean; filterTypes: string[] } | undefined;
+  let endpoint: { id: string; uid?: string; url: string; disabled: boolean; filterTypes: string[] } | undefined;
   const key = `whsec_${Buffer.alloc(32, 9).toString("base64")}`;
   let installed: Record<string, string> = {};
   const calls: string[] = [];
@@ -32,6 +32,9 @@ function gateway() {
       paths.push(url.pathname);
       endpoint = { id: endpoint?.id ?? "ep_1", ...JSON.parse(String(init?.body)) };
     }
+    if (method !== "PUT" && ![endpoint?.id, endpoint?.uid].includes(url.pathname.split("/")[6])) {
+      return new Response(null, { status: 404 });
+    }
     if (method === "PATCH") endpoint = { ...endpoint!, ...JSON.parse(String(init?.body)) };
     return Response.json(url.pathname.endsWith("/secret") ? { key } : endpoint);
   });
@@ -46,7 +49,7 @@ describe("Daytona webhook provisioning", () => {
     expect(first.endpointId).toBe(second.endpointId);
     expect(f.paths[0]).toContain("/endpoint/rally-terminal-");
     expect(f.paths[1]).toBe("/api/v1/app/org/endpoint/ep_1");
-    expect(f.endpoint()).toMatchObject({ disabled: false, filterTypes: ["sandbox.created", "sandbox.state.updated"] });
+    expect(f.endpoint()).toMatchObject({ uid: expect.stringContaining("rally-terminal-"), disabled: false, filterTypes: ["sandbox.created", "sandbox.state.updated"] });
     const install = f.calls.indexOf("install");
     const probe = f.calls.indexOf("POST /ingest/daytona");
     const enable = f.calls.findIndex((call) => call.startsWith("PATCH"));
