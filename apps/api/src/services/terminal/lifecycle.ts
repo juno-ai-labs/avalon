@@ -12,7 +12,7 @@ import {
   attachWorkstreamRuntimeResource,
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
-import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./provider-contract";
+import { observeTerminalSandbox, deleteTerminalSandbox, stopTerminalSandbox, type TerminalSandboxProvider } from "./provider-contract";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";
@@ -69,20 +69,8 @@ async function quiesceUnsettledTasks(
       // the provider. Retire the sandbox so any stale request targets only the
       // old generation; `planned` stays fail-safe if admission ever moves
       // before provider submission.
-      try {
-        await renewClaim();
-        await provider.deleteSandbox(providerSandboxId);
-      } catch (error) {
-        if (!isTerminalProviderNotFound(error)) {
-          try {
-            await provider.getSandbox(providerSandboxId);
-          } catch (observationError) {
-            if (isTerminalProviderNotFound(observationError)) sandboxAbsent = true;
-            else throw error;
-          }
-          if (!sandboxAbsent) throw error;
-        }
-      }
+      await renewClaim();
+      await deleteTerminalSandbox(provider, providerSandboxId);
       // Successful deletion and provider-confirmed absence both retire this generation.
       sandboxAbsent = true;
       sandboxStopped = false;
@@ -90,27 +78,9 @@ async function quiesceUnsettledTasks(
       // Removing a Daytona session is not process-quiescence evidence: a live
       // accepted command can keep mutating after the session handle disappears.
       // Whole-sandbox stop is the provider boundary scheduled cleanup needs.
-      try {
-        await renewClaim();
-        await provider.stopSandbox(providerSandboxId);
-        sandboxStopped = true;
-      } catch (error) {
-        if (isTerminalProviderNotFound(error)) {
-          sandboxAbsent = true;
-        } else {
-          let observed = null;
-          try {
-            observed = await provider.getSandbox(providerSandboxId);
-          } catch (observationError) {
-            if (isTerminalProviderNotFound(observationError)) sandboxAbsent = true;
-            else throw error;
-          }
-          if (!sandboxAbsent && observed?.state !== "stopped" && observed?.state !== "archived") {
-            throw error;
-          }
-          sandboxStopped = !sandboxAbsent;
-        }
-      }
+      await renewClaim();
+      sandboxAbsent = await stopTerminalSandbox(provider, providerSandboxId) === "absent";
+      sandboxStopped = !sandboxAbsent;
     }
 
     const settled = await terminal.cancelTaskAfterProviderCleanup({
@@ -206,6 +176,8 @@ export async function reconcileDueTerminalSandbox(
     return { transition: "deferred" };
   };
 
+  let settledState = desired;
+  let transitionError: unknown;
   try {
     const cleanup = await quiesceUnsettledTasks(
       terminal,
@@ -215,9 +187,12 @@ export async function reconcileDueTerminalSandbox(
       claimId,
       claimNow,
     );
-    let providerStopped = cleanup.sandboxStopped;
-    if (cleanup.sandboxAbsent) {
-      return settleMissingSandbox();
+    if (cleanup.sandboxAbsent) return settleMissingSandbox();
+    const observed = await observeTerminalSandbox(provider, claimedSandboxId);
+    if (!observed || observed.state === "expired") return settleMissingSandbox();
+    let providerStopped = observed.state === "stopped" || observed.state === "archived";
+    if (desired !== "expired" && !providerStopped && observed.state !== "running") {
+      throw new Error("terminal_lifecycle_provider_transition_pending");
     }
     const renewClaim = async (): Promise<void> => {
       const renewedAt = claimNow();
@@ -230,7 +205,10 @@ export async function reconcileDueTerminalSandbox(
       });
       if (!renewed) throw new Error("terminal_lifecycle_claim_lost");
     };
-    if (desired === "stopped") {
+    if (desired !== "expired" && observed.state === "archived") {
+      // Daytona's backstop already advanced further than Rally's deadline.
+      settledState = "archived";
+    } else if (desired === "stopped") {
       if (providerStopped && preserveBeforeExpiry) {
         await renewClaim();
         await provider.startSandbox(claimedSandboxId);
@@ -244,11 +222,17 @@ export async function reconcileDueTerminalSandbox(
       }
     } else if (desired === "archived") {
       await renewClaim();
+      if (!providerStopped) await provider.stopSandbox(claimedSandboxId);
+      await renewClaim();
       await provider.archiveSandbox(claimedSandboxId);
+      // archive() accepts the request; unlike start()/stop() it does not wait.
+      const archived = await observeTerminalSandbox(provider, claimedSandboxId);
+      if (!archived || archived.state === "expired") return settleMissingSandbox();
+      if (archived.state !== "archived") throw new Error("terminal_lifecycle_archive_pending");
     } else {
       // The final diff was captured before the sandbox was stopped. Daytona
       // archives cannot execute commands, so expiry only deletes them.
-      if (row.lifecycleState !== "archived") {
+      if (observed.state !== "archived") {
         if (providerStopped && preserveBeforeExpiry) {
           await renewClaim();
           await provider.startSandbox(claimedSandboxId);
@@ -263,44 +247,44 @@ export async function reconcileDueTerminalSandbox(
       await provider.deleteSandbox(claimedSandboxId);
     }
   } catch (error) {
-    let observed = null;
-    let observedNotFound = false;
-    try {
-      observed = await provider.getSandbox(claimedSandboxId);
-    } catch (observationError) {
-      observedNotFound = isTerminalProviderNotFound(observationError);
-    }
-    if (isTerminalProviderNotFound(error) || observedNotFound) {
-      return settleMissingSandbox();
-    }
+    transitionError = error;
+    // Toolbox/runner 404s say nothing about the retained sandbox identity.
+    const observed = await observeTerminalSandbox(provider, claimedSandboxId).catch(() => undefined);
+    if (observed === null || observed?.state === "expired") return settleMissingSandbox();
     const reconciled = desired === "stopped"
       ? observed?.state === "stopped" || observed?.state === "archived"
       : desired === "archived"
         ? observed?.state === "archived"
-        : observed?.state === "expired";
+        : false;
+    if (reconciled && observed?.state === "archived") settledState = "archived";
     if (!reconciled) {
       const stableState = desired === "stopped"
         ? "running" as const
         : desired === "archived"
           ? "stopped" as const
           : row.lifecycleState === "archived" ? "archived" as const : "stopped" as const;
+      const pending = observed?.state === "starting";
+      // Releasing the claim also clears its deadline. Restore the prior stable
+      // intent so the directory continues projecting the due stop/archive
+      // deadline; an intermediate state without a claim would sleep to expiry.
       await terminal.failLifecycleClaim({
         lifecycleState: stableState,
-        failureCode: `${desired}_provider_failed`,
+        failureCode: pending ? null : `${desired}_provider_failed`,
         claimId,
         now: now.getTime(),
       });
+      if (pending) return { transition: "deferred" };
       throw error;
     }
   }
 
   const settled = await terminal.settleLifecycleTransition({
-    lifecycleState: desired,
+    lifecycleState: settledState,
     claimId,
     now: now.getTime(),
   });
-  if (!settled) throw new Error("terminal_lifecycle_settlement_lost");
-  return { transition: desired };
+  if (!settled) throw transitionError ?? new Error("terminal_lifecycle_settlement_lost");
+  return { transition: settledState };
 }
 
 /**

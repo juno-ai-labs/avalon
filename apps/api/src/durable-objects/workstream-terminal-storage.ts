@@ -1,3 +1,5 @@
+import { uuidV7 } from "../lib/uuid-v7";
+
 /**
  * Object-local Terminal authority for one work stream.
  *
@@ -49,6 +51,19 @@ const TERMINAL_YIELDED_RUN_STATUSES = "('needs_input', 'completed', 'failed', 'c
 
 /** Existing Terminal operation-authority window, shared by cleanup claims. */
 export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
+
+/** Polling bounds observation staleness even when no retention action is due. */
+export const TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS = 60_000;
+
+export interface TerminalProviderObservation {
+  sandboxId: string;
+  generation: number;
+  observedAt: number | null;
+  nextObserveAt: number;
+  state: string | null;
+  recoverable: boolean | null;
+  errorCode: string | null;
+}
 
 export interface TerminalSandboxRecord {
   lifecycleState: TerminalLifecycleState;
@@ -287,6 +302,67 @@ export class WorkstreamTerminalStorage {
       `SELECT ${SANDBOX_COLUMNS} FROM terminal_workspace WHERE id = 1`,
     ));
     return row ? toSandbox(row) : null;
+  }
+
+  providerObservation(): TerminalProviderObservation | null {
+    type ObservationRow = {
+      sandbox_id: string; generation: number; observed_at: number | null;
+      next_observe_at: number; state: string | null; recoverable: number | null;
+      error_code: string | null;
+    };
+    const row = first<ObservationRow>(this.sql.exec<ObservationRow>(`SELECT o.sandbox_id, o.generation, o.observed_at, o.next_observe_at,
+               o.state, o.recoverable, o.error_code
+          FROM terminal_provider_observation o JOIN terminal_workspace w
+            ON w.id = o.id AND w.sandbox_id = o.sandbox_id AND w.generation = o.generation
+         WHERE o.id = 1`));
+    return row ? {
+      sandboxId: row.sandbox_id, generation: row.generation,
+      observedAt: row.observed_at, nextObserveAt: row.next_observe_at,
+      state: row.state, recoverable: row.recoverable === null ? null : row.recoverable === 1,
+      errorCode: row.error_code,
+    } : null;
+  }
+
+  /** Reserve ordering before crossing the provider boundary; never take a run lease. */
+  beginProviderObservation(input: { sandboxId: string; generation: number }): string | null {
+    const row = this.sandbox();
+    if (!row || row.sandboxId !== input.sandboxId || row.generation !== input.generation) return null;
+    const requestId = uuidV7();
+    const now = Date.now();
+    this.sql.exec(`INSERT INTO terminal_provider_observation
+        (id, sandbox_id, generation, request_id, requested_at, next_observe_at)
+      VALUES (1, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        observed_at = CASE WHEN sandbox_id = excluded.sandbox_id AND generation = excluded.generation
+          THEN observed_at ELSE NULL END,
+        state = CASE WHEN sandbox_id = excluded.sandbox_id AND generation = excluded.generation
+          THEN state ELSE NULL END,
+        recoverable = CASE WHEN sandbox_id = excluded.sandbox_id AND generation = excluded.generation
+          THEN recoverable ELSE NULL END,
+        error_code = NULL, sandbox_id = excluded.sandbox_id, generation = excluded.generation,
+        request_id = excluded.request_id, requested_at = excluded.requested_at,
+        next_observe_at = excluded.next_observe_at`,
+      input.sandboxId, input.generation, requestId, now, now + TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS);
+    return requestId;
+  }
+
+  /** Late reads cannot overwrite a newer read or a replacement generation. */
+  settleProviderObservation(input: {
+    sandboxId: string; generation: number; requestId: string;
+    state: string | null; recoverable: boolean | null; errorCode: string | null;
+  }): boolean {
+    return first(this.sql.exec<{ id: number }>(`UPDATE terminal_provider_observation
+      SET observed_at = CASE WHEN ? IS NULL THEN ? ELSE observed_at END,
+          state = CASE WHEN ? IS NULL THEN ? ELSE state END,
+          recoverable = CASE WHEN ? IS NULL THEN ? ELSE recoverable END,
+          error_code = ?
+      WHERE id = 1 AND sandbox_id = ? AND generation = ? AND request_id = ?
+        AND EXISTS (SELECT 1 FROM terminal_workspace w WHERE w.id = 1
+          AND w.sandbox_id = terminal_provider_observation.sandbox_id
+          AND w.generation = terminal_provider_observation.generation)
+      RETURNING id`, input.errorCode, Date.now(), input.errorCode, input.state,
+      input.errorCode, input.recoverable === null ? null : Number(input.recoverable),
+      input.errorCode, input.sandboxId, input.generation, input.requestId)) !== null;
   }
 
   /**

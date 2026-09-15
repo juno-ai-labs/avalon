@@ -5,6 +5,7 @@ export type TerminalProviderRequestOperation =
   | "sandbox.refresh"
   | "sandbox.create"
   | "sandbox.start"
+  | "sandbox.recover"
   | "sandbox.stop"
   | "sandbox.archive"
   | "sandbox.delete"
