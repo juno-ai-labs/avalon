@@ -201,21 +201,38 @@ describe("Terminal scheduled lifecycle", () => {
       .toEqual({ lifecycle_state: "archived", sandbox_id: "provider-1" });
   });
 
-  it("waits for provider archival to complete before recording archived", async () => {
+  it.each(["starting", "stopped"] as const)("waits for accepted archival while metadata reports %s", async (state) => {
     const { objectStore, provider } = fixture("stopped", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:59:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
     vi.mocked(provider.archiveSandbox).mockImplementation(async () => {
-      vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "starting", domainAllowList: [] });
+      vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state, domainAllowList: [] });
     });
     await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
       .resolves.toEqual({ transition: "deferred" });
-    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id, archive_due_at FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-1", archive_due_at: Date.parse("2026-08-13T11:59:00.000Z") });
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id, archive_due_at, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-1", archive_due_at: Date.parse("2026-08-13T11:59:00.000Z"), failure_code: null });
     vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "archived", domainAllowList: [] });
     await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, new Date(NOW.getTime() + 60_000)))
       .resolves.toEqual({ transition: "archived" });
     expect(provider.archiveSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("recovers a failed sandbox before preserving files and expiring it", async () => {
+    const { objectStore, provider } = fixture("stopped", {
+      warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
+    });
+    let recovered = false;
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "failed", recoverable: true, domainAllowList: [] });
+    vi.mocked(provider.recoverSandbox).mockImplementation(async () => { recovered = true; });
+    const preserve = vi.fn(async () => { if (!recovered) throw new Error("no runner before recovery"); });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW, preserve))
+      .resolves.toEqual({ transition: "expired" });
+    expect(preserve).toHaveBeenCalledWith("provider-1", 1);
+    expect(provider.recoverSandbox).toHaveBeenCalledWith("provider-1");
+    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "expired", sandbox_id: null });
   });
 
   it("archives stopped state and expires archived state without polling", async () => {

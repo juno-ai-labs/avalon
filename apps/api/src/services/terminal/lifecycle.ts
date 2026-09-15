@@ -178,6 +178,7 @@ export async function reconcileDueTerminalSandbox(
   };
 
   let settledState = desired;
+  let archiveRequested = false;
   let transitionError: unknown;
   try {
     const cleanup = await quiesceUnsettledTasks(
@@ -226,6 +227,7 @@ export async function reconcileDueTerminalSandbox(
       if (!providerStopped) await provider.stopSandbox(claimedSandboxId);
       await renewClaim();
       await provider.archiveSandbox(claimedSandboxId);
+      archiveRequested = true;
       // archive() accepts the request; unlike start()/stop() it does not wait.
       const archived = await observeTerminalSandbox(provider, claimedSandboxId);
       if (!archived || archived.state === "expired") return await settleMissingSandbox(archived?.state === "expired");
@@ -234,6 +236,10 @@ export async function reconcileDueTerminalSandbox(
       // The final diff was captured before the sandbox was stopped. Daytona
       // archives cannot execute commands, so expiry only deletes them.
       if (observed.state !== "archived") {
+        if (preserveBeforeExpiry && observed.state === "failed" && observed.recoverable === true) {
+          await renewClaim();
+          await provider.recoverSandbox(claimedSandboxId);
+        }
         if (providerStopped && preserveBeforeExpiry) {
           await renewClaim();
           await provider.startSandbox(claimedSandboxId);
@@ -266,7 +272,8 @@ export async function reconcileDueTerminalSandbox(
         : desired === "archived"
           ? "stopped" as const
           : row.lifecycleState === "archived" ? "archived" as const : "stopped" as const;
-      const pending = observed?.state === "starting";
+      const pending = observed?.state === "starting"
+        || (archiveRequested && observed?.state === "stopped");
       // Releasing the claim also clears its deadline. Restore the prior stable
       // intent so the directory continues projecting the due stop/archive
       // deadline; an intermediate state without a claim would sleep to expiry.
