@@ -246,10 +246,43 @@ describe('connector installation authority', () => {
     expect(retried?.registrations[0]?.state).toBe('unknown');
   });
 
+  it('fails a Granola create the provider refused and retries it on Test instead of leaving it unknown', async () => {
+    const { stub, input, workspaceId, connectionId } = await fixture();
+    const key = 'installation-test-envelope-key';
+    const events = ['note.access_granted', 'note.edited', 'note.generated'];
+    input.installation.provider = 'granola'; input.installation.selectedEvents = events;
+    input.installation.registrations[0]!.events = events;
+    input.installation.registrations[0]!.destination = `https://api.example.test/ingest/granola/${connectionId}`;
+    input.capability = 'granola.workspace.read';
+    input.credentials = { ...await encryptString(JSON.stringify({ apiKey: `grn_${'a'.repeat(32)}` }), key, connectionId), keyVersion: 1 };
+    await stub.createConnectorInstallation(input);
+    const remote = { id: 'whe_1234567890abcd', url: input.installation.registrations[0]!.destination, events, enabled: true };
+    let creates = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: RequestInit) => {
+      if (init?.method !== 'POST') return Response.json({ webhook_endpoints: creates > 1 ? [remote] : [] });
+      creates += 1;
+      // What an event name the provider does not define gets: a validation
+      // refusal, so nothing was registered and there is nothing to inspect.
+      if (creates === 1) return Response.json({ error: { message: 'events must only contain note.access_granted, note.edited, note.generated' } }, { status: 400 });
+      return Response.json({ ...remote, signing_secret: 'whsec_dGVzdA==' }, { status: 201 });
+    }));
+    const testEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: key, CONNECTOR_CREDENTIALS_KEY_VERSION: '1' };
+    const refused = await runConnectorInstallation(testEnv, workspaceId, connectionId, new AbortController().signal);
+    expect(refused?.state).toBe('failed');
+    expect(refused?.registrations[0]).toMatchObject({ state: 'failed', providerId: null, error: expect.stringContaining('HTTP 400') });
+    expect(refused?.registrations[0]?.error).toContain('events must only contain');
+    // An unknown create is never retried; a refused one is, by Test.
+    await stub.changeConnectorInstallation({ workspaceId, connectionId, action: 'repair' });
+    const retried = await runConnectorInstallation(testEnv, workspaceId, connectionId, new AbortController().signal);
+    expect(creates).toBe(2);
+    expect(retried?.state).toBe('current');
+    expect(retried?.registrations[0]).toMatchObject({ providerId: remote.id, state: 'current', error: null });
+  });
+
   it('creates Granola through the shared runner and stores its returned secret only in the encrypted envelope', async () => {
     const { stub, input, workspaceId, connectionId } = await fixture();
     const key = 'installation-test-envelope-key';
-    const events = ['note.access_granted', 'note.edited', 'note.generated', 'note.regenerated'];
+    const events = ['note.access_granted', 'note.edited', 'note.generated'];
     input.installation.provider = 'granola'; input.installation.selectedEvents = events;
     input.installation.registrations[0]!.events = events;
     input.installation.registrations[0]!.destination = `https://api.example.test/ingest/granola/${connectionId}`;
@@ -274,7 +307,7 @@ describe('connector installation authority', () => {
   it('adopts Granola without changing the existing credential, ID, legacy destination, or grouped subscription', async () => {
     const { stub, input, workspaceId, connectionId } = await fixture();
     const key = 'adoption-test-envelope-key';
-    const events = ['note.access_granted', 'note.edited', 'note.generated', 'note.regenerated'];
+    const events = ['note.access_granted', 'note.edited', 'note.generated'];
     const providerId = 'whe_1234567890abcd';
     const destination = `https://api.with-avalon.com/ingest/granola/${connectionId}`;
     input.installation.provider = 'granola'; input.installation.selectedEvents = events;

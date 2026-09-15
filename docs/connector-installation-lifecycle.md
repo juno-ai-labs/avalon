@@ -137,8 +137,8 @@ delivery to the retired route is rejected, so a webhook left behind is harmless.
 Existing Granola workspace connections are adopted on explicit Test or disconnect.
 Adoption retains the connection ID, plugin ID, encrypted envelope and secret, and
 records the existing provider webhook ID. It creates no subscription. An absent
-or mismatched registration requires attention. The four existing note event
-subscriptions remain unchanged. All Granola provider repair and removal now use
+or mismatched registration requires attention. The existing note event
+subscription is inspected against the three events Granola defines. All Granola provider repair and removal now use
 the lifecycle path; the adapter has no duplicate legacy mutation implementation.
 The original Granola setup request remains accepted when an older desktop omits
 an idempotency key; current clients supply a stable setup attempt.
@@ -221,10 +221,12 @@ explicitly set 2,000,000 bytes. The shared bounded reader enforces this before
 buffering or RPC forwarding. Oversized bodies
 are rejected with 413; this reuses the regional provider ingress limit.
 
-Granola's current public update schema omits `note.regenerated`, although Rally's
-existing subscription includes it. The implementation preserves the existing
-four-event selection and only patches `enabled`; live compatibility remains
-required before changing that selection or advertising broader repair.
+Granola's public API defines three note events — `note.access_granted`,
+`note.edited`, `note.generated`; a regenerated summary is delivered as
+`note.edited`. Version 1 registers exactly those, inspection compares against
+them, and repair only patches `enabled`. A create the provider refuses with a
+4xx settles as a failed step that Test re-dispatches; only an outcome the
+provider did not answer — a timeout, a 5xx, an unreadable response — is unknown.
 
 ## Testing
 
@@ -313,6 +315,36 @@ and actual operator execution remain outside this implementation task.
 Only the reviewed version present in the deployed provider declaration is accepted.
 Unknown provider outcomes and not-yet-adopted Granola connections report customer
 action. An administrator's explicit Test adopts an existing Granola connection.
+
+### 2026-09-15 — A create the provider refused is a failed step, not an unknown one
+
+**What changed:** When `management.create` throws a `ConnectorError` whose
+`details.status` is 400, 401, 403, 404 or 422, the runner settles the step
+`failed`, with the provider's status and bounded message on the registration,
+and Test re-dispatches it. Every other thrown create — a timeout, a 5xx, a
+response that could not be parsed — stays `unknown`, as before. Granola's
+version 1 registers the three events its API defines.
+
+**Why:** The runner marked any thrown create unknown, and unknown creates are
+deliberately never retried. That is right for a lost response, where an
+endpoint may exist that a retry would duplicate. It is wrong for a 4xx, which
+the provider sent instead of acting: nothing was registered, there is nothing
+to inspect, and the administrator was left with "the provider operation may
+have completed", a Test that changed nothing, and no way to learn that the
+request had named an event Granola does not define.
+
+**Considered and rejected:** Retrying every failed create on Test, which is the
+blind retry this lifecycle exists to prevent. Also rejected: proving an unknown
+create did nothing by listing the provider's endpoints and matching the
+destination, since a listing may redact the URL of an endpoint the caller did
+not create.
+
+**Consequences:** A registration refused for a cause that has since been fixed
+— a corrected request, a key given the permission, a plan that now includes
+webhooks — recovers with one press of Test. A create recorded as unknown before
+this change stays unknown; that connection is disconnected and connected again.
+
+Shipped in the pull request for this change.
 
 ### 2026-09-13 — A verified delivery is the evidence a manual registration cannot otherwise produce
 

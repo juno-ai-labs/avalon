@@ -7119,7 +7119,7 @@ async function pluginAuthorizationFromHealth(
   env: PluginAuthorizationEnv,
   input: PluginAuthorizationInput,
   frozen: PluginAuthorizationConnection,
-  health: { ok: boolean; message: string; reconnectRequired?: boolean; warning?: string },
+  health: { ok: boolean; message: string; reasonCode?: string; reconnectRequired?: boolean; warning?: string },
 ): Promise<PluginAuthorization> {
   if (health.ok) {
     // A healthy connection can still be degraded, and this is the only place
@@ -7134,6 +7134,7 @@ async function pluginAuthorizationFromHealth(
         connection_id: frozen.connectionId,
         connector_type: frozen.connectorType,
         warning: health.warning,
+        ...(health.reasonCode === undefined ? {} : { reason_code: health.reasonCode }),
       });
     }
     return "authorized";
