@@ -139,7 +139,7 @@ it('upgrades conversation resource snapshots and fences old attachments without 
   await runInDurableObject(stub, async (_instance, state) => {
     const migrate = (before: boolean) => applyDurableObjectSqliteMigrations({
       storage: state.storage, component: 'substream_agent_do', workerVersionId: 'test',
-      migrations: before ? WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter(m => m.version < 57) : WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+      migrations: before ? WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter(m => m.version < 58) : WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
     });
     migrate(true);
     const insert = (id: string, provider: string) => state.storage.sql.exec(`INSERT INTO workstream_resource_links
