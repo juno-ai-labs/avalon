@@ -3767,9 +3767,9 @@ describe("agent harness", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     const description = requests[1]?.tools?.find((tool) => tool.function.name === "test_draw")?.function.description;
     if (longRunning) {
-      expect(description).toContain("Consider using a background agent");
-      expect(description).toContain("not a requirement");
-      expect(requests[1]?.messages.find((message) => message.role === "tool")?.content).toContain("Consider using a background agent");
+      expect(description).toContain("Consider delegating it");
+      expect(description).toContain("use it directly when appropriate");
+      expect(requests[1]?.messages.find((message) => message.role === "tool")?.content).toContain("Consider delegating it");
     } else {
       expect(description).toBe("Draw an image.");
     }

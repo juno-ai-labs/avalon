@@ -4528,7 +4528,7 @@ async function loadRunPromptContext(
     // a synthetic model-visible user message. Trigger evidence remains explicit
     // untrusted user data, and exact wall-clock time is available through the
     // authoritative core_current_time tool.
-    systemPrompt: renderWorkstreamSystemPrompt({
+    systemPrompt: `${agentCoordinationRoleGuidance(input)}\n` + renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
@@ -4542,8 +4542,8 @@ async function loadRunPromptContext(
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.agentExchange && (input.backgroundAgent || input.parentKind === "automation")
-      ? "\nExplicitly send results, questions, and updates to the intended agent. Your standard assistant responses remain only in this conversation and are not forwarded. Finish normally when done; no special completion tool is needed. Ask the coordinating agent for missing information; this conversation has no participant-facing question form."
-      : "") + `\n${agentCoordinationRoleGuidance(input)}` + "\nContinue prior agents through messages. Coordinate through messages and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
+      ? "\nSend your results and questions to the coordinating agent. Your final response stays here; it is not forwarded. Ask the coordinator for missing information instead of asking participants directly."
+      : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
   };

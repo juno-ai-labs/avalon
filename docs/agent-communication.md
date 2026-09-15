@@ -133,7 +133,11 @@ Questions from agent exchanges use replies instead of participant forms.
 
 System prompts describe coordination behavior without naming tools. Exact tool
 names belong in tool definitions, so prompt guidance stays independent of the
-available tool inventory and wire names. Background agents are explicitly told
+available tool inventory and wire names. Instructions lead with the action,
+use short sentences, and distinguish agent IDs from message IDs. Expected
+communication errors explain what to do next while retaining their diagnostic
+codes. These wording checks do not substitute for small-model evaluation.
+Background agents are explicitly told
 to execute their assignment directly and delegate further only when splitting
 work would materially help. Participant-responsiveness guidance belongs only to
 the foreground workstream role. The base prompt and loaded coordination plugin

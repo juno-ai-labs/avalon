@@ -41,33 +41,33 @@ export function agentAddressForId(agentId: AgentId): AgentAddress {
 }
 
 const MessageFields = {
-  message: z.string().max(MESSAGE_MAX_CHARACTERS).describe("Instructions or a reply for the receiving agent."),
+  message: z.string().max(MESSAGE_MAX_CHARACTERS).describe("Tell the recipient what to do or provide your response. Include the context it needs."),
   // Same identifiers, default and bound as SubstreamOpeningMessageSchema.
   attachmentIds: z.array(IdSchema).max(10).default([])
-    .describe("Existing attachments to include as context; omit when there are none."),
+    .describe("Resource IDs already attached to this conversation. Omit when no attachments are needed."),
 };
 const hasContent = (value: { message: string; attachmentIds: string[] }) =>
   value.message.trim().length > 0 || value.attachmentIds.length > 0;
 const contentError = { message: "Include a message or at least one attachment." };
 
 export const StartAgentInputSchema = z.strictObject({
-  name: z.string().trim().min(1).max(500).describe("A short descriptive name returned by list_agents."),
-  description: z.string().trim().min(1).max(4_000).describe("What this agent is doing, returned by list_agents."),
+  name: z.string().trim().min(1).max(500).describe("Give the agent a short name so teammates can recognize it."),
+  description: z.string().trim().min(1).max(4_000).describe("Describe the agent’s job for teammates. Put the full assignment in message."),
   ...MessageFields,
 }).refine(hasContent, contentError);
 export const StartAgentResultSchema = z.strictObject({ agentId: AgentIdSchema });
 export const ListAgentsInputSchema = z.strictObject({});
 export const SendAgentMessageInputSchema = z.strictObject({
-  agentId: AgentIdSchema.describe("The recipient's exact agentId from creation or discovery."),
+  agentId: AgentIdSchema.describe("Copy the recipient’s agentId from creation or discovery. Do not use a Sidekick ID."),
   ...MessageFields,
 }).refine(hasContent, contentError);
 export const ReplyToAgentMessageInputSchema = z.strictObject({
-  messageId: IdSchema.describe("The received message to reply to; its sender and team determine the destination."),
+  messageId: IdSchema.describe("Copy Message ID from the message you received. The response goes to its sender."),
   ...MessageFields,
 }).refine(hasContent, contentError);
 export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema });
 export const StopAgentInputSchema = z.strictObject({
-  agentId: AgentIdSchema.describe("The owned agent to stop, including its owned descendants."),
+  agentId: AgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
 });
 
 export type StartAgentInput = z.infer<typeof StartAgentInputSchema>;
