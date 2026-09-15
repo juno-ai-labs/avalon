@@ -13,6 +13,51 @@ struct RallyUser: Codable, Sendable, Equatable, Identifiable {
     var name: String
     var avatarUrl: String?
     var timezone: String
+    var presentation: RallyPersonalPresentation? = nil
+}
+
+/// Account appearance owned by Global identity (`GET /onboarding/account`).
+struct RallyPersonalPresentation: Codable, Sendable, Equatable {
+    var displayName: String?
+    var initials: String?
+    var color: String
+    var avatar: String?
+    var revision: Int?
+
+    init(displayName: String? = nil, initials: String? = nil, color: String, avatar: String? = nil, revision: Int? = nil) {
+        self.displayName = displayName
+        self.initials = initials
+        self.color = color
+        self.avatar = avatar
+        self.revision = revision
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        initials = try container.decodeIfPresent(String.self, forKey: .initials)
+        color = try container.decodeIfPresent(String.self, forKey: .color) ?? "blue"
+        avatar = try container.decodeIfPresent(String.self, forKey: .avatar)
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision)
+    }
+
+    /// Server initials when set; otherwise the same two-letter name fallback desktop uses.
+    static func initials(stored: String?, fallbackName: String) -> String {
+        let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { return trimmed }
+        let letters = fallbackName.split { $0.isWhitespace || $0.isNewline }
+            .compactMap(\.first)
+            .prefix(2)
+        let derived = String(letters).uppercased()
+        return derived.isEmpty ? "?" : derived
+    }
+}
+
+struct RallyAccountOnboarding: Codable, Sendable, Equatable {
+    var eligible: Bool?
+    var introduced: Bool?
+    var presentation: RallyPersonalPresentation?
+    var revision: Int?
 }
 
 struct RallyWorkspace: Codable, Sendable, Equatable, Identifiable {
@@ -90,6 +135,10 @@ struct RallyWorkstream: Codable, Sendable, Equatable, Identifiable {
     var youAreMentioned: Bool? = nil
     var unseen: Bool? = nil
     var lastActivityAt: String? = nil
+    var lastAccessedAt: String? = nil
+    /// `true` when the wire omitted `lastAccessedAt` (older server). Explicit
+    /// `null` is a supporting server that nobody has visited.
+    var lastAccessedAtOmitted: Bool = true
     var createdAt: String? = nil
     var updatedAt: String? = nil
     var archivedAt: String? = nil
@@ -100,8 +149,63 @@ struct RallyWorkstream: Codable, Sendable, Equatable, Identifiable {
     var systemKind: String? = nil
     var emailAddress: String? = nil
     var projectId: String? = nil
+    var preview: String? = nil
+    var appearance: RallySavedAppearance? = nil
 
     var isPinned: Bool { pinned == true || pinPosition != nil }
+
+    init(id: String, title: String) {
+        self.id = id
+        self.title = title
+    }
+
+    /// Same instant Electron's `workstreamRecencyAt` uses.
+    var recencyRaw: String? {
+        if lastAccessedAtOmitted {
+            return lastActivityAt
+        }
+        return lastAccessedAt ?? createdAt ?? lastActivityAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, workspaceId, title, titleStatus, objective
+        case hasUnread, youAreMentioned, unseen
+        case lastActivityAt, lastAccessedAt, createdAt, updatedAt, archivedAt
+        case scope, harnessStatus, pinned, pinPosition, systemKind
+        case emailAddress, projectId, preview, appearance
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        workspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceId)
+        titleStatus = try container.decodeIfPresent(String.self, forKey: .titleStatus)
+        objective = try container.decodeIfPresent(String.self, forKey: .objective)
+        hasUnread = try container.decodeIfPresent(Bool.self, forKey: .hasUnread)
+        youAreMentioned = try container.decodeIfPresent(Bool.self, forKey: .youAreMentioned)
+        unseen = try container.decodeIfPresent(Bool.self, forKey: .unseen)
+        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt)
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        archivedAt = try container.decodeIfPresent(String.self, forKey: .archivedAt)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope)
+        harnessStatus = try container.decodeIfPresent(String.self, forKey: .harnessStatus)
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned)
+        pinPosition = try container.decodeIfPresent(Int.self, forKey: .pinPosition)
+        systemKind = try container.decodeIfPresent(String.self, forKey: .systemKind)
+        emailAddress = try container.decodeIfPresent(String.self, forKey: .emailAddress)
+        projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
+        preview = try container.decodeIfPresent(String.self, forKey: .preview)
+        appearance = try container.decodeIfPresent(RallySavedAppearance.self, forKey: .appearance)
+        if container.contains(.lastAccessedAt) {
+            lastAccessedAtOmitted = false
+            lastAccessedAt = try container.decodeIfPresent(String.self, forKey: .lastAccessedAt)
+        } else {
+            lastAccessedAtOmitted = true
+            lastAccessedAt = nil
+        }
+    }
 }
 
 struct RallyWorkstreamPage: Codable, Sendable {
@@ -200,7 +304,54 @@ struct RallyWorkstreamControlMetadata: Decodable, Sendable {
     var title: String?
     var scope: String?
     var systemKind: String?
+    var appearance: RallySavedAppearance?
     var privateChildren: [RallyPrivateChild]?
+
+    init(
+        title: String? = nil,
+        scope: String? = nil,
+        systemKind: String? = nil,
+        appearance: RallySavedAppearance? = nil,
+        privateChildren: [RallyPrivateChild]? = nil
+    ) {
+        self.title = title
+        self.scope = scope
+        self.systemKind = systemKind
+        self.appearance = appearance
+        self.privateChildren = privateChildren
+    }
+
+    /// Control frames carry many fields iOS does not model. A full decode is
+    /// preferred; if `appearance` or another nested value is the wrong shape,
+    /// children are still taken from JSON so the list can leave its wait.
+    static func parseSocketFrame(_ data: Data) -> RallyWorkstreamControlMetadata? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = object["type"] as? String,
+              type == "workstream_metadata" else { return nil }
+        let metadataObject = object["metadata"]
+        if let metadataObject,
+           let metadataData = try? JSONSerialization.data(withJSONObject: metadataObject),
+           let decoded = try? JSONCoding.decoder.decode(RallyWorkstreamControlMetadata.self, from: metadataData) {
+            return decoded
+        }
+        return RallyWorkstreamControlMetadata(privateChildren: children(from: metadataObject))
+    }
+
+    private static func children(from metadataObject: Any?) -> [RallyPrivateChild] {
+        guard let object = metadataObject as? [String: Any],
+              let rows = object["privateChildren"] as? [[String: Any]] else { return [] }
+        return rows.compactMap { row in
+            guard let substreamId = row["substreamId"] as? String,
+                  let title = row["title"] as? String else { return nil }
+            return RallyPrivateChild(
+                substreamId: substreamId,
+                title: title,
+                createdByUserId: row["createdByUserId"] as? String,
+                createdAt: row["createdAt"] as? String,
+                updatedAt: row["updatedAt"] as? String
+            )
+        }
+    }
 }
 
 struct RallyAttachment: Codable, Sendable, Equatable, Identifiable {
@@ -262,42 +413,35 @@ struct RallyElicitationOption: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-struct RallyNote: Codable, Sendable, Equatable, Identifiable {
-    var id: String
-    var title: String
-    var liveNotes: String? = nil
-    var manualNotes: String? = nil
-    var recordingStatus: String? = nil
-    var lastActivityAt: String? = nil
-    var archivedAt: String? = nil
-}
-
-struct RallyNotePage: Codable, Sendable {
-    var items: [RallyNote]
-    var nextCursor: String?
-}
-
 struct RallySidekick: Codable, Sendable, Equatable, Identifiable {
     var id: String
     var name: String
     var description: String? = nil
     var status: String? = nil
     var lastRunAt: String? = nil
+    var appearance: RallySavedAppearance? = nil
 }
 
 struct RallySidekickPage: Codable, Sendable {
     var items: [RallySidekick]
 }
 
-struct RallyProject: Codable, Sendable, Equatable, Identifiable {
-    var id: String
-    var name: String
-    var archivedAt: String? = nil
-    var workstreamIds: [String] = []
-    var status: String? = nil
-    var iconKey: String? = nil
-    var colorKey: String? = nil
-    var scope: String? = nil
+struct RallySearchPage: Decodable, Sendable {
+    var results: [RallySearchHit]
+    var nextCursor: String?
+
+    init(results: [RallySearchHit] = [], nextCursor: String? = nil) {
+        self.results = results
+        self.nextCursor = nextCursor
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        results = try container.decodeIfPresent([RallySearchHit].self, forKey: .results) ?? []
+        nextCursor = try container.decodeIfPresent(String.self, forKey: .nextCursor)
+    }
+
+    private enum CodingKeys: String, CodingKey { case results, nextCursor }
 }
 
 struct RallySearchHit: Codable, Sendable, Equatable, Identifiable {
@@ -358,16 +502,18 @@ struct RallyMember: Codable, Sendable, Equatable, Identifiable {
     var name: String
     var email: String?
     var role: String?
+    var presentation: RallyPersonalPresentation?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, email, role, user
+        case id, name, email, role, user, presentation
     }
 
-    init(id: String, name: String, email: String? = nil, role: String? = nil) {
+    init(id: String, name: String, email: String? = nil, role: String? = nil, presentation: RallyPersonalPresentation? = nil) {
         self.id = id
         self.name = name
         self.email = email
         self.role = role
+        self.presentation = presentation
     }
 
     init(from decoder: Decoder) throws {
@@ -376,10 +522,12 @@ struct RallyMember: Codable, Sendable, Equatable, Identifiable {
             id = user.id
             name = user.name
             email = user.email
+            presentation = user.presentation
         } else {
             id = try container.decode(String.self, forKey: .id)
             name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
             email = try container.decodeIfPresent(String.self, forKey: .email)
+            presentation = try container.decodeIfPresent(RallyPersonalPresentation.self, forKey: .presentation)
         }
         role = try container.decodeIfPresent(String.self, forKey: .role)
     }
@@ -390,12 +538,14 @@ struct RallyMember: Codable, Sendable, Equatable, Identifiable {
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(email, forKey: .email)
         try container.encodeIfPresent(role, forKey: .role)
+        try container.encodeIfPresent(presentation, forKey: .presentation)
     }
 
     private struct NestedUser: Decodable {
         var id: String
         var name: String
         var email: String?
+        var presentation: RallyPersonalPresentation?
     }
 }
 

@@ -261,6 +261,27 @@ final class DirectoryDecodeTests: XCTestCase {
         XCTAssertEqual(page.items.first?.id, "u1")
         XCTAssertEqual(page.items.first?.name, "Ada")
         XCTAssertEqual(page.items.first?.role, "admin")
+        XCTAssertNil(page.items.first?.presentation)
+    }
+
+    func testMembersPageNestedPresentation() throws {
+        let json = """
+        { "items": [{ "role": "admin", "user": { "id": "u1", "name": "Ada", "email": "ada@juno-labs.com", "presentation": { "displayName": "Ada Lovelace", "initials": "AL", "color": "violet", "avatar": "flower", "revision": 2 } } }] }
+        """.data(using: .utf8)!
+        struct Page: Decodable { var items: [RallyMember] }
+        let page = try JSONCoding.decoder.decode(Page.self, from: json)
+        XCTAssertEqual(page.items.first?.presentation?.initials, "AL")
+        XCTAssertEqual(page.items.first?.presentation?.color, "violet")
+    }
+
+    func testAccountOnboardingDecodes() throws {
+        let json = """
+        { "eligible": false, "introduced": true, "revision": 4, "presentation": { "displayName": "Alex Rivera", "initials": "AR", "color": "rose", "avatar": "circle", "revision": 4 } }
+        """.data(using: .utf8)!
+        let account = try JSONCoding.decoder.decode(RallyAccountOnboarding.self, from: json)
+        XCTAssertEqual(account.presentation?.initials, "AR")
+        XCTAssertEqual(account.presentation?.color, "rose")
+        XCTAssertEqual(account.revision, 4)
     }
 
     func testSearchResultsShape() throws {
@@ -281,6 +302,191 @@ final class DirectoryDecodeTests: XCTestCase {
         XCTAssertEqual(response.results.first?.snippet, "Hello Rally")
         XCTAssertEqual(response.results.first?.workstreamId, "wsr_9")
         XCTAssertEqual(response.results.first?.substreamId, "child-1")
+    }
+
+    func testWorkstreamAppearanceDecodes() throws {
+        let json = """
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "title": "Ship iOS",
+          "appearance": { "icon": "megaphone", "color": "blue" }
+        }
+        """.data(using: .utf8)!
+        let stream = try JSONCoding.decoder.decode(RallyWorkstream.self, from: json)
+        XCTAssertEqual(stream.appearance?.icon, "megaphone")
+        XCTAssertEqual(stream.appearance?.color, "blue")
+    }
+
+    func testSidekickAppearanceDecodes() throws {
+        let json = """
+        {
+          "id": "auto-1",
+          "name": "Digest",
+          "status": "active",
+          "appearance": { "icon": "rocket", "color": "lime" }
+        }
+        """.data(using: .utf8)!
+        let sidekick = try JSONCoding.decoder.decode(RallySidekick.self, from: json)
+        XCTAssertEqual(sidekick.appearance?.icon, "rocket")
+        XCTAssertEqual(sidekick.appearance?.color, "lime")
+        XCTAssertEqual(sidekick.status, "active")
+    }
+}
+
+final class PersonalAppearanceTests: XCTestCase {
+    func testStoredInitialsBeatNameFallback() {
+        XCTAssertEqual(
+            RallyPersonalPresentation.initials(stored: "AJ", fallbackName: "Ada Lovelace"),
+            "AJ"
+        )
+    }
+
+    func testNameFallbackTakesTwoLetters() {
+        XCTAssertEqual(
+            RallyPersonalPresentation.initials(stored: nil, fallbackName: "Ada Lovelace"),
+            "AL"
+        )
+        XCTAssertEqual(
+            RallyPersonalPresentation.initials(stored: "  ", fallbackName: "Ada"),
+            "A"
+        )
+    }
+
+    func testPersonalColorAliasesAndDefault() {
+        XCTAssertEqual(RallyPaletteKey.personal(from: "rose"), .rose)
+        XCTAssertEqual(RallyPaletteKey.personal(from: "teal"), .emerald)
+        XCTAssertEqual(RallyPaletteKey.personal(from: "green"), .emerald)
+        XCTAssertEqual(RallyPaletteKey.personal(from: "amber"), .orange)
+        XCTAssertEqual(RallyPaletteKey.personal(from: "slate"), .black)
+        XCTAssertEqual(RallyPaletteKey.personal(from: nil), .blue)
+        XCTAssertEqual(RallyPaletteKey.personal(from: "not-a-color"), .blue)
+    }
+}
+
+final class WorkstreamDirectoryTests: XCTestCase {
+    func testPinnedSectionUsesPinPositionThenId() {
+        var later = RallyWorkstream(id: "b", title: "B")
+        later.pinPosition = 2
+        var first = RallyWorkstream(id: "a", title: "A")
+        first.pinPosition = 0
+        var middle = RallyWorkstream(id: "c", title: "C")
+        middle.pinPosition = 1
+        var recent = RallyWorkstream(id: "d", title: "D")
+        recent.lastActivityAt = "2026-08-07T17:25:00Z"
+        recent.lastAccessedAtOmitted = true
+
+        let sections = RallyWorkstreamDirectory.sections(
+            from: [later, first, middle, recent],
+            now: Date()
+        )
+        XCTAssertEqual(sections.first?.title, "Pinned")
+        XCTAssertEqual(sections.first?.items.map(\.id), ["a", "c", "b"])
+        XCTAssertEqual(sections.dropFirst().flatMap(\.items).map(\.id), ["d"])
+    }
+
+    func testRecencyGroupsMatchElectronHeadings() {
+        let now = localDate(2026, 8, 7, 10, 30)
+        let streams: [RallyWorkstream] = [
+            stream("month-old-running", at: localDate(2026, 8, 1, 12)),
+            stream("today-failed", at: localDate(2026, 8, 7, 8)),
+            stream("before-month", at: localDate(2026, 7, 31, 23, 59)),
+            stream("hour-older", at: localDate(2026, 8, 7, 10)),
+            stream("yesterday", at: localDate(2026, 8, 6, 12)),
+            stream("week", at: localDate(2026, 8, 2, 12)),
+            stream("hour-newer", at: localDate(2026, 8, 7, 10, 25)),
+        ]
+        let groups = RallyWorkstreamDirectory.recencyGroups(from: streams, now: now)
+        XCTAssertEqual(groups.map(\.title), [
+            "Last hour", "Today", "Yesterday", "This week", "This month", "Before this month",
+        ])
+        XCTAssertEqual(groups.flatMap(\.items).map(\.id), [
+            "hour-newer", "hour-older", "today-failed", "yesterday", "week", "month-old-running", "before-month",
+        ])
+    }
+
+    func testLastAccessedAtWinsOverSharedActivity() {
+        var visited = RallyWorkstream(id: "visited", title: "Visited")
+        visited.lastActivityAt = iso(localDate(2026, 1, 1))
+        visited.lastAccessedAt = iso(localDate(2026, 8, 7, 10, 25))
+        visited.lastAccessedAtOmitted = false
+        var noisy = RallyWorkstream(id: "noisy", title: "Noisy")
+        noisy.lastActivityAt = iso(localDate(2026, 8, 7, 10, 20))
+        noisy.lastAccessedAtOmitted = true
+
+        let groups = RallyWorkstreamDirectory.recencyGroups(
+            from: [noisy, visited],
+            now: localDate(2026, 8, 7, 10, 30)
+        )
+        XCTAssertEqual(groups.first?.items.map(\.id), ["visited", "noisy"])
+    }
+
+    func testExplicitNullAccessFallsBackToCreatedAt() throws {
+        let json = """
+        { "id": "u", "title": "Unvisited", "lastActivityAt": "2026-08-01T00:00:00Z", "createdAt": "2026-08-07T17:20:00Z", "lastAccessedAt": null }
+        """.data(using: .utf8)!
+        let item = try JSONCoding.decoder.decode(RallyWorkstream.self, from: json)
+        XCTAssertFalse(item.lastAccessedAtOmitted)
+        XCTAssertNil(item.lastAccessedAt)
+        XCTAssertEqual(item.recencyRaw, "2026-08-07T17:20:00Z")
+    }
+
+    func testOmittedAccessFallsBackToLastActivity() throws {
+        let json = """
+        { "id": "old", "title": "Older server", "lastActivityAt": "2026-08-07T17:10:00Z", "createdAt": "2026-01-01T00:00:00Z" }
+        """.data(using: .utf8)!
+        let item = try JSONCoding.decoder.decode(RallyWorkstream.self, from: json)
+        XCTAssertTrue(item.lastAccessedAtOmitted)
+        XCTAssertEqual(item.recencyRaw, "2026-08-07T17:10:00Z")
+    }
+
+    private func stream(_ id: String, at date: Date) -> RallyWorkstream {
+        var item = RallyWorkstream(id: id, title: id)
+        item.lastActivityAt = iso(date)
+        item.lastAccessedAtOmitted = true
+        return item
+    }
+
+    private func localDate(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 0, _ minute: Int = 0) -> Date {
+        Calendar.current.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
+    }
+
+    private func iso(_ date: Date) -> String {
+        date.ISO8601Format()
+    }
+}
+
+final class FeedChromeTests: XCTestCase {
+    func testConnectingEmptyShowsSkeleton() {
+        XCTAssertEqual(
+            RallyFeedChrome.resolve(isLaunch: false, isConnecting: true, hasMessages: false),
+            .skeleton
+        )
+    }
+
+    func testLaunchBeatsSkeleton() {
+        XCTAssertEqual(
+            RallyFeedChrome.resolve(isLaunch: true, isConnecting: true, hasMessages: false),
+            .launch
+        )
+    }
+
+    func testMessagesBeatConnecting() {
+        XCTAssertEqual(
+            RallyFeedChrome.resolve(isLaunch: false, isConnecting: true, hasMessages: true),
+            .messages
+        )
+    }
+
+    func testSettledEmptyShowsGreeting() {
+        XCTAssertEqual(
+            RallyFeedChrome.resolve(isLaunch: false, isConnecting: false, hasMessages: false),
+            .emptyGreeting
+        )
+    }
+
+    func testSubstreamListShowsMainBeforeDirectoryArrives() {
+        XCTAssertEqual(RallySubstreamListChrome.resolve(hasChildDirectory: false), .awaitingChildren)
+        XCTAssertEqual(RallySubstreamListChrome.resolve(hasChildDirectory: true), .directory)
     }
 }
 
@@ -314,12 +520,19 @@ final class ConversationBootTests: XCTestCase {
         {
           "type": "snapshot",
           "workstream": { "id": "wsr_2", "title": "From socket" },
-          "transcript": { "ranges": [], "activeTurns": [] }
+          "transcript": {
+            "snapshotId": "snap-1",
+            "eventSequence": 4,
+            "ranges": [],
+            "activeTurns": []
+          }
         }
         """.data(using: .utf8)!
         let boot = try JSONCoding.decoder.decode(ConversationBoot.self, from: json)
         XCTAssertEqual(boot.id, "wsr_2")
         XCTAssertEqual(boot.title, "From socket")
+        XCTAssertEqual(boot.transcript?.snapshotId, "snap-1")
+        XCTAssertEqual(boot.transcript?.eventSequence, 4)
     }
 }
 
@@ -355,6 +568,7 @@ final class SubstreamDecodeTests: XCTestCase {
         {
           "title": "Ship iOS",
           "scope": "personal",
+          "appearance": { "icon": "atom", "color": "purple" },
           "privateChildren": [{
             "substreamId": "child-1",
             "title": "Investigate crash",
@@ -366,7 +580,127 @@ final class SubstreamDecodeTests: XCTestCase {
         """.data(using: .utf8)!
         let metadata = try JSONCoding.decoder.decode(RallyWorkstreamControlMetadata.self, from: json)
         XCTAssertEqual(metadata.title, "Ship iOS")
+        XCTAssertEqual(metadata.appearance?.icon, "atom")
+        XCTAssertEqual(metadata.appearance?.color, "purple")
         XCTAssertEqual(metadata.privateChildren?.first?.substreamId, "child-1")
         XCTAssertEqual(metadata.privateChildren?.first?.title, "Investigate crash")
     }
+
+    func testControlFrameKeepsChildrenWhenAppearanceDoesNotDecode() {
+        let json = """
+        {
+          "type": "workstream_metadata",
+          "metadata": {
+            "appearance": "not-an-object",
+            "privateChildren": [{ "substreamId": "child-1", "title": "Investigate crash" }]
+          }
+        }
+        """.data(using: .utf8)!
+        let metadata = RallyWorkstreamControlMetadata.parseSocketFrame(json)
+        XCTAssertEqual(metadata?.privateChildren?.first?.substreamId, "child-1")
+        XCTAssertEqual(metadata?.privateChildren?.first?.title, "Investigate crash")
+    }
+
+    func testControlFrameIgnoresUnknownMetadataKeys() {
+        let json = """
+        {
+          "type": "workstream_metadata",
+          "metadata": {
+            "title": "Ship iOS",
+            "stateVersion": 1,
+            "revision": 0,
+            "privateChildren": []
+          }
+        }
+        """.data(using: .utf8)!
+        let metadata = RallyWorkstreamControlMetadata.parseSocketFrame(json)
+        XCTAssertEqual(metadata?.title, "Ship iOS")
+        XCTAssertEqual(metadata?.privateChildren, [])
+    }
 }
+
+final class AppearanceTests: XCTestCase {
+    func testDerivedAppearanceMatchesDesktopHash() {
+        let first = RallyResolvedAppearance.derived(from: "00000000-0000-7000-8000-000000000001")
+        XCTAssertEqual(first.color, .red)
+        XCTAssertEqual(first.icon, "aperture")
+
+        let named = RallyResolvedAppearance.derived(from: "launch-room")
+        XCTAssertEqual(named.color, .lime)
+        XCTAssertEqual(named.icon, "orbit")
+    }
+
+    func testStoredAppearanceWinsOverGenerated() {
+        let resolved = RallyResolvedAppearance.resolve(
+            id: "launch-room",
+            saved: RallySavedAppearance(icon: "megaphone", color: "blue")
+        )
+        XCTAssertEqual(resolved.colorKey, .blue)
+        XCTAssertEqual(resolved.iconKey, "megaphone")
+        XCTAssertEqual(resolved.systemImage, "megaphone")
+    }
+
+    func testUnknownIconFallsBackToGenerated() {
+        let generated = RallyResolvedAppearance.resolve(id: "launch-room", saved: nil)
+        let unknown = RallyResolvedAppearance.resolve(
+            id: "launch-room",
+            saved: RallySavedAppearance(icon: "not-in-this-build", color: "blue")
+        )
+        XCTAssertEqual(unknown.iconKey, generated.iconKey)
+        XCTAssertEqual(unknown.colorKey, .blue)
+    }
+
+    func testLimeTakesDarkInkAndRedTakesLightInk() {
+        XCTAssertFalse(RallyPaletteKey.lime.usesLightInk)
+        XCTAssertTrue(RallyPaletteKey.red.usesLightInk)
+        XCTAssertTrue(RallyPaletteKey.black.usesLightInk)
+    }
+}
+
+#if RALLY_DEBUG
+final class DevelopmentSessionTests: XCTestCase {
+    func testAcceptsMatchingLocalSessions() throws {
+        let local = URL(string: "http://127.0.0.1:8787")!
+        try AppModel.validateDevelopmentSessions(
+            workspace: Self.session(email: "dev@avalon.local", workspace: true, api: "http://127.0.0.1:8787"),
+            identity: Self.session(email: "dev@avalon.local", workspace: false, api: "http://127.0.0.1:8787"),
+            expectedGlobalURL: local
+        )
+    }
+
+    func testRejectsIdentityThatCarriesAWorkspace() {
+        let local = URL(string: "http://127.0.0.1:8787")!
+        XCTAssertThrowsError(
+            try AppModel.validateDevelopmentSessions(
+                workspace: Self.session(email: "dev@avalon.local", workspace: true, api: "http://127.0.0.1:8787"),
+                identity: Self.session(email: "dev@avalon.local", workspace: true, api: "http://127.0.0.1:8787"),
+                expectedGlobalURL: local
+            )
+        )
+    }
+
+    func testRejectsMismatchedAPIOrigin() {
+        let local = URL(string: "http://127.0.0.1:8787")!
+        XCTAssertThrowsError(
+            try AppModel.validateDevelopmentSessions(
+                workspace: Self.session(email: "dev@avalon.local", workspace: true, api: "https://api.rallywith.ai"),
+                identity: Self.session(email: "dev@avalon.local", workspace: false, api: "http://127.0.0.1:8787"),
+                expectedGlobalURL: local
+            )
+        )
+    }
+
+    private static func session(email: String, workspace: Bool, api: String) -> RallySession {
+        RallySession(
+            accessToken: "a",
+            refreshToken: "r",
+            expiresAt: "2026-09-13T00:00:00.000Z",
+            user: RallyUser(id: "u1", email: email, name: "Adam", avatarUrl: nil, timezone: "America/Los_Angeles"),
+            workspace: workspace
+                ? RallyWorkspace(id: "ws1", name: "Rally Development", slug: "avalon-development", region: .global, role: "owner", timezone: "America/Los_Angeles")
+                : nil,
+            apiBaseUrl: api
+        )
+    }
+}
+#endif

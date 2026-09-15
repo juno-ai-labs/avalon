@@ -74,6 +74,28 @@ actor RallyClient {
         return try await post(path: "/auth/refresh", body: Body(refreshToken: refreshToken), as: RallySession.self, authorized: false)
     }
 
+#if RALLY_DEBUG
+    func createDevelopmentWorkspaceSession(workspaceName: String) async throws -> RallySession {
+        struct Body: Encodable { var workspaceName: String }
+        return try await post(
+            path: "/auth/dev/session",
+            body: Body(workspaceName: workspaceName),
+            as: RallySession.self,
+            authorized: false
+        )
+    }
+
+    func createDevelopmentIdentitySession() async throws -> RallySession {
+        struct Body: Encodable {}
+        return try await post(
+            path: "/auth/dev/identity",
+            body: Body(),
+            as: RallySession.self,
+            authorized: false
+        )
+    }
+#endif
+
     func logout(refreshToken: String?) async {
         struct Body: Encodable { var refreshToken: String? }
         do {
@@ -116,8 +138,19 @@ actor RallyClient {
         )
     }
 
-    func getWorkspace() async throws -> RallyWorkspace {
-        try await get(path: "/workspace", as: RallyWorkspace.self)
+    /// Account appearance lives on Global identity, not the regional workspace.
+    func getAccountOnboarding(accessToken: String) async throws -> RallyAccountOnboarding {
+        try await request(
+            method: "GET",
+            path: "/onboarding/account",
+            bodyData: nil,
+            contentType: nil,
+            as: RallyAccountOnboarding.self,
+            authorized: true,
+            extraHeaders: [:],
+            baseURL: APIConfiguration.globalURL(),
+            bearerToken: accessToken
+        )
     }
 
     func leaveWorkspace(workspaceId: String, expectedOutcome: String) async throws {
@@ -130,36 +163,17 @@ actor RallyClient {
 
     // MARK: Work streams
 
-    func listWorkstreams(limit: Int = 50) async throws -> RallyWorkstreamPage {
-        try await get(path: "/workstreams?limit=\(limit)", as: RallyWorkstreamPage.self)
-    }
-
     func createWorkstream(
         openingMessage: String,
         clientMessageId: String,
         operationId: String,
-        attachmentIds: [String] = [],
-        projectId: String? = nil
+        attachmentIds: [String] = []
     ) async throws -> RallyCreatedWorkstream {
         struct Body: Encodable {
             var openingMessage: String
             var participantUserIds: [String]
             var clientMessageId: String
             var attachmentIds: [String]
-            var projectId: String?
-
-            enum CodingKeys: String, CodingKey {
-                case openingMessage, participantUserIds, clientMessageId, attachmentIds, projectId
-            }
-
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.container(keyedBy: CodingKeys.self)
-                try container.encode(openingMessage, forKey: .openingMessage)
-                try container.encode(participantUserIds, forKey: .participantUserIds)
-                try container.encode(clientMessageId, forKey: .clientMessageId)
-                try container.encode(attachmentIds, forKey: .attachmentIds)
-                try container.encodeIfPresent(projectId, forKey: .projectId)
-            }
         }
         return try await post(
             path: "/workstreams",
@@ -167,16 +181,11 @@ actor RallyClient {
                 openingMessage: openingMessage,
                 participantUserIds: [],
                 clientMessageId: clientMessageId,
-                attachmentIds: attachmentIds,
-                projectId: projectId
+                attachmentIds: attachmentIds
             ),
             as: RallyCreatedWorkstream.self,
             headers: [APIConfiguration.operationHeader: operationId]
         )
-    }
-
-    func getConversation(id: String) async throws -> ConversationBoot {
-        try await get(path: "/conversations/\(id)", as: ConversationBoot.self)
     }
 
     func conversationSocketTicket(parentId: String, substreamId: String = SubstreamAddress.main) async throws -> RallySocketTicket {
@@ -274,6 +283,8 @@ actor RallyClient {
         try await get(path: "/workspace/socket", as: RallySocketTicket.self)
     }
 
+    /// Suggested-work chips are still HTTP — the Worker invalidates on the
+    /// socket but does not yet push the rows (choosing-sockets-or-rest.md).
     func workOpportunities() async throws -> [RallyOpportunity] {
         struct Page: Decodable { var items: [RallyOpportunity] }
         let page: Page = try await get(path: "/work-opportunities", as: Page.self)
@@ -303,25 +314,6 @@ actor RallyClient {
         _ = try await request(method: "POST", path: "/workstreams/\(id)/read-state/mark-unread", body: Optional<Empty>.none, as: RallyWorkstream.self)
     }
 
-    func listNotes() async throws -> [RallyNote] {
-        let page: RallyNotePage = try await get(path: "/notes?limit=100", as: RallyNotePage.self)
-        return page.items.filter { $0.archivedAt == nil }
-    }
-
-    func getNote(id: String) async throws -> RallyNote {
-        try await get(path: "/notes/\(id)", as: RallyNote.self)
-    }
-
-    func createNote(id: String, title: String) async throws -> RallyNote {
-        struct Body: Encodable { var id: String; var title: String; var scope: String }
-        return try await post(path: "/notes", body: Body(id: id, title: title, scope: "personal"), as: RallyNote.self)
-    }
-
-    func listSidekicks() async throws -> [RallySidekick] {
-        let page: RallySidekickPage = try await get(path: "/sidekicks", as: RallySidekickPage.self)
-        return page.items
-    }
-
     func createSidekick() async throws -> String {
         struct Created: Decodable { var automationId: String }
         struct Body: Encodable {}
@@ -329,40 +321,44 @@ actor RallyClient {
         return created.automationId
     }
 
-    func createProject(name: String) async throws -> RallyProject {
-        struct Body: Encodable {
-            var name: String
-            var iconKey: String
-            var colorKey: String
-            var scope: String
-        }
-        return try await post(
-            path: "/projects",
-            body: Body(name: name, iconKey: "briefcase", colorKey: "lime", scope: "personal"),
-            as: RallyProject.self
-        )
-    }
-
+    /// Members are still HTTP — workspace_sync invalidates, the payload does
+    /// not carry the rows (choosing-sockets-or-rest.md).
     func listMembers() async throws -> [RallyMember] {
         struct Page: Decodable { var items: [RallyMember] }
         let page: Page = try await get(path: "/workspace/members", as: Page.self)
         return page.items
     }
 
-    func searchWorkspace(query: String) async throws -> [RallySearchHit] {
+    func searchWorkspace(query: String, cursor: String? = nil) async throws -> RallySearchPage {
         struct Body: Encodable {
             var query: String
             var category: String
+            var pageSize: Int
+            var cursor: String?
+
+            enum CodingKeys: String, CodingKey { case query, category, pageSize, cursor }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(query, forKey: .query)
+                try container.encode(category, forKey: .category)
+                try container.encode(pageSize, forKey: .pageSize)
+                try container.encodeIfPresent(cursor, forKey: .cursor)
+            }
         }
-        struct Response: Decodable { var results: [RallySearchHit]? }
-        let response: Response = try await post(
+        return try await post(
             path: "/search",
-            body: Body(query: query, category: "all"),
-            as: Response.self
+            body: Body(
+                query: query,
+                category: "all",
+                pageSize: RallyPagedDirectory.searchPageSize,
+                cursor: cursor
+            ),
+            as: RallySearchPage.self
         )
-        return response.results ?? []
     }
 
+    /// Digest is still HTTP — same Worker gap as members and suggested work.
     func getDigest() async throws -> RallyDigest {
         try await get(path: "/digest", as: RallyDigest.self)
     }
@@ -469,9 +465,20 @@ actor RallyClient {
         contentType: String?,
         as type: T.Type,
         authorized: Bool = true,
-        extraHeaders: [String: String] = [:]
+        extraHeaders: [String: String] = [:],
+        baseURL: URL? = nil,
+        bearerToken: String? = nil
     ) async throws -> T {
-        let (data, response) = try await send(method: method, path: path, bodyData: bodyData, contentType: contentType, authorized: authorized, extraHeaders: extraHeaders)
+        let (data, response) = try await send(
+            method: method,
+            path: path,
+            bodyData: bodyData,
+            contentType: contentType,
+            authorized: authorized,
+            extraHeaders: extraHeaders,
+            baseURL: baseURL,
+            bearerToken: bearerToken
+        )
         if (200..<300).contains(response.statusCode) {
             do {
                 return try decoder.decode(T.self, from: data)
@@ -511,9 +518,12 @@ actor RallyClient {
         bodyData: Data?,
         contentType: String?,
         authorized: Bool,
-        extraHeaders: [String: String]
+        extraHeaders: [String: String],
+        baseURL: URL? = nil,
+        bearerToken: String? = nil
     ) async throws -> (Data, HTTPURLResponse) {
-        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+        let root = baseURL ?? self.baseURL
+        guard let url = URL(string: path, relativeTo: root)?.absoluteURL else {
             throw RallyAPIError(status: 0, code: "invalid_url", message: "The request URL was invalid.")
         }
         var request = URLRequest(url: url)
@@ -522,8 +532,8 @@ actor RallyClient {
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        if authorized, let accessToken {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        if authorized, let token = bearerToken ?? accessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
@@ -597,6 +607,9 @@ struct ConversationBoot: Decodable, Sendable {
 }
 
 struct TranscriptSnapshot: Decodable, Sendable {
+    var snapshotId: String?
+    var eventSequence: Int?
+    var snapshotThrough: Int?
     var ranges: [TranscriptRange]?
     var activeTurns: [TranscriptTurn]?
 }

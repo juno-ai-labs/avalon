@@ -1,10 +1,12 @@
 # Rally iOS
 
 Native SwiftUI client for Rally. It is not Expo, React Native, or Flutter.
-The product surface is a Grok Bot–style transcript plus the same directory the
-Mac sidebar holds: Chats, Projects, Notes, and Sidekicks. Auth and the regional
+The product surface is a Grok Bot–style work-stream list, then substreams, then
+the transcript, plus Sidekicks. Projects and Notes stay on the Mac. Auth and the
+regional
 API are the same contracts the desktop client uses (`rallywithai://auth/complete`
 plus `/auth/desktop/exchange`). The App Store icon is the Electron Dark mark.
+In-app chrome uses the shared Rally loop, not the retired four-pointed spark.
 
 The owning document is [`docs/ios-client.md`](../../docs/ios-client.md).
 
@@ -29,6 +31,11 @@ APNs.
 
 Override the Global API with the scheme environment variable
 `RALLY_API_GLOBAL_URL`, or in a Debug build from Settings → Developer.
+`Info.plist` allows local HTTP (`NSAllowsLocalNetworking`) so a Debug build
+can talk to `http://127.0.0.1:8787`. The scheme still points at production;
+for a local Worker, set that URL (or the UserDefaults key `rally.api.global`)
+and use **Use local development account** on the sign-in screen — Google
+OAuth cannot complete against wrangler.
 
 ## TestFlight
 
@@ -60,5 +67,6 @@ Override the Global API with the scheme environment variable
   still a PRD, not a shipped route.
 - Member-facing account erasure: Settings leaves the workspace, signs out, and
   points at the privacy URL. Operator erasure is out of band.
-- Connectors, automations, projects, and the desktop Settings window. This
-  client is the conversation surface.
+- Projects, Notes (Control Tower capture), connectors, workspace search, starting
+  a new work stream or Sidekick, and the desktop Settings window. This client
+  is the conversation surface.

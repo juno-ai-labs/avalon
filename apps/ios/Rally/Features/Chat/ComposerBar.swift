@@ -44,51 +44,51 @@ struct ComposerBar: View {
                             .foregroundStyle(colors.textPrimary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(colors.surface2, in: Capsule())
+                            .rallyGlass(in: Capsule())
                         }
                     }
                     .padding(.horizontal, 16)
                 }
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 18))
-                        .foregroundStyle(colors.textSecondary)
-                        .frame(width: 32, height: 32)
+            GlassEffectContainer(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(colors.textSecondary)
+                                .frame(width: 32, height: 32)
+                        }
+                        .disabled(isDisabled)
+                        .accessibilityLabel("Attach a photo")
+                        .contextMenu {
+                            Button("Choose file") { pickingFile = true }
+                        }
+                        TextField(placeholder, text: $text, axis: .vertical)
+                            .font(RallyType.prompt())
+                            .foregroundStyle(colors.textPrimary)
+                            .tint(colors.textPrimary)
+                            .lineLimit(1...5)
+                            .focused($focused)
+                            .disabled(isDisabled)
+                            .submitLabel(.send)
+                            .onSubmit { if sendEnabled && !isStreaming && !isDisabled { onSend() } }
+                            .accessibilityLabel("Message")
+                        Button(action: onVoice) {
+                            Image(systemName: "waveform")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(colors.textSecondary)
+                                .frame(width: 32, height: 32)
+                        }
+                        .accessibilityLabel("Speak a message")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+                    SendButton(isStreaming: isStreaming, enabled: sendEnabled && !isDisabled, onSend: onSend, onStop: onStop)
                 }
-                .disabled(isDisabled)
-                .accessibilityLabel("Attach a photo")
-                .contextMenu {
-                    Button("Choose file") { pickingFile = true }
-                }
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .font(RallyType.prompt())
-                    .foregroundStyle(colors.textPrimary)
-                    .tint(colors.textPrimary)
-                    .lineLimit(1...5)
-                    .focused($focused)
-                    .disabled(isDisabled)
-                    .submitLabel(.send)
-                    .onSubmit { if sendEnabled && !isStreaming && !isDisabled { onSend() } }
-                    .accessibilityLabel("Message")
-                Button(action: onVoice) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(colors.textSecondary)
-                        .frame(width: 32, height: 32)
-                }
-                .accessibilityLabel("Speak a message")
-                SendButton(isStreaming: isStreaming, enabled: sendEnabled && !isDisabled, onSend: onSend, onStop: onStop)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(colors.surface1))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(focused ? RallyPalette.focusBorder : colors.divider, lineWidth: 1)
-            )
-            .rallyGlass(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
@@ -125,25 +125,17 @@ struct SendButton: View {
             Group {
                 if isStreaming {
                     Image(systemName: "stop.fill")
-                        .foregroundStyle(colors.textPrimary)
                 } else {
                     Image(systemName: "arrow.up")
-                        .foregroundStyle(enabled ? colors.sendGlyphEnabled : colors.textSecondary)
                 }
             }
             .font(.system(size: 16, weight: .semibold))
             .frame(width: 32, height: 32)
-            .background(Circle().fill(fill))
             .contentTransition(.symbolEffect(.replace))
         }
-        .buttonStyle(RallyPressableStyle(scale: 0.92))
+        .buttonStyle(.glassProminent)
         .disabled(!isStreaming && !enabled)
         .accessibilityLabel(isStreaming ? "Stop generating" : "Send message")
         .sensoryFeedback(.impact(flexibility: .soft), trigger: isStreaming)
-    }
-
-    private var fill: Color {
-        if isStreaming { return colors.surface3 }
-        return enabled ? colors.sendFillEnabled : colors.surface3
     }
 }
