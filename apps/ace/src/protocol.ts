@@ -100,7 +100,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 7,
+    rank: 6,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -109,7 +109,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 8,
+    rank: 7,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',

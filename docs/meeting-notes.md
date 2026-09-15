@@ -11,13 +11,26 @@ clears note content and linked resources, retaining only IDs and object referenc
 in `retired_meeting_resources`. Inserts and updates cannot recreate built-in note
 resources. Existing migration definitions remain unchanged.
 
-`retiredMeetingInventory` and `purgeMeetingNoteObjects` are internal RPCs, with no
-public route. Both are permitted on retired workspaces so an inactive or closed
+`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`, and
+`purgeMeetingNoteObjects` are internal RPCs, with no
+public route. All are permitted on retired workspaces so an inactive or closed
 workspace cannot escape the purge. One purge call deletes one resource's page of
 R2 objects; failures retain the address and another call resumes. Resource IDs
 remain until downstream attachments and archives have been checked.
 
-Conversation schema migration 57 removes identifiable note attachment snapshots
+Search cleanup drains an already admitted KV publication, deletes the external
+key, then removes its SQLite decision and dependencies. A failure retains the
+key for retry. Registration and publication both reject retired resource IDs.
+The search index is independently inventoried by exact source ID before deleting
+its revision metadata; queued indexing revalidates canonical authority.
+
+Some adopted schemas lack the obsolete `automation_resources` table. Migration
+57 had already shipped when this was discovered, so its hash stays unchanged.
+An outer transaction supplies an empty temporary relation for that migration's
+DELETE and removes it before committing. The real workerd upgrade test covers
+this historical shape as well as a complete populated schema.
+
+Conversation schema migration 58 removes identifiable note attachment snapshots
 and receipts while preserving conversation turns. Unknown copied prose is not
 classified by text matching. Terminal imports and model-history copies require
 separate provenance-based inventory before claiming complete deletion.
@@ -28,8 +41,11 @@ Deploy retirement behavior before running cleanup. Enumerate every workspace and
 conversation object, including retired objects. Drain the R2 cleanup, remove
 attributable search documents and raw inference records, and delete analytical
 copies through the Iceberg catalog. Never delete shared Parquet objects directly.
-After downstream deletion is verified, a subsequent forward migration can drop
-the empty note tables and cleanup manifests.
+Workspace migration 58 drops the five empty feature tables after a guard verifies
+that R2 deletion is complete and attributable search authorization keys are gone.
+It also removes the note sidebar state and search revision rows. Content-free
+resource IDs remain as provenance and stale-writer fences; they contain no notes.
+Historical provider retention is tracked separately from current serving storage.
 
 The inference consumer writes a content-free tombstone before deleting a queued
 meeting inference record. Replays acknowledge that tombstone instead of restoring
@@ -41,6 +57,52 @@ recreation refusal and repeat execution. Dictation must additionally be exercise
 in a real desktop window. Cloudflare point-in-time recovery and Iceberg historical
 snapshots must be reported separately from deletion of currently served records.
 
+## Production checkpoint — 2026-09-15 UTC
+
+The deployed API version `a7b1266b-1283-4343-bc58-725c0dc7fec7` completed
+workspace schema 58. All 16 stored workspace objects, including closed workspaces,
+were explicitly read back: zero feature tables, zero attributable resource
+references, and zero pending R2 deletions. The content-free manifest records 26
+retired resources. All 52 current and historical note files were removed; a full
+159,351-object workspace-prefix scan found no note files afterward.
+
+All 6,693 stored conversation objects were inspected after conversation migration
+58: no remaining note attachments, attributable terminal imports, or tool-input
+copies. All 28 production search namespaces had zero matching source IDs. The
+74 attributable authorization KV keys and their SQLite decisions were deleted.
+No attributable meeting inference records were found in the current catalog or
+among 348 raw records not yet cataloged. Unrelated conversations and external
+meeting integrations were preserved, and no content backup was created.
+
+The current analytics catalog's two meeting lifecycle rows and D1's 13 accepted
+events plus 13 receipts were deleted. Thirteen PostHog lifecycle events remain:
+the available deletion mechanisms would also remove unrelated person/project
+data. Historical Iceberg snapshots retain earlier rows and snapshot expiration
+is disabled. Durable Object point-in-time recovery can retain pre-deletion data
+for 30 days. These retention copies are not a completed physical erasure. Offline
+desktop caches are cleared by the client cache upgrade when the updated app runs.
+
+macOS release 1.363.0 is published with verified public artifacts and update feed.
+The app and DMG passed signing, notarization, stapling, and a clean-profile launch.
+Ace version `c203de00-3e39-481d-a395-626eab8e1c69` removed the administrative
+meeting controls, and telemetry delivery version
+`a3bd4e0d-aed9-476c-a3d6-7d9d01b5e5b8` fences old events at the destination.
+
+Validation includes lint and typecheck, real workerd fresh/populated/adopted
+schema upgrades, interrupted and repeated cleanup, stale writers, and mutation
+proofs for deletion and fencing. The full workerd run passed 890 tests and found
+two obsolete table expectations; the corrected affected run passed all 88 tests.
+The final dictation/permission suite passed 44 tests, and Granola/Fireflies passed
+55 connector tests. A real Electron window switched between two local workspaces
+and transcribed synthetic speech through the live provider into the composer
+both before and after switching. Actual physical microphone hardware and fresh
+external-provider OAuth consent were not exercised. Temporary cleanup account
+tokens were revoked and the remote operator session was closed.
+
+Deployment and current-storage deletion therefore have separate evidence from
+provider-retained copies. Do not describe this checkpoint as erasure from every
+historical storage layer.
+
 ## Changelog
 
 ### 2026-09-14 — Retire built-in meeting notes, preserve dictation
@@ -51,7 +113,8 @@ writers available. Cleanup retains content-free addresses so an interrupted R2
 operation can resume. Shared dictation and external meeting integrations remain;
 removing either would exceed the requested feature boundary. Empty legacy wire
 fields remain temporarily for already-installed clients, and final schema removal
-must follow verified downstream cleanup.
+follows verified current-storage cleanup. Search authorization cleanup also fences
+delayed publications before removing cache metadata.
 
 ### 2026-09-01 — The note list pages instead of stopping at 250
 
