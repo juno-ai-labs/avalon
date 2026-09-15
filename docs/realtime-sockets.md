@@ -87,11 +87,13 @@ admission is split in two.
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
-   same pair from Node's `ws` client and supplies the fixed application Origin.
-   Both become `Sec-WebSocket-Protocol`, the handshake header available for
-   browser-compatible ticket presentation. A ticket is a compact JWS —
-   base64url joined by dots — which is a legal subprotocol token, so it needs no
-   encoding.
+   same pair from Node's `ws` client and supplies the fixed application Origin
+   (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
+   upgrade, so the native client sets that same allowlisted value on the
+   handshake request. Both become `Sec-WebSocket-Protocol`, the handshake header
+   available for browser-compatible ticket presentation. A ticket is a compact
+   JWS — base64url joined by dots — which is a legal subprotocol token, so it
+   needs no encoding.
 3. **Verify.** The Worker checks the `Upgrade` header and the exact `Origin`,
    reads the ticket off the offer, verifies the signature and the claims, and
    rejects a region or work-stream mismatch.

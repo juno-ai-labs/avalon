@@ -1,7 +1,7 @@
 {
   "applinks": {
     "details": [{
-      "appIDs": ["7ZLT6A8W25.ai.rallywith.desktop"],
+      "appIDs": ["7ZLT6A8W25.ai.rallywith.desktop", "7ZLT6A8W25.ai.rallywith.ios"],
       "components": [{ "/": "/app/workspaces/*" }, { "/": "/app/workstreams/*" }]
     }]
   }
