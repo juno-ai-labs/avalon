@@ -322,8 +322,12 @@ action. An administrator's explicit Test adopts an existing Granola connection.
 `details.status` is 400, 401, 403, 404 or 422, the runner settles the step
 `failed`, with the provider's status and bounded message on the registration,
 and Test re-dispatches it. Every other thrown create — a timeout, a 5xx, a
-response that could not be parsed — stays `unknown`, as before. Granola's
-version 1 registers the three events its API defines.
+response that could not be parsed — stays `unknown`, as before. The validation
+read before the create is not the create: a key refused there stays a failed
+inspection. Test runs a managed repair before the credential door and loads the
+envelope it checks after the repair, so a retried create is verified against the
+endpoint it just registered. Granola's version 1 registers the three events its
+API defines.
 
 **Why:** The runner marked any thrown create unknown, and unknown creates are
 deliberately never retried. That is right for a lost response, where an

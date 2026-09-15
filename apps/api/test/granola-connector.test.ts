@@ -2,6 +2,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
+import { ApiError } from "../src/lib/api-error";
 import { encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { __integrationTesting } from "../src/services/integrations";
@@ -92,6 +93,48 @@ describe("Granola workspace connection", () => {
     expect(payloadPut).toHaveBeenCalledTimes(2);
     expect(database.prepare("SELECT count(*) AS count FROM activities").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 1 });
+  });
+
+  it("refuses a verified delivery whose event Rally does not model, by name, before any receipt", async () => {
+    // Granola's own list has three events and Rally's understanding of it has
+    // been wrong once. An unknown name used to fail schema validation as a
+    // 500, which Standard Webhooks retries for four days before Granola
+    // disables the endpoint; now it is the named 400 every other ingress gives.
+    const { auth, database, env, payloadPut, queueSend } = fixture();
+    const secretBytes = new TextEncoder().encode("webhook-signing-secret");
+    const connectionId = crypto.randomUUID();
+    const encrypted = await encryptString(JSON.stringify({ apiKey: API_KEY, webhookEndpointId: "whe_1234567890abcd", webhookSigningSecret: `whsec_${base64(secretBytes)}` }), CREDENTIAL_KEY, connectionId);
+    database.prepare(`INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, display_name, encrypted_credentials, credential_iv,
+       granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES (?, ?, 'granola', 'workspace', NULL, 'Granola workspace', ?, ?, '["granola.workspace.read"]', 'plugin_granola_fixture', 'healthy', '{}', '{}', ?, ?)`)
+      .run(connectionId, auth.workspaceId, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
+    const event = {
+      event_id: "33333333-3333-4333-8333-333333333333",
+      event_type: "note.regenerated",
+      note_id: "not_1234567890abcd",
+      occurred_at: "2026-08-07T13:00:00-07:00",
+    } as const;
+    const rawBodyText = JSON.stringify(event);
+    const timestamp = Math.floor(Date.now() / 1_000);
+    const signature = await hmacBase64(secretBytes, `${event.event_id}.${timestamp}.${rawBodyText}`);
+    const headers = { webhookId: event.event_id, webhookTimestamp: String(timestamp), webhookSignature: `v1,${signature}` };
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const refusal = await new ConnectionService(env).ingestGranolaWebhook(connectionId, new TextEncoder().encode(rawBodyText), headers)
+      .then(() => null, (error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(ApiError);
+    expect(refusal).toMatchObject({ status: 400, code: "unsupported_webhook_event", details: { provider: "granola", eventType: "note.regenerated" } });
+    expect((refusal as ApiError).message).toContain("note.regenerated");
+    expect(warnings.mock.calls.map(([entry]) => entry)).toContainEqual(expect.objectContaining({
+      event: "connector_webhook_event_refused", connector_type: "granola", connection_id: connectionId, event_type: "note.regenerated",
+    }));
+    expect(queueSend).not.toHaveBeenCalled();
+    expect(payloadPut).toHaveBeenCalledTimes(1);
+    expect(database.prepare("SELECT count(*) AS count FROM activities").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 0 });
+    warnings.mockRestore();
   });
 
   it("claims the receipt through the typed object RPC without a credential crossing in plaintext", async () => {
