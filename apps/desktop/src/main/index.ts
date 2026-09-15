@@ -588,6 +588,7 @@ let telemetryLaunchId: string | null = null;
 let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: DesktopDeepLinkNavigation[] = [];
+let mainWindowLoading: Promise<void> | null = null;
 let resolveMainWindowStartup!: () => void;
 const mainWindowStartup = new Promise<void>((resolve) => { resolveMainWindowStartup = resolve; });
 const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
@@ -4428,6 +4429,7 @@ async function createMainWindow(): Promise<void> {
   // Electron's ready event precedes our async startup. Native notification and
   // URL callbacks can arrive before the renderer protocol and IPC exist.
   await mainWindowStartup;
+  if (mainWindowLoading) return mainWindowLoading;
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -4490,7 +4492,12 @@ async function createMainWindow(): Promise<void> {
     settingsWindowController.releasePrewarmed();
   });
 
-  await loadRenderer(mainWindow, rendererUrl(), 'main');
+  mainWindowLoading = loadRenderer(mainWindow, rendererUrl(), 'main');
+  try {
+    await mainWindowLoading;
+  } finally {
+    mainWindowLoading = null;
+  }
 }
 
 function installContentSecurityPolicy(): void {

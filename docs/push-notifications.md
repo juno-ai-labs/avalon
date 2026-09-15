@@ -133,7 +133,8 @@ Signed-Mac acceptance found that clicking a notification with Rally quit opened
 a blank window: Electron was ready before Rally's async initialization installed
 its renderer protocol and IPC. Main-window creation now waits for that setup,
 preserving the existing pending-link queue. This also covers early URL callbacks
-without a separate notification window or retry timer.
+without a separate notification window or retry timer. Concurrent open requests
+share the in-flight renderer load so they cannot show the window prematurely.
 
 ### 2026-09-14 — Add Apple push as a transport of existing notification intents
 
