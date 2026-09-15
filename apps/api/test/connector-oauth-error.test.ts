@@ -87,6 +87,25 @@ describe("connector OAuth callback failures", () => {
     ).diagnostics).not.toHaveProperty("response_invalid");
   });
 
+  it("names the field a stage helper said the response was missing, in code shape only", () => {
+    // The adapter's stage helper attaches the failing paths; the classifier
+    // carries them because they are schema shape, and refuses anything in
+    // that key that is not, so a provider body could never ride along.
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", {
+        oauthStage: "account_identity",
+        responseInvalid: true,
+        responseIssues: "authed_user.id:invalid_type",
+      }),
+    ).diagnostics).toMatchObject({ stage: "account_identity", response_invalid: true, response_issues: "authed_user.id:invalid_type" });
+    expect(classifyConnectorOAuthCallbackFailure(
+      new ConnectorError("provider_error", "Slack OAuth failed", {
+        responseInvalid: true,
+        responseIssues: "access_token: xoxp-secret was returned",
+      }),
+    ).diagnostics).not.toHaveProperty("response_issues");
+  });
+
   it("classifies schema, API, and unknown failures without their messages", () => {
     const schemaError = z.object({ token: z.string() }).safeParse({ token: 1 });
     expect(schemaError.success).toBe(false);
@@ -98,6 +117,7 @@ describe("connector OAuth callback failures", () => {
         error_name: "ZodError",
         response_invalid: true,
         validation_issue_count: 1,
+        response_issues: "token:invalid_type",
       },
     });
     expect(classifyConnectorOAuthCallbackFailure(new ApiError(401, "invalid_oauth_state", "private")))

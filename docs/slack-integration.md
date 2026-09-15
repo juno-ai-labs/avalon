@@ -606,7 +606,9 @@ not own:
   with no usable identity used to log one indistinguishable
   `connector_code: "provider_error"`. `slackOAuthCallbackStage` fills that
   field; read `stage` with `provider_error`, `provider_status`,
-  `response_invalid`, and `timed_out` on `connector_oauth_callback_failed`.
+  `response_invalid`, `response_issues` — the failing paths of a body that did
+  not parse, never its values — and `timed_out` on
+  `connector_oauth_callback_failed`.
 - **Retries with the same `event_id` and body are acknowledged once; reuse of an
   event ID with different content is a conflict.**
 - **A denied prompt is retained regionally for at most 24 hours** so the same
