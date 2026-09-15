@@ -199,7 +199,7 @@ export class ResourceService {
   }
 
   async upload(file: File, title: string | undefined, draftId: string,
-    importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; fileIndex: string }) {
+    importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; sourceKind: "attachment" | "artifact"; fileIndex: string }) {
     const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
     if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);

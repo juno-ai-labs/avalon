@@ -93,6 +93,18 @@ describe("shared session import", () => {
     await expect(previewSessionImport({ kind: "link", url: "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2" }, fetcher)).rejects.toThrow("could not return");
     expect(calls).toEqual([{ redirect: "manual" }]);
   });
+  it("identifies invalid canonical fields without echoing source values", () => {
+    expect(() => parseSessionExport("claude", JSON.stringify({ chat_messages: [] })))
+      .toThrow("content.messages:too_small");
+  });
+  it("maps network and response-stream failures to the export fallback", async () => {
+    const input = { kind: "link" as const, url: "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2" };
+    await expect(previewSessionImport(input, async () => { throw new Error("private network detail"); }))
+      .rejects.toMatchObject({ code: "session_unavailable" });
+    await expect(previewSessionImport(input, async () => new Response(new ReadableStream({ start(controller) {
+      controller.error(new Error("private stream detail"));
+    } })))) .rejects.toMatchObject({ code: "session_unavailable" });
+  });
   it("rejects empty or non-conversation content", () => {
     expect(() => parseSessionExport("claude", "{}")).toThrow("Expected Claude");
     expect(() => parseSessionExport("chatgpt", '<html>Log in</html>')).toThrow("Share page has no conversation data");

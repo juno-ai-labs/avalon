@@ -122,6 +122,7 @@ describe("creating a work stream", () => {
     const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
       title: preview.title, clientMessageId: "import-files", participantUserIds: [],
     }, conversation);
+    expect(created.workstream.objective).toBe(preview.title);
     const boot = await new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id).boot();
     const turns = boot.transcript.ranges.flatMap((range) => range.turns);
     expect(JSON.stringify(turns[0])).toContain("requirements.txt");
