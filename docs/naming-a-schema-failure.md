@@ -134,6 +134,7 @@ its own is a boundary that drifts.
 | `apps/api/src/durable-objects/workspace-do.ts` | `connector_event_authority_terminal` carries the settler's `error` as `error_code` when it is code-shaped |
 | `apps/api/src/services/demo-preparation.ts` | a phase stopped by a stored record that no longer parses names the field as its operator-facing code, where it said `demo_internal_error` |
 | `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
+| `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
 | `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop instead of reducing it to the fallback |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries a code-shaped message a Durable Object threw, as `error_code`, where the row said `internal_error` and `Error` |
@@ -190,6 +191,48 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-09-15 — The plugin host names a catalog and an authorization that failed their schemas
+
+**What changed:** The two host logs behind a plugin the model could not
+load name the field. `dynamic_connector_tools_unavailable` carries
+`error_code` beside `error_name` on both surfaces that emit it, and
+`connector_plugin_reauthorization_failed` carries a schema rejection's paths
+as `code`, the key it already used for a connector's own code.
+
+**Why:** A hosted MCP server's tool catalog that drifted out of
+`ToolDefinitionSchema` failed identically on every activation, and the host
+logged the word `ZodError`; the model was told `plugin_tools_unavailable`
+and to retry once later. A reauthorization whose cause was a schema
+rejection logged the rejection's JSON message as `reason` and no code, and
+became `indeterminate` — `plugin_authorization_unavailable`, "retry after
+the authorization service is available" — for a failure that no wait would
+change. Naming the field at the host log is what tells an operator reading
+that row that the blocker is deterministic.
+
+**Considered and rejected:** Changing `structuredFailureKind`'s
+`validation_error` to a per-path code. The kind is a small vocabulary that
+`integrations.ts` matches on to derive a member-facing classification, and
+the `validate`-stage diagnostic emitted two lines earlier already carries
+`validationIssues` for the same `inferenceRequestId`; the paths are on the
+row beside it. Also rejected: naming the rejection inside the harness's
+`plugin_tools_unavailable` catch. The only slot that reaches the log is the
+one that reaches the model, and what the model is told about a deterministic
+blocker is the fabricated-blocker decision recorded in the pull request, not
+a diagnostics change. And rejected: converting `onToolCallRejected`'s
+`error.name` defensively. Nothing in this repository can be shown to hand a
+`ZodError` to that callback — the rejection hook returns a structured refusal
+rather than throwing — so a conversion there would be a guess with no test
+able to fail.
+
+**Consequences:** `error_code` on `dynamic_connector_tools_unavailable`
+carries the catalog's failing path only for a schema rejection and the
+fallback constant otherwise, so a query on that field separates a drifted
+catalog from an unreachable server. The two `plugin_*_unavailable` codes and
+their retry guidance are unchanged; the fabricated-blocker finding stands
+against them until their owners decide on a third verdict.
+
+Shipped in the pull request for this change.
 
 ### 2026-09-15 — The services and the admin Worker name what they already knew
 

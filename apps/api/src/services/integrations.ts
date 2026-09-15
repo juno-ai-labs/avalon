@@ -2164,6 +2164,10 @@ async function loadAutomationCreatorPluginCatalog(
           connection_id: connectionId,
           surface: "automation_creator",
           error_name: error instanceof Error ? error.name : "unknown",
+          // A tool catalog that drifted out of `ToolDefinitionSchema` fails
+          // identically forever; its path is the diagnosis, and the class
+          // name `ZodError` was all this row said.
+          error_code: diagnosticErrorCode(error, "dynamic_connector_tools_unavailable"),
         });
         continue;
       }
@@ -2851,6 +2855,7 @@ export async function runWorkstreamHarness(
           plugin_id: pluginId,
           surface: "initial_activation",
           error_name: error instanceof Error ? error.name : "unknown",
+          error_code: diagnosticErrorCode(error, "dynamic_connector_tools_unavailable"),
         });
         return false;
       });
@@ -7181,7 +7186,15 @@ function logPluginAuthorizationFailure(
     connection_id: frozen.connectionId,
     connector_type: frozen.connectorType,
     reason: cause instanceof Error ? cause.message : String(cause),
-    ...(cause instanceof ConnectorError ? { code: cause.code } : {}),
+    // The verdict this failure becomes is `indeterminate`, which tells the
+    // model to retry later; the row is where a deterministic cause — a
+    // connector's own code, or the field a schema rejection named — is
+    // told apart from a service that was down.
+    ...(cause instanceof ConnectorError
+      ? { code: cause.code }
+      : cause instanceof z.ZodError
+        ? { code: diagnosticErrorCode(cause, "reauthorization_failed") }
+        : {}),
   });
 }
 
@@ -8739,6 +8752,7 @@ async function recordToolAudit(
 
 export const __integrationTesting = {
   createToolEffectIntents,
+  logPluginAuthorizationFailure,
   loadWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,
   assertRunAuthorityStillValid,
