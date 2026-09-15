@@ -27,6 +27,7 @@ function gateway() {
     }
     expect(url.host).toBe("api.us.svix.com");
     expect(headers.get("authorization")).toBe("Bearer portal.us.scoped");
+    if (method === "GET" && url.pathname.endsWith("/endpoint")) return Response.json({ data: endpoint ? [endpoint] : [], done: true, iterator: null });
     if (method === "PUT") {
       paths.push(url.pathname);
       endpoint = { id: endpoint?.id ?? "ep_1", ...JSON.parse(String(init?.body)) };
@@ -43,7 +44,8 @@ describe("Daytona webhook provisioning", () => {
     const first = await provisionDaytonaWebhook(f.input);
     const second = await provisionDaytonaWebhook(f.input);
     expect(first.endpointId).toBe(second.endpointId);
-    expect(new Set(f.paths).size).toBe(1);
+    expect(f.paths[0]).toContain("/endpoint/rally-terminal-");
+    expect(f.paths[1]).toBe("/api/v1/app/org/endpoint/ep_1");
     expect(f.endpoint()).toMatchObject({ disabled: false, filterTypes: ["sandbox.created", "sandbox.state.updated"] });
     const install = f.calls.indexOf("install");
     const probe = f.calls.indexOf("POST /ingest/daytona");
@@ -51,6 +53,22 @@ describe("Daytona webhook provisioning", () => {
     expect(install).toBeLessThan(probe);
     expect(probe).toBeLessThan(enable);
   });
+  it("finds an existing endpoint on a later page instead of creating a duplicate", async () => {
+    const f = gateway();
+    const original = f.input.fetcher.getMockImplementation()!;
+    f.input.fetcher.mockImplementation((target, init) => {
+      const url = new URL(String(target));
+      if (url.pathname.endsWith("/endpoint")) return Promise.resolve(Response.json(
+        url.searchParams.has("iterator")
+          ? { data: [{ id: "ep_manual", url: f.input.webhookUrl, disabled: false, filterTypes: null }], done: true, iterator: null }
+          : { data: [], done: false, iterator: "page-2" },
+      ));
+      return original(target, init);
+    });
+    await provisionDaytonaWebhook(f.input);
+    expect(f.paths).toEqual(["/api/v1/app/org/endpoint/ep_manual"]);
+  });
+
   it("leaves delivery disabled if installing the secret fails", async () => {
     const f = gateway();
     f.input.installSecrets.mockRejectedValueOnce(new Error("deployment failed"));
