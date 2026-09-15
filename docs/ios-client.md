@@ -16,22 +16,26 @@ Grok-inspired transcript chrome, or the TestFlight archive.
 | `apps/ios/Rally.xcodeproj` | File-system-synchronized Xcode 26 project. Targets Rally, RallyTests, RallyUITests. |
 | `apps/ios/Config/Shared.xcconfig` | Bundle ID `ai.rallywith.ios`, team `7ZLT6A8W25`, marketing version, deployment target iOS 26, usage strings. |
 | `apps/ios/Rally/RallyApp.swift` | `@main`. Appearance, deep links, push authorization. |
-| `apps/ios/Rally/App/AppModel.swift` | Session lifecycle, workspace pick, directory, send, socket consume, pin/archive/search, substream switch and create. |
-| `apps/ios/Rally/App/MainShell.swift` | Tab shell: Chats, Projects, Notes, Sidekicks. |
+| `apps/ios/Rally/App/AppModel.swift` | Session lifecycle, workspace pick, directory, send, socket consume, pin/archive/search, substream switch and create, account appearance. |
+| `apps/ios/Rally/App/MainShell.swift` | Tab shell: Work streams, Sidekicks. System `Tab` + minimize-on-scroll so the bar is Liquid Glass. |
 | `apps/ios/Rally/Auth/PKCE.swift` | S256 attempt/verifier/challenge, same lengths as the desktop store. |
 | `apps/ios/Rally/Auth/KeychainStore.swift` | Identity and workspace sessions. Refresh tokens never go in UserDefaults. |
 | `apps/ios/Rally/Network/RallyClient.swift` | Regional HTTPS. `ConversationBoot` also understands a nested socket snapshot. Prepare/confirm/cancel/rename/archive for substreams. |
-| `apps/ios/Rally/Network/ConversationSocket.swift` | `rally.ticket.v1` + ticket as `Sec-WebSocket-Protocol`. Subscribe, send, stop, retry, elicitation, older ranges. |
-| `apps/ios/Rally/Network/WorkspaceSocket.swift` | Directory subscribe. Projects exist only on this sidebar; there is no `GET /projects`. |
+| `apps/ios/Rally/Network/RallyTicketedSocket.swift` | The one iOS ticketed WebSocket: subprotocol ticket, subscribe on open, `isBusy` during handshake. Workspace, control, and feed sockets are codecs on top of it. |
+| `apps/ios/Rally/Network/ConversationSocket.swift` | Feed frames on `RallyTicketedSocket`: subscribe, send, stop, retry, elicitation, older ranges, `mark_opened`. |
+| `apps/ios/Rally/Network/WorkspaceSocket.swift` | Directory subscribe, `list_workstreams` later pages, recency upserts. Sidebar projects and notes are ignored. |
 | `apps/ios/Rally/Network/WorkstreamControlSocket.swift` | Parent `workstream_metadata` frames. The child directory lives here, not on the workspace sidebar. |
-| `apps/ios/Rally/Features/Chat` | Transcript, `FeedProjection`, composer, conversation switcher, substream launch. Same row kinds as desktop `messageType`. |
-| `apps/ios/Rally/Features/Projects` | Project list and project space. |
-| `apps/ios/Rally/Features/Notes` | Note list and detail (Control Tower recording stays on the Mac). |
+| `apps/ios/Rally/Network/RallySocketPolicy.swift` | Navigation-shaped retain set plus presence-free feeds for directory rows that stayed on screen for one second. |
+| `apps/ios/Rally/Network/RallySocketPool.swift` | Opens and closes sockets to match the retain set. Reuses a live ticketed connection. Caches snapshots for the workspace session. |
+| `apps/ios/Rally/Network/RallyPagedDirectory.swift` | Subscribe overlay, cursor append, recency upsert. Page sizes transcribed from the contracts. |
+| `apps/ios/Rally/Design/RallyInfiniteScroll.swift` | Terminal-row `onAppear` trigger for the next cursor page or older transcript range. |
+| `apps/ios/Rally/Features/Chat` | Work-stream list → substream list → feed. `FeedProjection`, composer in `safeAreaBar`, substream launch. Same row kinds as desktop `messageType`. |
+| `apps/ios/Rally/Features/History` | Work-stream list: pin, unread, archive, rename, Electron recency/pin order. |
 | `apps/ios/Rally/Features/Sidekicks` | Sidekick library; opening one is the same conversation surface with the automation id as parent. |
-| `apps/ios/Rally/Features/History` | History sheet: pin, unread, archive, rename, public/private. |
 | `apps/ios/Rally/Features/Settings` | Account, digest, members, appearance, leave/sign-out. Desktop-only settings are named, not faked. |
 | `apps/ios/Rally/Assets.xcassets/AppIcon.appiconset/AppIcon.png` | 1024 RGB App Store icon, flattened from the Electron **Dark** selectable icon (`apps/desktop/resources/app-icons/dark.png`). |
-| `apps/ios/Rally/Design` | True-black/light palette, Liquid Glass wrapper, Dynamic Type, Rally mark. |
+| `apps/ios/Rally/Assets.xcassets/RallyMark.imageset` | Shared loop PNG from `assets/brand/rally-mark.png`. Template-rendered in brand ink. |
+| `apps/ios/Rally/Design` | True-black/light palette, Liquid Glass helpers, Dynamic Type, the shared Rally loop mark, work-stream/Sidekick glyphs from the appearance catalog, the circular account avatar. |
 | `apps/ios/fastlane` and `apps/ios/scripts/archive-testflight.sh` | App Store export. Must run on a Mac. |
 | `scripts/ios-project.test.mjs` | Linux-runnable packaging invariants. |
 
@@ -49,6 +53,15 @@ Node package here would be picked up as a workspace package and is forbidden.
 session. JWT audience stays `avalon-desktop` — iOS reuses the desktop client
 rather than minting a second audience.
 
+A Debug build also offers **Use local development account**, the same
+`POST /auth/dev/session` plus `POST /auth/dev/identity` split the desktop uses.
+It is compiled out of Release (`RALLY_DEBUG`). Real Google callbacks cannot be
+verified against wrangler, so local validation has to take this door.
+`NSAllowsLocalNetworking` in `Info.plist` is what lets the simulator speak
+HTTP to `127.0.0.1` without turning ATS off. The shared scheme still points at
+production; override `RALLY_API_GLOBAL_URL` or Settings → Developer
+(`rally.api.global`) for a local Worker.
+
 `GET /onboarding` then lists workspaces and invitations. One workspace activates
 immediately; otherwise the picker runs. Activation and create hit
 `/onboarding/workspace/activate` and `/onboarding/workspace` and store a
@@ -56,50 +69,98 @@ immediately; otherwise the picker runs. Activation and create hit
 
 ### Conversation
 
-Ready state is the tab shell. **Chats** is Grok Bot's chrome: history, search,
-a centered workspace pill that opens Settings, details (inspector), and new
-chat. The composer is pinned to the bottom. Sending with no open stream
-calls `POST /workstreams` with `openingMessage` (text or attachments, never a
-placeholder space) and, when a project is selected, that project's id. An open
-stream sends `create_message` on the conversation feed.
+Ready state is the tab shell. **Work streams** opens on the work-stream list (Grok
+Bot's directory: the circular account avatar opens Settings). The chip paints
+stored initials and personal color from `GET /onboarding/account` on Global
+identity; a missing presentation falls back to two letters of the name and
+`blue`. The list uses the same order as the Mac sidebar: **Pinned** in
+`pinPosition` order, then recency groups (**Last hour**, **Today**,
+**Yesterday**, **This week**, **This month**, **Before this month**) by this
+viewer's last access. Selecting a work stream pushes the
+substream list on that tap, without a navigation animation: Main and **New substream** paint at once; children
+fill when the parent control socket has the directory. Selecting a substream
+pushes the feed on that tap, before the ticket and without waiting for a zoom:
+a cached snapshot paints if
+the pool has one, otherwise bubble skeletons on the first frame until the feed snapshot arrives.
+The composer stays up. Sending on an open stream is `create_message` on the
+conversation feed.
 
-`GET /conversations/:id` paints the REST boot for Main. `GET
-/conversations/:id/substreams/:substreamId/socket` returns a URL and ticket; the client
-connects with subprotocols `rally.ticket.v1` and the ticket, then
-`subscribe`. Snapshot frames nest `workstream` + `transcript`; REST boots are
-flat. Both decode through `ConversationBoot`. A child's REST parent boot is not
-the child's transcript — only the feed socket for that substream is. `FeedProjection` maps turns onto
-the same row kinds the Electron renderer shows (`docs/conversation-surfaces.md`).
+The feed snapshot is the transcript. There is no REST conversation boot —
+Main and child both wait on the addressed SubstreamAgent subscribe, per
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md). Snapshot frames
+nest `workstream` + `transcript` and decode through `ConversationBoot`.
+`FeedProjection` maps turns onto the same row kinds the Electron renderer
+shows (`docs/conversation-surfaces.md`).
+
+iOS does not copy the desktop pin/recent/running swarm. `RallySocketPolicy`
+keeps one workspace socket for the session, one control socket for the parent
+still on the navigation stack, the visible feed, Main (`"0"`) of that
+parent while the substream list or a child is showing, and presence-free
+feeds for directory rows that stayed on screen for one second (the same delay
+desktop uses for hover). Child rows on the substream list warm as soon as they
+appear: that list is already a committed parent, and a tap should not wait out
+the hover delay. A Sidekick is on-demand until its row warms: then
+one feed, no control, no extra Main. Retained Main is presence-free;
+navigating onto it sends `mark_opened`. Send, stop, and retry reuse the live
+feed socket — they do not mint a new ticket. Snapshots stay for the workspace
+session so switching back paints before the next handshake. Foregrounding
+remints only sockets in the retain set that have dropped. Tickets remain
+single-use; reconnect always asks for a new one. Older history is
+`load_transcript_range` with the opening snapshot fence (`snapshotId`,
+half-open sequence range, event waterline) once the feed has settled on the
+newest row and the reader pulls to the oldest visible content. A LazyVStack
+sentinel at index 0 is not that signal — it appears while the view is still
+pinned to the bottom. There is no Load-earlier button.
 
 The desktop center rail is parent-scoped, so on iPhone it is not a fifth tab.
-Chats shows a conversation chip (Main, or the open child) that opens a sheet
-with Main, each private child, and **New substream**. The same sheet's row menus
-rename, copy the canonical link, archive, and (on Main) make the work stream
-public. A settled main-feed message also offers **New substream** with that
-turn as the cutoff. Either entry replaces the feed and composer with the launch
-surface: faded provenance when branching from a message, an empty body when
-branching from the switcher, and a composer whose first submit is
+After a work stream is selected, its substream list is the next push: Main, each
+private child, and **New substream**. Row menus rename, copy the canonical link,
+archive, and (on Main) make the work stream public. A settled main-feed message
+also offers **New substream** with that turn as the cutoff. Either entry opens
+the launch surface: faded provenance when branching from a message, an empty
+body when branching from the list, and a composer whose first submit is
 `POST …/substreams/prepare` then `POST …/substreams/confirm`. Nothing is
 reserved until that submit. The parent control socket
 (`GET /workstreams/:id/control-socket`) is the child directory. Sidekick chats
-do not show this chrome: they are automations, and their conversation is
+skip the substream list: they are automations, and their conversation is
 substream `0` only.
 
 ### Directory
 
-`GET /workstreams`, `/notes`, `/sidekicks`, and `/workspace/members` paint the
-first lists. `GET /workspace/socket` then subscribes; the sidebar on
-`workspace_sync` is the authority for **projects** (the Worker has no project
-index route). Opening a Sidekick uses the same conversation parent contract as
+The workspace ticket (`GET /workspace/socket`) opens `RallyTicketedSocket`.
+Subscribe carries the first sidebar page; later work-stream pages are
+`list_workstreams` on that socket. There is no REST directory or Sidekick
+list — those rows arrive on subscribe. A subscribe page with a cursor overlays
+page one and keeps later pages a reader already scrolled to; a payload with no
+cursor replaces the list. Recency events upsert one row. The last visible
+work-stream row requests the next page. Sidekicks have no cursor — the
+subscribe slice is bounded at 250 — and update from the same sidebar.
+Members, digest, and suggested-work chips still refetch over HTTP when
+`workspace_sync` invalidates — the Worker does not yet push those payloads
+([`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md)). Search follows
+`POST /search` `nextCursor`.
+Projects and notes still arrive on that sidebar; this client does not keep
+them. A work-stream row draws the filled circle from
+[`workstream-appearance.md`](workstream-appearance.md) — stored icon and colour
+when the directory carries them, otherwise the same id-derived mark desktop
+uses. A Sidekick row draws that same mark in the rounded hexagon, with a play
+on `active`. Opening a Sidekick uses the same conversation parent contract as
 desktop: `/conversations/:automationId`.
 
 ### Appearance and HIG
 
 Dark canvas is OLED `#000000`. Light inverts the same steps. System / Light /
 Dark is a Keychain preference. Type uses Dynamic Type styles, not locked point
-sizes. Navigation chips use Liquid Glass (`glassEffect`) on iOS 26 and
-ultra-thin material below. Reduce Motion stops the streaming cursor blink.
-VoiceOver labels cover history, new chat, send/stop, and message roles.
+sizes. Liquid Glass is the **navigation layer** only: system tab bars, navigation
+bars, and toolbars get it automatically; the composer and a few floating controls
+use `glassEffect` / `.glassProminent`. Content (lists, transcript bubbles) stays
+opaque. Glass is never stacked on an opaque fill of the same control. The tab bar
+minimizes on scroll. Reduce Motion drops press scales and the
+streaming cursor blink. VoiceOver labels cover send/stop and message roles.
+The Sidekicks tab uses the hexagon, not sparkles — sparkles is a catalog
+icon, not a Sidekick's, and not Rally's loop. The Work streams toolbar avatar is always
+a circle on the stored personal color; it does not copy desktop's diamond,
+flower, or arch.
 
 ### TestFlight
 
@@ -122,27 +183,28 @@ than stubbed as working.
 | Electron path / flow | iOS |
 | --- | --- |
 | Boot / sign-in / Google PKCE | `SignInView` |
+| Desktop “Use local development account” | Debug-only button on `SignInView`; Release stays Google-only |
 | Region + create workspace / invitations / activate | `WorkspacePickerView` |
 | Guided connectors / profile / people journey | Skipped after workspace pick. Profile is Settings → Account; people are Settings → Members; connectors stay on the Mac |
-| `#/` landing | Empty Chats composer (same hand-off as new work stream) |
-| `#/workstreams/new` | New chat on the Chats tab |
-| `#/workstreams/:id` | Chats conversation |
-| Open, rename, pin, unread, archive, public/private | History swipe + context menu + inspector |
-| Participants / resources inspector | Details sheet (people; add participant) |
+| `#/` landing | Work-stream list on the Work streams tab |
+| `#/workstreams/new` | Not on iPhone. New work streams start on the Mac |
+| `#/workstreams/:id` | Work stream → substream list → feed |
+| Open, rename, pin, unread, archive, public/private | Work-stream list swipe + context menu + inspector |
+| Participants / resources inspector | Details inspector (people; add participant) |
 | Suggested prompts | Empty-state chips from `/work-opportunities` |
 | Stop / retry / copy / speak | Composer stop, failed-turn Retry, message actions |
 | Save image / PDF / Mermaid export | Not on iPhone. Copy and Share are |
-| Start substream / center rail (Main, children, New substream, launch, rename, archive, copy link) | Chats conversation chip + sheet + message action. Same prepare/confirm contract as desktop. Not a tab. |
+| Start substream / center rail (Main, children, New substream, launch, rename, archive, copy link) | Substream list after picking a work stream, plus message action on the feed. Same prepare/confirm contract as desktop. Not a tab. |
 | Composer: send, stop, attach, dictation | Composer + PhotosPicker + file importer + `VoiceBar` |
 | Mentions, slash commands, debug model override, pending-input reorder | Not on iPhone |
-| `#/projects/:id` and `#/projects/:id/workstreams/new` | Projects tab + project space + new chat with `projectId` |
-| `#/notes/:id` | Notes tab + detail |
-| Meeting window / Control Tower live capture | Note list/detail only. AudioWorklet capture stays on the Mac |
-| `#/sidekicks`, `#/sidekicks/:id`, `#/automations/:id` | Sidekicks tab; open is `/conversations/:id` |
+| `#/projects/:id` and `#/projects/:id/workstreams/new` | Not on iPhone. Project grouping stays on the Mac |
+| `#/notes/:id` | Not on iPhone. Notes stay on the Mac |
+| Meeting window / Control Tower live capture | Not on iPhone. AudioWorklet capture stays on the Mac |
+| `#/sidekicks`, `#/sidekicks/:id`, `#/automations/:id` | Sidekicks tab; open is `/conversations/:id`. Creating a Sidekick stays on the Mac |
 | `#/settings` and settings window | Settings sheet: Account, Digest, Workspace members, Appearance, leave, sign-out |
 | Settings: connections, GitHub, custom MCP, Terminal network | Named in Settings as Mac-only |
 | Application: menu bar, Dock icon, login item, lockdown | Named in Settings as Mac-only |
-| Search (⌘K) | Search sheet |
+| Search (⌘K) | Search sheet; pages follow `nextCursor` |
 | Account / workspace switcher | Workspace picker after leave; sign-out |
 | Deep-link error window | Alert: "This Rally view does not exist or is no longer available." |
 | macOS menu bar extra window | Desktop-only |
@@ -161,7 +223,7 @@ Feed row kinds (desktop `messageType` / omitted placeholder / stripped suggestio
 | `automation_activation` | `.automationActivation` |
 | omitted-blocks placeholder | `.omitted` |
 | `suggestion` | stripped, not shown |
-| unread divider, load-older, jump-to-latest, streaming caret, attachments, speak/copy | Chats feed |
+| unread divider, load-older, jump-to-latest, streaming caret, attachments, speak/copy | Work streams feed |
 
 ## Invariants
 
@@ -175,6 +237,12 @@ Feed row kinds (desktop `messageType` / omitted placeholder / stripped suggestio
   on a phone.
 - **Socket tickets travel as `Sec-WebSocket-Protocol`**, never as a query
   parameter. A leaked URL in a proxy log would otherwise be a feed credential.
+- **The handshake Origin is `app://rallywithai`**, the same allowlisted
+  value desktop sends. `URLSession` does not set `Origin` on a WebSocket
+  upgrade; the Worker rejects a missing one before it reads the ticket.
+- **The iOS pool is the navigation stack, not the desktop swarm.** A second
+  live feed is only Main of the parent still on the stack. Hover warming,
+  pinned/recent/running rows, and a five-minute graveyard are desktop-only.
 - **Identity stays on Global; workspace traffic stays on `apiBaseUrl`.** Mixing
   them would send EU workspace content to the Global Worker.
 - **An opening message is text or attachments**, never `" "` so the refine on
@@ -198,8 +266,9 @@ Nothing in the Worker imports this tree.
 
 - Sign-in cancel (`ASWebAuthenticationSessionError.canceledLogin`) is silent.
 - HTTP 401 on workspace calls refreshes once, then signs out.
-- Socket close after the REST boot has painted: the transcript stays; the next
-  send reconnects. There is no background reconnect loop.
+- Socket close after a snapshot has painted: the transcript stays in the
+  snapshot cache; send or foreground remints a ticket. There is no background
+  reconnect loop. A retained Main feed is not presence.
 - Offline is `RallyAPIError.offline` and an alert. Nothing is queued on device.
 - Composer cap is `APIConfiguration.messageMaxCharacters` (100,000), the same
   number as the HTTP contract.
@@ -217,8 +286,8 @@ them.
 | Suite | Command | What it can prove |
 | --- | --- | --- |
 | Packaging | `pnpm test:scripts` (file `scripts/ios-project.test.mjs`) | Native-only tree, bundle ID, team, entitlements, privacy manifest, 1024 RGB icon, required Swift files, Electron route coverage, feed-kind cases, substream switcher/launch strings. Runs on Linux. |
-| XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata. Needs iOS 26 SDK. |
-| UI tests | Xcode → RallyUITests | Intro chrome and Continue with Google. Needs a simulator. |
+| XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream pin/recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
+| UI tests | Xcode → RallyUITests | Intro chrome and Continue with Google. `testLocalDevelopmentAccountReachesChats` is skipped unless `RALLY_LOCAL_UI=1` and a local Worker is up — CI never sets that. Needs a simulator. |
 
 This sandbox cannot run `xcodebuild`. The packaging test is the gate that CI
 on Linux can actually fail. A Swift behavior change that the packaging test
@@ -253,24 +322,51 @@ pointed at the wrong team.
   device token. Do not invent that route in the iOS tree.
 - Member-facing erasure: Settings currently leaves + signs out + privacy URL.
   An in-app delete that actually drops identity needs an API.
-- Meeting capture, connector OAuth, GitHub repo access, Terminal network
-  policy, and composer queue reorder remain Mac-only until those APIs have a
-  phone-sized UI and, for capture, an iOS audio path.
+- Meeting capture, Projects, Notes, connector OAuth, GitHub repo access, Terminal
+  network policy, and composer queue reorder remain Mac-only until those APIs
+  have a phone-sized UI and, for capture, an iOS audio path.
 
 ## Changelog
 
 ### 2026-09-11 — Native SwiftUI client, Grok IA, desktop PKCE
 
 **What changed:** Rally ships an iOS app under `apps/ios` as SwiftUI on iOS 26.
-The ready surface is a Grok Bot transcript plus the Electron directory
-(Chats / Projects / Notes / Sidekicks), talking to the existing Global/EU
-Workers with the desktop Google PKCE exchange and Keychain sessions. The feed
-projects every desktop `messageType` (text, thought, tool, plugin, accordion,
-elicitation, system, automation, omitted; suggestions stripped). Work-stream
-substreams use the same parent + child ids as desktop: a conversation chip
-inside Chats lists Main and children, **New substream** on that sheet and on a
+The ready surface is Work streams plus Sidekicks. The Work streams tab is a three-step stack: the
+work-stream list, then that stream's substreams, then the feed. The list has
+no search field and no trailing plus; Sidekicks has no plus. New work streams
+and Sidekicks start on the Mac. Liquid Glass is
+the system navigation layer (tab bar, toolbars) plus a composer `safeAreaBar`;
+lists and transcript bubbles stay opaque content. The Work streams leading control is
+the account avatar from Global identity (`GET /onboarding/account`): stored
+initials and personal color, always a circle. The work-stream list is Pinned then
+access recency, same headings as the Mac sidebar. Projects and Notes are not on
+the phone: they stay on the Mac with Control Tower capture. Debug builds can
+also mint the local development session (`/auth/dev/session` plus
+`/auth/dev/identity`) so the simulator can sign in against wrangler; ATS allows
+local HTTP without disabling it globally. The feed projects every desktop
+`messageType` (text, thought, tool, plugin, accordion, elicitation, system,
+automation, omitted; suggestions stripped). Work-stream substreams use the same
+parent + child ids as desktop: **New substream** on the substream list and on a
 settled main-feed message opens the launch composer, and prepare/confirm run on
-submit. The App Store icon is the Electron Dark selectable mark, flattened to
+submit. Opening a substream or the substream list replaces the stack on the tap
+with no push animation, so the skeleton (or Main and New substream) is the first
+frame. The feed shows skeletons until a snapshot paints; the
+substream list shows Main and New substream immediately and fills children
+when the parent directory arrives. The row does not wait for the ticket. Every
+live connection is a `RallyTicketedSocket` (ticket as subprotocol, Origin
+`app://rallywithai`, subscribe on open). Directory and transcript state come down those sockets, not REST. Directory rows use the shared appearance catalog: a circle for a work
+stream, a hexagon for a Sidekick, the same colours and the same id-derived
+fallback as desktop. In-app Rally chrome uses the shared loop mark
+(`assets/brand/rally-mark.png`), not the retired four-pointed spark. Socket
+ownership is a navigation-shaped pool: the workspace session, the parent on
+the stack, the visible feed, Main of that parent while a child or the
+substream list is showing, and presence-free feeds for directory rows that
+stayed on screen for one second. Directories and the feed page: subscribe is
+page one, `list_workstreams` and fenced `load_transcript_range` follow the last or
+first visible row, and a later subscribe does not drop pages already
+scrolled. Feed history waits until the bottom-anchored list has settled before
+treating the top edge as a page request. Child rows on the substream list warm on appear. A ticket already
+minted for a still-retained feed is kept when a tap upgrades presence. The App Store icon is the Electron Dark selectable mark, flattened to
 RGB. TestFlight identity is bundle `ai.rallywith.ios`, team `7ZLT6A8W25`,
 version 1.0.0.
 
@@ -286,11 +382,59 @@ parallel feed model would have drifted from
 [`conversation-surfaces.md`](conversation-surfaces.md) on day one; projecting
 the same kinds keeps one transcript. The Dark desktop icon is the mark people
 already have in the Dock — a second glyph would have been a second brand. The
-center rail could not become a fifth tab: a substream is a child of the open
-work stream, not a workspace object, and a tab would have implied leaving the
-parent the way Projects does. Putting the rail inside Chats keeps the parent
-inspector and history where they are, which is the same split
-[`substream-creation.md`](substream-creation.md) already documents for desktop.
+phone shell is conversation plus Sidekicks: project grouping has no phone-sized
+space yet, and Notes without Control Tower capture would be a read-only stub of
+the Mac. Opening onto a composer hid the directory a phone user needs to pick
+work; the Grok Bot list, then the substream list, then the feed is the same
+parent → child → transcript split
+[`substream-creation.md`](substream-creation.md) already documents, as a
+push stack rather than a fifth tab. A local title filter in that list is not
+workspace search, and a trailing plus next to Settings is a second create
+surface on a screen whose job is opening work that already exists. Liquid
+Glass belongs on that navigation layer. Recreating a custom top bar and hiding
+the system toolbar would have
+skipped the material Apple applies automatically and stacked glass on opaque
+fills. The Work streams chip has to read the stored initials and color; a first letter
+of the Google name with no fill would have been a second identity next to the
+account people already set on the Mac. A letter in a hashed circle would have been a second identity for the
+same objects the Mac already paints from the appearance catalog. Local Google
+OAuth cannot complete against wrangler, so Debug reuses
+desktop's dev session rather than pointing the shared scheme at localhost (which
+would ship a production TestFlight build at the wrong host). Switching chats on
+a phone is the stack, not a sidebar of pins; reminting a ticket on every send
+would spend a one-use credential to re-handshake a socket that was already
+open. Keeping Main of the open parent is the back-target the Grok list
+promises, without holding every pinned or running stream. Visible directory
+rows warm after one second so opening them paints from a snapshot instead of
+a cold ticket. Painting the work-stream
+list in API arrival order would have been a second directory next to the pin
+and last-access order [`workstream-pinning.md`](workstream-pinning.md) already
+owns. Waiting for a feed ticket before pushing a substream froze the list on a
+destination the tap already knew; the feed skeleton is that wait, not a spinner on
+the row. A zoom from the row hid that skeleton until the morph finished, and
+`GeometryReader` reported a zero width for the pills during the transition, so
+the wait looked empty. Directory-row appear/disappear must not each start a new pool pass:
+overlapping applies cancelled the control socket before `workstream_metadata`.
+A control subscribe sent before the WebSocket was open was dropped, then
+treated as connected, so later retain passes never retried and the child
+roster never arrived. Painting the directory or Main transcript from REST
+while the same fields arrive on subscribe was two paths to one field —
+[`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) forbids a REST
+read for the first value a socket will push. A workspace upgrade without
+`Origin: app://rallywithai` is refused before the ticket is read —
+`URLSession` does not send `Origin` unless the handshake request sets it, and
+the refusal surfaces as NSURLError -1011 with an empty work-stream list.
+A `load_transcript_range` that named only `beforeSequence` was not a
+`WorkstreamTranscriptRangeRequest` — the room refused it as `invalid_event`,
+and a fire-once `onAppear` at the top of a bottom-anchored feed never retried,
+so older history never arrived. Treating the first layout (offset 0 before
+`defaultScrollAnchor(.bottom)` applies) as “the reader pulled to the oldest
+row” then paged the whole transcript against a tail-follow, flashing empty
+LazyVStack gaps. Waiting one second to warm a child the
+substream list was already showing made the first tap a cold handshake.
+Replacing a scrolled directory with subscribe's first page would have
+thrown away rows the reader had already paged; a Load-earlier button on the
+feed would have been a second paging control next to the terminal row.
 
 **Considered and rejected:** An Expo or React Native shell around the existing
 renderer. That would have shipped faster pixels and a permanently different
@@ -300,18 +444,61 @@ issues tokens the Worker accepts; a second audience is a Worker change this
 client does not need in order to sign in. Also rejected: stubbing Mac-only
 settings (menu bar, lockdown, Terminal policy, connector OAuth) as working
 toggles. A disabled row that pretends to save would be a lie on a phone that
-cannot hold those secrets. Also rejected: listing substreams in History or as
-their own tab. That would have mixed parent inventory with child conversations
-and split the launch surface away from the feed it replaces.
+cannot hold those secrets. Also rejected: keeping Projects and Notes as tabs
+that list Mac objects they cannot create or capture. Also rejected: listing
+substreams as their own tab, or gluing Liquid Glass onto every row and bubble.
+A tab would have mixed parent inventory with child conversations. Glass on
+content would have broken Apple's rule that the material is the topmost
+navigation layer and must not be overused. Also rejected: wiring the list
+search field to `POST /search`, or keeping toolbar pluses that compose a
+work stream or Sidekick. Those would have presented a fake directory search
+and a Mac create-flow on the phone chrome. Also rejected: letter-in-a-circle
+glyphs hashed from a private palette. Those would have been a second identity
+next to the catalog [`workstream-appearance.md`](workstream-appearance.md)
+already owns, and sparkles on the Sidekicks tab is a catalog icon, not the
+Rally loop. Also rejected: keeping the Grok four-pointed spark as the in-app
+mark. Desktop already retired that starburst for the shared loop. Also
+rejected: copying Electron's pin/recent/running swarm or a five-minute retain
+TTL onto iOS. `URLSessionWebSocketTask` dies in the background, and the phone
+has no persistent sidebar those sockets would serve. Work-stream directory
+rows use the same one-second delay desktop uses for hover; that is the row on
+screen, not a guessed extra-socket ceiling. Substream-list children warm as
+soon as they appear — copying the hover delay onto a list the reader already
+opened made the first tap a cold handshake. Also rejected: a `beforeSequence`
+range request, or a Load-earlier button. The room already has a fenced
+`load_transcript_range`; a second paging control next to the terminal row
+would have been a second way to ask. Also rejected: a LazyVStack sentinel as
+the first child of a bottom-anchored feed, or retrying `load_transcript_range`
+on connect while the scroll offset is still 0. Also rejected: a second iOS origin on
+`ALLOWED_ORIGINS`, or REST-listing work streams when the handshake 403s.
+The Worker already admits `app://rallywithai`; the bug was that iOS did not
+send it. Also rejected: painting desktop's diamond, flower, or arch on the 32pt toolbar
+chip, or hashing a color from the display name. The phone control is always a
+circle filled with the stored personal color. Also rejected: sorting work streams by
+last shared activity, or flattening pins into the recency groups. Pins are a
+hand-arranged section; unpinned rows group by this viewer's last access. Also
+rejected: holding the substream list until the conversation socket connected,
+showing the empty-greeting chips while a known feed is still opening, or covering
+Main and New substream with a full-list skeleton while the child roster is still
+in flight. Also rejected: a zoom from the directory row into the pushed screen.
+The morph hid the skeleton until it finished. Also rejected: a guessed sleep before `subscribe`. The protocol
+signal is the socket open event, the same one desktop already waits for. Also
+rejected: a REST first paint of the work-stream list or Main transcript.
+Those fields already arrive on subscribe.
 
 **Consequences:** iOS is a peer of desktop, not a mode of it. Session files,
 preload, and CSP in `apps/desktop` do not apply. A future iOS feature that
 needs a new Worker route has to land in the API first. APNs delivery and
 member-facing erasure are explicitly out of this change — the client stores a
 device token and explains deletion, and nothing behind the API was invented to
-match. Meeting Control Tower and connector authorization stay Mac-only. Child
-membership stays creator-only because that is the platform policy, not an iOS
-omission. Prepare still happens on the submit keystroke, not when the launch
-surface opens, so backing out of an unsent composer does not reserve a child.
+match. Meeting Control Tower, Projects, Notes, connector authorization, new
+work streams, and new Sidekicks stay Mac-only. A new substream
+still starts from the list row or a settled feed message. Child membership stays creator-only because that is the platform
+policy, not an iOS omission. Prepare still happens on the submit keystroke, not
+when the launch surface opens, so backing out of an unsent composer does not
+reserve a child. Foregrounding remints dropped sockets in the retain set; it
+does not hold extra connections while the app is suspended. A scrolled
+work-stream list keeps later pages across a subscribe overlay; `nextCursor`
+is adopted only while the client is still on page one.
 
 Shipped in #725.

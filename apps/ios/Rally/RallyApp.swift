@@ -21,7 +21,10 @@ struct RallyApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                Task { await model.requestPushAuthorization() }
+                Task {
+                    await model.resumeSockets()
+                    await model.requestPushAuthorization()
+                }
             }
         }
     }

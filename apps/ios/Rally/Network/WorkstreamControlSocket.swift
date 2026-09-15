@@ -1,86 +1,58 @@
 import Foundation
 
-/// Parent-scoped control socket. The feed socket is one conversation; this one
-/// is the work stream's child directory (`privateChildren`) and title, the same
-/// `workstream_metadata` frames the desktop center rail listens to.
+/// Parent-scoped control codec on `RallyTicketedSocket`. The feed socket is
+/// one conversation; this one is the work stream's child directory
+/// (`privateChildren`) and title, the same `workstream_metadata` frames the
+/// desktop center rail listens to.
 actor WorkstreamControlSocket {
-    private var task: URLSessionWebSocketTask?
-    private let session: URLSession
-    private var continuation: AsyncStream<Incoming>.Continuation?
+    private let transport = RallyTicketedSocket()
+
+    func isConnected() async -> Bool { await transport.isConnected() }
+    func isBusy() async -> Bool { await transport.isBusy() }
 
     enum Incoming: Sendable {
         case metadata(RallyWorkstreamControlMetadata)
         case closed
     }
 
-    init(session: URLSession = .shared) {
-        self.session = session
-    }
-
-    func connect(ticket: RallySocketTicket) -> AsyncStream<Incoming> {
-        disconnect()
-        let stream = AsyncStream<Incoming> { continuation in
-            self.continuation = continuation
-        }
-        guard let url = URL(string: ticket.url) else {
-            continuation?.yield(.closed)
-            continuation?.finish()
-            return stream
-        }
-        let task = session.webSocketTask(with: url, protocols: [APIConfiguration.socketTicketSubprotocol, ticket.ticket])
-        self.task = task
-        task.resume()
-        Task { await self.subscribe() }
-        receiveLoop()
-        return stream
+    func connect(ticket: RallySocketTicket) async -> AsyncStream<Incoming> {
+        let frames = await transport.connect(
+            ticket: ticket,
+            subscribe: Self.json(["type": "subscribe"])
+        )
+        return mapFrames(frames)
     }
 
     func subscribe() async {
-        let payload: [String: Any] = ["type": "subscribe"]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let string = String(data: data, encoding: .utf8) else { return }
-        try? await task?.send(.string(string))
+        await transport.subscribe(Self.json(["type": "subscribe"]))
     }
 
-    func disconnect() {
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
-        continuation?.finish()
-        continuation = nil
+    func disconnect() async {
+        await transport.disconnect()
     }
 
-    private func receiveLoop() {
-        guard let task else { return }
-        task.receive { [weak self] result in
-            guard let self else { return }
-            Task { await self.handle(result) }
-        }
+    private static func json(_ object: [String: Any]) -> Data {
+        RallyTicketedSocket.encode(object) ?? Data()
     }
 
-    private func handle(_ result: Result<URLSessionWebSocketTask.Message, Error>) async {
-        switch result {
-        case .failure:
-            continuation?.yield(.closed)
-            continuation?.finish()
-        case .success(let message):
-            let data: Data?
-            switch message {
-            case .string(let string): data = string.data(using: .utf8)
-            case .data(let value): data = value
-            @unknown default: data = nil
+    private func mapFrames(_ frames: AsyncStream<RallyTicketedSocket.Incoming>) -> AsyncStream<Incoming> {
+        AsyncStream { continuation in
+            let task = Task {
+                for await event in frames {
+                    switch event {
+                    case .frame(let data):
+                        if let metadata = RallyWorkstreamControlMetadata.parseSocketFrame(data) {
+                            continuation.yield(.metadata(metadata))
+                        }
+                    case .closed:
+                        continuation.yield(.closed)
+                        continuation.finish()
+                        return
+                    }
+                }
+                continuation.finish()
             }
-            if let data { emit(data) }
-            receiveLoop()
+            continuation.onTermination = { _ in task.cancel() }
         }
-    }
-
-    private func emit(_ data: Data) {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = object["type"] as? String,
-              type == "workstream_metadata",
-              let metadataObject = object["metadata"] else { return }
-        guard let metadataData = try? JSONSerialization.data(withJSONObject: metadataObject),
-              let metadata = try? JSONCoding.decoder.decode(RallyWorkstreamControlMetadata.self, from: metadataData) else { return }
-        continuation?.yield(.metadata(metadata))
     }
 }

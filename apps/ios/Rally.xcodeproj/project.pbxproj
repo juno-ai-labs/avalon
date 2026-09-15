@@ -24,16 +24,16 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		000000000000000000000005 /* Rally.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rally.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		00000000000000000000000A /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		00000000000000000000000C /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		00000000000000000000000D /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
-		000000000000000000000005 /* Rally.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rally.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000019 /* RallyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RallyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000024 /* RallyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RallyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		A0APPEX0000000000000001 /* Exceptions for Rally */ = {
+		A0APPEX0000000000000001 /* Exceptions for "Rally" folder in "Rally" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -46,7 +46,7 @@
 		000000000000000000000004 /* Rally */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				A0APPEX0000000000000001 /* Exceptions for Rally */,
+				A0APPEX0000000000000001 /* Exceptions for "Rally" folder in "Rally" target */,
 			);
 			path = Rally;
 			sourceTree = "<group>";
@@ -291,20 +291,6 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		000000000000000000000010 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = 00000000000000000000000A /* Debug.xcconfig */;
-			buildSettings = {
-			};
-			name = Debug;
-		};
-		000000000000000000000011 /* Release */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = 00000000000000000000000C /* Release.xcconfig */;
-			buildSettings = {
-			};
-			name = Release;
-		};
 		000000000000000000000002 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 00000000000000000000000A /* Debug.xcconfig */;
@@ -340,6 +326,20 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+		000000000000000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 00000000000000000000000A /* Debug.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		000000000000000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 00000000000000000000000C /* Release.xcconfig */;
+			buildSettings = {
 			};
 			name = Release;
 		};
@@ -408,20 +408,20 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		00000000000000000000000F /* Build configuration list for PBXProject "Rally" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				000000000000000000000010 /* Debug */,
-				000000000000000000000011 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		000000000000000000000001 /* Build configuration list for PBXNativeTarget "Rally" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				000000000000000000000002 /* Debug */,
 				000000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		00000000000000000000000F /* Build configuration list for PBXProject "Rally" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000010 /* Debug */,
+				000000000000000000000011 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

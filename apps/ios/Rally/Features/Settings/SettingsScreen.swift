@@ -72,6 +72,11 @@ struct SettingsScreen: View {
                             .font(RallyType.caption())
                             .foregroundStyle(colors.textSecondary)
                         }
+                        .rallyInfiniteScroll(
+                            isTerminal: member.id == model.members.last?.id,
+                            hasMore: false,
+                            isLoading: false
+                        ) {}
                     }
                 }
 
@@ -141,6 +146,7 @@ struct SettingsScreen: View {
                 #endif
             }
             .navigationTitle("Settings")
+            .task { await model.refreshLiveDirectory() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }

@@ -1,102 +1,151 @@
 import Foundation
 
-/// Workspace directory socket. Tickets travel as `Sec-WebSocket-Protocol`
-/// tokens, same as the conversation feed. The subscribe answer carries the
-/// sidebar — work streams, notes, Sidekicks, and projects — which is the only
-/// list of projects the API publishes (there is no `GET /projects`).
+/// Workspace directory codec on `RallyTicketedSocket`. The subscribe answer
+/// carries the first sidebar page; later work-stream pages are
+/// `list_workstreams` on this socket.
 actor WorkspaceSocket {
-    private var task: URLSessionWebSocketTask?
-    private let session: URLSession
-    private var continuation: AsyncStream<Incoming>.Continuation?
+    /// Same as desktop `COMMAND_TIMEOUT_MS` in
+    /// `apps/desktop/src/renderer/lib/workspace-socket.tsx`.
+    private static let commandTimeoutSeconds: TimeInterval = 120
+
+    private let transport = RallyTicketedSocket()
+    private var pendingPages: [String: CheckedContinuation<WorkstreamPageResult?, Never>] = [:]
+
+    func isConnected() async -> Bool { await transport.isConnected() }
+    func isBusy() async -> Bool { await transport.isBusy() }
 
     enum Incoming: Sendable {
         case sidebar(WorkspaceSidebar)
+        case workstreamRecency(RallyWorkstream)
         case closed
+    }
+
+    struct WorkstreamPageResult: Sendable {
+        var items: [RallyWorkstream]
+        var nextCursor: String?
     }
 
     struct WorkspaceSidebar: Decodable, Sendable {
         var workstreams: WorkstreamPage?
         var automations: SidekickPage?
-        var notes: NotePage?
-        var projects: ProjectSnapshot?
 
-        struct WorkstreamPage: Decodable, Sendable { var items: [RallyWorkstream]? }
+        struct WorkstreamPage: Decodable, Sendable {
+            var items: [RallyWorkstream]?
+            var nextCursor: String?
+        }
+
         struct SidekickPage: Decodable, Sendable { var items: [RallySidekick]? }
-        struct NotePage: Decodable, Sendable { var items: [RallyNote]? }
-        struct ProjectSnapshot: Decodable, Sendable {
-            var active: ProjectPage?
-            var inactive: ProjectPage?
-        }
-        struct ProjectPage: Decodable, Sendable { var items: [RallyProject]? }
     }
 
-    init(session: URLSession = .shared) {
-        self.session = session
-    }
-
-    func connect(ticket: RallySocketTicket) -> AsyncStream<Incoming> {
-        disconnect()
-        let stream = AsyncStream<Incoming> { continuation in
-            self.continuation = continuation
-        }
-        guard let url = URL(string: ticket.url) else {
-            continuation?.yield(.closed)
-            continuation?.finish()
-            return stream
-        }
-        let task = session.webSocketTask(with: url, protocols: [APIConfiguration.socketTicketSubprotocol, ticket.ticket])
-        self.task = task
-        task.resume()
-        Task { await self.subscribe() }
-        receiveLoop()
-        return stream
+    func connect(ticket: RallySocketTicket) async -> AsyncStream<Incoming> {
+        let frames = await transport.connect(
+            ticket: ticket,
+            subscribe: Self.json(["type": "subscribe", "afterWaterline": 0])
+        )
+        return mapFrames(frames)
     }
 
     func subscribe() async {
-        let payload: [String: Any] = ["type": "subscribe", "afterWaterline": 0]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let string = String(data: data, encoding: .utf8) else { return }
-        try? await task?.send(.string(string))
+        await transport.subscribe(Self.json(["type": "subscribe", "afterWaterline": 0]))
     }
 
-    func disconnect() {
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
-        continuation?.finish()
-        continuation = nil
-    }
-
-    private func receiveLoop() {
-        guard let task else { return }
-        task.receive { [weak self] result in
-            guard let self else { return }
-            Task { await self.handle(result) }
+    func listWorkstreams(before: String?, includeSystem: Bool) async -> WorkstreamPageResult? {
+        guard await transport.isConnected() else { return nil }
+        let requestId = UUID().uuidString.lowercased()
+        var payload: [String: Any] = [
+            "type": "list_workstreams",
+            "requestId": requestId,
+            "limit": RallyPagedDirectory.workstreamPageSize,
+            "includeSystem": includeSystem,
+        ]
+        if let before {
+            payload["before"] = before
         }
-    }
-
-    private func handle(_ result: Result<URLSessionWebSocketTask.Message, Error>) async {
-        switch result {
-        case .failure:
-            continuation?.yield(.closed)
-            continuation?.finish()
-        case .success(let message):
-            let data: Data?
-            switch message {
-            case .string(let string): data = string.data(using: .utf8)
-            case .data(let value): data = value
-            @unknown default: data = nil
+        let body = Self.json(payload)
+        return await withCheckedContinuation { continuation in
+            pendingPages[requestId] = continuation
+            Task {
+                do {
+                    try await self.transport.send(body)
+                } catch {
+                    await self.failPage(requestId)
+                }
             }
-            if let data { emit(data) }
-            receiveLoop()
+            Task { await self.timeoutPage(requestId) }
         }
     }
 
-    private func emit(_ data: Data) {
+    func disconnect() async {
+        failAllPages()
+        await transport.disconnect()
+    }
+
+    private static func json(_ object: [String: Any]) -> Data {
+        RallyTicketedSocket.encode(object) ?? Data()
+    }
+
+    private func timeoutPage(_ requestId: String) async {
+        try? await Task.sleep(for: .seconds(Self.commandTimeoutSeconds))
+        pendingPages.removeValue(forKey: requestId)?.resume(returning: nil)
+    }
+
+    private func failPage(_ requestId: String) {
+        pendingPages.removeValue(forKey: requestId)?.resume(returning: nil)
+    }
+
+    private func failAllPages() {
+        for (_, continuation) in pendingPages {
+            continuation.resume(returning: nil)
+        }
+        pendingPages.removeAll()
+    }
+
+    private func mapFrames(_ frames: AsyncStream<RallyTicketedSocket.Incoming>) -> AsyncStream<Incoming> {
+        AsyncStream { continuation in
+            let task = Task {
+                for await event in frames {
+                    switch event {
+                    case .frame(let data):
+                        await self.emit(data, into: continuation)
+                    case .closed:
+                        await self.failAllPages()
+                        continuation.yield(.closed)
+                        continuation.finish()
+                        return
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func emit(_ data: Data, into continuation: AsyncStream<Incoming>.Continuation) {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = object["type"] as? String else { return }
-        guard type == "workspace_sync", let sidebarObject = object["sidebar"] else { return }
-        guard let sidebarData = try? JSONSerialization.data(withJSONObject: sidebarObject),
-              let sidebar = try? JSONCoding.decoder.decode(WorkspaceSidebar.self, from: sidebarData) else { return }
-        continuation?.yield(.sidebar(sidebar))
+        switch type {
+        case "workspace_sync":
+            guard let sidebarObject = object["sidebar"] else { return }
+            guard let sidebarData = try? JSONSerialization.data(withJSONObject: sidebarObject),
+                  let sidebar = try? JSONCoding.decoder.decode(WorkspaceSidebar.self, from: sidebarData) else { return }
+            continuation.yield(.sidebar(sidebar))
+        case "workspace_workstream_page":
+            let requestId = object["requestId"] as? String
+            let itemsObject = object["items"] ?? []
+            let itemsData = (try? JSONSerialization.data(withJSONObject: itemsObject)) ?? Data("[]".utf8)
+            let items = (try? JSONCoding.decoder.decode([RallyWorkstream].self, from: itemsData)) ?? []
+            let nextCursor = object["nextCursor"] as? String
+            let page = WorkstreamPageResult(items: items, nextCursor: nextCursor)
+            if let requestId, let pending = pendingPages.removeValue(forKey: requestId) {
+                pending.resume(returning: page)
+            }
+        case "workspace_workstream_recency":
+            guard let row = object["workstream"],
+                  let rowData = try? JSONSerialization.data(withJSONObject: row),
+                  let workstream = try? JSONCoding.decoder.decode(RallyWorkstream.self, from: rowData) else { return }
+            continuation.yield(.workstreamRecency(workstream))
+        default:
+            break
+        }
     }
 }

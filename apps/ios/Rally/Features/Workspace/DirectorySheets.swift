@@ -11,11 +11,11 @@ struct SearchSheet: View {
             List {
                 if model.searchHits.isEmpty {
                     ContentUnavailableView("Search this workspace", systemImage: "magnifyingglass", description: Text("Messages, links, and files Rally can see."))
-                        .listRowBackground(colors.canvas)
+                        .listRowBackground(Color.clear)
                 } else {
                     ForEach(model.searchHits) { hit in
                         Button {
-                            Task { await model.openSearchHit(hit) }
+                            model.openSearchHit(hit)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(hit.title ?? "Result")
@@ -34,7 +34,20 @@ struct SearchSheet: View {
                                 }
                             }
                         }
-                        .listRowBackground(colors.canvas)
+                        .listRowBackground(Color.clear)
+                        .rallyInfiniteScroll(
+                            isTerminal: hit.id == model.searchHits.last?.id,
+                            hasMore: model.searchNextCursor != nil,
+                            isLoading: model.isFetchingMoreSearch
+                        ) {
+                            Task { await model.fetchMoreSearch() }
+                        }
+                    }
+                    if model.isFetchingMoreSearch {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .listRowBackground(Color.clear)
+                            .accessibilityLabel("Loading more results")
                     }
                 }
             }
@@ -91,6 +104,11 @@ struct InspectorSheet: View {
                                     }
                                 }
                             }
+                            .rallyInfiniteScroll(
+                                isTerminal: member.id == model.members.last?.id,
+                                hasMore: false,
+                                isLoading: false
+                            ) {}
                         }
                     }
                 } else {
@@ -99,6 +117,7 @@ struct InspectorSheet: View {
                 }
             }
             .navigationTitle("Details")
+            .task { await model.refreshLiveDirectory() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
