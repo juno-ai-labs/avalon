@@ -16,12 +16,6 @@ import type { AutomationSummary } from './types';
  * that earned it, so a strictly-greater test is a total order here. Equal is
  * not newer: a resumed automation writes its subscription and then its email
  * route, and only the second of those two pushes carries a higher number.
- *
- * "Both producers" means both *versioned* ones. An optimistic local patch —
- * `onChangeNoteScope` in the app shell is the only one — writes its list entry
- * directly, because it has no waterline to be ordered by and inventing one
- * would corrupt this ledger. Such a patch is not an authority: the push the
- * same write earns arrives behind it and replaces what it wrote.
  */
 
 export type SidebarList = 'automations';
