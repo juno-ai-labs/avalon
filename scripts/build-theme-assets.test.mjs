@@ -513,15 +513,6 @@ test('every theme keeps its markdown headings above its prose', () => {
     const descending = headings.every((size, index) => index === 0 || size <= headings[index - 1]);
     assert.ok(descending, `${theme.id}: markdown heading sizes are not in descending order`);
 
-    // The note detail runs its own scale, and h4 and below fall back to the
-    // shared one — so an article scale that stops descending too early inverts
-    // the hierarchy rather than merely flattening it.
-    const article = [1, 2, 3].map((level) => px(values[`cmp.markdown.article-heading-${level}`]));
-    assert.ok(article.every(Number.isFinite), `${theme.id} leaves an article heading size unset`);
-    assert.ok(
-      article.every((size, index) => (index === 0 || size <= article[index - 1]) && size >= prose),
-      `${theme.id}: the note article's heading scale does not descend above its prose`,
-    );
   }
 });
 

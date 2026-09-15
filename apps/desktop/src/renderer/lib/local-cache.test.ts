@@ -132,3 +132,39 @@ describe('local cache store', () => {
     expect(await notes.read(global1, 'b')).toEqual({ text: 'b' });
   });
 });
+
+
+it('upgrades inactive cached workspaces and removes only structured meeting content', async () => {
+  closeLocalCache();
+  const request = <T>(value: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+    value.onsuccess = () => resolve(value.result);
+    value.onerror = () => reject(value.error);
+  });
+  await request(indexedDB.deleteDatabase('rally-local-cache'));
+  const opening = indexedDB.open('rally-local-cache', 1);
+  opening.onupgradeneeded = () => {
+    const entries = opening.result.createObjectStore('entries', { keyPath: ['scope', 'kind', 'key'] });
+    entries.createIndex('kindSubject', ['kind', 'subject']);
+    entries.createIndex('kindKey', ['kind', 'key']);
+  };
+  const database = await request(opening);
+  const transaction = database.transaction('entries', 'readwrite');
+  const complete = new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  transaction.objectStore('entries').put({ scope: eu1, kind: 'directory', key: 'directory', subject: 'directory', version: 1,
+    updatedAt: 1, value: { notes: [{ title: 'private meeting' }], workstreams: [{ title: 'keep' }] } });
+  transaction.objectStore('entries').put({ scope: eu1, kind: 'conversation-test', key: 'conversation', subject: 'conversation', version: 1,
+    updatedAt: 1, value: { text: 'ordinary conversation mentioning a meeting', attachments: [
+      { provider: 'avalon_note', title: 'private transcript' }, { provider: 'granola', title: 'keep' },
+    ] } });
+  await complete;
+  database.close();
+  const directory = defineLocalCacheSlice({ kind: 'directory', version: 2, parse: value => value });
+  const conversation = defineLocalCacheSlice({ kind: 'conversation-test', version: 1, parse: value => value });
+  expect(await directory.read(eu1, 'directory')).toEqual({ workstreams: [{ title: 'keep' }] });
+  expect(await conversation.read(eu1, 'conversation')).toEqual({ text: 'ordinary conversation mentioning a meeting',
+    attachments: [{ provider: 'granola', title: 'keep' }] });
+  closeLocalCache();
+});

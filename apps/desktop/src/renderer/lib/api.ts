@@ -1,15 +1,3 @@
-import { ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from '@rally/contracts';
-import { SidekickAttachmentsSchema, type SidekickAttachment } from '@rally/contracts';
-import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
-import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
-import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
-import {
-  SubstreamCreationResultSchema,
-  SubstreamPreparationPreviewSchema,
-  type SubstreamCreationResult,
-  type SubstreamPreparationPreview,
-} from '@rally/contracts/substream-creation';
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
@@ -26,10 +14,6 @@ import {
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
-  NoteDetailSchema as WireNoteDetailSchema,
-  NoteCursorSchema as WireNoteCursorSchema,
-  NoteSummarySchema as WireNoteSummarySchema,
-  NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
@@ -74,18 +58,35 @@ import {
   type UpdateProjectPresentationRequest,
   type UpdateProjectAudienceRequest,
   type WorkstreamAppearancePatch,
+  ConnectionTestResponseSchema,
+  ConnectorInstallationMutationResponseSchema,
+  ConnectorInstallationReadResponseSchema,
+  ConnectorInstallationSetupResponseSchema,
+  OnboardingJourneySchema,
+  SidekickAttachmentsSchema,
+  type SidekickAttachment,
+  type UpdateOnboardingJourney,
 } from '@rally/contracts';
+import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
+import {
+  SubstreamCreationResultSchema,
+  SubstreamPreparationPreviewSchema,
+  type SubstreamCreationResult,
+  type SubstreamPreparationPreview,
+} from '@rally/contracts/substream-creation';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
+import { logDebug } from '../../common/logger';
 import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
-import { logDebug } from '../../common/logger';
-import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
+import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type {
   AgentModelOverride,
   AutomationDeliveryTargetType,
@@ -99,9 +100,6 @@ import type {
   DigestSchedule,
   ElicitationData,
   HarnessStatus,
-  NoteDetail,
-  NoteSummary,
-  NoteTranscriptSegment,
   Participant,
   Region,
   SocketTicket,
@@ -211,10 +209,6 @@ export interface MentionIdentity {
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
-const wireNotePageSchema = z.object({
-  items: z.array(WireNoteSummarySchema),
-  nextCursor: WireNoteCursorSchema.nullable(),
-});
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
@@ -1099,16 +1093,6 @@ export class RallyApi {
     };
   }
 
-  /** One page of the note list, newest first; `before` resumes after a cursor. */
-  async getNotes(
-    input: { limit: number; before?: string } = { limit: 250 },
-    signal?: AbortSignal,
-  ): Promise<{ items: NoteSummary[]; nextCursor: string | null }> {
-    const query = new URLSearchParams({ limit: String(input.limit) });
-    if (input.before) query.set('before', input.before);
-    return this.request(`/notes?${query.toString()}`, { schema: wireNotePageSchema, signal });
-  }
-
   createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
     return this.request('/projects', {
       method: 'POST',
@@ -1185,59 +1169,6 @@ export class RallyApi {
     );
   }
 
-  createNote(id: string, title: string): Promise<NoteDetail> {
-    return this.request('/notes', {
-      method: 'POST',
-      body: { id, title, scope: 'personal' },
-      schema: WireNoteDetailSchema,
-    });
-  }
-
-  getNote(id: string, signal?: AbortSignal): Promise<NoteDetail> {
-    return this.request(`/notes/${encodeURIComponent(id)}`, { schema: WireNoteDetailSchema, signal });
-  }
-
-  updateNote(
-    id: string,
-    input: {
-      title?: string;
-      manualNotes?: string;
-      scope?: 'personal' | 'workspace';
-      recordingStatus?: 'idle' | 'recording' | 'complete';
-      recordedMs?: number;
-      startedAt?: string | null;
-      endedAt?: string | null;
-    },
-  ): Promise<NoteDetail> {
-    return this.request(`/notes/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: input,
-      schema: WireNoteDetailSchema,
-    });
-  }
-
-  archiveNote(id: string): Promise<void> {
-    return this.requestVoid(`/notes/${encodeURIComponent(id)}/archive`, { method: 'POST' });
-  }
-
-  appendNoteTranscriptSegment(
-    id: string,
-    input: {
-      clientSegmentId: string;
-      startOffsetMs: number;
-      endOffsetMs: number;
-      capturedAt: string;
-      speakerLabel?: string | null;
-      text: string;
-    },
-  ): Promise<NoteTranscriptSegment> {
-    return this.request(`/notes/${encodeURIComponent(id)}/segments`, {
-      method: 'POST',
-      body: { ...input, speakerLabel: input.speakerLabel ?? null },
-      schema: WireNoteTranscriptSegmentSchema,
-    });
-  }
-
   /**
    * The server-decided values this device is allowed to see, for the signed-in
    * person. The main process polls the same route for Application → Developer;
@@ -1246,29 +1177,6 @@ export class RallyApi {
    */
   clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
     return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
-  }
-
-  /**
-   * `refreshSeconds` is the cadence this meeting settled on. It travels with
-   * the request so the briefing is written for the schedule the client is
-   * actually keeping, rather than for whatever the flag says when the server
-   * happens to read it.
-   */
-  generateNoteNotes(
-    id: string,
-    mode: 'live' | 'final' = 'live',
-    transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
-    refreshSeconds?: number,
-  ): Promise<NoteDetail> {
-    return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
-      method: 'POST',
-      body: {
-        mode,
-        transcriptStatus,
-        ...(refreshSeconds === undefined ? {} : { refreshSeconds }),
-      },
-      schema: WireNoteDetailSchema,
-    });
   }
 
   async renameWorkstream(id: string, title: string): Promise<WorkstreamSummary> {

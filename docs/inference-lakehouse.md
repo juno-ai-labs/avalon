@@ -538,3 +538,10 @@ Responders use the R2 SQL and R2 Object HTTP APIs, query only the owning region
 and incident window, and move raw JSON to a temporary local file only when the
 typed row is insufficient. The lakehouse remains analytical evidence and never
 becomes product-state repair authority.
+
+
+## Changelog
+
+### 2026-09-14 — Fence retired meeting data before erasure
+
+The meeting-note retirement consumer recognizes the historical `meeting_notes` source, writes a content-free tombstone, and erases its raw payload before acknowledging a replay. It repeats deletion when the tombstone already exists so interruption between receipt and erasure cannot preserve the bytes. This fence prevents queued retired feature records from restoring catalog copies; ordinary inference remains unchanged. Catalog snapshots and provider-held copies require separate verification. See [meeting retirement](meeting-notes.md).
