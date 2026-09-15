@@ -59,7 +59,9 @@ the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
 The launcher starts with focus in the opening-message text input, including
-when opened from a project. The sidebar lists existing work streams without a
+when opened from a project. The composer is keyed by its draft identity so
+switching between project launchers also restores initial focus; that key stays
+stable throughout the launch hand-off. The sidebar lists existing work streams without a
 placeholder row for the unsent draft. Recipient selection remains available
 when the person chooses the recipient field.
 
@@ -398,7 +400,8 @@ handler would make the starting state depend on a second control's mount event;
 it now starts closed directly.
 
 **Consequences:** Recipient selection opens when the person reaches the recipient
-field. Future launcher changes must preserve initial composer focus and keep
+field. Changing launcher draft identity remounts the composer to restore focus,
+while the same draft keeps its composer across the launch hand-off. Future launcher changes must preserve initial composer focus and keep
 unsent drafts out of the work-stream list. The earlier recipient-first launcher
 and sidebar-label changelog entries describe the behavior before this change.
 
