@@ -177,9 +177,6 @@
     "sys.color.surface.elevated-hover": {
       "$type": "color"
     },
-    "sys.color.surface.inverse-hover": {
-      "$type": "color"
-    },
     "sys.color.text.on-media": {
       "$type": "color"
     },
@@ -400,9 +397,6 @@
       "$type": "color"
     },
     "sys.color.danger.tint": {
-      "$type": "color"
-    },
-    "sys.color.danger.tint-strong": {
       "$type": "color"
     },
     "sys.color.scrim.default": {
@@ -752,18 +746,6 @@
     },
     "cmp.markdown.table-leading": {
       "$type": "number"
-    },
-    "cmp.markdown.article-heading-1": {
-      "$type": "dimension"
-    },
-    "cmp.markdown.article-heading-2": {
-      "$type": "dimension"
-    },
-    "cmp.markdown.article-heading-3": {
-      "$type": "dimension"
-    },
-    "cmp.markdown.article-heading-margin": {
-      "$type": "dimension"
     },
     "cmp.tooltip.background": {
       "$type": "color"

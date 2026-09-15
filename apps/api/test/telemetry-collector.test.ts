@@ -176,3 +176,18 @@ describe("regional telemetry collector", () => {
     database.close();
   });
 });
+
+it('suppresses delayed built-in meeting telemetry before storing or scheduling it', async () => {
+  const database = migratedSqliteDatabase();
+  const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global' });
+  const collector = new TelemetryCollector(env);
+  const event = {
+    ...productEvent(), name: 'note_opened', identityScope: 'workspace-user',
+    properties: { noteId: '00000000-0000-7000-8000-000000000101', visibility: 'private', recordingState: 'complete', navigation: 'opened' },
+  } as TelemetryEnvelope;
+  const context = { route: 'global' as const, routingBasis: 'explicit_binding' as const,
+    analyticsSubjectId: 'subject', subjectUserId: null, workspaceAnalyticsId: 'workspace' };
+  await expect(collector.accept(event, context)).resolves.toEqual({ result: 'suppressed', eventId });
+  expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_accepted_events').get()).toEqual({ count: 0 });
+  expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_delivery_receipts').get()).toEqual({ count: 0 });
+});

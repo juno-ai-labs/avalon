@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { NoteService } from "../src/services/note-service";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
   seedWorkstreamObjectRoot,
@@ -18,7 +18,6 @@ import {
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
-import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
@@ -125,8 +124,6 @@ function fixture(): {
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
     WORKSPACE_DOS: testSubstreamAgentsBinding(objectStore, {
       extra: workspaceObjectRpcs(workspaceObject.instance, [
-        "noteWithSegments",
-        "updateNote",
         "executeRuntimeSql",
       ]),
     }),
@@ -141,47 +138,6 @@ function fixture(): {
     // the identity wrap the fixture used to get away with routes nothing.
     env: withWorkspaceRuntimeDatabase(baseEnv, WORKSPACE_ID),
   };
-}
-
-/**
- * Attach a workspace resource to the work-stream object the way the product
- * attach path does: a link row carrying the frozen descriptor copied from the
- * workspace row. The legacy `workstream_resources` D1 table was dropped by
- * migration 0090 and the compat view over the link table is read-only for
- * inserts — attachment is a product operation, not a runtime SQL write.
- */
-function attachResourceLink(
-  workspaceObjectDatabase: DatabaseSync,
-  objectStore: DatabaseSync,
-  resourceId: string,
-  attachedAt: string,
-): void {
-  const resource = workspaceObjectDatabase.prepare(
-    `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
-            mime_type, content_ref, canonical_url, metadata_json
-       FROM resources WHERE id = ?`,
-  ).get(resourceId) as Record<string, string | null>;
-  const at = Date.parse(attachedAt);
-  objectStore.prepare(
-    `INSERT INTO workstream_resource_links
-       (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
-     VALUES (?, ?, 0, 'context', ?, ?, ?)`,
-  ).run(resourceId, USER_ID, JSON.stringify({
-    id: resourceId,
-    connectionId: resource.connection_id,
-    type: resource.resource_type,
-    provider: resource.provider,
-    providerResourceId: resource.provider_resource_id,
-    title: resource.title,
-    mimeType: resource.mime_type,
-    contentRef: resource.content_ref,
-    canonicalUrl: resource.canonical_url,
-    metadata: JSON.parse(resource.metadata_json ?? "{}") as Record<string, unknown>,
-  }), at, at);
-  objectStore.prepare(
-    `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
-     ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
-  ).run(at);
 }
 
 function workflowInput(): WorkstreamWorkflowInput {
@@ -349,56 +305,6 @@ describe("Avalon connector connection tools", () => {
     );
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
-  });
-
-  it("revokes private note access from workspace-principal resource tools", async () => {
-    const { objectDatabase, objectStore, env } = fixture();
-    const noteService = new NoteService(env, {
-      sessionId: "note-owner-session",
-      userId: USER_ID,
-      workspaceId: WORKSPACE_ID,
-      region: "global",
-      role: "owner",
-    });
-    const note = await noteService.create({
-      id: "00000000-0000-4000-8000-000000000010",
-      title: "Sensitive note",
-      scope: "personal",
-    });
-    attachResourceLink(objectDatabase, objectStore, note.resourceId, "2026-08-07T18:00:00.000Z");
-    const workspaceInput = workflowInput();
-    workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
-    const tools = __integrationTesting.createAvalonTools(env, workspaceInput);
-    const listResources = tools.find((tool) => tool.definition.name === "list_resources")!;
-    const readResource = tools.find((tool) => tool.definition.name === "read_resource")!;
-
-    await expect(listResources.execute({}, context())).resolves.toMatchObject({
-      output: { items: [], totalVisibleResources: 0 },
-    });
-    await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toMatchObject({ code: "resource_not_found" });
-
-    await noteService.update(note.id, { scope: "workspace" });
-    const visible = await listResources.execute({}, context());
-    expect(visible.output).toMatchObject({
-      items: [expect.objectContaining({ resourceId: note.resourceId, title: "Sensitive note" })],
-    });
-    await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
-
-    await noteService.update(note.id, { scope: "personal" });
-    await expect(readResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toMatchObject({ code: "resource_not_found" });
-
-    const ownerReadResource = __integrationTesting.createAvalonTools(env, workflowInput())
-      .find((tool) => tool.definition.name === "read_resource")!;
-    await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
-      .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
-
-    objectDatabase.prepare("UPDATE notes SET archived_at = ? WHERE id = ?")
-      .run("2026-08-07T19:00:00.000Z", note.id);
-    await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
-      .rejects.toMatchObject({ code: "resource_not_found" });
   });
 
   it("returns easy-English current time in the user's configured timezone", async () => {

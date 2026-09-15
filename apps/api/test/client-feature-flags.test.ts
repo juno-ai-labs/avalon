@@ -1,5 +1,4 @@
 import { asUserId, asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
-import { CONTROL_TOWER_REFRESH_SECONDS } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { Env, IdentityAuthContext } from "../src/env";
@@ -247,7 +246,6 @@ describe("client feature flags", () => {
     await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
       .resolves.toEqual({
         developerSettings: false,
-        meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         multipleWorkspacesEnabled: false,
         pushNotificationsEnabled: false,
@@ -257,57 +255,7 @@ describe("client feature flags", () => {
         digestsEnabled: true,
         // A feature fails closed; a cadence has no off, so it fails to the
         // checked-in default the desktop would have used anyway.
-        controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
       });
-  });
-
-  it("serves the Control Tower cadence Flagship decides", async () => {
-    const env = envWithAccounts({ ...serving(false), ...servingNumber(90) });
-
-    await expect(resolveClientFeatureFlags(env, auth(staffUserId)))
-      .resolves.toEqual({
-        developerSettings: false,
-        meetingRecordingEnabled: false,
-        suggestedWorkEnabled: false,
-        multipleWorkspacesEnabled: false,
-        pushNotificationsEnabled: false,
-        liveArtifactsEnabled: false,
-        // `serving(false)` is an explicit, successfully-served `false` — the
-        // one value that turns digestsEnabled off too, same as every other
-        // Boolean here.
-        digestsEnabled: false,
-        controlTowerRefreshSeconds: 90,
-      });
-  });
-
-  it("clamps a cadence that would make every meeting a billing incident", async () => {
-    // A flag typed in milliseconds is the mistake this bound exists for: every
-    // refresh is an inference, so 60000 served as seconds must not become a
-    // sixteen-hour gap, and 0.5 must not become two refreshes a second.
-    const tooFast = envWithAccounts({ ...serving(false), ...servingNumber(0.5) });
-    await expect(resolveClientFeatureFlags(tooFast, auth(staffUserId)))
-      .resolves.toMatchObject({ controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.minimum });
-
-    clearFlagTargetingAttributeCache();
-    const tooSlow = envWithAccounts({ ...serving(false), ...servingNumber(60_000) });
-    await expect(resolveClientFeatureFlags(tooSlow, auth(staffUserId)))
-      .resolves.toMatchObject({ controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.maximum });
-  });
-
-  it("keeps the default cadence when the cadence flag does not resolve", async () => {
-    const env = envWithAccounts({
-      ...serving(false),
-      getNumberDetails: vi.fn(async (flagKey: string) => ({
-        flagKey,
-        value: CONTROL_TOWER_REFRESH_SECONDS.default,
-        errorCode: "FLAG_NOT_FOUND",
-        errorMessage: "flag not found",
-        reason: "ERROR",
-      })),
-    });
-
-    await expect(resolveClientFeatureFlags(env, auth(staffUserId)))
-      .resolves.toMatchObject({ controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default });
   });
 
   it("stays off when the binding throws, as it does under wrangler dev --local", async () => {
@@ -377,7 +325,6 @@ describe("client feature flags", () => {
         "developer-settings",
         "digests-enabled",
         "live-artifacts-enabled",
-        "meeting-recording-enabled",
         "multiple-workspaces-enabled",
         "push-notifications-enabled",
         "suggested-work-enabled",
@@ -418,13 +365,11 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: true,
-      meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
       multipleWorkspacesEnabled: true,
       pushNotificationsEnabled: true,
       liveArtifactsEnabled: true,
       digestsEnabled: true,
-      controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
   });
 
@@ -444,7 +389,6 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: false,
-      meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
       multipleWorkspacesEnabled: false,
       pushNotificationsEnabled: false,
@@ -452,7 +396,6 @@ describe("GET /feature-flags", () => {
       // The one field that answers `true` here: an unresolvable flag must
       // reproduce delivery continuing, not stopping.
       digestsEnabled: true,
-      controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
   });
 });

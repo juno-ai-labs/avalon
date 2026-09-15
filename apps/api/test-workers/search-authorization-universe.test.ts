@@ -85,7 +85,6 @@ async function seededWorkspace(name = workspaceDOName('global', WORKSPACE_ID)) {
       VALUES (?, ?, 'file', ?, 'File', '{}', '2026-09-10', '2026-09-10', ?, ?)`, id, WORKSPACE_ID, provider, connectionId, uploader);
     file(SYNCED_FILE, 'google_drive', WORKSPACE_CONNECTION, null);
     file(UPLOAD, 'avalon_upload', null, MEMBER);
-    file(NOTE, 'avalon_note', null, OWNER);
   });
   await stub.applyAuthorizationLocations({ workspaceId: WORKSPACE_ID, parentId: OPEN_ROOM, substreamId: '0', parentKind: 'workstream',
     revision: 1, validatedAt: 1, resourceIds: [UPLOAD, SYNCED_FILE] });
@@ -109,14 +108,14 @@ describe('search projection universe', () => {
     expect(await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: crypto.randomUUID() } })).toEqual([]);
   });
 
-  it('reaches every member for a connection or a note, the located readers and owner for an upload, and nothing for a synced file', async () => {
+  it('reaches every member for a connection, the located readers and owner for an upload, and nothing for a synced file', async () => {
     const stub = await seededWorkspace('search-universe-resources');
     const synced = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'connection', id: WORKSPACE_CONNECTION } });
     expect(sorted(synced.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
     expect(synced[0]!.resources).toEqual([connection(WORKSPACE_CONNECTION)]);
     expect(await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: SYNCED_FILE } })).toEqual([]);
     const note = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: NOTE } });
-    expect(sorted(note.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
+    expect(note).toEqual([]);
     const upload = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: UPLOAD } });
     expect(sorted(upload.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
     expect(upload[0]!.resources).toEqual([resource(UPLOAD)]);
@@ -128,7 +127,7 @@ describe('search projection universe', () => {
     expect(rest).toEqual([]);
     expect(member!.subject.userId).toBe(MEMBER);
     expect(sorted(member!.resources)).toEqual(sorted([conversation(OPEN_ROOM, '0'), resource(UPLOAD), conversation(AUTOMATION, RUN),
-      connection(WORKSPACE_CONNECTION), connection(PERSONAL_CONNECTION), resource(NOTE)]));
+      connection(WORKSPACE_CONNECTION), connection(PERSONAL_CONNECTION)]));
     expect(await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'member', id: OUTSIDER } })).toEqual([]);
   });
 

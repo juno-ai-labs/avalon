@@ -1,4 +1,3 @@
-import { RegionSchema } from "@rally/contracts/regions";
 import {
   ApplyWorkstreamBatchRequestSchema,
   WorkstreamBatchAcceptedSchema,
@@ -10,15 +9,15 @@ import {
   type ApplyWorkstreamBatchRequest,
   type WorkstreamBatchFilter,
 } from "@rally/contracts";
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
 import { conversationObjectName } from "../durable-objects/names";
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
-import { NoteService } from "./note-service";
-import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { logInfo, logWarn } from "../observability/logger";
+import { WorkstreamDirectoryService } from "./workstream-directory-service";
 
 /**
  * Cloudflare accepts at most 100 messages per Queue call. The product owner
@@ -147,12 +146,7 @@ export class WorkstreamBatchUpdateService {
     // The residual window is one RPC wide and points the safe way: if this
     // throws, the work streams are enqueued and the notes are not, and the
     // retry finishes them.
-    const archivedNoteCount = request.update.kind === "archive"
-      ? await new NoteService(this.env, this.auth).archiveForBatch({
-        operationId: request.operationId,
-        requestHash,
-      })
-      : 0;
+    const archivedNoteCount = 0;
 
     logInfo(this.env, "workstream_batch_update_enqueued", {
       workspace_id: this.auth.workspaceId,
