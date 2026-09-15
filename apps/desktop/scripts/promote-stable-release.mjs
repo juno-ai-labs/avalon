@@ -4,7 +4,6 @@ import { isEntryPoint } from './entry-point.mjs';
 import { normalizeReleasePrefix, parseMacUpdateFeed } from './release-lib.mjs';
 import { purgeCloudflareUrls } from './release-cache.mjs';
 import {
-  R2ReleaseLockHeldError,
   createR2ReleaseLockClient,
   withR2ReleaseLock,
 } from './release-r2-lock.mjs';
@@ -231,13 +230,11 @@ export async function main(environment = process.env) {
       client,
       key: `${normalizeReleasePrefix(required('RALLY_RELEASE_PREFIX', environment))}/${releaseLockName}`,
       operation: async () => await runScheduledStablePromotion({ client, environment }),
+      // A scheduled promoter has no tag or checked-in record to finish after
+      // publication. A failed cleanup must therefore fail the cron visibly;
+      // otherwise the persistent active lock would freeze Stable forever.
+      strictCleanup: true,
     });
-  } catch (error) {
-    if (error instanceof R2ReleaseLockHeldError) {
-      console.log('Stable promotion deferred because a desktop release publisher is active');
-      return;
-    }
-    throw error;
   } finally {
     client.destroy();
   }

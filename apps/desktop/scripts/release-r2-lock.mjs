@@ -137,6 +137,7 @@ export async function withR2ReleaseLock({
   operation,
   owner = randomUUID(),
   reportCleanupFailure = console.error,
+  strictCleanup = false,
 }) {
   const acquired = await acquireR2ReleaseLock({ bucket, client, key, owner });
   if (typeof acquired.ETag !== 'string' || acquired.ETag.length === 0) {
@@ -185,6 +186,7 @@ export async function withR2ReleaseLock({
   }
   if (operationFailed) throw operationError;
   if (releaseError) {
+    if (strictCleanup) throw releaseError;
     try {
       reportCleanupFailure(releaseError.message);
     } catch {

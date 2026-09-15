@@ -141,6 +141,8 @@ describe('desktop auto-update runtime', () => {
     });
     const onInstallFailed = vi.fn();
     const { controller, updater, showMessageBox } = setup({ beforeInstall, onInstallFailed });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
 
     controller.installDownloadedUpdate();
 
@@ -163,6 +165,8 @@ describe('desktop auto-update runtime', () => {
     updater.quitAndInstall.mockImplementationOnce(() => {
       throw new Error('restart failed');
     });
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
 
     controller.installDownloadedUpdate();
 
@@ -180,6 +184,61 @@ describe('desktop auto-update runtime', () => {
     controller.installDownloadedUpdate();
     await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledTimes(2));
     expect(beforeInstall).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not install an update downloaded before the channel changed', async () => {
+    const { controller, updater, statuses, showMessageBox } = setup();
+    let finishDialog!: (value: { response: number; checkboxChecked: boolean }) => void;
+    showMessageBox.mockImplementationOnce(() => new Promise((resolve) => { finishDialog = resolve; }));
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+
+    controller.setReleaseChannel('faster');
+    await Promise.resolve();
+
+    expect(updater.autoInstallOnAppQuit).toBe(false);
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(statuses.at(-1)).toEqual({ kind: 'checking' });
+    finishDialog({ response: 0, checkboxChecked: false });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('waits for an old-channel check to settle before checking the new feed', async () => {
+    const { controller, updater, statuses } = setup();
+
+    controller.setReleaseChannel('faster');
+    expect(updater.autoDownload).toBe(false);
+    expect(updater.autoInstallOnAppQuit).toBe(false);
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+
+    updater.emit('update-available', { version: '1.1.0' });
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    await Promise.resolve();
+
+    expect(updater.autoDownload).toBe(true);
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(statuses.at(-1)).toEqual({ kind: 'checking' });
+  });
+
+  it('discards an old-channel download and re-enables quit install only for the new channel', async () => {
+    const { controller, updater, statuses, showMessageBox } = setup();
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('download-progress', { percent: 40 });
+
+    controller.setReleaseChannel('faster');
+    updater.emit('update-downloaded', { version: '1.1.0' });
+    await Promise.resolve();
+
+    expect(updater.autoInstallOnAppQuit).toBe(false);
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(statuses.at(-1)).toEqual({ kind: 'checking' });
+    expect(showMessageBox).not.toHaveBeenCalled();
+
+    updater.emit('update-available', { version: '1.2.0' });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    expect(updater.autoInstallOnAppQuit).toBe(true);
+    expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.2.0' });
   });
 
   it('reports a manual no-update result and gates unpackaged builds', async () => {
