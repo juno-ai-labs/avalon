@@ -666,6 +666,28 @@ describe('Modal', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
+
+  it('does not dismiss when the interaction is a portaled menu from inside it', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <Modal onOpenChange={onOpenChange} open title="Add a participant">
+          <p>body</p>
+        </Modal>
+        <div className="menu-content">
+          <button type="button">Remove from work stream</button>
+        </div>
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Remove from work stream' }));
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    const overlay = document.querySelector('.dialog-overlay');
+    expect(overlay).toBeInstanceOf(Element);
+    fireEvent.pointerDown(overlay!);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
 });
 
 describe('DropdownSelect', () => {

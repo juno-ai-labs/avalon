@@ -1492,7 +1492,10 @@ export function ConversationSurface({
       // the main room would otherwise keep the empty list their refusal
       // cached, and somebody who leaves would keep the names it held.
       if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
-      setParticipantDialogOpen(false);
+      // The roster is the dialog's job: it stays open so another person can be
+      // added or removed without reopening. Dismissal is click-outside, Escape,
+      // or the header close control. Self-removal still closes, below, because
+      // that person is leaving the room.
     },
   });
 
