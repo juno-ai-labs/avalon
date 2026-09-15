@@ -145,3 +145,25 @@ describe('TelemetrySpool', () => {
     expect(await spool.ready(new Date('2026-08-12T00:01:00.000Z'))).toHaveLength(10);
   });
 });
+
+
+it('purges retired telemetry and its deadline without reporting corruption or deleting unrelated events', async () => {
+  const directory = await root();
+  const spool = new TelemetrySpool({ rootDirectory: directory });
+  const acceptedAt = new Date('2026-08-12T20:00:00.000Z');
+  for (const id of [uuid7('71'), uuid7('72')]) {
+    await spool.enqueue({ route: 'global', accountEpochId: uuid7('70'), event: envelope(id), acceptedAt });
+  }
+  // Model a row already persisted by an older installed client.
+  const path = join(directory, 'rows', `${uuid7('71')}.json`);
+  const row = JSON.parse(await readFile(path, 'utf8'));
+  row.event.name = 'note_created';
+  row.event.identityScope = 'workspace-user';
+  row.event.properties = { noteId: uuid7('73'), visibility: 'private', noteType: 'meeting_or_voice', entrypoint: 'sidebar' };
+  await writeFile(path, JSON.stringify(row));
+  expect(await spool.maintain(acceptedAt)).toEqual({ expired: 0, quarantined: 0, evicted: 0 });
+  expect(await readdir(join(directory, 'rows'))).toEqual([`${uuid7('72')}.deadline`, `${uuid7('72')}.json`]);
+  expect(await readdir(join(directory, 'quarantine'))).toEqual([]);
+  expect((await spool.ready(acceptedAt)).map(row => row.event.eventId)).toEqual([uuid7('72')]);
+  await expect(spool.prepareSend(uuid7('71'), acceptedAt)).rejects.toThrow('Telemetry row is unavailable');
+});

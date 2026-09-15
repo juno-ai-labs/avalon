@@ -200,7 +200,6 @@ describe('TelemetryReporter', () => {
     });
     const workstreamId = '00000000-0000-4000-8000-000000000101';
     const messageId = '00000000-0000-4000-8000-000000000102';
-    const noteId = '00000000-0000-4000-8000-000000000103';
     const automationId = '00000000-0000-4000-8000-000000000104';
     await reporter.workstreamOpened({
       workstreamId, visibility: 'private', navigation: 'switched', origin: 'ad_hoc', pinned: true,
@@ -215,11 +214,6 @@ describe('TelemetryReporter', () => {
     await reporter.automationActionCompleted({
       automationId, action: 'archive_draft', visibility: 'private', status: 'draft',
     });
-    await reporter.noteOpened({ noteId, visibility: 'public', recordingState: 'complete', navigation: 'reopened' });
-    await reporter.transcriptionStateChanged({
-      noteId, state: 'paused', visibility: 'public', audioSource: 'microphone_and_system',
-    });
-
     const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
       { name: 'workstream_opened', properties: {
@@ -234,12 +228,6 @@ describe('TelemetryReporter', () => {
       } },
       { name: 'automation_action_completed', properties: {
         automationId, action: 'archive_draft', visibility: 'private', status: 'draft',
-      } },
-      { name: 'note_opened', properties: {
-        noteId, visibility: 'public', recordingState: 'complete', navigation: 'reopened',
-      } },
-      { name: 'transcription_state_changed', properties: {
-        noteId, state: 'paused', visibility: 'public', audioSource: 'microphone_and_system',
       } },
     ]);
   });

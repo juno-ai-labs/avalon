@@ -16,8 +16,6 @@ interface WorkspaceActivationRequest {
 }
 
 interface WorkspaceActivationDependencies<Result> {
-  beginChange(target: WorkspaceActivationTarget): number | null;
-  finishChange(changeId: number | null): void;
   nextSelectionIntent(): number;
   request(input: WorkspaceActivationRequest): Promise<Result>;
 }
@@ -32,7 +30,6 @@ export async function revalidateWorkspaceActivation<Result>(
   operationId: string | undefined,
   dependencies: WorkspaceActivationDependencies<Result>,
 ): Promise<Result> {
-  const changeId = dependencies.beginChange(target);
   try {
     return await dependencies.request({
       path: '/onboarding/workspace/activate',
@@ -44,7 +41,5 @@ export async function revalidateWorkspaceActivation<Result>(
     });
   } catch (error) {
     throw workspaceActivationBridgeError(error);
-  } finally {
-    dependencies.finishChange(changeId);
   }
 }

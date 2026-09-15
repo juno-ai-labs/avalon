@@ -6,7 +6,6 @@ import {
   ActivityQueueMessageSchema,
   ActiveStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
-  AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
@@ -18,15 +17,12 @@ import {
   automationAcceptanceSelections,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
-  GenerateNoteNotesRequestSchema,
-  GenerateMeetingNotesRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
   MessageSchema,
   MentionSchema,
-  NoteDetailSchema,
   RESOURCE_RELATIONSHIP_TYPES,
   RefreshRequestSchema,
   ResourceRelationshipTypeSchema,
@@ -98,80 +94,6 @@ describe("boundary contracts", () => {
   it("uses one connector OAuth provider catalog across protocol consumers", () => {
     expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
     expect(ConnectorOAuthProviders).toContain("granola");
-  });
-
-  it("keeps timestamped transcript segments separate from editable note text", () => {
-    const segment = AppendNoteTranscriptSegmentRequestSchema.parse({
-      clientSegmentId: id,
-      startOffsetMs: 1_250,
-      endOffsetMs: 4_750,
-      capturedAt: "2026-08-07T18:00:04.750Z",
-      text: "  A finalized transcript segment.  ",
-    });
-    expect(segment).toMatchObject({
-      startOffsetMs: 1_250,
-      endOffsetMs: 4_750,
-      speakerLabel: null,
-      text: "A finalized transcript segment.",
-    });
-    expect(AppendNoteTranscriptSegmentRequestSchema.safeParse({
-      ...segment,
-      startOffsetMs: 5_000,
-      endOffsetMs: 4_000,
-    }).success).toBe(false);
-    expect(NoteDetailSchema.parse({
-      id,
-      workspaceId: id,
-      resourceId: id,
-      ownerUserId: id,
-      scope: "personal",
-      title: "Typed notes",
-      recordingStatus: "idle",
-      manualNotes: "Pasted text",
-      liveNotes: "",
-      notesThroughSequence: 0,
-      segments: [],
-      recordedMs: 0,
-      startedAt: null,
-      endedAt: null,
-      generatedAt: null,
-      lastActivityAt: "2026-08-07T18:00:00.000Z",
-      createdAt: "2026-08-07T18:00:00.000Z",
-      updatedAt: "2026-08-07T18:00:00.000Z",
-      archivedAt: null,
-    }).manualNotes).toBe("Pasted text");
-  });
-
-  it("bounds and normalizes live meeting-note refreshes", () => {
-    expect(GenerateMeetingNotesRequestSchema.parse({ transcript: "  New decision  " })).toEqual({
-      mode: "live",
-      meetingTitle: "Meeting notes",
-      transcript: "New decision",
-      recentTranscript: "",
-      previousNotes: "",
-      userNotes: "",
-      startedAt: null,
-      endedAt: null,
-      transcriptStatus: "partial",
-      refreshSeconds: null,
-    });
-    expect(GenerateNoteNotesRequestSchema.parse({})).toEqual({ mode: "live", transcriptStatus: "partial" });
-    expect(GenerateNoteNotesRequestSchema.parse({ mode: "final", transcriptStatus: "complete" })).toEqual({
-      mode: "final",
-      transcriptStatus: "complete",
-    });
-    // The cadence a client may claim is bounded by what the flag itself could
-    // serve, so a request cannot ask the prompt to describe a schedule the
-    // service would never hand out.
-    expect(GenerateNoteNotesRequestSchema.parse({ refreshSeconds: 15 }).refreshSeconds).toBe(15);
-    expect(GenerateNoteNotesRequestSchema.safeParse({ refreshSeconds: 5 }).success).toBe(false);
-    expect(GenerateNoteNotesRequestSchema.safeParse({ refreshSeconds: 60_000 }).success).toBe(false);
-    expect(GenerateNoteNotesRequestSchema.safeParse({ refreshSeconds: 60.5 }).success).toBe(false);
-    expect(GenerateMeetingNotesRequestSchema.safeParse({ transcript: "   " }).success).toBe(false);
-    expect(GenerateMeetingNotesRequestSchema.safeParse({
-      transcript: "valid",
-      previousNotes: "x".repeat(50_001),
-    }).success).toBe(false);
   });
 
   it("represents provider members as external actors without manufacturing Avalon users", () => {
@@ -347,7 +269,6 @@ describe("boundary contracts", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
       "workstream",
       "inline_child",
-      "meeting_notes",
       "addressing_classifier",
       "workstream_naming",
       "work_opportunity_admission",
@@ -357,7 +278,6 @@ describe("boundary contracts", () => {
     expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
       "agent-model-workstream",
       "agent-model-inline-child",
-      "agent-model-meeting-notes",
       "agent-model-addressing-classifier",
       "agent-model-workstream-naming",
       "agent-model-work-opportunity-admission",

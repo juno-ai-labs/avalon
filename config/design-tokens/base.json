@@ -104,10 +104,6 @@
     "cmp.markdown.heading-leading": "1.35",
     "cmp.markdown.strong-weight": "560",
     "cmp.markdown.list-indent": "calc({ref.space.unit} * 6)",
-    "cmp.markdown.table-leading": "1.7",
-    "cmp.markdown.article-heading-1": "30px",
-    "cmp.markdown.article-heading-2": "23px",
-    "cmp.markdown.article-heading-3": "19px",
-    "cmp.markdown.article-heading-margin": "48px 0 18px"
+    "cmp.markdown.table-leading": "1.7"
   }
 }

@@ -1,4 +1,3 @@
-import { safeParseSocketEvent } from "@rally/contracts";
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -17,7 +16,8 @@ import {
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
   type WorkspaceWorkstreamPageEvent,
-} from '@rally/contracts';
+  safeParseSocketEvent,
+} from "@rally/contracts";
 import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
@@ -30,10 +30,21 @@ import {
   type PropsWithChildren,
 } from 'react';
 import { ApiError, mapAutomationSummary, mapWorkstreamSummary, type RallyApi } from './api';
-import { uuidV7 } from './telemetry';
+import { retainConversationParents } from './conversation-cache';
+import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
-import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import {
+  PROJECTS_QUERY_KEY,
+  INACTIVE_PROJECTS_QUERY_KEY,
+  SIDEBAR_LIST_QUERY_KEYS,
+  applyVersionedProjectSnapshot,
+  applyVersionedSidebarList,
+} from './sidebar-list-store';
+import { realtimeSocketTelemetry } from './socket-telemetry';
+import { uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
+import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -41,19 +52,7 @@ import {
   WORKSTREAM_STATE_WATERLINES_KEY,
   WORKSPACE_DIRECTORY_WATERLINES_KEY,
 } from './workstream-state-store';
-import {
-  applyVersionedNotePage,
-  applyVersionedProjectSnapshot,
-  applyVersionedSidebarList,
-  SIDEBAR_LIST_QUERY_KEYS,
-  PROJECTS_QUERY_KEY,
-  INACTIVE_PROJECTS_QUERY_KEY,
-} from './sidebar-list-store';
-import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
-import { retainConversationParents } from './conversation-cache';
-import { useLocalCacheScope } from './local-cache-scope';
-import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import { retainQueryData } from './retain-query-data';
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
@@ -77,8 +76,6 @@ export interface WorkstreamPage {
 export interface SidebarConnect {
   generation: number;
   nextCursor: string | null;
-  /** The note list's own next page, tracked separately: two lists, two cursors. */
-  notesNextCursor: string | null;
 }
 
 /**
@@ -226,7 +223,6 @@ export function WorkspaceSocketProvider({
     const releaseData = retainQueryData(queryClient, [
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
-      SIDEBAR_LIST_QUERY_KEYS.notes,
       PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY, CLIENT_FEATURE_FLAGS_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
@@ -346,12 +342,6 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
-      applyVersionedNotePage(
-        queryClient,
-        sidebar.notes.waterline,
-        sidebar.notes.items,
-        sidebar.notes.nextCursor,
-      );
       if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
       directoryLive = true;
       // The directory is the bound on the conversation cache: a conversation
@@ -368,7 +358,6 @@ export function WorkspaceSocketProvider({
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
-        notesNextCursor: sidebar.notes.nextCursor ?? null,
       }));
       return unaccountedFor && !wholeDirectory;
     };
@@ -564,13 +553,6 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
               void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
               void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
-            } else {
-              applyVersionedNotePage(
-                queryClient,
-                sidebarList.data.waterline,
-                sidebarList.data.items,
-                sidebarList.data.nextCursor,
-              );
             }
             return;
           }

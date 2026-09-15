@@ -1,10 +1,9 @@
-import { workstreamRecencyAt } from '../lib/format';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { SidebarSearch } from './sidebar-search';
 import {
   Archive,
   ChevronsLeft,
@@ -20,8 +19,6 @@ import {
   LogOut,
   Megaphone,
   Menu,
-  Mic2,
-  NotebookText,
   Pencil,
   Pin,
   PinOff,
@@ -33,8 +30,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
   formatTime,
@@ -43,11 +40,11 @@ import {
   recencyGroupBatchFilter,
   workstreamMarkerStatus,
   type RecencyGroup,
+  workstreamRecencyAt,
 } from '../lib/format';
+import { layoutRowAt } from '../lib/list-motion';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
-import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
-import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import {
   markSurfaceEntrypoint,
   markWorkstreamFeedOpenStarted,
@@ -55,7 +52,7 @@ import {
   reportTelemetryProductIntent,
   telemetryVisibility,
 } from '../lib/telemetry';
-import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import {
   COLLAPSED_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
@@ -66,12 +63,13 @@ import {
   useUiStore,
 } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
-import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
-import { layoutRowAt } from '../lib/list-motion';
 import { useListMotion } from '../lib/use-list-motion';
+import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
+import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip, TitleSkeleton } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { RelativeTime } from './relative-time';
+import { SidebarSearch } from './sidebar-search';
 import { SidebarSkeletonGroup } from './sidebar-skeleton';
 import { AutomationGlyph, HexagonGlyph, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph } from './workstream-glyph';
 
@@ -101,30 +99,23 @@ interface SidebarProps {
    * can forget is a flag that reads "empty workspace" on a cold sidebar.
    */
   automations: AutomationSummary[] | undefined;
-  notes?: NoteSummary[];
   projects?: ProjectSummary[];
   inactiveProjects?: ProjectSummary[];
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
-  hasMoreNotes?: boolean;
   /** A further page is in flight, so the end of the list is not the end. */
   loadingMoreWorkstreams?: boolean;
-  loadingMoreNotes?: boolean;
   /** Ask for the next page. Called when the scroll approaches the bottom. */
   onLoadMoreWorkstreams?: () => void;
-  onLoadMoreNotes?: () => void;
   loading?: boolean;
-  meetingRecordingAvailable?: boolean;
   accountMenu?: ReactNode;
-  onArchiveNote: (note: NoteSummary) => Promise<void>;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
   onApplyWorkstreamBatch: (
     operationId: string,
     filter: WorkstreamBatchFilter,
     update: WorkstreamBatchUpdate,
   ) => Promise<{ enqueuedCount: number; archivedNoteCount: number }>;
-  onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   /**
@@ -139,7 +130,6 @@ interface SidebarProps {
   onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
-  onOpenMeetingNotes: (noteId?: string) => Promise<void>;
   onPreviewWorkstreamBatch: (
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
@@ -151,7 +141,6 @@ interface SidebarProps {
 }
 
 type RecentSidebarItem =
-  | { type: 'note'; note: NoteSummary; id: string; lastActivityAt: string }
   | { type: 'workstream'; workstream: WorkstreamSummary; id: string; lastActivityAt: string };
 
 interface WorkstreamBatchTarget {
@@ -169,17 +158,8 @@ interface WorkstreamBatchTarget {
   matchedNoteCount: number;
 }
 
-/**
- * The note half, which only `archive` has. `mark_read` has nothing to do to a
- * note — a note has no read state to clear — so the dialog for it must not
- * offer to touch one.
- */
-function batchNoteCount(target: WorkstreamBatchTarget): number {
-  return target.update.kind === 'archive' ? target.matchedNoteCount : 0;
-}
-
 function batchTotal(target: WorkstreamBatchTarget): number {
-  return target.matchedCount + batchNoteCount(target);
+  return target.matchedCount;
 }
 
 /**
@@ -193,33 +173,10 @@ function batchTotal(target: WorkstreamBatchTarget): number {
  * behind it anyway.
  */
 function batchSubject(target: WorkstreamBatchTarget): string {
-  const notes = batchNoteCount(target);
   const workstreams = target.matchedCount === 1
     ? '1 work stream'
     : `${target.matchedCount} work streams`;
-  if (notes === 0) return workstreams;
-  const noteSubject = notes === 1 ? '1 note' : `${notes} notes`;
-  return target.matchedCount === 0 ? noteSubject : `${workstreams} and ${noteSubject}`;
-}
-
-/**
- * The rows under one heading this reader can see, as the seed the dialog opens
- * with before the server's own count replaces it.
- *
- * Notes are counted the way WorkspaceDO selects them — theirs to archive, and
- * not mid-recording — so the number does not jump for a reason the reader
- * cannot see when the preview lands.
- */
-function visibleBatchCounts(
-  items: readonly RecentSidebarItem[],
-  viewerId: string,
-): { workstreams: number; notes: number } {
-  return {
-    workstreams: items.filter((item) => item.type === 'workstream').length,
-    notes: items.filter((item) => item.type === 'note'
-      && item.note.ownerUserId === viewerId
-      && item.note.recordingStatus !== 'recording').length,
-  };
+  return workstreams;
 }
 
 const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
@@ -344,33 +301,6 @@ function OnboardingChecklist(): React.JSX.Element {
         })}
       </div>
     </section>
-  );
-}
-
-/** Application → Developer → Debug enabled reveals this on every resource
- * right-click menu, so a bug report can name the exact row it came from. */
-function CopyResourceIdItem({
-  contentType,
-  id,
-  label,
-  resourceType,
-}: {
-  contentType: 'note_id' | 'automation_id';
-  id: string;
-  label: string;
-  resourceType: 'note' | 'automation';
-}): React.JSX.Element {
-  const copy = async (): Promise<void> => {
-    await desktopBridge().copyText(id);
-    reportTelemetryProductIntent({ kind: 'content_copied', contentType, resourceType, resourceId: id });
-  };
-  return (
-    <ContextMenu.Item
-      className="menu-item"
-      onSelect={() => void copy().catch(() => undefined)}
-    >
-      <Copy aria-hidden="true" size={16} /> {label}
-    </ContextMenu.Item>
   );
 }
 
@@ -998,18 +928,6 @@ function WorkstreamRow({
 }
 
 /**
- * The one "only you can see this" marker in the sidebar. Notes wear it when
- * their scope is personal. Work streams use a facepile or a globe instead.
- */
-function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
-  return (
-    <span aria-label={label} className="sidebar-note-privacy" role="img">
-      <IconLock aria-hidden="true" size={15} stroke={1.8} />
-    </span>
-  );
-}
-
-/**
  * The globe a work stream wears when its audience is the whole workspace.
  *
  * A 17px badge with no words is the one thing on the row a reader cannot work
@@ -1040,80 +958,6 @@ function PublicMarker(): React.JSX.Element {
         <Globe2 aria-hidden="true" size={11} />
       </span>
     </Tip>
-  );
-}
-
-
-function NoteRow({
-  debugEnabled,
-  note,
-  ownedByViewer,
-  scopePending,
-  onArchive,
-  onChangeScope,
-}: {
-  debugEnabled: boolean;
-  note: NoteSummary;
-  ownedByViewer: boolean;
-  scopePending: boolean;
-  onArchive: (note: NoteSummary) => void;
-  onChangeScope: (note: NoteSummary, scope: 'personal' | 'workspace') => void;
-}): React.JSX.Element {
-  const isPrivate = note.scope === 'personal';
-  return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        <div className="sidebar-context-target" data-motion-key={`note:${note.id}`}>
-          <NavLink
-            className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
-            onClick={() => markSurfaceEntrypoint('sidebar_note')}
-            to={`/notes/${note.id}`}
-          >
-            <span className="sidebar-row-icon">
-              <span aria-label="Note" className="sidebar-note-marker" role="img">
-                <NotebookText aria-hidden="true" size={15} strokeWidth={1.8} />
-              </span>
-            </span>
-            <span className="sidebar-row-main">
-              <span className="sidebar-row-title">{note.title}</span>
-            </span>
-            {note.scope === 'personal' && <PrivacyMarker label="Private note" />}
-          </NavLink>
-        </div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
-          {/* A workspace note stays in everyone's sidebar, but only its owner
-              can change or archive it, so the row offers both actions without
-              pretending either would succeed for a reader. The visibility item
-              names the state it moves to rather than the current one. */}
-          <ContextMenu.Item
-            className="menu-item"
-            disabled={!ownedByViewer || scopePending}
-            onSelect={() => onChangeScope(note, isPrivate ? 'workspace' : 'personal')}
-          >
-            {isPrivate
-              ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
-              : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
-          </ContextMenu.Item>
-          {debugEnabled && (
-            <CopyResourceIdItem contentType="note_id" id={note.id} label="Copy note id" resourceType="note" />
-          )}
-          <ContextMenu.Separator className="menu-separator" />
-          {/* Archiving a note the meeting window is still recording into would
-              fail that window's next segment save — the recording continues
-              with nothing being persisted — so the action waits for the
-              recording to end. */}
-          <ContextMenu.Item
-            className="menu-item menu-item-danger"
-            disabled={!ownedByViewer || note.recordingStatus === 'recording'}
-            onSelect={() => onArchive(note)}
-          >
-            <Archive aria-hidden="true" size={16} /> Archive note
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
   );
 }
 
@@ -1160,23 +1004,18 @@ export function Sidebar({
   constrained = false,
   workspace,
   automations,
-  notes = [],
   projects = [],
   inactiveProjects = [],
   workstreams,
   loading,
-  meetingRecordingAvailable = false,
   accountMenu,
-  onArchiveNote,
   onArchiveWorkstream,
   onApplyWorkstreamBatch,
-  onChangeNoteScope,
   onChangeWorkstreamScope,
   onMarkWorkstreamUnread,
   onPinWorkstream,
   onReorderPinnedWorkstreams,
   onRenameWorkstream,
-  onOpenMeetingNotes,
   onPreviewWorkstreamBatch,
   onCreateProject = async () => {
     throw new Error('Project creation is unavailable.');
@@ -1186,11 +1025,8 @@ export function Sidebar({
   onRestoreProject = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
-  hasMoreNotes = false,
   loadingMoreWorkstreams = false,
-  loadingMoreNotes = false,
   onLoadMoreWorkstreams,
-  onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const location = useLocation();
@@ -1236,7 +1072,6 @@ export function Sidebar({
   // menu, so a rejection has nowhere to land unless it is raised here: the row
   // simply stays as it was.
   const [menuError, setMenuError] = useState<{ copy: string; message: string; title: string } | null>(null);
-  const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
   // The work stream a pin or unpin has just moved, and which side of the
@@ -1301,8 +1136,7 @@ export function Sidebar({
    */
   const loadMoreWhenNearBottom = useCallback((event: React.UIEvent<HTMLElement>): void => {
     const wantsWorkstreams = hasMoreWorkstreams && !loadingMoreWorkstreams && onLoadMoreWorkstreams;
-    const wantsNotes = hasMoreNotes && !loadingMoreNotes && onLoadMoreNotes;
-    if (!wantsWorkstreams && !wantsNotes) return;
+    if (!wantsWorkstreams) return;
     const { clientHeight, scrollHeight, scrollTop } = event.currentTarget;
     if (scrollHeight - scrollTop - clientHeight > LOAD_MORE_DISTANCE) return;
     // Both, not whichever is nearer the bottom. The two lists are interleaved
@@ -1310,14 +1144,10 @@ export function Sidebar({
     // one of them and the *other* is what the next heading down needs. Asking
     // only for the kind at the bottom would stall the list at the point where
     // one of them runs out.
-    if (wantsWorkstreams) onLoadMoreWorkstreams();
-    if (wantsNotes) onLoadMoreNotes();
+    onLoadMoreWorkstreams();
   }, [
-    hasMoreNotes,
     hasMoreWorkstreams,
-    loadingMoreNotes,
     loadingMoreWorkstreams,
-    onLoadMoreNotes,
     onLoadMoreWorkstreams,
   ]);
   // The arrangement being dragged, held only for as long as the drag lasts.
@@ -1326,8 +1156,6 @@ export function Sidebar({
   // ends. `null` means the pinned list is showing what the server last said.
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const draggingWorkstreamId = useRef<string | null>(null);
-  const [archiveNoteTarget, setArchiveNoteTarget] = useState<NoteSummary | null>(null);
-  const [archivingNote, setArchivingNote] = useState(false);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
   const [batchTarget, setBatchTarget] = useState<WorkstreamBatchTarget | null>(null);
@@ -1337,7 +1165,6 @@ export function Sidebar({
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
-  const visibleNotes = useMemo(() => conversationOnly ? [] : notes, [conversationOnly, notes]);
   // Resolved here rather than through `NavLink`'s function form, because both
   // of these links are tooltip triggers: Radix clones the child and merges its
   // `className`, and a function arrives at the DOM as its own source text with
@@ -1375,14 +1202,13 @@ export function Sidebar({
       ...unpinnedWorkstreams.map((workstream) => ({
         lastActivityAt: workstreamRecencyAt(workstream),
       })),
-      ...visibleNotes,
     ], now);
     const timer = window.setTimeout(
       () => setGroupedAtMs(Date.now()),
       Math.max(1, next - now.getTime() + 1),
     );
     return () => window.clearTimeout(timer);
-  }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
+  }, [groupedAtMs, unpinnedWorkstreams]);
   const groups = useMemo(() => {
     const groupedAt = new Date(groupedAtMs);
     return groupActivityItems<RecentSidebarItem>([
@@ -1392,52 +1218,13 @@ export function Sidebar({
         lastActivityAt: workstreamRecencyAt(workstream),
         workstream,
       })),
-      ...visibleNotes.map((note) => ({
-        type: 'note' as const,
-        id: `note:${note.id}`,
-        lastActivityAt: note.lastActivityAt,
-        note,
-      })),
     ], groupedAt);
-  }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
+  }, [groupedAtMs, unpinnedWorkstreams]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
     setRenameTitle(workstream.title);
     setRenameError(null);
-  };
-
-  const closeArchiveNote = (): void => {
-    if (archivingNote) return;
-    setArchiveNoteTarget(null);
-  };
-
-  // Archiving is not reversible from any surface yet, so it confirms and names
-  // its target the way deleting an automation does, rather than firing straight
-  // off a right-click that landed one row away from where it was aimed.
-  const submitArchiveNote = async (): Promise<void> => {
-    if (!archiveNoteTarget) return;
-    setArchivingNote(true);
-    try {
-      await onArchiveNote(archiveNoteTarget);
-      reportTelemetryProductIntent({
-        kind: 'note_action_completed',
-        noteId: archiveNoteTarget.id,
-        action: 'archive',
-        visibility: telemetryVisibility(archiveNoteTarget.scope),
-        recordingState: archiveNoteTarget.recordingStatus,
-      });
-      setArchiveNoteTarget(null);
-    } catch (error) {
-      setArchiveNoteTarget(null);
-      setMenuError({
-        title: 'Note could not be archived',
-        copy: 'The note is still in the sidebar. Try again in a moment.',
-        message: error instanceof Error ? error.message : 'The note could not be archived.',
-      });
-    } finally {
-      setArchivingNote(false);
-    }
   };
 
   const closeArchiveWorkstream = (): void => {
@@ -1488,7 +1275,7 @@ export function Sidebar({
     };
     const generation = batchPreviewGeneration.current + 1;
     batchPreviewGeneration.current = generation;
-    const seeded = visibleBatchCounts(visible, workspace.currentUser.id);
+    const seeded = { workstreams: visible.length, notes: 0 };
     setBatchTarget({
       label,
       operationId: crypto.randomUUID(),
@@ -1536,30 +1323,6 @@ export function Sidebar({
       setBatchError(error instanceof Error ? error.message : 'The work streams could not be updated.');
     } finally {
       setBatchApplying(false);
-    }
-  };
-
-  const changeNoteScope = async (note: NoteSummary, scope: 'personal' | 'workspace'): Promise<void> => {
-    setScopePendingNoteId(note.id);
-    try {
-      await onChangeNoteScope(note, scope);
-      reportTelemetryProductIntent({
-        kind: 'note_action_completed',
-        noteId: note.id,
-        action: scope === 'workspace' ? 'make_public' : 'make_private',
-        visibility: telemetryVisibility(scope),
-        recordingState: note.recordingStatus,
-      });
-    } catch (error) {
-      setMenuError({
-        title: 'Note visibility could not be changed',
-        copy: scope === 'workspace'
-          ? 'The note is still private. Try again in a moment.'
-          : 'The note is still public to the workspace. Try again in a moment.',
-        message: error instanceof Error ? error.message : 'The note could not be updated.',
-      });
-    } finally {
-      setScopePendingNoteId((current) => current === note.id ? null : current);
     }
   };
 
@@ -2012,12 +1775,7 @@ export function Sidebar({
               <Plus aria-hidden="true" size={15} />
               <span>{NEW_STREAM_LABEL}</span>
             </NavLink>
-            {meetingRecordingAvailable && (
-              <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">
-                <Mic2 aria-hidden="true" size={15} />
-                <span>New meeting/notes</span>
-              </button>
-            )}
+
           </div>}
 
           {!conversationOnly && (
@@ -2095,16 +1853,14 @@ export function Sidebar({
                 projects and automations above load from the same answer, so a
                 live region in either of those sections would say the same thing
                 twice. It is tied to the wait rather than to this section's own
-                placeholder because they end at different moments — a person who
-                has notes but no work streams yet sees this section's list while
-                the sections above are still filling in, and an announcement
-                nested in the branch below would already be gone. */}
+                placeholder because cached work streams may already be visible
+                while the sections above are still filling in. */}
             {loading && (
               <div role="status">
-                <span className="sr-only">Loading your projects, work streams and notes</span>
+                <span className="sr-only">Loading your projects and work streams</span>
               </div>
             )}
-            {loading && visibleWorkstreams.length === 0 && visibleNotes.length === 0 ? (
+            {loading && visibleWorkstreams.length === 0 ? (
               <>
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
@@ -2114,7 +1870,7 @@ export function Sidebar({
               // holds when nothing is pinned either; with everything pinned the
               // section has nothing left to say and says nothing.
               pinnedWorkstreams.length === 0 && (
-                <p className="sidebar-empty">No work streams or notes yet</p>
+                <p className="sidebar-empty">No work streams yet</p>
               )
             ) : (
               groups.map((group) => (
@@ -2163,17 +1919,7 @@ export function Sidebar({
                     </DropdownMenu.Root>
                   </div>
                   <div className="sidebar-list">
-                    {group.streams.map((item) => item.type === 'note' ? (
-                      <NoteRow
-                        debugEnabled={debugEnabled}
-                        key={item.id}
-                        note={item.note}
-                        onArchive={setArchiveNoteTarget}
-                        onChangeScope={(target, scope) => void changeNoteScope(target, scope)}
-                        ownedByViewer={item.note.ownerUserId === workspace.currentUser.id}
-                        scopePending={scopePendingNoteId === item.note.id}
-                      />
-                    ) : (
+                    {group.streams.map((item) => (
                       <WorkstreamRow
                         debugEnabled={debugEnabled}
                         key={item.id}
@@ -2196,7 +1942,7 @@ export function Sidebar({
             {/* Only while a page is actually in flight. A permanent "scroll for
                 more" would claim the list is incomplete every time it happens
                 to end exactly on a page boundary. */}
-            {(loadingMoreWorkstreams || loadingMoreNotes) && (
+            {(loadingMoreWorkstreams) && (
               <p aria-live="polite" className="sidebar-empty">Loading more…</p>
             )}
 
@@ -2397,27 +2143,7 @@ export function Sidebar({
         </form>
         {renameError && <InlineError>{renameError}</InlineError>}
       </Modal>
-      <Modal
-        footer={(
-          <>
-            <Button disabled={archivingNote} onClick={closeArchiveNote}>Cancel</Button>
-            <Button className="button-danger" disabled={archivingNote} onClick={() => void submitArchiveNote()}>
-              Archive
-            </Button>
-          </>
-        )}
-        onOpenChange={(open) => {
-          if (!open) closeArchiveNote();
-        }}
-        open={Boolean(archiveNoteTarget)}
-        title="Archive note"
-      >
-        <p className="modal-copy">
-          <strong>{archiveNoteTarget?.title}</strong> leaves the sidebar, stops being offered as a
-          resource, and stops reaching the agent. Its transcript is kept, but Rally has no way to
-          bring the note back yet.
-        </p>
-      </Modal>
+
       <Modal
         footer={(
           <>
