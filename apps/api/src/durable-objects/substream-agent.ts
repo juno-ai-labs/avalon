@@ -5697,16 +5697,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       'SELECT resource_id FROM retired_meeting_attachment_ids ORDER BY resource_id',
     ).toArray();
     const selected = [...new Set([...ids, ...retired.map(row => row.resource_id)])];
-    const imports: Array<{ resource_id: string; destination_path: string; sandbox_generation: number }> = [];
-    let toolCopies = 0;
-    for (const id of selected) {
-      imports.push(...sql.exec<{ resource_id: string; destination_path: string; sandbox_generation: number }>(
-        'SELECT resource_id, destination_path, sandbox_generation FROM terminal_imported_resources WHERE resource_id = ?', id,
-      ).toArray());
-      toolCopies += sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM tool_effects effect
-        WHERE EXISTS (SELECT 1 FROM json_tree(effect.input_json) field
-          WHERE field.key IN ('resourceId', 'resource_id') AND field.value = ?)`, id).one().count;
-    }
+    const selectedJson = JSON.stringify(selected);
+    const imports = sql.exec<{ resource_id: string; destination_path: string; sandbox_generation: number }>(
+      'SELECT resource_id, destination_path, sandbox_generation FROM terminal_imported_resources WHERE resource_id IN (SELECT value FROM json_each(?))', selectedJson,
+    ).toArray();
+    const toolCopies = selected.length === 0 ? 0 : sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM tool_effects effect
+      WHERE EXISTS (SELECT 1 FROM json_tree(effect.input_json) field
+        WHERE field.key IN ('resourceId', 'resource_id') AND field.value IN (SELECT value FROM json_each(?)))`, selectedJson).one().count;
     return {
       identity: sql.exec('SELECT workstream_key, parent_workspace_key FROM workstream WHERE id = 1').toArray()[0] ?? null,
       retiredResourceIds: retired.map(row => row.resource_id),

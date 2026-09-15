@@ -55,6 +55,17 @@ describe('meeting notes retirement', () => {
       expect(sql.exec('SELECT note_id, objects_deleted FROM retired_meeting_resources').toArray())
         .toEqual([{ note_id: noteId, objects_deleted: 0 }]);
       expect(() => insertResource(resourceId, 'avalon_note')).toThrow('meeting_notes_retired');
+      // Inject the external transport failure; reads and the retry still use real R2.
+      const interruptedBucket = new Proxy(env.PAYLOADS, {
+        get(target, key) {
+          if (key === 'delete') return async () => { throw new Error('interrupted_r2_delete'); };
+          const value = Reflect.get(target, key);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      await expect(purgeRetiredMeetingObjects(state.storage, interruptedBucket, 'global', workspaceId))
+        .rejects.toThrow('interrupted_r2_delete');
+      expect(sql.exec('SELECT objects_deleted FROM retired_meeting_resources').one()).toEqual({ objects_deleted: 0 });
       const result = await purgeRetiredMeetingObjects(state.storage, env.PAYLOADS, 'global', workspaceId);
       expect(result.remaining).toBe(0);
       expect((await env.PAYLOADS.list({ prefix })).objects).toEqual([]);
