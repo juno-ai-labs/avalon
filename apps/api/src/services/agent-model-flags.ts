@@ -66,7 +66,6 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
   switch (role) {
     case "workstream":
     case "inline_child":
-    case "meeting_notes":
       return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
     case "addressing_classifier":
     case "workstream_naming":

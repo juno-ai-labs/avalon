@@ -1,4 +1,4 @@
-import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
+import { isRetiredMeetingTelemetry, TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import {
   telemetryDeliveryRpcCall,
@@ -134,7 +134,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   for (const row of pending.results) {
     const parsed = TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope;
     const attributableNonessential = row.subject_user_id !== null && parsed.category !== "essential";
-    if (attributableNonessential && row.product_analytics_enabled !== 1) {
+    if (isRetiredMeetingTelemetry(parsed) || (attributableNonessential && row.product_analytics_enabled !== 1)) {
       await env.DB.prepare(
         "DELETE FROM telemetry_accepted_events WHERE event_id = ? AND delivery_state IN ('pending', 'retrying')",
       ).bind(row.event_id).run();

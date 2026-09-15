@@ -1014,6 +1014,10 @@ read through typed RPC. See [Apple push](push-notifications.md).
 
 ## Changelog
 
+### 2026-09-14 — Retire built-in meeting data
+
+Workspace migration 57 purges built-in note rows and captures content-free resource deletion addresses. Conversation migration 57 removes meeting attachment snapshots. The old tables remain empty until external deletion is verified; shipped migration history remains immutable. Dictation and connector resources remain independent. See [meeting retirement](meeting-notes.md) for rollout and verification.
+
 ### 2026-09-13 — Rebuilding a referenced parent empties its dependents first
 
 **What changed:** WorkspaceDO migration 55 admits `fireflies` to

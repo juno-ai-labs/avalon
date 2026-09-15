@@ -2,7 +2,6 @@ const PUSH_NOTIFICATIONS_FLAG_KEY = "push-notifications-enabled";
 import type { ClientFeatureFlags, ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
 import { resolveDigestsEnabled } from "./digest-flags";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
@@ -71,7 +70,6 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
-export const MEETING_RECORDING_FLAG_KEY: ProductFeatureFlagKey = "meeting-recording-enabled";
 export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
 export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
 export const LIVE_ARTIFACTS_FLAG_KEY: ProductFeatureFlagKey = "live-artifacts-enabled";
@@ -182,16 +180,13 @@ export async function resolveClientFeatureFlagsForSubject(
   };
   const [
     developerSettings,
-    meetingRecordingEnabled,
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
     pushNotificationsEnabled,
-    controlTowerRefreshSeconds,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
@@ -210,20 +205,14 @@ export async function resolveClientFeatureFlagsForSubject(
     // the loader's isolate cache rather than being handed `context`, so both
     // callers of that resolver — this route and the meeting-notes generator —
     // describe the subject identically.
-    resolveControlTowerRefreshSeconds(env, {
-      userId: subject.userId,
-      ...(subject.workspaceId ? { workspaceId: subject.workspaceId } : {}),
-    }),
   ]);
   return {
     developerSettings,
-    meetingRecordingEnabled,
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
     pushNotificationsEnabled,
-    controlTowerRefreshSeconds,
   };
 }
 
