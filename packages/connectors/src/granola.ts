@@ -1,4 +1,4 @@
-import { describeZodIssues } from "@rally/contracts";
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { RegionSchema } from "@rally/contracts/regions";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import type { ConnectorInstallationManagement } from "./installation";

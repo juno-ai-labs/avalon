@@ -1,5 +1,5 @@
 import { ConnectorError } from "@rally/connectors";
-import { describeZodIssues, isCodeShaped } from "@rally/contracts";
+import { describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 import { ApiError } from "./api-error";
 

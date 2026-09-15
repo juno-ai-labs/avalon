@@ -323,7 +323,7 @@ describe("connector observability", () => {
           activities: [],
           cursor: {},
           streamErrors: [
-            { streamId: "calendar", code: "response_invalid:items.0.start:invalid_type", message: "provider content must remain absent" },
+            { streamId: "calendar", code: "schema_invalid:items.0.start:invalid_type", message: "provider content must remain absent" },
             { streamId: "mail", code: "unauthorized", message: "provider content must remain absent" },
             { streamId: "drive", code: "unauthorized", message: "provider content must remain absent" },
           ],
@@ -339,7 +339,7 @@ describe("connector observability", () => {
       expect.objectContaining({
         operation: "poll",
         stream_error_count: 3,
-        stream_error_codes: ["response_invalid:items.0.start:invalid_type", "unauthorized"],
+        stream_error_codes: ["schema_invalid:items.0.start:invalid_type", "unauthorized"],
       }),
     ]);
     expect(JSON.stringify(observations)).not.toContain("provider content must remain absent");
