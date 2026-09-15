@@ -159,6 +159,10 @@ describe("workspace runtime database routing", () => {
  * naming the boundary it crossed.
  */
 const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
+  "agent_teams", // Agent communication uses typed WorkspaceDO RPC only.
+  "agent_team_members",
+  "agent_delegations",
+  "agent_message_routes",
   "connector_installations", // Generation-fenced installation RPC only.
   "connector_installation_steps", // Exact provider-dispatch receipts; no facade access.
   "workspace_workstream_access", // Private WorkspaceDO visit state; no facade callers.

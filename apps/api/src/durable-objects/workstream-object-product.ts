@@ -3210,6 +3210,7 @@ export class WorkstreamObjectProductService {
     }));
     return {
       kind: "directory_common" as const,
+      backgroundAgent: this.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
       appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       title: truncateUtf16Safe(root.title, 500),
       description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),

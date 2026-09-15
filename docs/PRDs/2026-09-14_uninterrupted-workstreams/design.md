@@ -34,6 +34,8 @@ Sidekick contact uses existing parent viewer authorization before adding members
 
 ## Delivery and execution
 
+Bind owns each feed's model/tool loop and protocol transitions. Rally owns durable admission, execution leases, conversation authority, routing, and persistence through the existing harness ports. Delegation does not relax tool receipts, ordered input acceptance, suspension, checkpoint recovery, or completion-defect checks. A capability missing from those ports belongs in Bind itself; responsiveness is not justification for a parallel host loop or a runtime patch maintained in Rally.
+
 The recipient's existing durable non-human input-preparation pipeline owns delivery and replay. The stored preparation discriminator remains `automation_activation`; agent content has its own `agent_message` tag. Its sender, received message ID, team reference, text and resource IDs survive both initial admission and later context rebuilding.
 
 Send and reply return after persistence, without waiting for execution. Idle recipients wake independently. Running recipients see input at the existing safe boundary; their in-flight model/tool work is not interrupted. No read/applied receipt or semantic acknowledgment state is added. Models acknowledge or ask questions by replying.
@@ -44,4 +46,6 @@ A stop requests existing active-execution cancellation and retains a background 
 
 ## Remaining implementation decisions
 
-Terminal-result delivery must use the existing durable external-settlement machinery and ordinary reply references. Its exact interaction with explicit replies and reply-loop avoidance remains to be completed and reviewed. Background count projection, archive traversal, attachment rendering, and removal of the participant queue/steer control remain acceptance work, not claims of shipped behavior.
+Terminal results now use existing durable external settlement and ordinary reply references, with a stable identity per completed execution. Archived destinations refuse delivery. Deliberate completion without replying still needs a supported Bind contract; empty-completion checks remain enabled. The interaction with explicit replies and acknowledgment-only exchanges is not yet complete.
+
+The count uses existing child common-state projections and ephemeral desktop control metadata, including nested background substreams. Unknown or disconnected state clears the displayed count. The composer no longer exposes queue controls and sends through existing safe-boundary delivery. Archive traversal requests owned stops. Attachment/media presentation, archive race coverage and complete model-tool evaluations remain acceptance work.

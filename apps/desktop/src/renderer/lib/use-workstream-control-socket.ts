@@ -153,6 +153,10 @@ export function useWorkstreamControlSocket(
     let protocolWarningReported = false;
     const socketTelemetry = realtimeSocketTelemetry('workstream_control');
     const isOffline = (): boolean => navigator.onLine === false;
+    const clearBackgroundCount = (): void => {
+      queryClient.setQueryData(['workstream-background-agents', workstreamId], null);
+    };
+    clearBackgroundCount();
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -189,6 +193,7 @@ export function useWorkstreamControlSocket(
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
       if (metadata.id !== workstreamId) return;
+      queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCount ?? null);
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,
@@ -249,6 +254,7 @@ export function useWorkstreamControlSocket(
         // request is invisible to the offline handler, because there was no
         // socket to close.
         if (isOffline()) {
+          clearBackgroundCount();
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           return;
         }
@@ -299,11 +305,13 @@ export function useWorkstreamControlSocket(
           socket = null;
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             accessRevoked = true;
+            clearBackgroundCount();
             socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
             evictCachedWorkstream(queryClient, workstreamId);
             return;
           }
           if (!stopped) {
+            clearBackgroundCount();
             socketTelemetry.disconnected({ attempts: attempt, retrying: !isOffline() });
           }
           scheduleReconnect();
@@ -317,6 +325,7 @@ export function useWorkstreamControlSocket(
         });
       } catch {
         if (!stopped) {
+          clearBackgroundCount();
           socketTelemetry.disconnected({
             attempts: attempt,
             retrying: !isOffline(),
@@ -333,6 +342,7 @@ export function useWorkstreamControlSocket(
       void connect();
     };
     const offline = (): void => {
+      clearBackgroundCount();
       clearReconnect();
       clearHeartbeat();
       if (socket) socketTelemetry.willClose('offline');
@@ -344,6 +354,7 @@ export function useWorkstreamControlSocket(
     return () => {
       stopped = true;
       releaseData();
+      clearBackgroundCount();
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       clearReconnect();
