@@ -47,7 +47,7 @@ reach the ledger through the `residentContext` object-port authority.
 
 ## Sidekick durable boundaries
 
-WorkspaceDO migration 57 stores implicit agent teams, additive membership,
+WorkspaceDO migration 59 stores implicit agent teams, additive membership,
 delegation ownership, and message addressing references. The workspace owns
 those cross-conversation relationships; the conversation remains authoritative
 for its content and execution. [Agent communication](agent-communication.md)

@@ -1,4 +1,3 @@
-import { buildAttachmentManifestPart } from "./attachment-model-content";
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub } from "./conversation-parent-client";
@@ -4541,8 +4540,8 @@ async function loadRunPromptContext(
             : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
-    }) + (input.agentExchange && (input.backgroundAgent || input.parentKind === "automation")
-      ? "\nSend your results and questions to the coordinating agent. Your final response stays here; it is not forwarded. Ask the coordinator for missing information instead of asking participants directly."
+    }) + (input.backgroundAgent || input.parentKind === "automation"
+      ? "\nFor requests from another agent, send results and questions back to that agent. Ask that agent for missing information instead of asking participants. Your final response stays here; it is not forwarded."
       : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,

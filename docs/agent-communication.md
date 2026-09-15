@@ -39,8 +39,9 @@ Discovery reads a team's roster after checking the requester belongs to it.
 Send requires a shared team. The host prefers the incoming exchange's scope;
 otherwise the stable first common team supplies the scope. Reply uses the
 received message's original sender and team, and only its recipient can reply.
-Replies to Sidekick authoring conversations recheck current Sidekick access;
-permanent team membership does not preserve revoked domain access.
+Replies to Sidekick authoring conversations and their inclusion in teammate
+listings recheck current Sidekick access; permanent team membership does not
+preserve revoked domain access or reveal inaccessible names and descriptions.
 
 `agent_message_routes` stores addresses, not bodies or delivery receipts.
 Recording a route does not prove a recipient accepted a message: recipient
@@ -71,7 +72,7 @@ attachment manifests and current-turn image projection. Resource IDs alone are
 not a substitute for those durable message attachments. Model-facing tools keep
 the existing composed-message and attachment limits, also enforced at admission.
 
-Conversation migration 59 stores the background principal and a stop timestamp.
+Conversation migration 60 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it in
 the same transaction that admits the message.
@@ -117,7 +118,9 @@ conversation to the team. Drafting tools are available only on a Sidekick's main
 authoring conversation, not ordinary workstreams, workers or scheduled runs.
 Authoring guidance identifies its own Sidekick, reads the current definition,
 and preserves the scope already selected under existing publication rules.
-Questions from agent exchanges use replies instead of participant forms.
+Questions from agent exchanges use replies instead of participant forms. This
+guidance is present in every Sidekick authoring execution, so requests arriving
+at a later Bind boundary during a participant-started run follow the same rule.
 
 
 ## Invariants

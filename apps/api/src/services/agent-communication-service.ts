@@ -216,6 +216,13 @@ export class AgentCommunicationService {
     const agents = [];
     for (const agentId of result.value.agentIds) {
       if (agentId === this.senderId) continue;
+      try {
+        await this.authorizeSidekick(agentId);
+      } catch (error) {
+        if (error instanceof AgentCommunicationError
+          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) continue;
+        throw error;
+      }
       const runtime = await (await this.conversation(agentId)).agentRuntimeInfo();
       if (runtime) agents.push({ agentId, name: runtime.name, description: runtime.description, status: runtime.status });
     }
