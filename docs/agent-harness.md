@@ -1233,7 +1233,37 @@ Provider reads do not wait for status transport; first output, disposal, and abo
 release pending notification delivery without inventing another timeout. The
 conversation settlement tombstone rejects an activation that arrives after its clear.
 
+## Proactive execution preparation
+
+Harness startup uses separate `Preparation` instances for the Sidekick run
+response, connector inventory, prompt context, and tool setup. Definition and
+inventory reads start while the initial lease heartbeat completes. Prompt and
+tool setup start after that heartbeat, alongside canonical transcript loading.
+Each consumer awaits only its dependency's existing promise. Rejections are
+observed immediately and failed preparations can be retried by later demand.
+No model or tool execution is started by preparation; Bind's live authority,
+lease, transcript, and command checks remain in their ordinary path.
+
+The Sidekick response is shared by prompt and tool setup within one execution.
+Although its definition revision is immutable, the response includes current
+plugin defaults, bindings, and run state, so it is not cached across executions.
+Connector inventory is also execution-scoped. Built-in tool surface hashes retain
+only the latest serialized metadata variant per built-in plugin in isolate
+memory; different metadata replaces the entry. They contain no executor closures,
+credentials, or run state. Isolate eviction drops these optimizations and demand
+reconstructs them. There is no timer, persistent cache, or global readiness gate.
+
 ## Changelog
+
+### 2026-09-15 — Share independent preparation promises
+
+Startup repeatedly fetched the Sidekick response and serialized preparation
+behind transcript and prompt loading. Separate promises now overlap independent
+work and share each result with its consumers. Built-in metadata hashes survive
+between runs in isolate memory, while live inventory and Sidekick response fields
+refresh per execution. Caching whole plugin objects was rejected because their
+handlers capture execution authority and mutable run state. Preparation never
+replaces Bind admission or current permission checks.
 
 ### 2026-09-15 — Evaluate the production runtime at settled Bind boundaries
 

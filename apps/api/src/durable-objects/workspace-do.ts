@@ -4975,6 +4975,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's Sidekicks");
     }
+    return this.listSidekickDirectoryForAuthorizedMember(request);
+  }
+
+  /** Internal host RPC: Bind checked active membership for this command. Scope filtering remains local. */
+  async listSidekickDirectoryForAuthorizedMember(input: { workspaceId: string; userId: string }): Promise<{ items: AutomationSummary[] }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & { author_user_id: string }>(
       `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
