@@ -1,5 +1,5 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
-import { asWorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
 import { workstreamCanonicalUrl } from "@rally/contracts/workstream-links";
 import type { Env } from "../env";
@@ -34,7 +34,10 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
     : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`;
   const body = effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "";
-  const payload = renderPushPayload({ title, body, threadKey: row.workstreamId, data: {
+  const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
+    workspaceId: id, userId: row.recipientUserId,
+  }));
+  const payload = renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data: {
     v: 1, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId,
     url: workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
       workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) }),
