@@ -32,7 +32,6 @@
    * lightness, so a step means the same thing whichever way round a theme
    * runs. Fills at the faint end, text at the strong end. */
   --av-ref-color-neutral-1: #fcfcfc;
-  --av-ref-color-neutral-2: #f7f7f7;
   --av-ref-color-neutral-3: #f3f3f3;
   --av-ref-color-neutral-4: #eeeeee;
   --av-ref-color-neutral-5: #e4e4e4;
@@ -496,7 +495,6 @@
   --av-cmp-surface-radius: 12px;
 
   --av-ref-color-neutral-1: #070707;
-  --av-ref-color-neutral-2: #111111;
   --av-ref-color-neutral-3: #1b1b1b;
   --av-ref-color-neutral-4: #2f2f2f;
   --av-ref-color-neutral-5: #3d3d3d;
