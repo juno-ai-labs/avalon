@@ -3681,7 +3681,15 @@ export const TerminalSelectedRepositorySchema = z.strictObject({
   baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
   headRef: z.string().min(1).max(240),
 });
+export const TerminalProviderObservationSchema = z.strictObject({
+  state: z.string().nullable(),
+  observedAt: TimestampSchema.nullable(),
+  nextObserveAt: TimestampSchema,
+  recoverable: z.boolean().nullable(),
+  errorCode: z.string().nullable(),
+});
 export const TerminalWorkstreamStateSchema = z.strictObject({
+  providerObservation: TerminalProviderObservationSchema.nullable().optional(),
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   state: TerminalSandboxStateSchema,
   lastActivityAt: TimestampSchema.nullable(),

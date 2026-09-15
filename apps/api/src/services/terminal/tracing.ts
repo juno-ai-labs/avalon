@@ -5,6 +5,7 @@ export type TerminalProviderRequestOperation =
   | "sandbox.refresh"
   | "sandbox.create"
   | "sandbox.start"
+  | "sandbox.recover"
   | "sandbox.stop"
   | "sandbox.archive"
   | "sandbox.delete"
@@ -25,6 +26,7 @@ export type TerminalProviderRequestOperation =
   | "secret.delete";
 
 export type TerminalUtilityOperation =
+  | "sandbox.readiness"
   | "path.resolve"
   | "file.inspect"
   | "file.read_page"

@@ -190,6 +190,53 @@ normal local-development state. Once every value is present, malformed values
 still fail the environment contract so an intended provider rollout cannot
 silently run against the wrong endpoint.
 
+#### Daytona state synchronization
+
+Deploy the API receiver and Terminal provider Worker from the same change before
+provisioning. From the repository root, with the normal Cloudflare operator
+credentials and Daytona key in the local environment, run once per regional API:
+
+```sh
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api terminal:ensure-webhook --config wrangler.global.jsonc
+```
+
+Set `DAYTONA_ORGANIZATION_ID` and `DAYTONA_WEBHOOK_URL` in that operator environment
+(the latter is the regional API's HTTPS URL ending `/ingest/daytona`). Use the
+matching configured deployment URL and Wrangler file for any future region.
+Global is currently the only configured deployment. The Daytona API key must belong to
+the named organization and allow webhook administration. No manual dashboard
+registration or separate Svix account is required. `SVIX_API_URL` is optional
+for a custom Svix server; otherwise the portal token determines its region.
+
+The command initializes Daytona webhooks, obtains an organization-scoped Svix
+portal token, and checks every endpoint page for the URL. It reuses an existing
+registration or upserts a deterministic endpoint when none exists; ambiguous
+duplicate registrations stop setup before any mutation. It installs
+`DAYTONA_WEBHOOK_SECRET` and `DAYTONA_ORGANIZATION_ID` directly through Wrangler
+stdin, probes the deployed signature verifier, then enables delivery and reads
+back the subscription. It never prints or writes the signing secret to disk.
+A failed installation/probe leaves the endpoint disabled; rerun the same command
+to converge. Provisioning temporarily disables an existing endpoint while
+checking its credentials. Periodic reconciliation continues during this window.
+
+Finally, it walks all Daytona sandbox pages and submits signed refresh hints for
+existing labelled sandboxes, including archives. This wakes their observation
+schedule without waiting for the old expiry deadline. Sandboxes already deleted
+before rollout cannot be discovered from Daytona; those old rows are reconciled
+on acquisition or their existing retention alarm. Newly attached generations
+publish an immediate observation deadline. `providerObservation` on the Terminal
+state API exposes the last successful observation and its freshness/error; a
+successful setup probe proves receiver configuration, not lifecycle delivery.
+Use a disposable sandbox to verify actual provider-generated events after rollout.
+
+The receiver accepts only the configured organization, and uses Daytona metadata
+rather than the event's state. Missing metadata is detected by periodic owner
+readback. See [Terminal lifecycle and synchronization](terminal-workspaces.md#network-policy-and-lifecycle)
+for the ownership, ordering, and recovery rules, and
+[Daytona webhooks](https://www.daytona.io/docs/en/webhooks/) and
+[Svix portal authentication](https://docs.svix.com/app-portal#authentication)
+for the provider setup contract.
+
 The managed-snapshot compatibility contract is
 `apps/api/src/services/terminal/snapshot-manifest.ts`: Bash, Python,
 JavaScript/Node.js, TypeScript, SQLite, apt/dpkg, pip/uv, npm/pnpm, Git, `gh`,

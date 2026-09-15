@@ -84,6 +84,9 @@ type Exhaustive<T extends readonly TerminalOperation[]> =
 
 const DISPATCHED_OPERATIONS = [
   "sandbox",
+  "providerObservation",
+  "beginProviderObservation",
+  "settleProviderObservation",
   "reserveFirstGeneration",
   "claimOperation",
   "claimYieldedOperationRecovery",
@@ -175,6 +178,7 @@ export function isTerminalOperation(value: string): value is TerminalOperation {
 const NON_DIRECTORY_OPERATIONS = new Set<TerminalOperation>([
   // Reads.
   "sandbox",
+  "providerObservation",
   "finalDiffResourceId",
   "policyTarget",
   "taskByEffect",
