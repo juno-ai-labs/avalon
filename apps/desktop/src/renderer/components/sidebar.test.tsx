@@ -212,7 +212,7 @@ describe('Sidebar work-stream markers', () => {
 
   it('reduces the GrokBot shell navigation to work streams', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/workstreams/new']}>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
@@ -227,6 +227,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
+    expect(screen.queryByLabelText('New work stream draft')).not.toBeInTheDocument();
     expect(screen.getByText('Customer launch')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Sidekick shortcuts' })).toContainElement(screen.getByText('Daily product brief'));
     expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();

@@ -248,6 +248,7 @@ describe('New work-stream home', () => {
       }],
     };
     renderProjectScreen(projectId, projects);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus());
 
     expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
@@ -440,6 +441,7 @@ describe('New work-stream home', () => {
   it('keeps recipient selection above the composer and sends selected people', async () => {
     renderScreen();
 
+    fireEvent.focus(screen.getByRole('combobox', { name: 'Search people' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
     expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveAttribute('placeholder', 'Add people');
@@ -460,18 +462,18 @@ describe('New work-stream home', () => {
     expect(request?.operationId).toBe(request?.requestId);
   });
 
-  it('focuses the recipient search when the new chat opens', async () => {
+  it('focuses the message composer when the new chat opens', async () => {
     renderScreen();
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveFocus());
-    expect(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus());
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });
 
   it('shows an empty recipient result when the workspace has no available members', async () => {
     api.getWorkspaceMembers.mockResolvedValue([currentUser]);
     renderScreen();
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveFocus());
+    fireEvent.focus(screen.getByRole('combobox', { name: 'Search people' }));
     expect(await screen.findByText('Everyone available is selected')).toBeVisible();
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });
