@@ -588,6 +588,8 @@ let telemetryLaunchId: string | null = null;
 let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: DesktopDeepLinkNavigation[] = [];
+let resolveMainWindowStartup!: () => void;
+const mainWindowStartup = new Promise<void>((resolve) => { resolveMainWindowStartup = resolve; });
 const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
   applicationOpenObserver.destroy();
   if (telemetryFlushTimer) clearInterval(telemetryFlushTimer);
@@ -4423,6 +4425,9 @@ function installApplicationMenu(): void {
 }
 
 async function createMainWindow(): Promise<void> {
+  // Electron's ready event precedes our async startup. Native notification and
+  // URL callbacks can arrive before the renderer protocol and IPC exist.
+  await mainWindowStartup;
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -4667,6 +4672,7 @@ if (!singleInstanceLock) {
     protocol.handle(fontScheme, (request) => themeFontCache.respond(request.url));
     installContentSecurityPolicy();
     registerIpc();
+    resolveMainWindowStartup();
     autoUpdateController = initializeAutoUpdate({
       isPackaged: app.isPackaged,
       platform: process.platform,

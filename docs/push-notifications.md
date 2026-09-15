@@ -63,6 +63,8 @@ APNs groups notifications by the main workstream ID, including notifications
 from its substreams. Clicks still target the originating substream.
 Clicks pass the HTTPS link through the existing work-stream parser and scheme
 navigation, including pending navigation before sign-in or window readiness.
+Main-window creation waits for renderer protocol and IPC installation, including
+when a native notification response arrives during asynchronous app startup.
 
 ## Operations and release
 
@@ -124,6 +126,14 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-09-15 — Wait for application startup before opening a notification target
+
+Signed-Mac acceptance found that clicking a notification with Rally quit opened
+a blank window: Electron was ready before Rally's async initialization installed
+its renderer protocol and IPC. Main-window creation now waits for that setup,
+preserving the existing pending-link queue. This also covers early URL callbacks
+without a separate notification window or retry timer.
 
 ### 2026-09-14 — Add Apple push as a transport of existing notification intents
 
