@@ -1,4 +1,3 @@
-import { AudioLines, BriefcaseBusiness } from 'lucide-react';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
 import GoogleDrive from '@thesvg/react/google-drive';
@@ -8,6 +7,8 @@ import Notion from '@thesvg/react/notion';
 import Slack from '@thesvg/react/slack';
 import X from '@thesvg/react/x';
 import type { ComponentType } from 'react';
+import Ashby from './brand-marks/ashby';
+import Fireflies from './brand-marks/fireflies';
 
 /**
  * A company's own mark, as a React component.
@@ -31,12 +32,14 @@ import type { ComponentType } from 'react';
 /**
  * One brand's component, and whether it has single-colour art to ask for.
  *
- * Six of the eight ship a `mono` variant, which paints in `currentColor`.
+ * Eight of the ten ship a `mono` variant, which paints in `currentColor`.
  * Slack and Granola ship none — their variant unions are `default | wordmark`
  * and `default | light | dark` — so asking for `mono` there is a type error
  * rather than a silent fallback, and `.connector-mark` recolours their palette
  * in CSS instead. Encoding that here keeps the fact checkable: a brand that
  * gains or loses `mono` upstream fails this table rather than the render.
+ * Ashby and Fireflies are not in `@thesvg/react`; their local components only
+ * ship the monochrome art, which is why they sit in the `mono: true` branch.
  */
 export type PluginBrandMarkComponent =
   | { readonly Mark: ComponentType<{ className?: string; variant?: 'mono' }>; readonly mono: true }
@@ -47,11 +50,8 @@ export const PLUGIN_BRAND_MARKS: Record<
   'ashby' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
-  ashby: { Mark: BriefcaseBusiness, mono: false },
-  // `@thesvg/react` ships no Fireflies mark, so this follows Ashby's precedent:
-  // a neutral glyph for what the connector carries — recorded speech — rather
-  // than the generic plug a missing row would draw.
-  fireflies: { Mark: AudioLines, mono: false },
+  ashby: { Mark: Ashby, mono: true },
+  fireflies: { Mark: Fireflies, mono: true },
   github: { Mark: Github, mono: true },
   google: { Mark: Google, mono: true },
   'google-drive': { Mark: GoogleDrive, mono: true },
