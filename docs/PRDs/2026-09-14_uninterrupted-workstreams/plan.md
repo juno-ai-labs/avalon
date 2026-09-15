@@ -27,7 +27,7 @@ Implement the full PRD on `codex/uninterrupted-workstreams`, rebased onto the me
 - Attachments preserve canonical descriptors and image projection. Admission and transcript promotion own attachment linking; refused admission leaves no recipient links.
 - Stop, continuation, archive, idempotent creation, and Sidekick authoring have real-workerd coverage with representative mutation failures. Hidden workers expose only a running count; Electron inspection used explicit count fixtures.
 - The inline-child runtime and participant queue UI are removed. Bind remains the owner of every loop; no timing barrier or alternate mailbox was added.
-- The branch was rebased onto 818cab7d9 to resolve actual conflicts. Existing migration 57 is preserved and the unpublished background migration is 58; socket teardown retains both main's query-data release and background-count cleanup.
+- The branch was rebased onto 4927e9306 to resolve actual conflicts. Shipped migrations remain unchanged; team and background migrations are each 59 in their separate authorities; socket teardown retains both main's query-data release and background-count cleanup.
 - User clarification on 2026-09-15 removes automatic forwarding. Every message to another agent uses send_message or reply; ordinary final responses remain local. No end_turn tool, special completion receipt, or new Bind dependency is needed. The previous native-completion proposal and generated-result admission exception are withdrawn.
 - The updated workerd suite exercises actual reply tool calls, local-only worker and Sidekick final responses, no synthesized failure/needs-input messages, and replay after lost admission confirmation. Current validation is recorded in [acceptance.md](acceptance.md).
 
