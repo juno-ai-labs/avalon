@@ -19,7 +19,25 @@ import { createConnectorRegistry, type ConnectorRegistry } from "@rally/connecto
  */
 const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
 
-export const testRegistryConfig: Parameters<typeof createConnectorRegistry>[0] = {
+/**
+ * Every configurable connector, required by type.
+ *
+ * `Required<Omit<…, "observer">>` is the guarantee: a connector added to
+ * `createConnectorRegistry`'s input fails to compile here until this object
+ * supplies it, so it cannot go missing from the walks below by being silently
+ * unbuilt. `generic_webhook` is absent because it takes no config and is added
+ * unconditionally, so it is never at risk of being skipped.
+ *
+ * The runtime check in `unconfiguredConnectorTypes` stays, but it is the weaker
+ * of the two and catches a different miss — a connector on the telemetry list
+ * that this fixture builds under a different key. It cannot be the coverage
+ * oracle for this file: telemetry is a separate vocabulary answering a separate
+ * question, and a connector omitted from both it and this object would be
+ * invisible to it.
+ */
+export const testRegistryConfig: Required<
+  Omit<NonNullable<Parameters<typeof createConnectorRegistry>[0]>, "observer">
+> = {
   customMcp: { redirectUri: "https://api.example.com/callback" },
   ashby: { redirectUri: "https://api.example.com/callback" },
   fireflies: { redirectUri: "https://api.example.com/callback" },
