@@ -17,6 +17,6 @@ This is an implementation acceptance record, not a declaration that the feature 
 
 ## Gates
 
-The focused result/Sidekick/agent workerd file passes 17 tests, including the two latest review regressions. The retired inline-child runtime/storage cutover passes 115 focused Node tests. Lint, typecheck, and document checks pass. The full repository suite passed: 2,942 desktop tests, 2,916 API Node tests, 921 workerd tests, and all other package suites. This establishes the broad regression gate for the implementation cutover.
+The focused result/Sidekick/agent workerd file passes 19 tests, including the two latest review regressions. The retired inline-child runtime/storage cutover passes 115 focused Node tests. Lint, typecheck, and document checks pass. The full repository suite passed: 2,942 desktop tests, 2,916 API Node tests, 921 workerd tests, and all other package suites. This establishes the broad regression gate for the implementation cutover.
 
 The existing model-tool contract proposals and attachment-sharing consequence are collected in [the plan](plan.md). Live inference requires an approved configured development provider; do not infer model behavior from the scripted provider used in runtime tests.
