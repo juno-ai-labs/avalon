@@ -160,6 +160,7 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 4,
         waitingReason: "mentioned",
         hasUnreadActivity: true,
+        unreadAndNeedsInputCount: 4,
       });
   });
 
@@ -184,6 +185,27 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 0,
         waitingReason: null,
         hasUnreadActivity: true,
+        unreadAndNeedsInputCount: 1,
+      });
+  });
+
+  it("counts ordinary unread and already-read needs-input streams together without treating unread as addressed", async () => {
+    await seed({ id: "00000000-0000-7000-8000-0000000009b8", latest: 3, seen: 1 });
+    await seed({ id: "00000000-0000-7000-8000-0000000009b9", state: "needs_input", latest: 2, seen: 2 });
+    await seed({ id: "00000000-0000-7000-8000-0000000009ba", latest: 4, seen: 1, state: "needs_input" });
+    await seed({
+      id: "00000000-0000-7000-8000-0000000009bb",
+      latest: 3,
+      seen: 1,
+      archivedAt: "2026-09-01T00:00:00.000Z",
+    });
+
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toEqual({
+        waitingForYou: 2,
+        waitingReason: "needs_input",
+        hasUnreadActivity: true,
+        unreadAndNeedsInputCount: 3,
       });
   });
 });

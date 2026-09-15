@@ -101,15 +101,6 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 6,
-    rankReason: 'Focused · live and final passes',
-    role: 'meeting_notes',
-    key: 'agent-model-meeting-notes',
-    label: 'Meeting notes',
-    description: 'Produces the live and final meeting-note passes from captured transcript segments.',
-    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 7,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -118,7 +109,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 8,
+    rank: 7,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',
@@ -163,7 +154,6 @@ export const ModelValidationRequestSchema = z.object({
  * import this table directly and read it at runtime.
  */
 export const MANAGED_FLAGS = [
-  { key: 'meeting-recording-enabled', label: 'Meeting Recording Enabled', description: 'True shows meeting-recording actions in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'multiple-workspaces-enabled', label: 'Multiple Workspaces Enabled', description: 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'digests-enabled', label: 'Digests Enabled', description: 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', defaultVariation: 'on' },

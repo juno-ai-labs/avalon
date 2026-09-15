@@ -1822,7 +1822,7 @@ describe('MessageBlock plugin activity rows', () => {
 
   it('draws a company mark in the row\'s own colour, as real markup', () => {
     // The mark is a React component, so nothing is injected as HTML, and the
-    // monochrome variant paints in `currentColor` — which is what keeps eight
+    // monochrome variant paints in `currentColor` — which is what keeps ten
     // companies legible on four grounds without per-theme artwork.
     const { container } = render(<MessageBlock {...actions} message={pluginRow('message-granola', {
       groupKey: 'name:Granola', name: 'Granola', icon: 'granola', active: false, durationMs: 3_000,

@@ -93,7 +93,7 @@ same as desktop.
   sandbox. Its bridge exposes a small named API and never exposes `ipcRenderer`,
   environment variables, filesystem paths, or arbitrary channel names.
 - Every IPC argument is parsed before use.
-- Five window kinds are trusted IPC senders: main, Sidekicks, settings, meeting, and the
+- Four window kinds are trusted IPC senders: main, Sidekicks, settings, and the
   deep-link failure window. Handlers that must not be reachable from every one of
   them narrow further — `assertDeepLinkErrorIpcSender` admits only the failure
   window, because its channels read and close that window. The failure window's

@@ -1,3 +1,5 @@
+import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
+import type { ConversationInitialization, PreparedConversation } from "@rally/contracts";
 import { CreateWorkstreamRequestSchema, asSubstreamId, asWorkstreamId } from "@rally/contracts";
 import type {
   DemoSeed,
@@ -61,6 +63,8 @@ interface ReceiptRow {
 }
 
 interface CreateOptions {
+  contentIdentityHash?: string;
+  initialization?: ConversationInitialization;
   /** Authority snapshot already resolved by the owning HTTP route in this request. */
   authorityControl?: WorkstreamAuthorityControl;
   openingStructuredContent?: unknown;
@@ -217,13 +221,24 @@ export class WorkstreamObjectCreationService {
     private readonly defer?: (task: Promise<unknown>) => void,
   ) {}
 
+  /** Store prepared facts through the same receipt, membership and publication workflow. */
+  async createPrepared(
+    input: Omit<CreateInput, "openingMessage" | "attachmentIds" | "mentions">,
+    conversation: PreparedConversation,
+    options: Omit<CreateOptions, "initialization" | "seed" | "openingStructuredContent"> = {},
+  ) {
+    return this.create({ ...input, objective: input.objective ?? input.title, openingMessage: "", attachmentIds: [] }, {
+      ...options, initialization: { kind: "history", conversation, ...(options.contentIdentityHash ? { identityHash: options.contentIdentityHash } : {}) },
+    });
+  }
+
   async create(input: CreateInput, options: CreateOptions = {}): Promise<{
     workstream: Workstream;
     turnId: string;
-    harnessRunId: string;
+    harnessRunId: string | null;
   }> {
     const span = options.span ?? noFlowSpan;
-    const body = CreateWorkstreamRequestSchema.parse(input);
+    const body = ((options.initialization?.kind === "history") ? WorkstreamCreationFieldsSchema : CreateWorkstreamRequestSchema).parse(input);
     // Named for the second read it is: `POST /workstreams` already resolved the
     // authority control row before choosing this service, and a span of its own
     // is where that duplicated round trip becomes visible instead of hiding
@@ -248,6 +263,8 @@ export class WorkstreamObjectCreationService {
     const { mentions: requestMentions, ...hashBody } = body;
     const requestHash = workstreamImportHash({
       ...hashBody,
+      ...((options.initialization?.kind === "history") ? { initialization: options.initialization?.kind === "history" && options.initialization.identityHash
+        ? { kind: "history", identityHash: options.initialization.identityHash } : options.initialization } : {}),
       // Keep empty mentions compatible with receipts reserved by the previous
       // Worker during a rolling deploy. Non-empty spans change the durable
       // message and therefore remain part of the idempotency identity.
@@ -299,7 +316,7 @@ export class WorkstreamObjectCreationService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    if (receipt.state === "completed" && receipt.message_id && receipt.harness_run_id) {
+    if (receipt.state === "completed" && receipt.message_id && (receipt.harness_run_id || (options.initialization?.kind === "history"))) {
       // A replayed create is a different latency question from a first one, so
       // it is labelled rather than folded into the same distribution.
       span.setAttributes({ "rally.create.path": "replayed_receipt" });
@@ -435,6 +452,7 @@ export class WorkstreamObjectCreationService {
       emailAddress: email.emailAddress,
       creatorUserId: this.auth.userId,
       openingMessage: body.openingMessage,
+      ...((options.initialization?.kind === "history") ? { initialization: options.initialization } : {}),
       mentions: body.mentions,
       openingStructuredContent: options.openingStructuredContent ?? null,
       clientMessageId: body.clientMessageId,
@@ -519,6 +537,7 @@ export class WorkstreamObjectCreationService {
           objective,
           openingMessage: body.openingMessage,
           provisionalTitle: title,
+          useConversationContext: options.initialization?.kind === "history",
         },
       ).catch((error: unknown) => {
         logWarn(this.env, "workstream_first_naming_failed", {

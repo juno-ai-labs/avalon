@@ -25,7 +25,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     activeWorkspace: active,
     attention: {
       [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-        waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true,
+        waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true, unreadAndNeedsInputCount: 3,
       },
     },
     currentUser,
@@ -126,7 +126,7 @@ describe('workspace account menu', () => {
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true,
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, unreadAndNeedsInputCount: 1,
         },
       },
     });
@@ -155,7 +155,7 @@ describe('workspace account menu', () => {
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true,
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, unreadAndNeedsInputCount: 1,
         },
       },
     });

@@ -39,8 +39,7 @@ export type DesktopDeepLinkIntent =
       attemptId: string | null;
       errorCode: string | null;
       region: WorkspaceTargetRegion | null;
-    }
-  | { kind: "note"; noteId: string };
+    };
 
 function exactKeys(parameters: URLSearchParams, required: readonly string[], optional: readonly string[] = []): boolean {
   const entries = [...parameters.keys()];
@@ -170,10 +169,6 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     return UUID_PATTERN.test(workstreamId) && !url.search
       ? { kind: "workstream", workstreamId, target, ...(substreamId ? { substreamId } : {}) }
       : null;
-  }
-  if (url.hostname === "notes") {
-    const noteId = url.pathname.slice(1);
-    return !target && UUID_PATTERN.test(noteId) && !url.search ? { kind: "note", noteId } : null;
   }
   if (url.hostname === "settings") {
     const section = url.pathname.slice(1);

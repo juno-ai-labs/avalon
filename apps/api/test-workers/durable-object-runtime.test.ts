@@ -1138,7 +1138,7 @@ describe("Durable Objects in the Workers runtime", () => {
         // Retired in schema version 3. Version 1 still creates them and always
         // will — its statements are hashed into the migration receipt — so a
         // fresh object proves the drop only by not having them at the end.
-        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist"],
+        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets"],
       },
     ] as const;
 
@@ -1867,14 +1867,14 @@ describe("Durable Objects in the Workers runtime", () => {
     try {
       const delivered = nextMessage(socket);
       await expect(stub.notifyProductFeatureFlagChanged(
-        "meeting-recording-enabled",
+        "suggested-work-enabled",
         WORKSPACE_ID,
         "wnam",
       )).resolves.toBe(1);
       expect(JSON.parse(String((await delivered).data))).toMatchObject({
         type: "workspace_feature_flags",
-        changedFlag: "meeting-recording-enabled",
-        flags: { meetingRecordingEnabled: false },
+        changedFlag: "suggested-work-enabled",
+        flags: { suggestedWorkEnabled: false },
       });
     } finally {
       socket.close(1000, "test complete");
@@ -2544,7 +2544,6 @@ describe("Durable Objects in the Workers runtime", () => {
     const subscriptionId = "00000000-0000-7000-8000-000000000704";
     const workstreamSubscriptionId = "00000000-0000-7000-8000-000000000709";
     const resourceId = "00000000-0000-7000-8000-000000000705";
-    const noteId = "00000000-0000-7000-8000-000000000706";
     await expect(stub.executeRuntimeSql({
       workspaceId: WORKSPACE_ID,
       requestId: "00000000-0000-7000-8000-000000000707",
@@ -2555,14 +2554,6 @@ describe("Durable Objects in the Workers runtime", () => {
             VALUES (?, ?, 'note', 'avalon', 'Standup', '2026-08-21T19:00:00.000Z',
                     '2026-08-21T19:00:00.000Z')`,
           params: [resourceId, WORKSPACE_ID],
-        },
-        {
-          sql: `INSERT INTO notes
-            (id, workspace_id, owner_user_id, resource_id, scope, title,
-             last_activity_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'workspace', 'Standup', '2026-08-21T20:30:00.000Z',
-                    '2026-08-21T19:00:00.000Z', '2026-08-21T20:30:00.000Z')`,
-          params: [noteId, WORKSPACE_ID, USER_ID, resourceId],
         },
       ],
     })).resolves.toMatchObject({ status: 200 });
@@ -2627,12 +2618,12 @@ describe("Durable Objects in the Workers runtime", () => {
           automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
           notes: { waterline: number; items: Array<{ id: string; title: string }> };
         };
-        featureFlags: { meetingRecordingEnabled: boolean };
+        featureFlags: { suggestedWorkEnabled: boolean };
       };
 
       expect(event.type).toBe("workspace_sync");
       expect(event.reason).toBe("initial");
-      expect(event.featureFlags).toMatchObject({ meetingRecordingEnabled: false });
+      expect(event.featureFlags).toMatchObject({ suggestedWorkEnabled: false });
       const page = event.sidebar;
       expect(page).toBeDefined();
       expect(page.workstreams.items).toHaveLength(1);
@@ -2648,12 +2639,11 @@ describe("Durable Objects in the Workers runtime", () => {
       // this handler runs on the object's single thread beside the directory
       // read. The REST refresh is what fills it in.
       expect(page.automations.items[0]?.emailAddress).toBeNull();
-      expect(page.notes.items).toHaveLength(1);
-      expect(page.notes.items[0]).toMatchObject({ id: noteId, title: "Standup" });
+      expect(page.notes.items).toEqual([]);
       // The batch carries the same counters the pushes carry, so the client
       // can order the opening list against everything that follows it.
       expect(page.automations.waterline).toBeGreaterThan(0);
-      expect(page.notes.waterline).toBeGreaterThan(0);
+      expect(page.notes.waterline).toBeGreaterThanOrEqual(0);
     } finally {
       socket!.close(1000, "test complete");
     }
@@ -2860,7 +2850,6 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
     const resourceId = "00000000-0000-7000-8000-000000000811";
-    const noteId = "00000000-0000-7000-8000-000000000812";
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -2890,14 +2879,6 @@ describe("Durable Objects in the Workers runtime", () => {
               VALUES (?, ?, 'note', 'avalon', 'Retro', '2026-08-21T19:00:00.000Z',
                       '2026-08-21T19:00:00.000Z')`,
             params: [resourceId, WORKSPACE_ID],
-          },
-          {
-            sql: `INSERT INTO notes
-              (id, workspace_id, owner_user_id, resource_id, scope, title,
-               last_activity_at, created_at, updated_at)
-              VALUES (?, ?, ?, ?, 'workspace', 'Retro', '2026-08-21T20:00:00.000Z',
-                      '2026-08-21T19:00:00.000Z', '2026-08-21T20:00:00.000Z')`,
-            params: [noteId, WORKSPACE_ID, USER_ID, resourceId],
           },
         ],
       })).resolves.toMatchObject({ status: 200 });

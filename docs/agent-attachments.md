@@ -12,6 +12,14 @@ Non-image bytes never enter transcript projection. A triggering image may be
 visible immediately, but its durable manifest and derivative are still the
 source of truth for retry, replay, and compaction recovery.
 
+Imported user attachments and assistant artifact files use the verified upload
+pipeline and per-turn canonical attachment relationships. Import retry reconciliation
+checks operation identity, bytes and the intended descriptor. Prepared conversation
+receipts own reservations separately from live input mailboxes; definite failures
+release holds, while canonical resource projection releases committed holds. Both
+historical roles retain model manifests. Unavailable originals remain references,
+and extracted text is labeled separately. See [session import](session-import.md).
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -638,6 +646,22 @@ lazy and reused by exact original hash plus extractor version; only scanned PDFs
 need the injected provider OCR path. Index storage grows with bounded chunks and
 terms rather than duplicating attachment text. Future changes must preserve those
 cheap discovery and continuation paths.
+
+## Changelog
+
+### 2026-09-15 — Share prepared conversation file ownership
+
+Imported user attachments and assistant artifact files use the verified upload
+pipeline and per-turn canonical attachment relationships. Import retry reconciliation
+checks operation identity, bytes and the intended descriptor. Prepared conversation
+receipts own reservations separately from live input mailboxes; definite failures
+release holds, while canonical resource projection releases committed holds. Both
+historical roles retain model manifests. Unavailable originals remain references,
+and extracted text is labeled separately. See [session import](session-import.md).
+
+The separate durable preparation owner prevents file holds from depending on a
+live-message mailbox that imported history never creates. Fake pending messages
+and generation receipts were rejected because they conflate storage with execution.
 
 ### 2026-09-11 — An attachment is reachable and advertised, separately
 

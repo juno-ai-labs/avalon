@@ -37,7 +37,7 @@ workspace credential carries its immutable region; the active-workspace binding
 and every ordered-recency entry are `(region, workspace_id)` pairs in
 device-local presentation state. The pair matters even when UUIDs happen to
 collide across regions: credential replacement, profile lookup, attention,
-departure, React keys, and the meeting guard all use the complete binding.
+departure and React keys all use the complete binding.
 Selecting a cached workspace rewrites only that active selection. A network
 activation may finish after another selection; its credential and profile are
 retained, but an intent generation prevents the late response from taking over
@@ -160,9 +160,11 @@ fails to list.
 
 The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
-credential may call `GET /workspace/attention`, which returns only an addressed
-count, its highest-priority reason, and an unread-activity boolean. Focus and
-account-menu opening refresh the projection. The fixed periodic cadence and any
+credential may call `GET /workspace/attention`, which returns an addressed
+count, its highest-priority reason, an unread-activity boolean, and
+`unreadAndNeedsInputCount` (unread or participant-needs-input streams; Apple
+push uses that number as `aps.badge`). Focus and account-menu opening refresh
+the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
@@ -193,8 +195,7 @@ automation route.
 
 An explicit handoff is allowed to change the foreground workspace because the
 person followed a destination. Background attention and reconciliation never do.
-For a handoff into another workspace, if the meeting guard refuses the change,
-the credential is missing, or regional membership has been revoked, activation
+For a handoff into another workspace, if the credential is missing, or regional membership has been revoked, activation
 fails closed: the current workspace and route remain unchanged and the deep-link
 failure window explains that the target could not be accessed. A handoff into
 the active workspace whose membership has ended is refused by the regional API
@@ -288,12 +289,8 @@ When on, rows follow device recency, show a region tag only across mixed regions
 and keep the menu open while a switch is pending. Offline selection is refused
 before the current workspace is disturbed.
 
-A meeting window registers live capture with Electron main before recording
-starts. Switching, creating, accepting, or leaving the active workspace is
-refused until that capture stops, and recording cannot start while any of those
-workspace transitions is pending. This bidirectional guard is main-owned because
-Settings, meeting, and the main window are separate renderers following one
-active workspace.
+Built-in meeting windows and their workspace-switching guard have been retired.
+Composer dictation remains tied to its composer lifecycle.
 
 ## Invariants
 

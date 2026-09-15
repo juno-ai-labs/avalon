@@ -321,7 +321,10 @@ describe('useWorkstreamControlSocket', () => {
     await flushPromises();
     const first = FakeWebSocket.instances[0]!;
     act(() => first.open());
+    act(() => first.message(metadata(1, { backgroundAgentCount: 2 })));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(2);
     act(() => first.close(1012));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBeNull();
     await act(async () => {
       await vi.runOnlyPendingTimersAsync();
     });
@@ -350,6 +353,8 @@ describe('useWorkstreamControlSocket', () => {
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
     expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
+    act(() => second.message(metadata(2, { backgroundAgentCount: 1 })));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(1);
     cancelWorkstreamFeedOpen(workstreamId, 100);
   });
 
@@ -369,7 +374,10 @@ describe('useWorkstreamControlSocket', () => {
     await flushPromises();
     const first = FakeWebSocket.instances[0]!;
     act(() => first.open());
+    act(() => first.message(metadata(1, { backgroundAgentCount: 2 })));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(2);
     act(() => first.close(1012));
+    expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBeNull();
     await act(async () => { await vi.runOnlyPendingTimersAsync(); });
     await flushPromises();
     act(() => FakeWebSocket.instances[1]!.open());

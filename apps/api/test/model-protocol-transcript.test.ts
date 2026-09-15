@@ -234,6 +234,19 @@ function transcriptPort(
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("preserves imported roles without attributing original prompts to the importer", async () => {
+    const provenance = { kind: "imported_session", source: { provider: "claude", url: null }, importedByUserId: USER_ID, importedByName: "Adam" };
+    const result = await __integrationTesting.projectModelProtocolTranscript(projectionEnv([], {}), {
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null,
+    }, [
+      message("00000000-0000-4000-8000-000000000080", 1, { author: "human", textContent: "Original question", structuredContent: provenance }),
+      message("00000000-0000-4000-8000-000000000081", 2, { author: "agent", textContent: "Original answer", structuredContent: provenance }),
+    ]);
+    expect(result.messages.map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: "user", content: "Original question" }, { role: "assistant", content: "Original answer" },
+    ]);
+  });
+
   it("canonicalizes persisted model-message keys by UTF-16 code unit", () => {
     expect(canonicalModelMessageJson({
       role: "user",
@@ -924,7 +937,7 @@ describe("durable UI-to-model transcript projection", () => {
     expect(listMessages).toHaveBeenCalledTimes(2);
   });
 
-  it("fails before provider projection when an uncompacted transcript exceeds the replay byte ceiling", async () => {
+  it("preserves large canonical history for Bind context preparation", async () => {
     const oversized = message("00000000-0000-4000-8000-000000000098", 1, {
       author: "human",
       textContent: "x".repeat(4 * 1_024 * 1_024 + 1),
@@ -934,7 +947,7 @@ describe("durable UI-to-model transcript projection", () => {
       transcriptPort({}),
       { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       async () => [oversized],
-    )).rejects.toMatchObject({ code: "context_limit_exceeded" });
+    )).resolves.toEqual([oversized]);
   });
 
   it.each(["get", "body"] as const)(

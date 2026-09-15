@@ -48,6 +48,7 @@ with an executor:
   mode: "read",                        // read | write
   idempotency: "safe",                 // safe | provider_key | record_before_execute
   timeoutMs: 30_000,                   // optional per-tool ceiling
+  longRunning: true,                  // optional advisory background-execution hint
 }
 ```
 
@@ -63,6 +64,14 @@ Canonical names are **local to their owning plugin** and must not repeat the
 plugin prefix: Bind prepends the plugin's short wire name when it renders the
 model-facing name, so a tool called `github_list_issues` inside the GitHub
 plugin reaches the model as `github_github_list_issues`.
+
+`longRunning` is optional tool-definition metadata, not an input argument.
+True adds a short background-execution hint to the model-visible description
+when tools are loaded and advertised; false or omission leaves it unchanged.
+It does not alter routing, permissions, serialization, deadlines, or retries.
+The model may call an already-asynchronous tool directly, and a background
+agent may execute it without delegating again. Image generation and editing
+are the initial annotated tools.
 
 `core_get_connector_connection_state` and `core_show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
@@ -103,13 +112,24 @@ the write happens for real. The fix is not to special-case that tool; it is to
 ignored is worse than one that does not exist.
 
 Do instead: **make the executor parse its own arguments with a strict schema.**
-`additionalProperties: false` on `inputSchema` is a *declaration to the model*,
+`additionalProperties: false` on `inputSchema` declares a closed shape, but
+Bind currently removes it from provider requests for xAI compatibility. It is
 not an enforcement point — nothing in the harness validates arguments against it
 (see [Mechanics](#mechanics--where-the-rules-are-enforced)). What actually
 rejects an undeclared key is a `.strict()` zod parse at the top of the executor,
 which is why the connector tools parse `rawArgs` per tool before doing anything
-with them. Declare both: the JSON Schema so the model sees the shape, the strict
-zod parse so a violation is an error rather than a silent drop. The same split
+with them. Declare the JSON Schema and allowed keys in its descriptions, then
+keep the strict zod parse so a violation is an error rather than a silent drop.
+When testing schema/executor agreement, inspect the serialized model request:
+`rawJsonSchema` still passes through Bind's sanitizer before Rally's root repair,
+and testing only the authored schema misses its compatibility transformations.
+The Gmail send/draft schemas additionally preserve their closed objects using
+complete required-key variants and `maxProperties` derived from each variant's
+key count; see [the Google contract](connectors.md#google). Their request tests
+use Ajv because Zod's JSON Schema importer ignores `maxProperties`. This is a
+local compatibility representation, not permission to weaken runtime parsing or
+to assume strict structured-output restrictions apply to non-strict tool calls.
+The same split
 governs a constraint *between* parameters: an exclusive choice belongs in the
 `description` and the executor's parse, because the schema sanitizer erases the
 `oneOf` idiom that looks like it would carry it (see

@@ -348,7 +348,7 @@ not create.
 webhooks — recovers with one press of Test. A create recorded as unknown before
 this change stays unknown; that connection is disconnected and connected again.
 
-Shipped in the pull request for this change.
+PR [#779](https://github.com/juno-ai-labs/avalon/pull/779).
 
 ### 2026-09-13 — A verified delivery is the evidence a manual registration cannot otherwise produce
 

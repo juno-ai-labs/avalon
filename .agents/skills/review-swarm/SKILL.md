@@ -9,7 +9,7 @@ All code reviews will classify issues into P0 (must fix), P1 (should fix), P2 (b
 Use sub-agents to do a code review using each of the personas under the "Sub-Agents" header. This means 1 sub-agent per reviewer persona - so that they all run in parallel. Under each sub-agent section use the provided information to generate a great system prompt for that agent to do a comprehensive code review.
 
 - Use effort `high` for each sub-agent.
-- Use the most current Opus model for each sub-agent.
+- Use the most current Opus (Claude), Sol (ChatGPT), or equivalent model for each sub-agent.
 
 ## What every sub-agent needs to know about this repository
 

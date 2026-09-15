@@ -1,6 +1,11 @@
-import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
-import type { Region } from "@rally/contracts/regions";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
+import type { Region } from "@rally/contracts/regions";
+import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
+import {
+  automaticApplicationIcon,
+  parseApplicationIconId,
+  type DesktopApplicationIconState,
+} from '../../common/application-icons';
 import type {
   RallyDesktopBridge,
   DesktopApplicationSettings,
@@ -9,11 +14,6 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../../common/desktop';
-import {
-  automaticApplicationIcon,
-  parseApplicationIconId,
-  type DesktopApplicationIconState,
-} from '../../common/application-icons';
 
 export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
 
@@ -497,44 +497,13 @@ const browserBridge: RallyDesktopBridge = {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;
   },
-  async openMeetingNotes(noteId) {
-    const target = new URL(window.location.href);
-    target.search = new URLSearchParams({
-      surface: 'meeting',
-      noteId: noteId ?? crypto.randomUUID(),
-    }).toString();
-    target.hash = '/meeting';
-    window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
-  },
-  async closeMeetingNotes(noteId) {
-    // A browser tab has no sibling window to hand the note to; the opener may
-    // not even be reachable. Closing is the whole of what this can do here.
-    void noteId;
-    window.close();
-  },
-  async setMeetingRecordingState() {
-    // Browser development has no main-process workspace switch coordinator.
-  },
-  async getMeetingAudioPermissions() {
-    return { microphone: 'unknown', systemAudio: 'unknown' };
-  },
-  async prepareMeetingAudioPermissions() {
-    return { microphone: 'unknown', systemAudio: 'unknown' };
-  },
-  async startMeetingSystemAudioCapture() {
+  async startSystemAudioCapture() {
     throw new Error('Native computer audio capture is available only in the Rally desktop app.');
   },
-  async stopMeetingSystemAudioCapture() {
+  async stopSystemAudioCapture() {
     // No native capture exists in a browser tab.
   },
-  onMeetingSystemAudioData() {
-    return () => undefined;
-  },
-  async openMeetingAudioSettings() {
-    // Browser permission recovery is owned by the browser chrome rather than
-    // an operating-system settings pane Rally can open directly.
-  },
-  onMeetingCloseRequested() {
+  onSystemAudioData() {
     return () => undefined;
   },
   onSettingsSectionRequested() {

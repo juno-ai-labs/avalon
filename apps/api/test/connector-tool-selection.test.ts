@@ -40,10 +40,7 @@ const AUTOMATION_RESOURCE_ID = "00000000-0000-4000-8000-000000000013";
 /** An automation this room owns, the one an edit from the room may name. */
 const OWNED_AUTOMATION_ID = "00000000-0000-4000-8000-000000000015";
 /** A second one, so a room's list is more than the single row it must contain. */
-const SECOND_OWNED_AUTOMATION_ID = "00000000-0000-4000-8000-000000000016";
 /** An automation another room owns, which no edit from this room may name. */
-const FOREIGN_AUTOMATION_ID = "00000000-0000-4000-8000-000000000017";
-const OTHER_WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000018");
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
   "drive.read",
@@ -630,11 +627,46 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
   return {
     ...parent,
     harnessRunId: CHILD_HARNESS_RUN_ID,
-    reason: "sub_agent",
+    substreamId: asSubstreamId(CHILD_HARNESS_RUN_ID),
+    backgroundAgent: true,
+    reason: "agent_message",
   };
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("gives background substreams normal writes, independent discovery and recursive agent tools", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID),
+    ]);
+    const runtimeEnv = createTestEnv({ ...env(database), FIRECRAWL_API_KEY: "firecrawl-test-key" });
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput());
+    expect(pluginConnectionIds(selected)).toEqual(expect.arrayContaining([
+      WORKSPACE_CONNECTION_ID, OWNER_CONNECTION_ID,
+    ]));
+    expect(selected.plugins.find((plugin) => plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`)
+      ?.tools.some((tool) => tool.definition.mode === "write")).toBe(true);
+    expect(selected.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
+      ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining([
+        "start_agent", "list_agents", "send_message", "reply", "stop_agent",
+      ]));
+    expect(selected.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
+  });
+
+  it("offers drafting only to Sidekick authoring and communication to ordinary conversations", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const runtimeEnv = env(database);
+    const room = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());
+    const authoring = await __integrationTesting.loadHarnessTools(runtimeEnv, automationConversationInput());
+    const child = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput(automationConversationInput()));
+    expect(room.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    expect(child.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
+    expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
+      ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
+  });
+
   it("skips a connection whose connector this deployment does not configure, rather than failing the run", async () => {
     // A rollout gate turned back off leaves its rows in place on purpose, so
     // `registry.get` has a type it has never heard of. Throwing here does not
@@ -838,164 +870,6 @@ describe("connector tools selected for harness runs", () => {
     }, selected)).toThrow("outside this run scope");
   });
 
-  it("installs one durable read-only sub-agent tool into the root core surface", async () => {
-    const database = new ToolSelectionDatabase([]);
-    const parentInput = workflowInput();
-    const selected = await __integrationTesting.loadHarnessTools(env(database), parentInput);
-
-    const tool = await __integrationTesting.installInlineChildAgentTool({
-      env: env(database),
-      input: parentInput,
-      parentLease: () => ({
-        attemptId: "attempt-parent",
-        owner: "owner-parent",
-        attemptNumber: 1,
-        leaseExpiresAt: "2099-01-01T00:00:00.000Z",
-      }),
-      parentSignal: new AbortController().signal,
-      runAuthoritySnapshot: {
-        automationRunId: null,
-        automationTemplateVersionId: null,
-        triggerType: null,
-      },
-      harnessTools: selected,
-      activeCredentialPluginIds: new Set(),
-    });
-
-    expect(tool.definition).toMatchObject({
-      name: "run_subagent",
-      capability: "subagent.run",
-      mode: "read",
-      idempotency: "safe",
-    });
-    expect(selected.coreTools.filter(({ definition }) =>
-      definition.name === "run_subagent"
-    )).toHaveLength(1);
-    expect(selected.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "rally:core",
-      "rally:tables",
-      "rally:memory",
-    ]);
-    const corePlugin = selected.corePlugins.find((plugin) => plugin.canonicalId === "rally:core");
-    expect(corePlugin?.tools.map(({ definition }) => definition.name)).toEqual([
-        "current_time",
-        "get_connector_connection_state",
-        "show_connector_connection",
-        "request_elicitation",
-      ]);
-    expect(corePlugin?.systemMessage).toContain("call core_get_connector_connection_state first");
-    expect(corePlugin?.systemMessage).toContain(
-      "call core_show_connector_connection with the same connectorId and scope",
-    );
-    expect(selected.plugins.find((plugin) =>
-      plugin.canonicalId === "rally:workstream"
-    )?.tools.filter(({ definition }) => definition.name === "run_subagent")).toHaveLength(1);
-    expect(selected.plugins.find((plugin) =>
-      plugin.canonicalId === "rally:workstream"
-    )).toMatchObject({
-      modelId: "rally_workstream",
-      shortWireName: "workstream",
-      preload: true,
-      explicit: true,
-    });
-    expect(selected.plugins.find((plugin) =>
-      plugin.canonicalId === "rally:workstream"
-    )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
-      "list_resources",
-      "read_resource",
-      "search_resource",
-      "run_subagent",
-    ]));
-    expect(selected.tools.filter(({ definition }) =>
-      definition.name === "run_subagent"
-    )).toHaveLength(1);
-    expect(selected.modeByTool.get("workstream_run_subagent")).toBe("read");
-    expect(selected.idempotencyByTool.get("workstream_run_subagent")).toBe("safe");
-  });
-
-  it("builds a non-recursive read-only child surface from only inherited active plugins", async () => {
-    const database = new ToolSelectionDatabase([
-      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
-      connection(OWNER_CONNECTION_ID, "personal", USER_ID),
-    ]);
-    const parentInput = workflowInput();
-    const runtimeEnv = createTestEnv({
-      ...env(database),
-      FIRECRAWL_API_KEY: "firecrawl-test-key",
-    });
-    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-    // Every work-stream run can draft an automation, so the plugin is on the
-    // parent surface — deferred, so being here costs a catalog entry and no
-    // connector read until somebody loads it.
-    expect(parentTools.plugins.map((plugin) => plugin.canonicalId))
-      .toContain("rally:sidekicks");
-    expect(parentTools.plugins).toHaveLength(5);
-    expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
-      .some((tool) => tool.definition.mode === "write")).toBe(true);
-
-    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
-      env: runtimeEnv,
-      parentInput,
-      childInput: childWorkflowInput(parentInput),
-      parentHarnessTools: parentTools,
-      selectedPluginIds: [`connection:${WORKSPACE_CONNECTION_ID}`],
-      assertChildOwned: async () => undefined,
-    });
-
-    // Not inherited: this surface is read-only and non-recursive, and drafting
-    // an automation is a write a child running on somebody's behalf must not
-    // make on its own.
-    expect(childTools.plugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "rally:workstream",
-      "rally:web",
-      `connection:${WORKSPACE_CONNECTION_ID}`,
-    ]);
-    expect(childTools.plugins[0]).toMatchObject({ preload: true, explicit: true });
-    expect(childTools.plugins[1]).toMatchObject({ preload: false, explicit: false });
-    expect(childTools.plugins[2]).toMatchObject({ preload: true, explicit: true });
-    expect(childTools.tools.every((tool) => tool.definition.mode === "read")).toBe(true);
-    expect(childTools.plugins[2]?.tools.map((tool) => tool.definition.name)).toEqual([
-      "drive.search",
-      "drive.get_metadata",
-      "drive.download",
-      "drive.export",
-      "docs.read_document",
-      "sheets.read_spreadsheet",
-      "sheets.read_values",
-    ]);
-    expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "list_resources",
-      "read_resource",
-      "search",
-      "fetch",
-      "search_resource",
-      "view_resource",
-      "summarize_resource",
-      // Read-only and safe to repeat, so a read-only child inherits them like
-      // every other resource read.
-      "describe_artifact_data",
-      "query_artifact_data",
-      "current_time",
-    ]);
-    expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
-      .toBe(false);
-    expect(childTools.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "rally:core",
-    ]);
-    expect(childTools.corePlugins[0]?.systemMessage).not.toContain("connector");
-    expect(childTools.corePlugins[0]?.systemMessage).not.toContain("core_request_elicitation");
-    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("run_subagent");
-    expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
-    expect(childTools.frozenConnections.has(`connection:${WORKSPACE_CONNECTION_ID}`)).toBe(true);
-    expect(__integrationTesting.eligibleConnectionCapabilityMap(
-      childTools.plugins,
-      childTools.frozenConnections,
-    )).toEqual({
-      [WORKSPACE_CONNECTION_ID]: childTools.plugins[2]?.tools.map((tool) =>
-        tool.definition.capability),
-    });
-  });
-
   it("shares a durable connector activation with ready automation validation", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
@@ -1095,7 +969,7 @@ describe("connector tools selected for harness runs", () => {
         capability: "rally.sidekick.evaluators.set",
       }),
     );
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await __integrationTesting.loadHarnessTools(env(database), automationConversationInput());
     const automations = selected.plugins.find((plugin) =>
       plugin.canonicalId === "rally:sidekicks"
     );
@@ -1155,7 +1029,7 @@ describe("connector tools selected for harness runs", () => {
       .resolves.toMatchObject({ output: { accepted: true } });
     expect(database.submittedDefinitions).toHaveLength(1);
     expect(database.submittedDefinitions[0]).toMatchObject({
-      automationId: HARNESS_RUN_ID,
+      automationId: AUTOMATION_ID,
       evaluatorRules,
     });
     expect(database.proposedDraftCards).toHaveLength(0);
@@ -1171,7 +1045,7 @@ describe("connector tools selected for harness runs", () => {
     await expect(submit.execute(readyDraft, { toolCallId: "submit-after-drop" } as never))
       .rejects.toThrow("Load and inspect plugin_google");
 
-    const replacement = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const replacement = await __integrationTesting.loadHarnessTools(env(database), automationConversationInput());
     __integrationTesting.recordCredentialPluginActivation(
       `connection:${WORKSPACE_CONNECTION_ID}`,
       replacement.frozenConnections,
@@ -1187,7 +1061,7 @@ describe("connector tools selected for harness runs", () => {
       { toolCallId: "submit-after-eviction" } as never,
     )).resolves.toMatchObject({ output: { accepted: true } });
     expect(database.submittedDefinitions.map((draft) => draft.automationId))
-      .toEqual([HARNESS_RUN_ID, HARNESS_RUN_ID]);
+      .toEqual([AUTOMATION_ID, AUTOMATION_ID]);
     expect(database.proposedDraftCards).toHaveLength(0);
   });
 
@@ -1262,7 +1136,7 @@ describe("connector tools selected for harness runs", () => {
         capability: "rally.sidekick.evaluators.set",
       }),
     );
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await __integrationTesting.loadHarnessTools(env(database), automationConversationInput());
     const automations = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     if (!automations) throw new Error("automations_plugin_missing");
     __integrationTesting.recordCredentialPluginActivation(
@@ -1303,161 +1177,6 @@ describe("connector tools selected for harness runs", () => {
       evaluatorRules: { evaluators: Array<{ source: Record<string, unknown> }> };
     };
     expect(submitted.evaluatorRules.evaluators[0]!.source).not.toHaveProperty("resourceId");
-  });
-
-  it("inherits tools committed into a deferred parent plugin after activation", async () => {
-    const database = new ToolSelectionDatabase([
-      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
-    ]);
-    const parentInput = workflowInput();
-    const runtimeEnv = env(database);
-    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-    const pluginId = `connection:${WORKSPACE_CONNECTION_ID}`;
-    const parentPlugin = parentTools.plugins.find((plugin) => plugin.canonicalId === pluginId);
-    if (!parentPlugin) throw new Error("expected workspace plugin");
-    const discoveredReadTool = parentPlugin.tools.find((tool) => tool.definition.name === "drive.search");
-    if (!discoveredReadTool) throw new Error("expected a read tool fixture");
-    const hostArray = parentPlugin.tools;
-    hostArray.splice(0);
-
-    expect(__integrationTesting.installDynamicPluginTools(hostArray, [discoveredReadTool])).toBe(hostArray);
-    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
-      env: runtimeEnv,
-      parentInput,
-      childInput: childWorkflowInput(parentInput),
-      parentHarnessTools: parentTools,
-      selectedPluginIds: [pluginId],
-      assertChildOwned: async () => undefined,
-    });
-
-    expect(childTools.plugins.find((plugin) => plugin.canonicalId === pluginId)
-      ?.tools.map((tool) => tool.definition.name)).toEqual(["drive.search"]);
-  });
-
-  it("keeps the child's built-in authorization set narrower than the parent's", async () => {
-    const database = new ToolSelectionDatabase([]);
-    const parentInput = workflowInput();
-    const runtimeEnv = createTestEnv({
-      ...env(database),
-      FIRECRAWL_API_KEY: "firecrawl-test-key",
-      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
-      AZURE_INFERENCE_API_KEY: "azure-test-key",
-    });
-    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-    expect(__integrationTesting.builtinPluginAuthorization("rally:multimodal-generation", parentTools))
-      .toBe("authorized");
-
-    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
-      env: runtimeEnv,
-      parentInput,
-      childInput: childWorkflowInput(parentInput),
-      parentHarnessTools: parentTools,
-      selectedPluginIds: [],
-      assertChildOwned: async () => undefined,
-    });
-
-    // A sub-agent assembles its own built-ins, so authorization has to be
-    // answered from the child's set. Inheriting the parent's would activate a
-    // plugin the child never registered — and multimodal generation is the
-    // case that matters, since it is all writes.
-    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream", "rally:web"]));
-    expect(__integrationTesting.builtinPluginAuthorization("rally:multimodal-generation", childTools))
-      .toBe("denied");
-    expect(__integrationTesting.builtinPluginAuthorization("rally:terminal", childTools)).toBe("denied");
-    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("authorized");
-  });
-
-  it("gives an inbound-email child the same web tools as any other child", async () => {
-    const database = new ToolSelectionDatabase([]);
-    const parentInput = workflowInput();
-    parentInput.reason = "inbound_email";
-    const runtimeEnv = createTestEnv({
-      ...env(database),
-      FIRECRAWL_API_KEY: "firecrawl-test-key",
-    });
-    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-
-    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
-      env: runtimeEnv,
-      parentInput,
-      childInput: childWorkflowInput(parentInput),
-      parentHarnessTools: parentTools,
-      selectedPluginIds: [],
-      assertChildOwned: async () => undefined,
-    });
-
-    // `search` and `fetch` are here now. The parent's trigger used to strip
-    // them from the child as well, on the same reasoning the parent's own strip
-    // used, and both are gone: a child inherits its parent's read-only surface
-    // and nothing narrows it further for one trigger kind.
-    expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "list_resources",
-      "read_resource",
-      "search",
-      "fetch",
-      "search_resource",
-      "view_resource",
-      "summarize_resource",
-      // Read-only and safe to repeat, so a read-only child inherits them like
-      // every other resource read.
-      "describe_artifact_data",
-      "query_artifact_data",
-      "current_time",
-    ]);
-    // The web plugin registers now that its tools survive, so `load_plugin` for
-    // it is authorized rather than refused against an empty surface.
-    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream", "rally:web"]));
-    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("authorized");
-  });
-
-  it("does not add plugin, schema, or result ceilings to child runs", () => {
-    const defaultLimits = __integrationTesting.childRunLimits(env(new ToolSelectionDatabase([])));
-
-    expect(defaultLimits).not.toHaveProperty("maxActivePlugins");
-    expect(defaultLimits).not.toHaveProperty("maxToolSchemaBytes");
-    expect(defaultLimits).not.toHaveProperty("maxToolResultBytes");
-  });
-
-  it("rejects a child request for a credential plugin not already active in the parent", async () => {
-    const database = new ToolSelectionDatabase([
-      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
-      connection(OWNER_CONNECTION_ID, "personal", USER_ID),
-    ]);
-    const parentInput = workflowInput();
-    const selected = await __integrationTesting.loadHarnessTools(env(database), parentInput);
-    const tool = await __integrationTesting.installInlineChildAgentTool({
-      env: env(database),
-      input: parentInput,
-      parentLease: () => ({
-        attemptId: "attempt-parent",
-        owner: "owner-parent",
-        attemptNumber: 1,
-        leaseExpiresAt: "2099-01-01T00:00:00.000Z",
-      }),
-      parentSignal: new AbortController().signal,
-      runAuthoritySnapshot: {
-        automationRunId: null,
-        automationTemplateVersionId: null,
-        triggerType: null,
-      },
-      harnessTools: selected,
-      activeCredentialPluginIds: new Set([`connection:${WORKSPACE_CONNECTION_ID}`]),
-    });
-
-    await expect(tool.execute(
-      {
-        objective: "Read the private plan",
-        pluginIds: ["plugin_google_2"],
-      },
-      {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        harnessRunId: HARNESS_RUN_ID,
-        toolCallId: "tool-inactive-child-plugin",
-        executionPrincipal: { type: "user", userId: USER_ID },
-        signal: new AbortController().signal,
-      },
-    )).rejects.toThrow("only inherit connector plugins already activated");
   });
 
   it("exposes every granted read and write tool from a workspace connection to an ad-hoc workstream", async () => {
@@ -1600,54 +1319,30 @@ describe("connector tools selected for harness runs", () => {
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
   });
 
-  it("demonstrates a new Gmail email with no threading fields, and a reply whose identifiers the tool refuses verbatim", async () => {
+  it.each([
+    {
+      capabilities: ["gmail.read", "gmail.draft", "gmail.send"],
+      expected: [["google_gmail_create_draft", "new"], ["google_gmail_create_draft", "reply"], ["google_gmail_send", "new"], ["google_gmail_send", "reply"]],
+    },
+    { capabilities: ["gmail.send"], expected: [["google_gmail_send", "new"]] },
+    { capabilities: ["gmail.draft"], expected: [["google_gmail_create_draft", "new"]] },
+  ])("demonstrates exactly the Gmail message kinds permitted by $capabilities", async ({ capabilities, expected }) => {
     const database = new ToolSelectionDatabase([
-      connection(
-        OWNER_CONNECTION_ID,
-        "personal",
-        USER_ID,
-        GOOGLE_MAIL_CALENDAR_CAPABILITIES,
-        "2026-07-01T00:00:00.000Z",
-      ),
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities, "2026-07-01T00:00:00.000Z"),
     ]);
-
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
-    const draft = mail?.tools.find((tool) => tool.definition.name === "gmail.create_draft");
-    const drafted = workedExampleCalls(mail?.systemMessage ?? "")
-      .filter((call) => call.wireName === "google_gmail_create_draft")
-      .map((call) => call.arguments);
-
-    // The reply was once the only draft example on this surface. A model
-    // composing a brand-new email had nothing else to copy, so it copied the
-    // reply, filled in identifiers a new conversation does not have, and
-    // reported the tool as requiring reply fields. The non-threaded shape is
-    // demonstrated as its own call, and it is a call the tool accepts.
-    const newEmail = drafted.filter((call) =>
-      !("threadId" in call) && !("inReplyTo" in call) && !("references" in call));
-    expect(newEmail).toHaveLength(1);
-    expect(draft?.validateInput?.(newEmail[0])).toBeNull();
-
-    // And the reply example's identifiers stay placeholders. That is the point
-    // of them: a placeholder that parses — the angle-bracketed
-    // `<hit.messageIdHeader>` that stood here satisfied the Message-ID rule
-    // exactly — is forwarded to Gmail, which rejects the call without naming a
-    // field. One that does not parse is refused here, against the field to
-    // fill in.
-    const reply = drafted.filter((call) => "threadId" in call);
-    expect(reply).toHaveLength(1);
-    expect(draft?.validateInput?.(reply[0])).toBeInstanceOf(Error);
-
-    // Both literals are pinned because only one of them is load-bearing for the
-    // assertion above. `inReplyTo` carries it through `RfcMessageIdSchema`;
-    // `threadId` is an unformatted `min(1)` string, so every placeholder parses
-    // and restoring `<hit.threadId>` alone leaves the whole-call assertion
-    // green. `threadId` is also the field with no argument-naming on Google's
-    // side, per the open consequence in docs/connectors.md — it travels in the
-    // request body, which `googleRejectedArgument` cannot read — so it is the
-    // one that most needs to stay a placeholder, and the literal is the only
-    // guard available for it until that check exists.
-    expect(reply[0]).toMatchObject({ threadId: "…", inReplyTo: "…" });
+    expect(mail?.systemMessage?.includes("To reply, pass message with kind=reply")).toBe(capabilities.includes("gmail.read"));
+    const examples = workedExampleCalls(mail?.systemMessage ?? "")
+      .filter((call) => /google_gmail_(?:send|create_draft)$/u.test(call.wireName));
+    expect(examples.map((call) => [call.wireName, call.arguments])).toMatchObject(
+      expected.map(([wireName, kind]) => [wireName, { message: { kind } }]),
+    );
+    for (const call of examples) {
+      const name = call.wireName.endsWith("create_draft") ? "gmail.create_draft" : "gmail.send";
+      const tool = mail?.tools.find((candidate) => candidate.definition.name === name);
+      expect(tool?.validateInput?.(call.arguments)).toBeNull();
+    }
   });
 
   it("preloads an explicitly attached workspace identity without dropping another eligible personal plugin", async () => {
@@ -1886,43 +1581,6 @@ describe("connector tools selected for harness runs", () => {
 });
 
 describe("editing an automation a conversation already owns", () => {
-  it("writes the named automation's next revision instead of creating another", async () => {
-    const database = new ToolSelectionDatabase([]);
-    database.automationOwners.set(OWNED_AUTOMATION_ID, WORKSTREAM_ID);
-    const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
-
-    await expect(submit.execute(
-      { ...manualDraft("Weekly digest"), sidekickId: OWNED_AUTOMATION_ID },
-      { toolCallId: "edit-owned" } as never,
-    )).resolves.toMatchObject({ output: { accepted: true } });
-
-    expect(database.submittedDefinitions).toHaveLength(1);
-    expect(database.submittedDefinitions[0]).toMatchObject({
-      automationId: OWNED_AUTOMATION_ID,
-      draft: { name: "Weekly digest" },
-    });
-    // The run id is the id a *new* automation would have been given, so an
-    // edit that quietly created one instead would submit under that name.
-    expect(database.submittedDefinitions[0]).not.toMatchObject({ automationId: HARNESS_RUN_ID });
-    expect(database.createdAutomations).toEqual([]);
-    expect(database.proposedDraftCards).toEqual([]);
-  });
-
-  it("refuses an automation another room owns, and submits nothing", async () => {
-    const database = new ToolSelectionDatabase([]);
-    database.automationOwners.set(FOREIGN_AUTOMATION_ID, OTHER_WORKSTREAM_ID);
-    const submit = await automationCreatorTool(database, workflowInput(), "submit_draft");
-
-    await expect(submit.execute(
-      { ...manualDraft("Weekly digest"), sidekickId: FOREIGN_AUTOMATION_ID },
-      { toolCallId: "edit-foreign" } as never,
-    )).rejects.toThrow("not one this work stream owns");
-
-    expect(database.submittedDefinitions).toEqual([]);
-    expect(database.createdAutomations).toEqual([]);
-    expect(database.proposedDraftCards).toEqual([]);
-  });
-
   it("lets an automation's own conversation change only that automation", async () => {
     const database = new ToolSelectionDatabase([]);
     database.automationOwners.set(OWNED_AUTOMATION_ID, WORKSTREAM_ID);
@@ -1951,57 +1609,9 @@ describe("editing an automation a conversation already owns", () => {
     expect(database.proposedDraftCards).toEqual([]);
   });
 
-  it("lists the room's automations with their definitions, and one automation's chat lists only itself", async () => {
+  it("lists only itself from a Sidekick authoring conversation", async () => {
     const database = new ToolSelectionDatabase([]);
-    database.workstreamAutomations.set(WORKSTREAM_ID, [
-      OWNED_AUTOMATION_ID,
-      SECOND_OWNED_AUTOMATION_ID,
-    ]);
-    database.automationDetails.set(OWNED_AUTOMATION_ID, automationDetail(OWNED_AUTOMATION_ID, "Weekly digest"));
-    database.automationDetails.set(
-      SECOND_OWNED_AUTOMATION_ID,
-      automationDetail(SECOND_OWNED_AUTOMATION_ID, "Standup notes", {
-        lifecycle: "paused",
-        status: "paused",
-        acceptedDefinitionRevision: null,
-        currentDefinitionRevision: 1,
-      }),
-    );
     database.automationDetails.set(AUTOMATION_ID, automationDetail(AUTOMATION_ID, "Drive digest"));
-
-    const roomList = await automationCreatorTool(database, workflowInput(), "sidekicks_list");
-    await expect(roomList.execute({}, { toolCallId: "list-in-room" } as never))
-      .resolves.toMatchObject({
-        output: {
-          sidekicks: [
-            {
-              sidekickId: OWNED_AUTOMATION_ID,
-              name: "Weekly digest",
-              lifecycle: "active",
-              scope: "workstream",
-              currentDefinitionRevision: 3,
-              acceptedDefinitionRevision: 2,
-              currentDefinition: { name: "Weekly digest", definitionVersion: 2, triggers: [{ type: "manual" }, { type: "inbound_email" }] },
-            },
-            {
-              sidekickId: SECOND_OWNED_AUTOMATION_ID,
-              name: "Standup notes",
-              lifecycle: "paused",
-              currentDefinitionRevision: 1,
-              acceptedDefinitionRevision: null,
-              currentDefinition: { name: "Standup notes" },
-            },
-          ],
-        },
-      });
-    expect(database.workstreamAutomationListReads).toMatchObject([
-      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, userId: USER_ID },
-    ]);
-    expect(database.detailReads.map((request) => request.automationId))
-      .toEqual([OWNED_AUTOMATION_ID, SECOND_OWNED_AUTOMATION_ID]);
-
-    database.detailReads.length = 0;
-    database.workstreamAutomationListReads.length = 0;
     const ownList = await automationCreatorTool(database, automationConversationInput(), "sidekicks_list");
     await expect(ownList.execute({}, { toolCallId: "list-in-automation" } as never))
       .resolves.toMatchObject({

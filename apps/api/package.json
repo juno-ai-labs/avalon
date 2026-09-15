@@ -62,6 +62,8 @@
     "@cloudflare/vitest-pool-workers": "latest",
     "@cloudflare/workers-types": "latest",
     "@types/upng-js": "2.1.5",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "wrangler": "latest"

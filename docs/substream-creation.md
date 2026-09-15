@@ -12,6 +12,19 @@ The platform currently uses summary-based context with
 `google/gemini-2.5-flash-lite` and creator-only membership. These are shared
 platform policies, not controls offered to the user.
 
+Prepared history may be supplied by the internal coordinator on confirmation.
+It uses the same canonical preparation/materialization and resource-reservation
+owner as a root conversation, before the parent publishes readiness. The durable
+preparation receipt rejects changed replay. The parent freezes the prepared-history
+hash (or no-history intent) when confirmation is first claimed, before any child
+installation yields. Concurrent and ready confirmations must match that intent;
+a ready child may only replay an already committed history installation. This
+prevents a confirmation without history from publishing ahead of one that requires
+it, and prevents adding initial history after publication. Parent migration 12
+treats previously claimed operations as no-history, preserving their original
+meaning. An ordinary opening can then start
+execution independently. See [prepared conversations](session-import.md).
+
 ## Where the code lives
 
 | File | Responsibility |
@@ -521,6 +534,27 @@ five completion/error cases.
 Run the focused suites with the package-local Vitest paths per
 [testing](testing.md), then full lint and typecheck. Runtime tests are not a
 substitute for real-provider latency or window-level acceptance.
+
+## Changelog
+
+### 2026-09-15 — Share prepared conversation file ownership
+
+Prepared history may be supplied by the internal coordinator on confirmation.
+It uses the same canonical preparation/materialization and resource-reservation
+owner as a root conversation, before the parent publishes readiness. The durable
+preparation receipt rejects changed replay. The parent freezes the prepared-history
+hash (or no-history intent) when confirmation is first claimed, before any child
+installation yields. Concurrent and ready confirmations must match that intent;
+a ready child may only replay an already committed history installation. This
+prevents a confirmation without history from publishing ahead of one that requires
+it, and prevents adding initial history after publication. Parent migration 12
+treats previously claimed operations as no-history, preserving their original
+meaning. An ordinary opening can then start
+execution independently. See [prepared conversations](session-import.md).
+
+The separate durable preparation owner prevents file holds from depending on a
+live-message mailbox that imported history never creates. Fake pending messages
+and generation receipts were rejected because they conflate storage with execution.
 
 ### 2026-09-11 — The rail holds a row for a substream being created
 
