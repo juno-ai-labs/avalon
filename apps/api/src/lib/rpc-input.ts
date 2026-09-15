@@ -1,4 +1,4 @@
-import { codeShaped, describeZodIssues } from "@rally/contracts";
+import { codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import type { z } from "zod";
 
 /**

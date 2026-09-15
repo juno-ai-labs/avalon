@@ -12,7 +12,7 @@
  * hook cannot await. `docs/durable-object-alarms.md` and `docs/ops-alerting.md`
  * are the module documents.
  */
-import { DIAGNOSTIC_CODE_MAX_LENGTH } from "@rally/contracts";
+import { DIAGNOSTIC_CODE_MAX_LENGTH } from "@rally/contracts/zod-diagnostics";
 
 import type { Env } from "../env";
 import { logError, logWarn } from "../observability/logger";

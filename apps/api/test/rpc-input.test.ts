@@ -53,7 +53,7 @@ describe("parseRpcInput", () => {
       const code = scheduledAlarmErrorCode(thrown);
       expect(code).not.toContain("handler_error");
       expect(code).toContain("projection_invalid");
-      expect(code).toContain("_root_");
+      expect(code).toContain("-root-");
     }
   });
 

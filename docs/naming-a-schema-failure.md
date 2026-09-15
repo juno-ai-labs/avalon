@@ -13,9 +13,13 @@ the catalogue behind it.
 
 ## Why this needs a rule
 
-Between 2026-09-14 and 2026-09-15, one bug — `fireflies` missing from
-`ConnectorTypeSchema` — was diagnosed four separate times, because four
-different boundaries reported it as something that named nothing:
+Between 2026-09-14 and 2026-09-15, four boundaries in one incident each
+reported a failure as something that named nothing. They were not all the same
+underlying bug — two were `fireflies` missing from `ConnectorTypeSchema`, one
+was a Fireflies response whose shape had drifted, one was a Granola webhook
+endpoint that was never provisioned. What they share is the pattern: a reason
+that had already been computed, discarded at the boundary that existed to report
+it, so each cost its own diagnosis.
 
 | Boundary | What it reported | What it had |
 | --- | --- | --- |
@@ -119,6 +123,26 @@ its own is a boundary that drifts.
 Adopt it at the next boundary you touch that would otherwise say
 `unexpected_error`. Converting every RPC entry point and every adapter blind is
 how a diagnostic fix becomes a risk.
+
+Known and not yet converted:
+
+- `packages/agent-harness/src/index.ts` — `if (error instanceof z.ZodError)
+  return "validation_error"` names the class and discards the path.
+- Every other Durable Object RPC entry point that opens with `Schema.parse(input)`.
+  Only `applyExternalEventRegistrations` uses `parseRpcInput` so far.
+
+## What it costs
+
+`codeShaped` truncates at `DIAGNOSTIC_CODE_MAX_LENGTH`, so a rejection with
+three deep paths can lose its third issue without saying so. That is the right
+trade against `scheduledAlarmErrorCode` degrading the whole message to
+`handler_error`, but the failure mode is "quietly shorter", not "rejected" —
+worth knowing when a code looks truncated mid-path.
+
+The label is the caller's and describes the *boundary*, not the side that was
+wrong. `connectorObservationErrorCode` says `schema`, not `response`, because it
+classifies every adapter operation and `executeTool` parses the model's own
+arguments through the same `.parse`.
 
 ## What this does not fix
 

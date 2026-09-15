@@ -27,8 +27,15 @@ describe("zod diagnostics", () => {
       .toContain("summary.topics_discussed.0");
   });
 
-  it("marks a whole-value mismatch rather than leaving the path empty", () => {
-    expect(describeZodIssues(rejection("not an object"))).toContain("_root_");
+  it("marks a whole-value mismatch with something no field can be mistaken for", () => {
+    expect(describeZodIssues(rejection("not an object"))).toContain("-root-");
+    // A marker spelled `_root_` would be a legal object key, so a field of that
+    // name and "there was no field" would read identically. A hyphen cannot
+    // appear in a declared name, and a key containing one is withheld first.
+    const Named = z.looseObject({ "-root-": z.number() });
+    const collision = Named.safeParse({ "-root-": "x" });
+    if (collision.success) throw new Error("expected a rejection");
+    expect(describeZodIssues(collision.error)).not.toContain("-root-");
   });
 
   it("withholds the offending keys a caller sent unless the caller is one we control", () => {

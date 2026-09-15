@@ -8,7 +8,7 @@ import {
   type ConnectorPollingActivitySource,
   type ConnectorWebhookActivitySource,
 } from "./types";
-import { zodDiagnosticCode } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { FetchLike } from "./provider-utils";
 
 /** Logging is diagnostic only: a sink failure must never become a connector failure. */
@@ -34,7 +34,12 @@ export function connectorObservationErrorCode(error: unknown): string {
   // array holds objects where it held strings — and the whole diagnosis is the
   // path. Collapsing it to `unexpected_error` discards that and leaves an
   // operator comparing two identical log lines.
-  return zodDiagnosticCode(error, "response") ?? "unexpected_error";
+  // `schema`, not `response`: this classifies every adapter operation, and
+  // `executeTool` parses the *model's* arguments with the same `.parse` —
+  // `notion.ts:824` is one of several. Naming the provider there would pin a
+  // model's malformed input on the provider, which is a worse lie than the
+  // generic code it replaces.
+  return zodDiagnosticCode(error, "schema") ?? "unexpected_error";
 }
 
 export function connectorObservationFailureLevel(error: unknown): ConnectorLogLevel {
