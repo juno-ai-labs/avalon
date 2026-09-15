@@ -568,9 +568,8 @@ const emailContentFields = {
 // A nested union keeps the tool's root an object for every provider. Both the
 // advertised schema and the executor use this definition: a second handwritten
 // schema previously accepted reply placeholders that execution then rejected.
-// Bind removes additionalProperties:false for xAI compatibility, so describe
-// the closed shapes as well. Execution stays strict: ignoring an unknown write
-// parameter (such as preview:true) could silently change what was requested.
+// Execution stays strict: ignoring an unknown write parameter (such as
+// preview:true) could silently change what was requested.
 const EmailArgsSchema = z.strictObject({
   message: z.discriminatedUnion("kind", [
     z.strictObject({
@@ -584,6 +583,39 @@ const EmailArgsSchema = z.strictObject({
       messageId: z.string().min(1).describe("The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."),
     }).describe("Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field."),
   ]).describe("Choose kind new with a subject, or kind reply with an existing messageId. Supply the recipients and body in either case. Reply threading is resolved by Rally. Do not supply threadId, inReplyTo, or references, including empty or placeholder values. Supply only the keys listed for the chosen kind."),
+});
+
+const emailToolInputSchema = z.toJSONSchema(EmailArgsSchema, {
+  io: "input",
+  override: ({ jsonSchema }) => {
+    if (jsonSchema.type !== "object" || jsonSchema.additionalProperties !== false) return;
+    const properties = jsonSchema.properties ?? {};
+    const required = jsonSchema.required ?? [];
+    const optional = Object.keys(properties).filter((key) => !required.includes(key));
+
+    // Bind drops boolean additionalProperties:false for xAI compatibility.
+    // Requiring every declared key and allowing exactly that many properties
+    // expresses the same closed object without depending on that keyword.
+    // These counts come from the shape, not a separately chosen input limit.
+    if (optional.length === 0) {
+      jsonSchema.maxProperties = required.length;
+      return;
+    }
+
+    // Gmail's only optional field is cc. Expand its absent/present forms so
+    // omitting cc never frees a slot for an undeclared key such as preview.
+    // Keep this local to Gmail; this is not a general schema powerset expander.
+    if (optional.length !== 1 || optional[0] !== "cc") {
+      throw new Error("Gmail write schemas must explicitly handle new optional fields");
+    }
+    const withoutCc = Object.fromEntries(Object.entries(properties).filter(([key]) => key !== "cc"));
+    jsonSchema.anyOf = [
+      { type: "object", properties: withoutCc, required, additionalProperties: false, maxProperties: required.length },
+      { type: "object", properties, required: [...required, "cc"], additionalProperties: false, maxProperties: required.length + 1 },
+    ];
+    // Retain the enclosing properties too: providers that default objects to
+    // closed must see their allowed keys on this object, not only in anyOf.
+  },
 });
 
 export const googleTools: ToolDefinition[] = [
@@ -690,7 +722,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "gmail.draft",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: z.toJSONSchema(EmailArgsSchema, { io: "input" })
+    inputSchema: emailToolInputSchema
   },
   {
     name: "gmail.send",
@@ -698,7 +730,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "gmail.send",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: z.toJSONSchema(EmailArgsSchema, { io: "input" })
+    inputSchema: emailToolInputSchema
   },
   {
     name: "calendar.list_calendars",

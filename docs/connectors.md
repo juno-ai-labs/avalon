@@ -405,13 +405,18 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   under `message` so the root remains an object across providers. Unknown fields
   are rejected in both branches by execution, including old flat arguments.
   Bind's `toolWireDefinition` sanitizes even `rawJsonSchema` before Rally's root
-  repair. Its xAI compatibility pass removes `additionalProperties: false`, so
-  the final model schema is not a closed-object guarantee: explicit allowed-key
-  descriptions survive on each branch, and execution remains strict. Ignoring
+  repair. Its xAI compatibility pass removes `additionalProperties: false`.
+  Gmail therefore also expresses each closed object as a complete required-key
+  set with `maxProperties` equal to that set's size. The optional `cc` field has
+  two generated variants, absent and present; omitting it cannot free a slot
+  for an undeclared field. The root likewise permits only the required
+  `message` property. These constraints survive Bind without changing its
+  treatment of other tools or relaxing execution. Ignoring
   undeclared write options could change intent, such as turning an invented
   `preview: true` into an actual send. The regression test captures the real
-  harness HTTP request, checks declared-field constraints against execution,
-  and checks that the allowed-key guidance survives. The selected
+  harness HTTP request and uses Ajv to check declared-field constraints and
+  unknown-key rejection against execution; Zod's JSON Schema importer does not
+  enforce `maxProperties` and cannot prove this boundary. The selected
   plugin's worked examples show both kinds for each granted write capability,
   with replies shown only when read access is granted. Callers using older flat arguments need the refreshed tool definition
   before retrying.
@@ -1184,9 +1189,10 @@ and threading headers under the same connection. One Zod schema defines both
 advertised inputs and runtime validation. Threading headers are deduplicated
 with a Set and folded between IDs, with byte validation ensuring that even an
 indivisible UTF-8 ID fits on one physical line. Long and Unicode subjects use
-independently decodable, folded encoded-words. Allowed-key descriptions survive
-Bind's compatibility sanitizer, and wire tests now inspect the actual request
-rather than a schema that has only passed Rally's root repair.
+independently decodable, folded encoded-words. Generated complete-key variants
+preserve Gmail's closed input shapes through Bind's compatibility sanitizer,
+and wire tests now validate the actual request with Ajv rather than a schema
+that has only passed Rally's root repair.
 
 **Why:** Two fixes to examples and error wording still left a production run
 making nine rejected sends. Nonempty reply placeholders satisfied the advertised
@@ -1205,9 +1211,11 @@ became a 1,089-byte line, and one large encoded-word also violated RFC 2047.
 
 The first regression check missed Bind's intermediate sanitizer. That pass
 deliberately drops `additionalProperties: false` because xAI rejected nested
-boolean schemas; the final model contract therefore cannot promise rejection
-of unknown keys. Explicit branch guidance and a real request-boundary test make
-that limitation visible while keeping execution strict.
+boolean schemas. Merely documenting that loss left an extra threading field
+legal in the advertised schema and illegal at execution. The generated
+required-key variants plus exact property counts express the same constraint
+without the removed keyword. A real request-boundary test checks the formerly
+accepted extra fields, with and without `cc`, at the root and inside `message`.
 
 **Considered and rejected:** Another prompt/error repair or accepting more
 placeholder spellings would keep that ambiguity. Separate new/reply tool names
@@ -1224,10 +1232,16 @@ response bound covers total input size.
 
 Restoring `additionalProperties: false` globally would reinstate a documented
 xAI request failure. Silently stripping unknown write fields would violate the
-tool policy and risk discarding caller intent. Alternate schema keywords are
-not uniformly supported across the routed providers, so this change retains
-strict execution and explicit allowed-key descriptions instead of claiming
-universal closed-object enforcement in the model schema.
+tool policy and risk discarding caller intent. The alternative is scoped to
+these two Gmail tools and generated from their executor schema. `maxProperties`
+is supported by [xAI's tool schema rules](https://docs.x.ai/developers/model-capabilities/text/structured-outputs#constraint-limits)
+and [Google's schema definition](https://ai.google.dev/api/generate-content#Schema).
+Strict structured-output restrictions are distinct from Rally's non-strict
+Chat Completions tools, as OpenAI's
+[function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)
+explains. This does not enable strict generation or change
+provider routing. Runtime validation remains necessary because a model can
+still generate arguments that violate its advertised schema.
 
 **Consequences:** Replies require read access and one metadata fetch before the
 write. Recipients stay explicit; unreadable or unthreadable originals produce a
@@ -1237,9 +1251,11 @@ cannot fit on a continuation line is refused before the write; an oversized
 ancestor is omitted without truncating any ID. The tests use synthetic messages
 and inspect provider requests, including long duplicate-heavy chains and ASCII
 and UTF-8 byte boundaries; they do not send live email. Required fields, kinds,
-and declared-value constraints are checked after the real harness serialization
-path. Unknown-key rejection remains an execution guarantee, not a guarantee
-of every provider-facing schema.
+and declared-value constraints, including rejection of undeclared keys, are
+checked after the real harness serialization path. The property counts are
+derived from the required keys, not independently chosen defensive limits.
+Adding another optional Gmail field requires deliberately extending the
+generated variants; it must not leave an unused slot for an unknown key.
 
 PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
 

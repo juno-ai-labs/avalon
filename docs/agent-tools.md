@@ -114,6 +114,12 @@ keep the strict zod parse so a violation is an error rather than a silent drop.
 When testing schema/executor agreement, inspect the serialized model request:
 `rawJsonSchema` still passes through Bind's sanitizer before Rally's root repair,
 and testing only the authored schema misses its compatibility transformations.
+The Gmail send/draft schemas additionally preserve their closed objects using
+complete required-key variants and `maxProperties` derived from each variant's
+key count; see [the Google contract](connectors.md#google). Their request tests
+use Ajv because Zod's JSON Schema importer ignores `maxProperties`. This is a
+local compatibility representation, not permission to weaken runtime parsing or
+to assume strict structured-output restrictions apply to non-strict tool calls.
 The same split
 governs a constraint *between* parameters: an exclusive choice belongs in the
 `description` and the executor's parse, because the schema sanitizer erases the
