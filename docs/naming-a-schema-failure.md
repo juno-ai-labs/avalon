@@ -122,7 +122,7 @@ its own is a boundary that drifts.
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |
 | `packages/connectors/src/observability.ts` | the `poll` wrapper logs `stream_error_codes`, one per distinct failed stream, beside the count that used to be all it said; the `validateToolInput` wrapper logs the returned rejection's paths as `code` beside `outcome: "invalid"` |
-| `packages/connectors/src/types.ts` | `streamFailure` names a provider's off-schema poll body as `response_invalid:<path>:<code>` where it said `poll_failed`, the word a network fault also says; the code reaches the connection row as the stream's degradation reason |
+| `packages/connectors/src/types.ts` | `streamFailure` names a provider's off-schema poll body as `schema_invalid:<path>:<code>` where it said `poll_failed`, the word a network fault also says; the code reaches the connection row as the stream's degradation reason |
 | `packages/connectors/src/granola.ts`, `packages/connectors/src/slack.ts` | the OAuth stage helpers attach `responseIssues` — the failing paths — to a `provider_error` whose body did not parse, beside `responseInvalid` |
 | `apps/api/src/lib/connector-oauth-error.ts` | `connector_oauth_callback_failed` carries `response_issues` from that detail, admitted only in code shape, and from a raw `ZodError` |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
@@ -186,7 +186,7 @@ error made that diagnosable in minutes; it did not make it visible.
 
 **What changed:** The connectors package names a schema rejection it returns
 rather than throws. A poll stream whose provider answered off-schema reports
-`response_invalid:<path>:<code>` instead of `poll_failed`; the `poll`
+`schema_invalid:<path>:<code>` instead of `poll_failed`; the `poll`
 wrapper logs the distinct codes of the streams that failed, not only their
 count; the `validateToolInput` wrapper logs the returned `ZodError`'s paths
 beside `outcome: "invalid"`; and the Slack and Granola OAuth stage helpers
