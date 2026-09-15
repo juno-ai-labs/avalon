@@ -209,7 +209,9 @@ registration or separate Svix account is required. `SVIX_API_URL` is optional
 for a custom Svix server; otherwise the portal token determines its region.
 
 The command initializes Daytona webhooks, obtains an organization-scoped Svix
-portal token, and upserts one deterministic endpoint for the URL. It installs
+portal token, and checks every endpoint page for the URL. It reuses an existing
+registration or upserts a deterministic endpoint when none exists; ambiguous
+duplicate registrations stop setup before any mutation. It installs
 `DAYTONA_WEBHOOK_SECRET` and `DAYTONA_ORGANIZATION_ID` directly through Wrangler
 stdin, probes the deployed signature verifier, then enables delivery and reads
 back the subscription. It never prints or writes the signing secret to disk.
