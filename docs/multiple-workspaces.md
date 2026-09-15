@@ -160,9 +160,11 @@ fails to list.
 
 The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
-credential may call `GET /workspace/attention`, which returns only an addressed
-count, its highest-priority reason, and an unread-activity boolean. Focus and
-account-menu opening refresh the projection. The fixed periodic cadence and any
+credential may call `GET /workspace/attention`, which returns an addressed
+count, its highest-priority reason, an unread-activity boolean, and
+`unreadAndNeedsInputCount` (unread or participant-needs-input streams; Apple
+push uses that number as `aps.badge`). Focus and account-menu opening refresh
+the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
