@@ -638,44 +638,44 @@ describe("sidekick_post_result", () => {
   it.each(["worker", "sidekick"] as const)("keeps a %s final response local and sends only explicit replies", async (kind) => {
     const deliveries = vi.spyOn(SlackAgentService.prototype, "deliverWorkstreamOutcome");
     try {
-    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
-      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
-      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
-      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
-    const service = new AgentCommunicationService(TEST_ENV, input);
-    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
-      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
-      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
-    const started = kind === "worker"
-      ? await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
-        message: "Finish your local work.", attachmentIds: [] }, context)
-      : await service.createSidekick("workstream", context);
-    if (kind === "sidekick") await service.send({ agentId: started.agentId,
-      message: "Finish your local work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
-    const address = agentAddressForId(started.agentId);
-    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", WORKSPACE_ID, address.parentId, address.substreamId),
-    ));
-    const [run] = await settledRun(child);
-    expect(run).toMatchObject({ status: "completed", error_json: null });
-    await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
-      "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
-    ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM runs",
-    ).one().n)).toBe(0);
-    expect(deliveries.mock.calls.filter((args) => args[3].startsWith(`${run!.run_id}:`))).toEqual([]);
-    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM (
-        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
-        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
-      )`,
-    ).one().n)).toBe(0);
-    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
-    await service.send({ agentId: started.agentId, message: "EXPLICIT_REPLY: send a useful result.", attachmentIds: [] },
-      { ...context, effectIntentId: crypto.randomUUID() });
-    expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
-    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+      const service = new AgentCommunicationService(TEST_ENV, input);
+      const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+      const started = kind === "worker"
+        ? await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+          message: "Finish your local work.", attachmentIds: [] }, context)
+        : await service.createSidekick("workstream", context);
+      if (kind === "sidekick") await service.send({ agentId: started.agentId,
+        message: "Finish your local work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, address.parentId, address.substreamId),
+      ));
+      const [run] = await settledRun(child);
+      expect(run).toMatchObject({ status: "completed", error_json: null });
+      await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
+        "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
+      ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM runs",
+      ).one().n)).toBe(0);
+      expect(deliveries.mock.calls.filter((args) => args[3].startsWith(`${run!.run_id}:`))).toEqual([]);
+      expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM (
+          SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+          UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+        )`,
+      ).one().n)).toBe(0);
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
+      await service.send({ agentId: started.agentId, message: "EXPLICIT_REPLY: send a useful result.", attachmentIds: [] },
+        { ...context, effectIntentId: crypto.randomUUID() });
+      expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
+      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     } finally {
       deliveries.mockRestore();
     }
