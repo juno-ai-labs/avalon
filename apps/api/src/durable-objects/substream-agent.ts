@@ -4313,7 +4313,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
-        });
+        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects));
         await this.flushSemanticRealtimeOutboxBestEffort();
       },
       commitBindCompaction: async (compaction) => {

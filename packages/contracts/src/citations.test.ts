@@ -11,6 +11,7 @@ import {
   personIdFromMentionHref,
   personMentionHref,
   personMentionMarkdownPattern,
+  personMentionMarkdownRanges,
   rewriteCitationsAsPlainText,
 } from "./citations";
 
@@ -105,6 +106,32 @@ describe("person mention hrefs", () => {
     const legacy = `Ask [@Ada](person:${id}) please.`;
     expect(house.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
     expect(legacy.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+  });
+
+  it("locates person links in prose but not code examples", () => {
+    const house = `[@Ada](person://${id})`;
+    const legacy = `[@Grace](person:${id.toUpperCase()})`;
+    const markdown = [
+      `Ask ${house}.`,
+      `Keep \`${legacy}\` literal.`,
+      "```md",
+      house,
+      "```",
+      `Then ask ${legacy}.`,
+    ].join("\n");
+
+    expect(personMentionMarkdownRanges(markdown)).toEqual([
+      {
+        personId: id,
+        startOffset: markdown.indexOf(house),
+        endOffset: markdown.indexOf(house) + house.length,
+      },
+      {
+        personId: id,
+        startOffset: markdown.lastIndexOf(legacy),
+        endOffset: markdown.lastIndexOf(legacy) + legacy.length,
+      },
+    ]);
   });
 });
 

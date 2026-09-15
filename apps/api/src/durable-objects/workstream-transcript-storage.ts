@@ -15,6 +15,7 @@ import {
   type WorkstreamTranscriptSnapshot,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
+import { personMentionMarkdownRanges } from "@rally/contracts/citations";
 import {
   SubstreamContextCaptureSchema,
   SubstreamContextMessageSchema,
@@ -244,7 +245,7 @@ export interface PendingInputDeliveryEffectInput {
   turnId: string;
   transcriptSequence: number;
   attentionOrdinal: number;
-  actor: PendingLoopInputRow["actor"];
+  actor: PendingLoopInputRow["actor"] | "assistant";
   authorUserId: string | null;
   authorNameSnapshot: string | null;
   text: string;
@@ -578,6 +579,9 @@ export class WorkstreamTranscriptStorage {
     transition: BindLoopTransition,
     now = Date.now(),
     executionFence?: TranscriptExecutionFence,
+    enqueueRegionalEffectsInTransaction?: (
+      deliveries: readonly PendingInputDeliveryEffectInput[],
+    ) => void,
   ): Promise<void> {
     const previous = this.readBindProjection(transition.loopId);
     const next = applyBindLoopTransition(previous, transition);
@@ -589,7 +593,10 @@ export class WorkstreamTranscriptStorage {
       this.writeBindState(transition, next, facts, now);
       if (transition.kind === "assistant_accepted") {
         if (!facts.appendedFactId) throw new Error("assistant_projection_fact_missing");
-        this.projectAssistantTurn(transition, facts.appendedFactId, now);
+        const delivery = this.projectAssistantTurn(transition, facts.appendedFactId, now);
+        if (delivery) {
+          invokeSynchronousEffectEnqueue(enqueueRegionalEffectsInTransaction, [delivery]);
+        }
       }
       if (executionFence) {
         this.advanceLoopBindRevisionInTransaction(
@@ -3402,12 +3409,12 @@ export class WorkstreamTranscriptStorage {
     transition: Extract<BindLoopTransition, { kind: "assistant_accepted" }>,
     rootFactId: string,
     now: number,
-  ): void {
+  ): PendingInputDeliveryEffectInput | null {
     const existing = this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
       `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
       transition.turnId,
     ).toArray()[0];
-    if (existing) return;
+    if (existing) return null;
     if (transition.transcriptSequence === null) {
       throw new Error("workstream_assistant_reservation_missing_sequence");
     }
@@ -3430,15 +3437,19 @@ export class WorkstreamTranscriptStorage {
     };
     const sequence = transition.transcriptSequence;
     const activityId = `${transition.turnId}:activity`;
+    const content = typeof message.content === "string" ? message.content : "";
+    const mentions = this.authoritativeAssistantPersonMentions(content);
+    const attentionOrdinal = mentions.length > 0 ? this.nextAttentionOrdinal() : null;
     this.sql.exec(
       `INSERT INTO participant_transcript_turns
          (transcript_sequence, turn_id, entry_kind, actor, author_user_id,
           root_fact_id, activity_id, attention_ordinal, revision, created_at, updated_at)
-       VALUES (?, ?, 'conversation', 'assistant', NULL, ?, ?, NULL, 1, ?, ?)`,
+       VALUES (?, ?, 'conversation', 'assistant', NULL, ?, ?, ?, 1, ?, ?)`,
       sequence,
       transition.turnId,
       rootFactId,
       activityId,
+      attentionOrdinal,
       now,
       now,
     );
@@ -3464,7 +3475,7 @@ export class WorkstreamTranscriptStorage {
       );
       blockIndex += 1;
     }
-    if (typeof message.content === "string" && message.content.length > 0) {
+    if (content.length > 0) {
       this.sql.exec(
         `INSERT INTO participant_transcript_blocks
            (turn_id, block_id, block_index, block_kind, fact_id, revision, updated_at)
@@ -3476,6 +3487,22 @@ export class WorkstreamTranscriptStorage {
         now,
       );
       blockIndex += 1;
+    }
+    if (attentionOrdinal !== null) {
+      this.insertPendingMentions(transition.turnId, attentionOrdinal, mentions, now);
+      const advanced = this.sql.exec<{
+        next_attention_ordinal: number;
+      } & Record<string, SqlStorageValue>>(
+        `UPDATE workstream
+            SET next_attention_ordinal = next_attention_ordinal + 1, updated_at = ?
+          WHERE id = 1 AND next_attention_ordinal = ?
+          RETURNING next_attention_ordinal`,
+        now,
+        attentionOrdinal,
+      ).toArray()[0];
+      if (advanced?.next_attention_ordinal !== attentionOrdinal + 1) {
+        throw new Error("assistant_mention_attention_changed");
+      }
     }
     for (let callIndex = 0; callIndex < (message.tool_calls?.length ?? 0); callIndex += 1) {
       const call = message.tool_calls![callIndex]!;
@@ -3516,6 +3543,51 @@ export class WorkstreamTranscriptStorage {
       { kind: "transcript_turn", turnId: transition.turnId },
       now,
     );
+    if (attentionOrdinal === null) return null;
+    const mentionedUserIds = [...new Set(mentions.map((mention) => mention.targetUserId!))];
+    return {
+      inputId: transition.turnId,
+      turnId: transition.turnId,
+      transcriptSequence: sequence,
+      attentionOrdinal,
+      actor: "assistant",
+      authorUserId: null,
+      authorNameSnapshot: null,
+      text: content,
+      mentionedUserIds,
+      confirmedParticipantUserIds: [],
+      affectedUserIds: mentionedUserIds,
+      activatedParticipants: [],
+    };
+  }
+
+  /**
+   * Model text can name an identity, but it cannot grant one. Only canonical
+   * links whose ids still belong to active participants become transcript
+   * mention authority; every other link remains ordinary rendered text.
+   */
+  private authoritativeAssistantPersonMentions(text: string): PendingInputMentionDescriptor[] {
+    const ranges = personMentionMarkdownRanges(text);
+    if (ranges.length === 0) return [];
+    const activeUserIds = new Set(boundParameterChunks([
+      ...new Set(ranges.map((range) => range.personId)),
+    ]).flatMap((ids) => this.sql.exec<{
+      user_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT user_id FROM participants
+        WHERE status = 'active' AND user_id IN (${ids.map(() => "?").join(", ")})`,
+      ...ids,
+    ).toArray().map((row) => row.user_id.toLowerCase())));
+    return ranges
+      .filter((range) => activeUserIds.has(range.personId))
+      .map((range, mentionIndex) => ({
+        mentionIndex,
+        mentionKind: "person" as const,
+        targetUserId: range.personId,
+        connectorType: null,
+        startOffset: range.startOffset,
+        endOffset: range.endOffset,
+      }));
   }
 
   private insertParticipantStatus(input: {
@@ -4967,9 +5039,10 @@ function sameOrderedInputPrefix(
 }
 
 function invokeSynchronousEffectEnqueue(
-  enqueue: (deliveries: readonly PendingInputDeliveryEffectInput[]) => void,
+  enqueue: ((deliveries: readonly PendingInputDeliveryEffectInput[]) => void) | undefined,
   deliveries: readonly PendingInputDeliveryEffectInput[],
 ): void {
+  if (!enqueue) return;
   const returned = enqueue(deliveries) as unknown;
   if (returned && (typeof returned === "object" || typeof returned === "function")
     && "then" in returned) {
