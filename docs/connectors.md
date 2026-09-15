@@ -356,7 +356,71 @@ The capability check is enforced for every tool invocation. The current Google t
 
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
-- Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`. `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit and a threaded reply has the `inReplyTo` value `google_gmail_create_draft` requires. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. A draft or message body is delivered as `text/plain` exactly as written — `serializeEmail` builds no alternative part — so the descriptor's system message, the capability-gated Google presentation, and the `body` parameter's own description all say to write plain text rather than Markdown, which would otherwise reach the recipient as `#` and `**`.
+- Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`. `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit. Drafts and sends take an explicit new/reply message, described below. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. A draft or message body is delivered as `text/plain` exactly as written — `serializeEmail` builds no alternative part — so the descriptor's system message, the capability-gated Google presentation, and the `body` parameter's own description all say to write plain text rather than Markdown, which would otherwise reach the recipient as `#` and `**`.
+  Both Gmail writes accept one `message` object, with two complete shapes:
+
+  | Intent | Arguments |
+  | --- | --- |
+  | New conversation | `{ "message": { "kind": "new", "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana." } }` |
+  | Reply to a message | `{ "message": { "kind": "reply", "messageId": "id-from-a-search-hit", "to": ["dana@example.com"], "body": "Thank you." } }` |
+
+  `cc` is optional in either shape; omitted, `null`, and `[]` all mean none.
+  Recipients remain explicit, including for replies: the adapter does not infer
+  reply-all recipients or copy the original's recipient list. A new message has
+  no message id or threading fields. A reply accepts a Gmail **message id** from
+  the same connection's search/read result, and has no caller-supplied subject,
+  `threadId`, `inReplyTo`, or `references`.
+
+  Before either reply write, the adapter checks `gmail.read` and reads that
+  message's metadata from the same account. Its subject, thread id, and validated
+  RFC Message-ID determine the outgoing MIME and Gmail request together. Valid
+  ancestor Message-IDs from References are preserved and deduplicated in linear
+  time, with the parent Message-ID once at the end; malformed or oversized
+  ancestor tokens are ignored. Both `References` and `In-Reply-To` are folded
+  between complete IDs, targeting 78 bytes per physical line. An indivisible ID
+  may exceed that target, but must fit within the 998-byte line maximum including
+  a continuation's leading space: at most 997 UTF-8 bytes per ID. These are the
+  [email format's line limits](https://www.rfc-editor.org/rfc/rfc6532.html#section-3.4),
+  with the folding target conservatively measured in bytes. Valid ancestry is
+  retained without a count cap; the existing metadata response bound still
+  bounds the input. A
+  missing or invalid parent Message-ID, missing thread id, or unreadable message
+  stops before the write. It never falls back to sending a new conversation.
+  New messages need only the existing send/draft capability and perform no read.
+  Resolving a reply adds one metadata request and depends on that message still
+  being readable at execution time.
+
+  Short ASCII subjects stay plain. Longer or non-ASCII subjects use UTF-8
+  encoded-words split at complete Unicode characters, including when a reply's
+  inherited subject exceeds the new-message input limit. Each encoded-word is
+  at most 75 characters and each physical line containing them at most 76,
+  including the `Subject:` prefix or continuation space, per
+  [RFC 2047 §2](https://www.rfc-editor.org/rfc/rfc2047.html#section-2).
+  Folding whitespace between encoded-words does not change the decoded subject;
+  original spaces stay inside the encoded text. Input CR/LF is neutralized
+  before serialization.
+
+  `EmailArgsSchema` supplies both runtime validation and the advertised schema
+  through `z.toJSONSchema(..., { io: "input" })`. Its new/reply union is nested
+  under `message` so the root remains an object across providers. Unknown fields
+  are rejected in both branches by execution, including old flat arguments.
+  Bind's `toolWireDefinition` sanitizes even `rawJsonSchema` before Rally's root
+  repair. Its xAI compatibility pass removes `additionalProperties: false`.
+  Gmail therefore also expresses each closed object as a complete required-key
+  set with `maxProperties` equal to that set's size. The optional `cc` field has
+  two generated variants, absent and present; omitting it cannot free a slot
+  for an undeclared field. The root likewise permits only the required
+  `message` property. These constraints survive Bind without changing its
+  treatment of other tools or relaxing execution. Ignoring
+  undeclared write options could change intent, such as turning an invented
+  `preview: true` into an actual send. The regression test captures the real
+  harness HTTP request and uses Ajv to check declared-field constraints and
+  unknown-key rejection against execution; Zod's JSON Schema importer does not
+  enforce `maxProperties` and cannot prove this boundary. The selected
+  plugin's worked examples show both kinds for each granted write capability,
+  with replies shown only when read access is granted. Callers using older flat arguments need the refreshed tool definition
+  before retrying.
+
 - Calendar: `google_calendar_list_calendars`, `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event`. Event tools accept a calendar ID, `primary`, or a calendar's **name**, which is resolved against the account's calendar list — a name matching two calendars is an `ambiguous_calendar_name` failure listing both rather than a guess — and otherwise use the configured calendar, which defaults to primary. An event ID that looks like a calendar address is rejected as `wrong_id_family` at the boundary. Scheduled activity polling still follows the configured calendar.
 
   A relative change carries each existing guest across whole rather than rebuilding them from an address, so `responseStatus`, `optional`, `displayName`, and a room's `resource` flag survive an addition; re-sending bare addresses would reset every RSVP and re-invite everyone. The read is uncapped and an `attendeesOmitted` response is refused rather than patched from, because `maxAttendees` returns only the participant past its cap rather than a prefix — a capped read is how a large event loses its guest list. Resolving a calendar by name needs the connection's calendar read capability, and says so rather than failing as an opaque provider error.
@@ -1093,7 +1157,8 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
 | `apps/api/test/connector-actor-identity.test.ts` | The three tiers, the monotonic write, and that only `verified_email` is recorded. |
 | `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
-| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
+| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection, capability-gated Gmail new/reply examples, and the `connectorCapabilityRefused` shape. |
+| `packages/connectors/src/index.test.ts`, `apps/api/test/tool-schema-sanitization.test.ts` | Gmail new/reply MIME and request bodies, metadata/read-capability failures before writes, and equivalent acceptance of valid and invalid arguments in the authored/provider schema and executor. Gmail HTTP is the capability double; no email is sent by these tests. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
@@ -1114,6 +1179,85 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-15 — Gmail callers choose new or reply; the adapter owns threading
+
+**What changed:** Gmail send and draft take a nested `message` union. New
+messages supply recipients, subject, and body. Replies supply an existing
+message id, recipients, and body, and the adapter fetches the original subject
+and threading headers under the same connection. One Zod schema defines both
+advertised inputs and runtime validation. Threading headers are deduplicated
+with a Set and folded between IDs, with byte validation ensuring that even an
+indivisible UTF-8 ID fits on one physical line. Long and Unicode subjects use
+independently decodable, folded encoded-words. Generated complete-key variants
+preserve Gmail's closed input shapes through Bind's compatibility sanitizer,
+and wire tests now validate the actual request with Ajv rather than a schema
+that has only passed Rally's root repair.
+
+**Why:** Two fixes to examples and error wording still left a production run
+making nine rejected sends. Nonempty reply placeholders satisfied the advertised
+schema but failed the executor, and the model repeated the same invalid shape.
+The 2026-09-14 new-email-example change below improved guidance but could not
+remove that contradictory contract or the unnecessary threading work assigned
+to the model.
+
+Automatically copying ancestry also exposed the inherited serializer's repeated
+array scans and single-line References join. Forty ordinary ancestor IDs already
+produced a 1,032-byte line, beyond the protocol maximum; the old 50-ID input cap
+did not guarantee a valid line either. Processing and folding the chain in linear
+time preserves the history without making long conversations expensive to send.
+Subject encoding had the same physical-line defect: 400 accented characters
+became a 1,089-byte line, and one large encoded-word also violated RFC 2047.
+
+The first regression check missed Bind's intermediate sanitizer. That pass
+deliberately drops `additionalProperties: false` because xAI rejected nested
+boolean schemas. Merely documenting that loss left an extra threading field
+legal in the advertised schema and illegal at execution. The generated
+required-key variants plus exact property counts express the same constraint
+without the removed keyword. A real request-boundary test checks the formerly
+accepted extra fields, with and without `cc`, at the root and inside `message`.
+
+**Considered and rejected:** Another prompt/error repair or accepting more
+placeholder spellings would keep that ambiguity. Separate new/reply tool names
+would also separate the inputs, but the nested union does so within the existing
+send/draft capabilities, tool names, and receipt policy. The shape follows
+[OpenAI's function design guidance](https://developers.openai.com/api/docs/guides/function-calling#best-practices-for-defining-functions)
+and resolves the coupled fields required by
+[Gmail's threading contract](https://developers.google.com/workspace/gmail/api/guides/threads#adding_drafts_and_messages_to_threads)
+in code.
+
+An ancestor-count cap would discard valid history while still admitting an
+oversized individual ID. Folding preserves the chain, and the existing metadata
+response bound covers total input size.
+
+Restoring `additionalProperties: false` globally would reinstate a documented
+xAI request failure. Silently stripping unknown write fields would violate the
+tool policy and risk discarding caller intent. The alternative is scoped to
+these two Gmail tools and generated from their executor schema. `maxProperties`
+is supported by [xAI's tool schema rules](https://docs.x.ai/developers/model-capabilities/text/structured-outputs#constraint-limits)
+and [Google's schema definition](https://ai.google.dev/api/generate-content#Schema).
+Strict structured-output restrictions are distinct from Rally's non-strict
+Chat Completions tools, as OpenAI's
+[function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)
+explains. This does not enable strict generation or change
+provider routing. Runtime validation remains necessary because a model can
+still generate arguments that violate its advertised schema.
+
+**Consequences:** Replies require read access and one metadata fetch before the
+write. Recipients stay explicit; unreadable or unthreadable originals produce a
+field-named error before any write. Existing flat inputs are deliberately
+rejected, so callers need refreshed tool definitions. A parent Message-ID that
+cannot fit on a continuation line is refused before the write; an oversized
+ancestor is omitted without truncating any ID. The tests use synthetic messages
+and inspect provider requests, including long duplicate-heavy chains and ASCII
+and UTF-8 byte boundaries; they do not send live email. Required fields, kinds,
+and declared-value constraints, including rejection of undeclared keys, are
+checked after the real harness serialization path. The property counts are
+derived from the required keys, not independently chosen defensive limits.
+Adding another optional Gmail field requires deliberately extending the
+generated variants; it must not leave an unused slot for an unknown key.
+
+PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
 
 ### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
 
