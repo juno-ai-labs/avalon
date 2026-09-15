@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 59;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 60;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 

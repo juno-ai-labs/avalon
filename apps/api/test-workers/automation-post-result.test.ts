@@ -595,7 +595,7 @@ describe("sidekick_post_result", () => {
     expect(await ownerConversation.agentRuntimeInfo()).not.toMatchObject({ status: "stopped" });
   });
 
-  it("reauthorizes a Sidekick reply after workstream access is revoked", async () => {
+  it("reauthorizes Sidekick listing and replies after workstream access is revoked", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -609,6 +609,7 @@ describe("sidekick_post_result", () => {
     const agentId = agentIdForAddress({ parentKind: "automation", parentId: created.automationId, substreamId: asSubstreamId("0") });
     await service.send({ agentId, message: "EXPLICIT_REPLY: send back a question.", attachmentIds: [] }, context);
     await settledRun(roomConversation());
+    expect((await service.list()).agents.map(agent => agent.agentId)).toContain(agentId);
     const received = await runInDurableObject(roomConversation(), (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
       state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs LIMIT 1").one().execution_context_json,
     )));
@@ -617,6 +618,7 @@ describe("sidekick_post_result", () => {
       state.storage.sql.exec("UPDATE workspace_workstream_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
     });
     expect(await workspaceStub().workstreamParticipant({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID })).toEqual({ participant: false });
+    expect((await service.list()).agents.map(agent => agent.agentId)).not.toContain(agentId);
     await expect(service.send({ messageId: received.agentExchange!.messageId, message: "Try another edit.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("Choose a Sidekick you can access");
   });
