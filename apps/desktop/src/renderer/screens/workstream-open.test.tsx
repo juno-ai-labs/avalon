@@ -751,8 +751,11 @@ describe('socket-first work-stream open', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member, New member'));
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New member participant actions' })).toBeVisible();
+    await waitFor(() => expect(
+      screen.getAllByRole('button', { hidden: true, name: 'Manage work-stream participants' })[0],
+    ).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
 
