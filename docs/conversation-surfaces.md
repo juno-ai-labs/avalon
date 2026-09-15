@@ -651,14 +651,17 @@ activation event without losing the warning; later clears replace that retained 
 **What changed:** Adding a person no longer closes `AddParticipantDialog`. The
 dialog stays up after each add or remove so another membership can be changed
 without reopening. It still closes on click-outside, Escape, the header close
-control, and when the current person removes themselves (they are leaving the
-room). A click on a portaled `.menu-content` — the Remove control — is not
-treated as outside the dialog.
+control, and when the current person removes themselves — including from a
+workspace-scoped Main, where they remain a viewer. Leave-room navigation still
+only happens for a substream or a personal Main. A click on a portaled
+`.menu-content` — the Remove control — is not treated as outside the dialog.
 
 **Why:** The dialog is the roster, not a single-shot add. Closing it on the
 first successful add made adding two people two trips through the facepile, and
 a Remove click on the portaled menu dismissed it the same way a click on the
-overlay does.
+overlay does. That accidental dismissal was also the only thing closing the
+dialog after a workspace-scoped self-removal, so the menu exception had to be
+paired with an explicit close on every self-removal.
 
 **Considered and rejected:** A Done footer like the new-work-stream picker.
 Click-outside is already the dismissal, and a second confirmation would make
