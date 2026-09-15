@@ -477,7 +477,7 @@ describe("sidekick_post_result", () => {
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const started = await service.start({ name: "Attachment researcher", description: "Read the supplied resource",
-      message: "Read the attached research.", attachmentIds: [resourceId, imageId] }, context);
+      message: "Read the attached research.", attachmentIds: [resourceId, resourceId, imageId] }, context);
     const address = agentAddressForId(started.agentId);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
@@ -492,7 +492,7 @@ describe("sidekick_post_result", () => {
       ).one().execution_context_json));
     });
     const reply = await new AgentCommunicationService(TEST_ENV, childInput).send({
-      messageId: childInput.agentExchange!.messageId, message: "Here is the research.", attachmentIds: [resourceId, imageId],
+      messageId: childInput.agentExchange!.messageId, message: "Here is the research.", attachmentIds: [resourceId, imageId, imageId],
     }, { ...context, effectIntentId: crypto.randomUUID() });
     await expect.poll(() => runInDurableObject(roomConversation(), (_instance, state) =>
       state.storage.sql.exec<{ resource_id: string }>(
@@ -505,8 +505,18 @@ describe("sidekick_post_result", () => {
       && JSON.stringify(message.content).includes("research.txt")))).toBe(true);
     expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
       && JSON.stringify(message.content).includes(`data:image/png;base64,${png}`)))).toBe(true);
-    await expect(service.send({ agentId: started.agentId, message: "Read this too", attachmentIds: [crypto.randomUUID()] },
+    const empty = await service.start({ name: "Empty researcher", description: "Wait for context",
+      message: "Wait for the research.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+    const emptyAddress = agentAddressForId(empty.agentId);
+    const emptyChild = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, emptyAddress.substreamId),
+    ));
+    await settledRun(emptyChild);
+    await expect(service.send({ agentId: empty.agentId, message: "Read this too", attachmentIds: [resourceId, crypto.randomUUID()] },
       { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("Attach the resource");
+    await runInDurableObject(emptyChild, (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM workstream_resource_links").one().n).toBe(0);
+    });
   });
 
   it("lets Bind settle an owned stop after the in-flight model step returns", async () => {
@@ -690,8 +700,23 @@ describe("sidekick_post_result", () => {
     expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
     expect(await service.start(args, context)).toEqual(started);
     expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
-    await service.send({ agentId: started.agentId, message: "Now compare their pricing.", attachmentIds: [] },
-      { ...context, toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID() });
+    // Lose the confirmation after durable admission, before its caller can
+    // perform another write. A retry must still resume the stopped worker.
+    await runInDurableObject(child, (instance) => {
+      const target = instance as unknown as {
+        product: { admitSystemActivation: (...args: unknown[]) => Promise<unknown> };
+      };
+      const admit = target.product.admitSystemActivation.bind(target.product);
+      target.product.admitSystemActivation = async (...args) => {
+        const result = await admit(...args);
+        target.product.admitSystemActivation = admit;
+        throw new Error(`injected_admission_confirmation_loss:${Boolean(result)}`);
+      };
+    });
+    const continuation = { agentId: started.agentId, message: "Now compare their pricing.", attachmentIds: [] };
+    const continuationContext = { ...context, toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID() };
+    await expect(service.send(continuation, continuationContext)).rejects.toThrow("injected_admission_confirmation_loss");
+    await service.send(continuation, continuationContext);
     await settledRun(child, 2);
     expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
     const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
