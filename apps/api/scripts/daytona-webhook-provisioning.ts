@@ -2,7 +2,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { z } from "zod";
 
-const EndpointSchema = z.object({ id: z.string(), url: z.string(), disabled: z.boolean(), filterTypes: z.array(z.string()).nullable() });
+const EndpointSchema = z.object({ id: z.string(), url: z.string(), disabled: z.boolean(), filterTypes: z.array(z.string()).nullish() });
 const EVENTS = ["sandbox.created", "sandbox.state.updated"];
 
 export function signedDaytonaHeaders(secret: string, body: string): Record<string, string> {
@@ -42,7 +42,21 @@ export async function provisionDaytonaWebhook(input: {
   const svixApiUrl = input.svixApiUrl ?? (["us", "eu", "in", "ca", "au"].includes(region ?? "")
     ? `https://api.${region}.svix.com` : "https://api.svix.com");
   const uid = `rally-terminal-${createHash("sha256").update(input.webhookUrl).digest("hex").slice(0, 32)}`;
-  const endpointPath = `/api/v1/app/${encodeURIComponent(input.organizationId)}/endpoint/${uid}`;
+  const collectionPath = `/api/v1/app/${encodeURIComponent(input.organizationId)}/endpoint`;
+  const matches: Array<z.infer<typeof EndpointSchema>> = [];
+  let iterator: string | null = null;
+  do {
+    const page = z.object({ data: z.array(EndpointSchema), done: z.boolean(), iterator: z.string().nullable() }).parse(
+      await request(svixApiUrl, portal.token, `${collectionPath}${iterator ? `?iterator=${encodeURIComponent(iterator)}` : ""}`),
+    );
+    matches.push(...page.data.filter((endpoint) => endpoint.url === input.webhookUrl));
+    if (page.done) break;
+    if (!page.iterator || page.iterator === iterator) throw new Error("Svix endpoint pagination did not advance");
+    iterator = page.iterator;
+  } while (true);
+  if (matches.length > 1) throw new Error("Multiple Svix endpoints already target this URL; reconcile the duplicate registrations first");
+  // Adopt a manually registered endpoint too, preserving its signing secret.
+  const endpointPath = `${collectionPath}/${encodeURIComponent(matches[0]?.id ?? uid)}`;
   const svix = (suffix: string, method = "GET", body?: unknown) => request(svixApiUrl, portal.token, `${endpointPath}${suffix}`, method, body);
   const endpoint = EndpointSchema.parse(await svix("", "PUT", {
     url: input.webhookUrl, version: 1, disabled: true,
