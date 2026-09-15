@@ -102,6 +102,9 @@ with the warning the check reports instead of failing.
   components.
 - `codeShaped(text)` — reduced to the character class and length a code-shaped
   field will carry.
+- `isCodeShaped(text)` — whether a message already has that shape, which is
+  the test a boundary applies before copying a thrown message into an indexed
+  field or a notice: no whitespace, so it cannot be prose.
 - `zodDiagnosticCode(error, label)` — a named code, or `null` for anything that
   is not a schema rejection, so a caller keeps its own vocabulary everywhere
   else.
@@ -121,11 +124,32 @@ its own is a boundary that drifts.
 | `apps/api/src/lib/rpc-input.ts` | `parseRpcInput` throws a message that survives an RPC hop |
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason` |
-| `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` shares the bound |
+| `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
+| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop instead of reducing it to the fallback |
+| `apps/api/src/middleware/errors.ts` | `request_failed` carries a code-shaped message a Durable Object threw, as `error_code`, where the row said `internal_error` and `Error` |
+| `apps/api/src/services/workspace-schedule-execution.ts` | the `workspace_schedule_target_failed` audit row names a handler's own rejection the way the notice does |
+| `apps/api/src/durable-objects/sidekick-do.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
+| `apps/api/src/durable-objects/workspace-do.ts` | the entry points on the Sidekick's publication tail and the connector-event pipeline: `applyExternalEventRegistrations`, `ensureMemoryScope`, `createMemoryTable`, `memoryTableWithColumns`, `recordMemoryTableOpenReceipt`, `memoryTableMutationReceipt`, `applyAutomationDirectory`, `ingestConnectorEvent`, `claimConnectorEvent`, `settleConnectorEvent`, `matchExternalEventDestinations` |
+| `apps/api/src/durable-objects/substream-agent.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
+| `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
+
+The label a Durable Object entry point passes to `parseRpcInput` is the RPC
+method, in snake case, not the schema: seven Sidekick methods share one actor
+schema, and the caller knows which method it called. `rpc-contracts.ts`'
+envelope-shaped `parseRpcInput`, which the regional bridges use, already
+labels by method for the same reason.
 
 Adopt it at the next boundary you touch that would otherwise say
 `unexpected_error`. Converting every RPC entry point and every adapter blind is
-how a diagnostic fix becomes a risk.
+how a diagnostic fix becomes a risk. What still parses its input with a bare
+`.parse(input)`, by object: the remaining `WorkspaceDO` methods (about 160,
+reached from routes and from the maintenance alarms), `WorkstreamDO` (24),
+`SubstreamAgent` (`applyPrivateChildLifecycle`, `applyPrivateChildMembership`,
+the batch-update and search-projection entry points), the conversation
+parent's `listChildren` and `retirementChildren`, and
+`InternallyInspectableDurableObject.runInspectionSql`. A rejection at any of
+those still crosses the hop as a bare `Error`; the reporters above then carry
+its empty message as `""`, `handler_error:Error`, or the caller's fallback.
 
 Known and not yet converted:
 
@@ -156,6 +180,58 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-09-15 — The reporters read what the primitive writes
+
+**What changed:** The three reporters a Durable Object's failure reaches now
+name a schema rejection, and the Sidekick pipeline's entry points throw one
+that survives the hop. `diagnosticErrorCode` answers a `ZodError` with its
+paths behind the caller's own code and carries a `parseRpcInput` message
+through instead of reducing it to the fallback; `scheduledAlarmErrorCode`
+names the field a handler's own `ZodError` rejected instead of answering
+`handler_error:ZodError`; and `request_failed` carries a code-shaped message
+a plain `Error` arrived with, as `error_code`. Every `SidekickDO` entry
+point, the `WorkspaceDO` methods on the Sidekick's publication tail and the
+connector-event pipeline, `SubstreamAgent.appendWatchedResourceEvent` and
+`receiveChildEffects` parse through `parseRpcInput`. `isCodeShaped` joins the
+primitive so the notice and the logger test one character class.
+
+**Why:** The first entry closed the boundary the incident was diagnosed at
+and left the ones beside it open. The queue consumer that delivers an
+external event to a Sidekick reduced a refused admission to the constant
+`external_event_delivery_failed` and retried until the Queue gave up, so a
+rule-shape change read as an outage. `materializeAutomationMemoryTables` sits
+on the same `sidekick_publication` alarm one write after the registration
+write that was fixed, and a rejection there still reached the failure row as
+`code: ""` and the notice as `handler_error:Error`. And `diagnosticErrorCode`
+— thirty call sites, every queue consumer among them — refused the `:` and
+`.` a `parseRpcInput` message is built from, so a rejection named on one side
+of the hop was reduced to its fallback on the other, by the helper that
+existed to read it. Two character classes for one idea is the drift the
+primitive was written to end.
+
+**Considered and rejected:** Converting every `.parse(input)` entry point in
+one pass — about 250. The change is mechanical, but a `ZodError` thrown inside
+an object today is indistinguishable, to any caller, from a plain `Error`,
+and nothing proves which callers or tests depend on that. The set converted
+here is the set on the paths that demonstrably lost the reason: the incident's
+object, its publication tail, and the event pipeline that feeds it. The rest
+are listed above by object for the next change to adopt. Also rejected:
+making `diagnosticErrorCode` log any message. A code-shaped message has no
+whitespace and cannot be prose, which is the same test the notice already
+applied; a sentence still reduces to the fallback.
+
+**Consequences:** A reporter that reads a thrown message now accepts the
+whole code class — uppercase, `-`, `:`, `.` — not only `[a-z][a-z0-9_]*`, so
+a saved query that matched a `reason` or `error_code` exactly may see a
+longer value carrying the path after the code it matched. The label an entry
+point passes to `parseRpcInput` is the RPC method, so a caller's log names
+which of an object's methods refused, not only which schema. The bare-`catch`
+sites that log nothing at all — the project-default consumer, the Slack
+reaction ticker, push delivery — are unchanged: naming a reason they never
+record is a logging decision for their owners, not this rule.
+
+Shipped in the pull request for this change.
 
 ### 2026-09-15 — One place to name a schema rejection
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { codeShaped, describeZodIssues, zodDiagnosticCode, DIAGNOSTIC_CODE_MAX_LENGTH } from "./zod-diagnostics";
+import { codeShaped, describeZodIssues, isCodeShaped, zodDiagnosticCode, DIAGNOSTIC_CODE_MAX_LENGTH } from "./zod-diagnostics";
 
 const Summary = z.looseObject({
   id: z.string().min(1),
@@ -93,5 +93,20 @@ describe("zod diagnostics", () => {
 
   it("truncates rather than emitting a code too long for its narrowest consumer", () => {
     expect(codeShaped("a".repeat(500))).toHaveLength(DIAGNOSTIC_CODE_MAX_LENGTH);
+  });
+});
+
+describe("isCodeShaped", () => {
+  it("accepts what codeShaped produces, separators included, and refuses anything that could be prose", () => {
+    // The alarm notice accepted `:` and `.`; the logger's own test did not,
+    // so a rejection named on one side of an RPC hop was reduced to its
+    // fallback on the other. One class, shared.
+    expect(isCodeShaped(codeShaped("projection_invalid:evaluators.0.source.connectorType:invalid_value"))).toBe(true);
+    expect(isCodeShaped("sidekick_missing")).toBe(true);
+    expect(isCodeShaped("handler_error:ZodError")).toBe(true);
+    expect(isCodeShaped("Provider included customer@example.com in its response")).toBe(false);
+    expect(isCodeShaped('[{"code":"invalid_type","path":["id"]}]')).toBe(false);
+    expect(isCodeShaped("")).toBe(false);
+    expect(isCodeShaped("a".repeat(DIAGNOSTIC_CODE_MAX_LENGTH + 1))).toBe(false);
   });
 });

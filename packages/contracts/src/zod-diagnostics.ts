@@ -68,6 +68,7 @@ const WITHHELD_SEGMENT = "_key_";
 const DECLARED_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 const OUTSIDE_CODE_SHAPE = /[^A-Za-z0-9_:.-]/gu;
+const CODE_SHAPE = new RegExp(`^[A-Za-z0-9_:.-]{1,${DIAGNOSTIC_CODE_MAX_LENGTH}}$`, "u");
 
 /**
  * One string reduced to what a code-shaped field will carry.
@@ -79,6 +80,27 @@ const OUTSIDE_CODE_SHAPE = /[^A-Za-z0-9_:.-]/gu;
  */
 export function codeShaped(text: string): string {
   return text.replace(OUTSIDE_CODE_SHAPE, "_").slice(0, DIAGNOSTIC_CODE_MAX_LENGTH);
+}
+
+/**
+ * Whether a string already has the shape `codeShaped` reduces to.
+ *
+ * The test a boundary applies to a thrown message before copying it into an
+ * indexed field or an operator notice. A message in this class carries no
+ * whitespace and no punctuation beyond a separator, so it cannot be prose —
+ * not a provider's sentence, not a member's content — and it is how a code a
+ * Durable Object threw on purpose (`sidekick_missing`, or a `parseRpcInput`
+ * rejection naming its field) is told apart from a message only a log row may
+ * keep.
+ *
+ * One test rather than one per boundary. The alarm notice and the logger's
+ * `diagnosticErrorCode` each spelled their own, and the second refused the
+ * `:` and `.` the first accepted — so a rejection named on one side of an RPC
+ * hop was reduced to its fallback on the other, by the helper that existed to
+ * read it.
+ */
+export function isCodeShaped(text: string): boolean {
+  return CODE_SHAPE.test(text);
 }
 
 /**
