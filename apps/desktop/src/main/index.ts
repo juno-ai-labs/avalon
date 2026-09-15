@@ -588,6 +588,10 @@ let telemetryLaunchId: string | null = null;
 let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: DesktopDeepLinkNavigation[] = [];
+let mainWindowReadyToShow = false;
+let mainWindowLoading: Promise<void> | null = null;
+let resolveMainWindowStartup!: () => void;
+const mainWindowStartup = new Promise<void>((resolve) => { resolveMainWindowStartup = resolve; });
 const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
   applicationOpenObserver.destroy();
   if (telemetryFlushTimer) clearInterval(telemetryFlushTimer);
@@ -2813,6 +2817,13 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
   }
 }
 
+function revealWindow(window: BrowserWindow): void {
+  if (window === mainWindow && !mainWindowReadyToShow) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
 function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): void {
   const navigation: DesktopDeepLinkNavigation = { url: rawUrl, entrypoint };
   const connectorSettingsWindow = shouldDeliverConnectorResultToSettings(rawUrl)
@@ -2840,9 +2851,7 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
   }
   mainWindow.webContents.send('auth:deep-link', navigation);
   const targetWindow = connectorSettingsWindow ?? mainWindow;
-  if (targetWindow.isMinimized()) targetWindow.restore();
-  targetWindow.show();
-  targetWindow.focus();
+  revealWindow(targetWindow);
 }
 
 /**
@@ -2863,11 +2872,6 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
 function revealNoteInMainWindow(noteId: string): void {
   const target = `${customProtocol}://notes/${noteId}`;
   const navigation: DesktopDeepLinkNavigation = { url: target, entrypoint: 'in_app_link' };
-  const raise = (window: BrowserWindow): void => {
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
-  };
   if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
     if (!pendingDeepLinks.some((pending) => pending.url === target)) pendingDeepLinks.push(navigation);
     // Gone: a new window opens on the queued link and raises itself. Present but
@@ -2876,12 +2880,12 @@ function revealNoteInMainWindow(noteId: string): void {
     if (!mainWindow || mainWindow.isDestroyed()) {
       if (app.isReady()) void createMainWindow();
     } else {
-      raise(mainWindow);
+      revealWindow(mainWindow);
     }
     return;
   }
   mainWindow.webContents.send('auth:deep-link', navigation);
-  raise(mainWindow);
+  revealWindow(mainWindow);
 }
 
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
@@ -4423,13 +4427,16 @@ function installApplicationMenu(): void {
 }
 
 async function createMainWindow(): Promise<void> {
+  // Electron's ready event precedes our async startup. Native notification and
+  // URL callbacks can arrive before the renderer protocol and IPC exist.
+  await mainWindowStartup;
+  if (mainWindowLoading) return mainWindowLoading;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    revealWindow(mainWindow);
     return;
   }
   rendererReady = false;
+  mainWindowReadyToShow = false;
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 940,
@@ -4458,7 +4465,10 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.on('render-process-gone', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindowReadyToShow = true;
+    mainWindow?.show();
+  });
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as
     // a renderer restart strands later OAuth/invitation callbacks in the main
@@ -4485,7 +4495,12 @@ async function createMainWindow(): Promise<void> {
     settingsWindowController.releasePrewarmed();
   });
 
-  await loadRenderer(mainWindow, rendererUrl(), 'main');
+  mainWindowLoading = loadRenderer(mainWindow, rendererUrl(), 'main');
+  try {
+    await mainWindowLoading;
+  } finally {
+    mainWindowLoading = null;
+  }
 }
 
 function installContentSecurityPolicy(): void {
@@ -4555,9 +4570,7 @@ if (!singleInstanceLock) {
     }
     else if (mainWindow) {
       applicationOpenObserver.opened('user_launch');
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      revealWindow(mainWindow);
     }
   });
 
@@ -4667,6 +4680,7 @@ if (!singleInstanceLock) {
     protocol.handle(fontScheme, (request) => themeFontCache.respond(request.url));
     installContentSecurityPolicy();
     registerIpc();
+    resolveMainWindowStartup();
     autoUpdateController = initializeAutoUpdate({
       isPackaged: app.isPackaged,
       platform: process.platform,
