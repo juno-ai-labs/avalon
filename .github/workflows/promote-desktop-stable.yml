@@ -1,0 +1,51 @@
+name: Promote Rally Stable desktop channel
+
+on:
+  # Avoid the top of the hour, when scheduled Actions traffic is highest.
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep scheduled runs from stacking up, but do not share the release workflow's
+# `single` queue: a new cron tick must never evict a pending desktop release.
+# The shared R2 release lock below serializes the actual pointer writes.
+concurrency:
+  group: desktop-stable-promotion
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: desktop-release
+    env:
+      RALLY_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
+      RALLY_RELEASE_BASE_URL: https://downloads.rallywith.ai
+      RALLY_RELEASE_PREFIX: stable/darwin/arm64
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check out the Stable promoter
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install desktop release dependencies
+        run: pnpm install --frozen-lockfile --filter @rally/desktop... --fail-if-no-match
+
+      - name: Promote the newest eligible Faster release to Stable
+        run: pnpm --filter @rally/desktop release:promote:stable

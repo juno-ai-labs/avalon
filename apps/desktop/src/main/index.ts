@@ -76,6 +76,11 @@ import type {
   DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
 import { logError, logWarn } from '../common/logger';
+import {
+  defaultDesktopReleaseChannel,
+  parseDesktopReleaseChannel,
+  type DesktopReleaseChannel,
+} from '../common/release-channels';
 import type { DesktopSettingsSection } from '../common/settings';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { SidekicksWindowTarget } from '../common/sidekicks';
@@ -506,6 +511,7 @@ let workspaceSelectionIntent = 0;
 let loggingOut = false;
 let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
+let desktopReleaseChannel: DesktopReleaseChannel = defaultDesktopReleaseChannel;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
@@ -1302,6 +1308,8 @@ function desktopApplicationSettings(
   return {
     ...lockdown,
     ...desktopPush.state(),
+    releaseChannel: desktopReleaseChannel,
+    releaseChannelAvailable: process.platform === 'darwin' && process.arch === 'arm64',
     developerSettingsAvailable,
     // The effective preference, not the stored one. Debug enabled is a
     // per-device choice inside a section the service decides exists at all, so
@@ -3109,6 +3117,17 @@ function registerIpc(): void {
     await productAnalyticsSettingsController.set(rawEnabled);
     return desktopApplicationSettings();
   });
+  ipcMain.handle('application-settings:set-release-channel', async (event, rawChannel: unknown) => {
+    assertTrustedIpcSender(event);
+    const channel = parseDesktopReleaseChannel(rawChannel);
+    if (!channel) throw new Error('Invalid desktop release channel');
+    await updateStoredApplicationSettings(userDataDirectory(), { releaseChannel: channel });
+    desktopReleaseChannel = channel;
+    autoUpdateController?.setReleaseChannel(channel);
+    const settings = desktopApplicationSettings();
+    broadcastApplicationSettingsChanged(settings);
+    return settings;
+  });
   ipcMain.handle('telemetry:screen', async (event, rawScreen: unknown) => {
     assertTrustedIpcSender(event);
     const screen = parseTelemetryScreen(rawScreen);
@@ -4382,7 +4401,10 @@ if (!singleInstanceLock) {
     try {
       // Before any window is constructed, so the first one of the launch opens
       // on the theme's own canvas rather than flashing the previous default.
-      windowThemeChoice = (await readStoredApplicationSettings(userDataDirectory())).themeChoice;
+      // The updater also needs its local channel before its first request.
+      const applicationSettings = await readStoredApplicationSettings(userDataDirectory());
+      windowThemeChoice = applicationSettings.themeChoice;
+      desktopReleaseChannel = applicationSettings.releaseChannel;
     } catch (error) {
       logWarn('rally', 'could not read the stored window theme', error);
     }
@@ -4438,6 +4460,7 @@ if (!singleInstanceLock) {
       arch: process.arch,
       env: process.env,
       currentVersion: app.getVersion(),
+      releaseChannel: desktopReleaseChannel,
       showMessageBox: (options) => dialog.showMessageBox(options),
       openExternal: (url) => shell.openExternal(url),
       beforeInstall: prepareForUpdateInstall,

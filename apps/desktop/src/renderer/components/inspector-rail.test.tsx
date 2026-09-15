@@ -210,7 +210,7 @@ describe('InspectorRail details', () => {
 
     // The Settings window owns the preference, so the rail learns about a
     // change through the application-settings broadcast.
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
+    announceApplicationSettings({ releaseChannel: 'stable', releaseChannelAvailable: true, lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
     expect(labels()).toEqual(['Email', 'Created by', 'Created', 'Last activity']);
     expect(within(details).queryByText('harness-run-1')).not.toBeInTheDocument();
@@ -227,7 +227,7 @@ describe('InspectorRail details', () => {
     await waitFor(() => expect(screen.getByText('Harness run')).toBeVisible());
     expect(address()).toHaveAttribute('title', workstream.emailAddress);
 
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
+    announceApplicationSettings({ releaseChannel: 'stable', releaseChannelAvailable: true, lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
     expect(address()).toHaveAttribute('title', workstream.emailAddress);
   });
