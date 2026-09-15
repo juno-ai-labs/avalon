@@ -647,6 +647,22 @@ need the injected provider OCR path. Index storage grows with bounded chunks and
 terms rather than duplicating attachment text. Future changes must preserve those
 cheap discovery and continuation paths.
 
+## Changelog
+
+### 2026-09-15 — Share prepared conversation file ownership
+
+Imported user attachments and assistant artifact files use the verified upload
+pipeline and per-turn canonical attachment relationships. Import retry reconciliation
+checks operation identity, bytes and the intended descriptor. Prepared conversation
+receipts own reservations separately from live input mailboxes; definite failures
+release holds, while canonical resource projection releases committed holds. Both
+historical roles retain model manifests. Unavailable originals remain references,
+and extracted text is labeled separately. See [session import](session-import.md).
+
+The separate durable preparation owner prevents file holds from depending on a
+live-message mailbox that imported history never creates. Fake pending messages
+and generation receipts were rejected because they conflate storage with execution.
+
 ### 2026-09-11 — An attachment is reachable and advertised, separately
 
 **What changed:** `resource-listing.ts` adds one flag in a resource's
@@ -1635,20 +1651,3 @@ additive rollout and must disappear at the manifest-only cutover.
 
 Shipped in [#144](https://github.com/juno-ai-labs/avalon/pull/144). Design:
 [context-safe agent attachments](PRDs/2026-08-12_context-safe-agent-attachments/prd.md).
-
-
-## Changelog
-
-### 2026-09-15 — Share prepared conversation file ownership
-
-Imported user attachments and assistant artifact files use the verified upload
-pipeline and per-turn canonical attachment relationships. Import retry reconciliation
-checks operation identity, bytes and the intended descriptor. Prepared conversation
-receipts own reservations separately from live input mailboxes; definite failures
-release holds, while canonical resource projection releases committed holds. Both
-historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [session import](session-import.md).
-
-The separate durable preparation owner prevents file holds from depending on a
-live-message mailbox that imported history never creates. Fake pending messages
-and generation receipts were rejected because they conflate storage with execution.
