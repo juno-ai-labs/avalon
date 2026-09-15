@@ -1,8 +1,6 @@
 import type { ConnectorInstallationManagement } from "./installation";
-import {
-  ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
-  ConnectorActivityTriggerDescriptorSchema,
-  ConnectorOriginResourceSchema, zodDiagnosticCode } from "@rally/contracts";
+import { ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY, ConnectorActivityTriggerDescriptorSchema, ConnectorOriginResourceSchema } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type {
   ConnectorActivityFilterField,
   ConnectorActivityTriggerDescriptor,
@@ -490,8 +488,9 @@ function streamFailure(error: unknown, streamId: string): ConnectorActivityStrea
     // model is a schema rejection, and its failing path is the diagnosis; it
     // used to be `poll_failed`, which is what a network fault also says. The
     // label is the one `connectorObservationErrorCode` uses for the same
-    // failure when it is thrown rather than returned.
-    code: error instanceof ConnectorError ? error.code : zodDiagnosticCode(error, "response") ?? "poll_failed",
+    // failure when it is thrown rather than returned: the boundary, not the
+    // side that was wrong.
+    code: error instanceof ConnectorError ? error.code : zodDiagnosticCode(error, "schema") ?? "poll_failed",
     message: (error instanceof Error ? error.message : "Connector activity stream failed").slice(0, 500),
   };
 }
