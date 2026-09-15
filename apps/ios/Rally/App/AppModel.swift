@@ -48,6 +48,12 @@ final class AppModel {
     var jumpToLatestToken = 0
     var digest: RallyDigest?
     var accountPresentation: RallyPersonalPresentation?
+    var pushNotificationsAvailable = false
+    var pushNotificationsEnabled = RallyPush.preferenceEnabled()
+    var pushNotificationDenied = false
+    private var pushDeviceToken: String?
+    private var pushPass = UUID()
+    private var pendingWorkstreamURL: URL?
 
     var accountAvatarName: String {
         workspaceSession?.user.name ?? identitySession?.user.name ?? "Rally"
@@ -260,7 +266,7 @@ final class AppModel {
             try? await completeSignIn(callback: url)
             return
         }
-        await openUniversalLink(url)
+        await openPushURL(url)
     }
 
     private func completeSignIn(callback: URL) async throws {
@@ -323,6 +329,7 @@ final class AppModel {
 
     func signOut() async {
         resetCreation()
+        await deletePushRegistration()
         await pool.disconnectAll()
         pool.clearSnapshots()
         await client.logout(refreshToken: workspaceSession?.refreshToken ?? identitySession?.refreshToken)
@@ -348,6 +355,7 @@ final class AppModel {
     func leaveCurrentWorkspace() async {
         guard let workspace = workspaceSession?.workspace else { return }
         do {
+            await deletePushRegistration()
             try await client.leaveWorkspace(workspaceId: workspace.id, expectedOutcome: "left")
             try? keychain.delete(account: SessionAccounts.workspace)
             workspaceSession = nil
@@ -359,6 +367,7 @@ final class AppModel {
             onboarding = try await client.onboardingState()
             phase = .pickingWorkspace
         } catch {
+            await reconcilePushRegistration()
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t leave this workspace."
         }
     }
@@ -384,6 +393,8 @@ final class AppModel {
                   let userId = workspaceSession?.user.id ?? identitySession?.user.id {
             accountPresentation = members.first(where: { $0.id == userId })?.presentation
         }
+        await consumePendingWorkstreamURL()
+        await reconcilePushRegistration()
     }
 
     private func fetchAccountOnboarding() async -> RallyAccountOnboarding? {
@@ -1434,12 +1445,96 @@ final class AppModel {
         errorMessage = "This Rally view does not exist or is no longer available."
     }
 
-    func requestPushAuthorization() async {
-        let center = UNUserNotificationCenter.current()
-        _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
-        await MainActor.run {
-            UIApplication.shared.registerForRemoteNotifications()
+    func openPushURL(_ url: URL) async {
+        guard phase == .ready else {
+            pendingWorkstreamURL = url
+            return
         }
+        await openUniversalLink(url)
+    }
+
+    func didReceivePushDeviceToken(_ token: String) async {
+        pushDeviceToken = token
+        await reconcilePushRegistration()
+    }
+
+    func setPushNotificationsEnabled(_ enabled: Bool) async {
+        pushNotificationsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: RallyPush.preferenceKey)
+        await reconcilePushRegistration()
+    }
+
+    func reconcilePushRegistration() async {
+        let pass = UUID()
+        pushPass = pass
+        guard phase == .ready, workspaceSession != nil else { return }
+        let flags: RallyClientFeatureFlags?
+        if let token = identitySession?.accessToken {
+            flags = try? await client.clientFeatureFlags(accessToken: token)
+        } else {
+            flags = nil
+        }
+        guard pushPass == pass else { return }
+        let available = flags?.pushNotificationsEnabled == true
+        pushNotificationsAvailable = available
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard pushPass == pass else { return }
+        pushNotificationDenied = settings.authorizationStatus == .denied
+        let authorized = Self.pushAuthorized(settings.authorizationStatus)
+        let wants = available && pushNotificationsEnabled
+        if !wants {
+            await deletePushRegistration()
+            return
+        }
+        if settings.authorizationStatus == .notDetermined {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            guard pushPass == pass else { return }
+            let refreshed = await UNUserNotificationCenter.current().notificationSettings()
+            pushNotificationDenied = refreshed.authorizationStatus == .denied
+            guard Self.pushAuthorized(refreshed.authorizationStatus) else {
+                await deletePushRegistration()
+                return
+            }
+        } else if !authorized {
+            await deletePushRegistration()
+            return
+        }
+        UIApplication.shared.registerForRemoteNotifications()
+        guard let token = pushDeviceToken, pushPass == pass else { return }
+        try? await client.registerPushDevice(
+            installationId: pushInstallationId(),
+            body: .current(token: token)
+        )
+    }
+
+    private func consumePendingWorkstreamURL() async {
+        guard let url = pendingWorkstreamURL else { return }
+        pendingWorkstreamURL = nil
+        await openUniversalLink(url)
+    }
+
+    private func deletePushRegistration() async {
+        if let data = try? keychain.load(account: SessionAccounts.pushInstallation),
+           let id = String(data: data, encoding: .utf8),
+           UUID(uuidString: id) != nil {
+            try? await client.deletePushDevice(installationId: id)
+        }
+        UIApplication.shared.unregisterForRemoteNotifications()
+    }
+
+    private func pushInstallationId() -> String {
+        if let data = try? keychain.load(account: SessionAccounts.pushInstallation),
+           let id = String(data: data, encoding: .utf8),
+           UUID(uuidString: id) != nil {
+            return id
+        }
+        let id = UUID().uuidString.lowercased()
+        try? keychain.save(Data(id.utf8), account: SessionAccounts.pushInstallation)
+        return id
+    }
+
+    private static func pushAuthorized(_ status: UNAuthorizationStatus) -> Bool {
+        status == .authorized || status == .provisional || status == .ephemeral
     }
 }
 

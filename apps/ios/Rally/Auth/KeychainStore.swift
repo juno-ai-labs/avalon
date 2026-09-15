@@ -66,4 +66,5 @@ enum SessionAccounts {
     static let identity = "identity-session"
     static let workspace = "workspace-session"
     static let appearance = "appearance-preference"
+    static let pushInstallation = "push-installation-id"
 }

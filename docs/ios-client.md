@@ -15,8 +15,10 @@ Grok-inspired transcript chrome, or the TestFlight archive.
 | --- | --- |
 | `apps/ios/Rally.xcodeproj` | File-system-synchronized Xcode 26 project. Targets Rally, RallyTests, RallyUITests. |
 | `apps/ios/Config/Shared.xcconfig` | Bundle ID `ai.rallywith.ios`, team `7ZLT6A8W25`, marketing version, deployment target iOS 26, usage strings. |
-| `apps/ios/Rally/RallyApp.swift` | `@main`. Appearance, deep links, push authorization. |
-| `apps/ios/Rally/App/AppModel.swift` | Session lifecycle, workspace pick, directory, send, socket consume, pin/archive/search, substream switch and create, account appearance. |
+| `apps/ios/Rally/RallyApp.swift` | `@main`. Appearance, deep links, push reconcile on foreground. |
+| `apps/ios/Rally/App/AppModel.swift` | Session lifecycle, workspace pick, directory, send, socket consume, pin/archive/search, substream switch and create, account appearance, Apple push registration. |
+| `apps/ios/Rally/App/RallyAppDelegate.swift` | APNs token and notification-tap callbacks. Forwards; does not register. |
+| `apps/ios/Rally/App/RallyPush.swift` | iOS topic, sandbox/production environment, `rally` payload parse. |
 | `apps/ios/Rally/App/MainShell.swift` | Tab shell: Work streams, Sidekicks. System `Tab` + minimize-on-scroll so the bar is Liquid Glass. |
 | `apps/ios/Rally/Auth/PKCE.swift` | S256 attempt/verifier/challenge, same lengths as the desktop store. |
 | `apps/ios/Rally/Auth/KeychainStore.swift` | Identity and workspace sessions. Refresh tokens never go in UserDefaults. |
@@ -32,7 +34,7 @@ Grok-inspired transcript chrome, or the TestFlight archive.
 | `apps/ios/Rally/Features/Chat` | Work-stream list → substream list → feed. `FeedProjection`, composer in `safeAreaBar`, substream launch. Same row kinds as desktop `messageType`. |
 | `apps/ios/Rally/Features/History` | Work-stream list: pin, unread, archive, rename, Electron recency/pin order. |
 | `apps/ios/Rally/Features/Sidekicks` | Sidekick library; opening one is the same conversation surface with the automation id as parent. |
-| `apps/ios/Rally/Features/Settings` | Account, digest, members, appearance, leave/sign-out. Desktop-only settings are named, not faked. |
+| `apps/ios/Rally/Features/Settings` | Account, digest, members, appearance, Apple push (when the flag is on), leave/sign-out. Desktop-only settings are named, not faked. |
 | `apps/ios/Rally/Assets.xcassets/AppIcon.appiconset/AppIcon.png` | 1024 RGB App Store icon, flattened from the Electron **Dark** selectable icon (`apps/desktop/resources/app-icons/dark.png`). |
 | `apps/ios/Rally/Assets.xcassets/RallyMark.imageset` | Shared loop PNG from `assets/brand/rally-mark.png`. Template-rendered in brand ink. |
 | `apps/ios/Rally/Design` | True-black/light palette, Liquid Glass helpers, Dynamic Type, the shared Rally loop mark, work-stream/Sidekick glyphs from the appearance catalog, the circular account avatar. |
@@ -171,6 +173,20 @@ false`, 1024px App Icon taken from the Electron Dark Dock icon, flattened to
 RGB because App Store icons cannot carry alpha. Archive on a Mac with Xcode 26;
 the sandbox image has no iOS SDK.
 
+### Apple push
+
+Once a workspace session is ready, iOS reads `GET /feature-flags` on Global
+identity. When `pushNotificationsEnabled` is on and the person has not turned
+the Notifications switch off, it asks for permission, registers for APNs, and
+`PUT`s `/push-devices/:installationId` on the workspace Worker with
+`platform: "ios"`, topic `ai.rallywith.ios`, and `apnsEnvironment` from the
+build (Debug sandbox, Release/TestFlight production). The installation UUID
+lives in the Keychain and survives sign-out. Sign-out and leave `DELETE` that
+row while the session is still live. A tap parses the same `rally` object
+desktop does and opens `rally.url` as a universal link. The Worker already
+renders that payload; iOS does not invent a second one.
+[`push-notifications.md`](push-notifications.md) owns delivery.
+
 ### Electron inventory and coverage
 
 Electron's main window is a HashRouter. Extra windows are `?surface=settings`,
@@ -201,9 +217,10 @@ than stubbed as working.
 | `#/notes/:id` | Not on iPhone. Notes stay on the Mac |
 | Meeting window / Control Tower live capture | Not on iPhone. AudioWorklet capture stays on the Mac |
 | `#/sidekicks`, `#/sidekicks/:id`, `#/automations/:id` | Sidekicks tab; open is `/conversations/:id`. Creating a Sidekick stays on the Mac |
-| `#/settings` and settings window | Settings sheet: Account, Digest, Workspace members, Appearance, leave, sign-out |
+| `#/settings` and settings window | Settings sheet: Account, Digest, Notifications (when the flag is on), Workspace members, Appearance, leave, sign-out |
 | Settings: connections, GitHub, custom MCP, Terminal network | Named in Settings as Mac-only |
 | Application: menu bar, Dock icon, login item, lockdown | Named in Settings as Mac-only |
+| Application: Apple push | Same registry as the Mac. iOS uses topic `ai.rallywith.ios` and the sandbox host from a Debug build |
 | Search (⌘K) | Search sheet; pages follow `nextCursor` |
 | Account / workspace switcher | Workspace picker after leave; sign-out |
 | Deep-link error window | Alert: "This Rally view does not exist or is no longer available." |
@@ -255,8 +272,8 @@ Feed row kinds (desktop `messageType` / omitted placeholder / stripped suggestio
 This module owns the iOS binary, its signing, and the way that binary talks to
 already-shipped HTTP and socket contracts. It does **not** own those contracts
 ([`architecture.md`](architecture.md), [`packages/contracts`](../packages/contracts)),
-desktop isolation ([`security.md`](security.md)), or APNs Worker delivery (still
-the push PRD). Account erasure for other members is operator work, not an iOS
+desktop isolation ([`security.md`](security.md)), or APNs delivery itself
+([`push-notifications.md`](push-notifications.md)). Account erasure for other members is operator work, not an iOS
 route.
 
 Callers: a person on an iPhone or iPad, TestFlight, and App Store Connect.
@@ -272,21 +289,22 @@ Nothing in the Worker imports this tree.
 - Offline is `RallyAPIError.offline` and an alert. Nothing is queued on device.
 - Composer cap is `APIConfiguration.messageMaxCharacters` (100,000), the same
   number as the HTTP contract.
-- APNs registration stores the hex token in UserDefaults. Nothing sends it
-  until the Worker grows an iOS topic. A missing token is not an error.
+- APNs registration is the same PUT/DELETE as desktop. A missing token (simulator,
+  unsigned Debug) is not an error; the device is simply not in the registry.
+  Denied permission deletes the row so email fallback can still fire.
 - Voice capture fails closed: denied speech or microphone shows a status string
   and does not send.
 
 No new numeric limit is invented here. Caps that already exist on the API are
-reused; APNs and erasure are left open because the Worker does not implement
-them.
+reused; member-facing erasure is left open because the Worker does not implement
+it.
 
 ## Testing
 
 | Suite | Command | What it can prove |
 | --- | --- | --- |
 | Packaging | `pnpm test:scripts` (file `scripts/ios-project.test.mjs`) | Native-only tree, bundle ID, team, entitlements, privacy manifest, 1024 RGB icon, required Swift files, Electron route coverage, feed-kind cases, substream switcher/launch strings. Runs on Linux. |
-| XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream pin/recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
+| XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), Apple push payload parse and PUT body, transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream pin/recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
 | UI tests | Xcode → RallyUITests | Intro chrome and Continue with Google. `testLocalDevelopmentAccountReachesChats` is skipped unless `RALLY_LOCAL_UI=1` and a local Worker is up — CI never sets that. Needs a simulator. |
 
 This sandbox cannot run `xcodebuild`. The packaging test is the gate that CI
@@ -318,8 +336,6 @@ pointed at the wrong team.
 
 ## Open questions
 
-- When the Worker grows `APNS_TOPICS.ios`, this client should POST the stored
-  device token. Do not invent that route in the iOS tree.
 - Member-facing erasure: Settings currently leaves + signs out + privacy URL.
   An in-app delete that actually drops identity needs an API.
 - Meeting capture, Projects, Notes, connector OAuth, GitHub repo access, Terminal
@@ -368,7 +384,9 @@ scrolled. Feed history waits until the bottom-anchored list has settled before
 treating the top edge as a page request. Child rows on the substream list warm on appear. A ticket already
 minted for a still-retained feed is kept when a tap upgrades presence. The App Store icon is the Electron Dark selectable mark, flattened to
 RGB. TestFlight identity is bundle `ai.rallywith.ios`, team `7ZLT6A8W25`,
-version 1.0.0.
+version 1.0.0. Apple push uses the Worker registry the Mac already has:
+`platform: "ios"`, topic `ai.rallywith.ios`, Debug sandbox / Release
+production, a Keychain installation id, and a tap that opens `rally.url`.
 
 **Why:** The product needed a phone client that could go to TestFlight without
 standing up a second UI stack, and then a phone that could actually walk the
@@ -384,7 +402,10 @@ the same kinds keeps one transcript. The Dark desktop icon is the mark people
 already have in the Dock — a second glyph would have been a second brand. The
 phone shell is conversation plus Sidekicks: project grouping has no phone-sized
 space yet, and Notes without Control Tower capture would be a read-only stub of
-the Mac. Opening onto a composer hid the directory a phone user needs to pick
+the Mac. Storing an APNs token in UserDefaults until a second Worker topic
+existed left mentions on a closed iPhone undelivered after the Mac registry
+had already shipped; iOS registers into that registry instead of inventing
+another queue. Opening onto a composer hid the directory a phone user needs to pick
 work; the Grok Bot list, then the substream list, then the feed is the same
 parent → child → transcript split
 [`substream-creation.md`](substream-creation.md) already documents, as a
@@ -484,14 +505,16 @@ in flight. Also rejected: a zoom from the directory row into the pushed screen.
 The morph hid the skeleton until it finished. Also rejected: a guessed sleep before `subscribe`. The protocol
 signal is the socket open event, the same one desktop already waits for. Also
 rejected: a REST first paint of the work-stream list or Main transcript.
-Those fields already arrive on subscribe.
+Those fields already arrive on subscribe. Also rejected: a second iOS-only
+push route, or leaving the APNs token in UserDefaults until a later Worker
+change. The Mac registry already existed; iOS is a second topic on it.
 
 **Consequences:** iOS is a peer of desktop, not a mode of it. Session files,
 preload, and CSP in `apps/desktop` do not apply. A future iOS feature that
-needs a new Worker route has to land in the API first. APNs delivery and
-member-facing erasure are explicitly out of this change — the client stores a
-device token and explains deletion, and nothing behind the API was invented to
-match. Meeting Control Tower, Projects, Notes, connector authorization, new
+needs a new Worker route has to land in the API first. Member-facing erasure
+is still out of this change. Apple push registration is in: Debug tokens go
+to Apple sandbox because that is the entitlement the Debug build signs, and
+the consumer must use the host that environment names. Meeting Control Tower, Projects, Notes, connector authorization, new
 work streams, and new Sidekicks stay Mac-only. A new substream
 still starts from the list row or a settled feed message. Child membership stays creator-only because that is the platform
 policy, not an iOS omission. Prepare still happens on the submit keystroke, not

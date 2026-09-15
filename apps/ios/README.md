@@ -9,6 +9,8 @@ plus `/auth/desktop/exchange`). The App Store icon is the Electron Dark mark.
 In-app chrome uses the shared Rally loop, not the retired four-pointed spark.
 
 The owning document is [`docs/ios-client.md`](../../docs/ios-client.md).
+Apple push registration is the same Worker registry as the Mac
+([`docs/push-notifications.md`](../../docs/push-notifications.md)).
 
 ## Requirements
 
