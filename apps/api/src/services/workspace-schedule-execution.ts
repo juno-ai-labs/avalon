@@ -25,6 +25,7 @@ import {
   type ConnectorPollWorkflowInput,
 } from "@rally/contracts";
 import { newId } from "@rally/db";
+import { z } from "zod";
 
 import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
 import type {
@@ -37,6 +38,7 @@ import type {
   WorkspaceNotificationIntentReapRequest,
   WorkspaceNotificationIntentReapResult,
 } from "../durable-objects/workspace-notification-intent-protocol";
+import { scheduledAlarmErrorCode } from "../durable-objects/scheduled-alarm-report";
 import { SLACK_INGRESS_ATTEMPT_LIMIT } from "../durable-objects/workspace-slack-protocol";
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
@@ -496,7 +498,13 @@ export async function recordWorkspaceScheduleFailure(
     workspace_id: ctx.workspaceId,
     target_kind: target.kind,
     target_id: target.id,
-    code: error instanceof Error ? error.message : "unknown_error",
+    // The row keeps the message, which a target here throws as a code. A
+    // stored row that no longer parses is the exception: its message is a
+    // JSON blob, and the field it names is what an operator needs, so it is
+    // reduced the way the alarm notice for the same failure reduces it.
+    code: error instanceof z.ZodError
+      ? scheduledAlarmErrorCode(error)
+      : error instanceof Error ? error.message : "unknown_error",
   });
 }
 

@@ -1,4 +1,6 @@
+import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import type { Context } from "hono";
+import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -52,12 +54,24 @@ export type LogFields = Record<string, unknown> & { message?: string };
 /**
  * Extract a stable error code without copying an arbitrary provider/runtime
  * message into an indexed log field.
+ *
+ * Two errors carry structure that is safe to keep. A `ZodError` raised on this
+ * side of any RPC hop still has its issues, and their paths and codes are
+ * schema shape rather than content, so they ride behind the caller's own code
+ * instead of being replaced by it: `external_event_delivery_failed` became
+ * `external_event_delivery_failed:event.eventType:invalid_type`. And a message
+ * that is already code-shaped is one somebody threw on purpose — a Durable
+ * Object's `sidekick_missing`, or a `parseRpcInput` rejection naming its field
+ * — which is why the test is the one class every such field shares. The
+ * earlier `[a-z][a-z0-9_]*` refused the `:` and `.` such a rejection is built
+ * from, and reduced it to the fallback one hop after it was named.
  */
 export function diagnosticErrorCode(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.code;
+  if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;
   const direct = error.message.trim();
-  if (/^[a-z][a-z0-9_]{0,119}$/u.test(direct)) return direct;
+  if (isCodeShaped(direct)) return direct;
   const tagged = /\(([a-z][a-z0-9._]{0,119})\)/u.exec(direct)?.[1];
   return tagged?.replaceAll(".", "_") ?? fallback;
 }
