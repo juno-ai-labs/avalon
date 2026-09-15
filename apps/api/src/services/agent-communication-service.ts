@@ -10,7 +10,6 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createResourceObjectPort } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
-import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { provisionWorkstreamObject } from "./workstream-runtime-database";
 import { createAutomation } from "./automation-service";
 
@@ -128,11 +127,6 @@ export class AgentCommunicationService {
     const runtime = await recipient.agentRuntimeInfo();
     if (!runtime) throw new AgentCommunicationError("agent_destination_unavailable");
     const attachmentIds = await this.validateAttachments(args.attachmentIds);
-    for (const resourceId of attachmentIds) {
-      await attachWorkstreamRuntimeResource(this.env, { workspaceId: this.input.workspaceId,
-        workstreamId: address.parentId, substreamId: address.substreamId, resourceId,
-        attachedByUserId: this.input.executionPrincipal.type === "user" ? this.input.executionPrincipal.userId : null });
-    }
     const result = await recipient.admitAgentMessage({ workspaceId: this.input.workspaceId,
       workstreamId: asWorkstreamId(address.parentId), messageId, clientMessageId: `agent-message:${messageId}`,
       recipientAgentId: target.recipientAgentId, text: args.message, attachmentIds,
