@@ -42,7 +42,14 @@ than adding a cross-store retention job for launch. Future pruning should join
 existing intent retention, not introduce another scheduler.
 
 Payloads carry the first 1,000 Unicode code points with an ellipsis when shortened,
-fitted further to Apple's 4,096-byte ceiling. APNs retains undelivered alerts for
+fitted further to Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to
+the recipient's count of unarchived, non-system work streams in that workspace that
+are unread for them, or `needs_input` while they are a participant — the same
+directory `attention` read already returns as `unreadAndNeedsInputCount`. Each
+stream counts once even when both apply. A send from one workspace does not sum
+other workspaces: iOS holds one session, and a global inbox is out of scope.
+Omitting `badge` would leave the previous icon count in place; `0` clears it.
+APNs retains undelivered alerts for
 24 hours. Provider JWTs are shared through regional KV and refreshed at 50 minutes;
 no coordination object is introduced. Enqueue and send share the same
 production/staging availability check. Queue retries and dead-letter queues own
@@ -121,8 +128,10 @@ signed-Mac delivery.
 `push-device-service.test.ts` uses real migrated SQLite. `push-payload.test.ts` and
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
-workerd `push-delivery.test.ts` covers read RPC, receipts, revocation and retry.
-Desktop push/link tests cover registration and routing; existing settings and
+workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
+and that `aps.badge` is the workspace attention count of unread and needs-input
+streams. `workspace-attention.test.ts` covers that count against the same
+directory projection. Desktop push/link tests cover registration and routing; existing settings and
 release suites cover the integration. iOS XCTest covers payload parse and the
 PUT body. The provider itself and macOS/iOS alert
 presentation require a signed installed build.
@@ -136,6 +145,36 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-09-15 — Set APNs badge from unread and needs-input work streams
+
+**What changed:** Alert payloads now include `aps.badge`, set from
+WorkspaceDO's attention read: the number of unarchived, non-system work streams
+in that workspace that are unread for the recipient, or `needs_input` while they
+are a participant. Ordinary unread that is not a mention, seating, or elicitation
+counts; a needs-input stream that has already been read still counts; a stream
+that is both counts once. `GET /workspace/attention` exposes the same number as
+`unreadAndNeedsInputCount`.
+
+**Why:** The iOS (and Mac) app icon had no count. The push design reserved
+`badge` for the attention read once that existed; using `waitingForYou` would
+have omitted unread streams that are not addressed and would have treated
+unseen-only rows as the icon count. A second producer or a silent badge-only
+push would have been another queue hop for a number the delivery consumer can
+already read from the directory it is fenced on.
+
+**Considered and rejected:** Summing every workspace the person belongs to.
+Attention is workspace-scoped, regions do not share directory rows, and
+multiple workspaces have no global inbox. iOS registers one session. Also
+rejected: setting badge only on iOS devices. APNs `badge` is how Apple paints
+the icon on both platforms; a later local Dock count fed by the socket is a
+different surface.
+
+**Consequences:** The icon reflects this workspace at send time. Reading a
+stream does not clear the badge until the next alert (or a client that sets it
+locally). A Mac with several workspace credentials shows whichever workspace
+last notified. Future silent badge refreshes belong with that local surface,
+not here.
 
 ### 2026-09-15 — Wait for application startup before opening a notification target
 
