@@ -790,6 +790,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
+            key={draftKey}
             layout="message-capsule"
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}

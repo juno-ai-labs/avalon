@@ -2,7 +2,7 @@ import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asProjectId, type Pro
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
@@ -154,6 +154,7 @@ function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }):
 function renderProjectScreen(
   projectId: string,
   projects: ProjectDirectory = { waterline: 0, items: [] },
+  nextProjectId?: string,
 ): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -163,6 +164,7 @@ function renderProjectScreen(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/projects/${projectId}/workstreams/new`]}>
+          {nextProjectId && <Link to={`/projects/${nextProjectId}/workstreams/new`}>New work stream in another project</Link>}
           <Routes>
             <Route element={<NewWorkstreamScreen projectId="route" workspace={workspace} />} path="/projects/:projectId/workstreams/new" />
           </Routes>
@@ -475,6 +477,22 @@ describe('New work-stream home', () => {
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
     await waitFor(() => expect(queryClient.getQueryState(['workspace-members'])?.status).toBe('success'));
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
+  });
+
+  it('focuses the message when navigating between project launchers', async () => {
+    const firstId = asProjectId('00000000-0000-7000-8000-0000000000f2');
+    const secondId = asProjectId('00000000-0000-7000-8000-0000000000f3');
+    renderProjectScreen(firstId, {
+      waterline: 1,
+      items: [...personalProjectDirectory(firstId).items, ...personalProjectDirectory(secondId).items],
+    }, secondId);
+    const firstComposer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    expect(firstComposer).toHaveFocus();
+    const nextProject = screen.getByRole('link', { name: 'New work stream in another project' });
+    act(() => nextProject.focus());
+    fireEvent.click(nextProject);
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus());
   });
 
   it('shows an empty recipient result when the workspace has no available members', async () => {
