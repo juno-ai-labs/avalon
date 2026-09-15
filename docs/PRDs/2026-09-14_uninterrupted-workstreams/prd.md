@@ -12,6 +12,8 @@ Participants keep talking with Rally while substantial work runs in background s
 
 Teams supply a simple communication scope. Sidekicks participate through their own authoring substreams, where their setup tools live. The design reuses persistent substreams, existing execution behavior, and normal tool authorization rather than adding a task-management system.
 
+Bind remains the core owner of the agent loop in every message feed, including background substreams. Responsiveness comes from independent execution and supported input boundaries, while preserving Bind's ordering, checkpoint, tool-execution, suspension, and completion protections. If the design needs a new loop capability, change the Bind runtime library directly rather than bypassing it or building a competing loop in Rally.
+
 ## Motivation
 
 In the workstream interaction reported during this PRD’s creation, three participants were having a fluid conversation until Rally began a long-running task. Messages accumulated behind the execution, exposing queue defects. Repeated steering also felt wrong for ordinary human conversation.
@@ -58,7 +60,7 @@ Background agents use the same agent harness as workstream agents and inherit th
 
 Agents use the same start and message primitives recursively. A child can delegate when useful. Retain only the lineage needed for authorization, reporting, and stopping owned execution; do not introduce tree scheduling or aggregate task state.
 
-An agent’s final response returns through the originating message exchange. Follow-up instructions continue the same substream with its existing context. Reuse message references for returning answers rather than creating separate return-destination machinery.
+Agents send results and questions through `send_message` or `reply`. Standard assistant responses remain in their own conversation and are never automatically forwarded to another agent; this applies equally to parents, siblings, and Sidekick authoring agents. A failed background agent posts one host-generated notice to its owning parent: `Agent failed due to <reason>. Id: <id>`. Settlement retries do not duplicate it. Completion and needs-input states do not synthesize messages. Follow-up instructions continue the same substream with its existing context. Reuse message references for returning answers rather than creating separate return-destination machinery.
 
 ### Minimal participant visibility
 
@@ -79,6 +81,8 @@ Stop uses the host’s existing execution-stop behavior. A later continuation me
 The workstream’s stop control targets the foreground response. Participants direct background agents through messages to Rally, not per-worker controls.
 
 Archiving a workstream stops its active agents and their owned descendants through the same execution-stop behavior. Independently owned Sidekicks remain intact, and their scheduled runs are unaffected; team membership alone does not make an agent part of the archive’s stop scope.
+
+Messages cannot restart agents in an archived workstream. Send and reply refuse the archived destination while retaining additive team membership.
 
 ### Send and reply
 
@@ -133,7 +137,7 @@ None yet.
 1. **Substreams and messages are the primitives.** They already provide identity, context, and continuation. Separate tasks, requirement revisions, and return-routing records duplicate them.
 2. **Teams are small and active internally.** Workspace-scoped membership replaces special messaging rules for parents, siblings, introductions, and Sidekicks. Additive membership and deferred management surfaces keep the mechanism small.
 3. **Trust model judgment.** Use frontier-model reasoning for collaboration, changed instructions, multi-team context, and delegation choices. Add mechanisms in response to observed failures, not anticipated ones.
-4. **Reuse execution behavior.** Stop and message-based continuation, ordinary final responses, existing status, and durable delivery replace bespoke lifecycle and progress machinery.
+4. **Reuse execution behavior.** Stop and message-based continuation, local final responses, explicit messaging tools, existing status, and durable delivery replace bespoke lifecycle and progress machinery.
 5. **Sidekicks own setup.** Their authoring agents use domain tools locally; other agents request outcomes through the common messaging interface.
 6. **Cut over directly.** With zero users, a simple operational cutover is preferable to a parallel compatibility system or migration of live agent work.
 
@@ -166,30 +170,30 @@ Retain existing resource-level write controls and safe handling of uncertain ext
 | Stop agent | Stop the addressed agent and its owned descendants using existing host controls. Continue later with a message. |
 | Initialize or locate Sidekick | Discover accessible Sidekicks with ownership scope, presenting current-workstream entries first. Prefer suitable existing workstream Sidekicks; default new Sidekicks to current-workstream ownership. Establish the authorized authoring destination and implicit team membership; setup itself happens through messages. |
 
-Final responses and failures use the existing execution host and message exchange. There is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
+Final responses settle locally through the existing execution host. Failed background runs additionally notify their owning parent. Model-authored inter-agent messages require explicit send_message or reply calls; there is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
 
 ### Agreed wire shapes
 
 Use these canonical tools, before the plugin wire prefix. Shapes below describe successful payloads within the existing tool-result envelope:
 
 ```text
-start_agent({ name: string, description: string, message: string })
+start_agent({ name: string, description: string, message: string, attachmentIds?: string[] })
   → { agentId: string }
 
 list_agents({})
   → { agents: [{ agentId: string, name: string, description: string, status: existingExecutionStatus }] }
 
-send_message({ agentId: string, message: string })
+send_message({ agentId: string, message: string, attachmentIds?: string[] })
   → { messageId: string }
 
-reply({ messageId: string, message: string })
+reply({ messageId: string, message: string, attachmentIds?: string[] })
   → { messageId: string }
 
 stop_agent({ agentId: string })
   → existing host stop-result semantics
 ```
 
-All shown input fields are required. `agentId` is the existing substream identity returned by creation or listing, not a new agent entity. The input `messageId` for `reply` identifies a received message; the returned `messageId` identifies the newly accepted reply. Start returns after durable creation/admission, and send/reply return after durable acceptance, not after the recipient finishes processing.
+All shown input fields except `attachmentIds` are required. Attachments default to an empty array and reuse existing attachment identifiers and validation. `agentId` addresses an existing substream within its parent, not a new agent entity; it must distinguish different parents' main substreams, all locally named `0`. The input `messageId` for `reply` identifies a received message; the returned `messageId` identifies the newly accepted reply. Start returns after durable creation/admission, and send/reply return after durable acceptance, not after the recipient finishes processing.
 
 The host supplies sender identity, team scope, permissions, inherited model selection, and reply routing. `send_message` has no reply-to field, and `reply` has no recipient field. `list_agents` takes no model-selected team parameter. There is no `read_agent` or transcript cursor contract. Exact validation, failure envelopes, and the mapping of existing status/stop results remain to be specified using repository conventions.
 

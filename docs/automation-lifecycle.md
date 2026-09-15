@@ -90,7 +90,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -139,18 +139,25 @@ a filter.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
-create a second draft. The existing `rally:sidekicks` plugin can also create a
-workstream-owned Sidekick from a workstream conversation. The persisted plugin
-id and the canonical tool names stay; the model reads the plugin as
+create a second draft. Coordinating conversations use `rally_agents` to discover
+and reuse a suitable Sidekick owned by their workstream, or create a minimal one
+there by default, then send setup instructions to its authoring agent. Drafting
+tools are available only in that authoring conversation. The persisted drafting
+plugin id and canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
 entries are managed in the library and listed in their own room's rails, beside
 that conversation's loaded attachments.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
 `SubstreamAgent`, preserving the existing automation parent identity and routes.
-The same conversation remains available for subsequent edits. Personal versus
-workspace scope is selected conversationally while drafting; a workstream-owned
-Sidekick remains owned by that workstream.
+The same conversation remains available for subsequent edits. Personal and
+workspace drafts retain their existing ability to adopt an explicitly requested
+personal/workspace scope before publication; a workstream-owned Sidekick remains
+owned by that workstream. Authoring guidance uses the scope already selected
+instead of requiring another scope question. The host supplies its Sidekick ID,
+and directory reads provide the current definition before revision. Questions
+from an agent exchange return through ordinary replies, without participant
+elicitation forms.
 
 ### Conversational publication
 
@@ -739,6 +746,8 @@ run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
+## Changelog
+
 ### 2026-09-15 — A rule can name Fireflies
 
 **What changed:** `fireflies` is added to `ConnectorTypeSchema`, and a test in
@@ -789,6 +798,16 @@ diagnosis made minutes ago; the guard that fails in CI is the cheaper half and
 does not.
 
 Shipped in #765.
+
+### 2026-09-14 — Sidekicks configure themselves through their authoring conversations
+
+Long setup work must leave Rally's coordinating conversation available. Creation
+establishes a minimal Sidekick and communication supplies its instructions;
+only its authoring agent receives drafting tools. Discovery prefers reuse within
+the current workstream. The authoring prompt names its identity and uses the
+already selected scope, while existing publication and scope validation remain
+authoritative. Returning questions and saved results through the same message
+primitives avoids a second setup protocol or an unavailable elicitation form.
 
 ### 2026-09-14 — A publication that cannot parse says which field it choked on
 

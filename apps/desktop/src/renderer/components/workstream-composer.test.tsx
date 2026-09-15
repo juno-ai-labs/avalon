@@ -317,7 +317,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(composer).toHaveValue('');
   });
 
-  it('sends queue while a loop is running and does not offer a delivery dropdown', async () => {
+  it('uses safe-boundary delivery while a loop is running and does not offer a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend, false, vi.fn(), { ...workstream, harnessStatus: 'running' });
 
@@ -325,7 +325,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const composer = screen.getByLabelText('Message the work stream');
     fireEvent.change(composer, { target: { value: 'After this run' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('After this run', [], undefined, 'queue'));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('After this run', [], undefined, 'steer'));
   });
 
   it('restores a failed message unless the user has started a new draft', async () => {

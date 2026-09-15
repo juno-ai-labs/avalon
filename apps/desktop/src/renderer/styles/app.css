@@ -3933,115 +3933,6 @@ pre {
 .composer-wrap { margin: 0 auto; max-width: var(--av-cmp-feed-width); position: relative; }
 .composer-stack > .composer-wrap { margin: 0; max-width: none; width: 100%; }
 .composer-wrap > .workstream-composer { position: relative; z-index: 1; }
-.composer-queue {
-  background: var(--av-ref-color-neutral-2);
-  border: 1px solid var(--av-ref-color-line-4);
-  border-bottom: 0;
-  border-radius: var(--av-sys-size-radius-md) var(--av-sys-size-radius-md) 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  list-style: none;
-  margin: 0 10px -10px;
-  padding: 4px 4px 14px;
-  position: relative;
-  z-index: 0;
-}
-.composer-queue-row {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-height: 28px;
-  padding: 3px 6px 3px 2px;
-}
-.composer-queue-row.is-dragging { opacity: .45; }
-.composer-queue-grip {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-sm);
-  color: var(--av-sys-color-text-muted);
-  cursor: grab;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 16px;
-  justify-content: center;
-  line-height: 0;
-  opacity: 0;
-  padding: 0;
-  width: 16px;
-}
-.composer-queue-grip svg { display: block; }
-.composer-queue-row:hover .composer-queue-grip,
-.composer-queue-row:focus-within .composer-queue-grip,
-.composer-queue-row.is-dragging .composer-queue-grip { opacity: 1; }
-.composer-queue-grip:disabled { cursor: default; visibility: hidden; }
-.composer-queue-grip:active { cursor: grabbing; }
-.composer-queue-avatar {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 16px;
-  justify-content: center;
-  width: 16px;
-}
-.composer-queue-avatar .avatar-small {
-  height: 16px;
-  width: 16px;
-}
-.composer-queue-avatar .avatar-fallback { font-size: 7px; }
-.composer-queue-text {
-  color: var(--av-sys-color-text-subtle);
-  flex: 1 1 auto;
-  font-size: 12px;
-  line-height: 16px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* A queued row is one clipped line of the transcript's own Markdown renderer.
-   Flattening it here rather than in a second renderer is deliberate: the row
-   then draws the same chips, the same emphasis, and the same code spans the
-   turn will draw once it lands, and there is no parallel implementation to keep
-   in step with this one. Every block becomes inline so `nowrap` and the
-   ellipsis on the row apply to the whole message, and the prose type scale
-   gives way to the row's. */
-.composer-queue-text .markdown-body {
-  /* Restated rather than inherited: `.markdown-body` paints its own prose ink,
-     and a queued row is deliberately quieter than a turn that has landed. */
-  color: var(--av-sys-color-text-subtle);
-  display: inline;
-  font-size: inherit;
-  line-height: inherit;
-}
-.composer-queue-text .markdown-body :is(
-  p, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, blockquote, table, thead, tbody, tr, th, td, hr
-) {
-  border: 0;
-  display: inline;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  margin: 0;
-  padding: 0;
-}
-/* A block's neighbours would otherwise run together into one word. */
-.composer-queue-text .markdown-body :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, tr)::after {
-  content: ' ';
-  white-space: pre;
-}
-.composer-queue-text .markdown-body :is(li, ul, ol) { list-style: none; }
-/* The transcript's mention chip, in a line a little over half its usual size. */
-.composer-queue-text .mention-chip {
-  height: 1.45em;
-  padding: 1px 5px 1px 2px;
-}
-.composer-queue-text .mention-chip-avatar {
-  font-size: 5.5px;
-  height: 13px;
-  width: 13px;
-}
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: var(--space-3); }
@@ -6088,10 +5979,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 100%;
 }
 
-.workstream-screen .composer-queue {
-  background: var(--av-cmp-composer-background);
-  border-color: var(--av-cmp-composer-border-color);
-}
+
 
 /* The field is three quarters of the widest a turn is ever drawn, centred over
    the same column. Full width said nothing about the conversation above it: the
@@ -7231,3 +7119,65 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .inference-delay-notice > svg { flex-shrink: 0; }
 
 .session-import-link-form { display: grid; gap: 10px; }
+.background-agent-count {
+  color: var(--av-sys-color-text-muted);
+  display: grid;
+  font-size: 12px;
+  grid-template-rows: 0fr;
+  padding: 0;
+  pointer-events: none;
+  transition: grid-template-rows 320ms cubic-bezier(.22, 1, .36, 1);
+}
+.background-agent-count[data-active="true"] { grid-template-rows: 1fr; }
+.background-agent-reveal { min-height: 0; overflow: hidden; }
+.background-agent-label {
+  align-items: baseline;
+  display: flex;
+  gap: .3em;
+  line-height: 18px;
+  opacity: 0;
+  padding: 0 12px 6px;
+  transform: translateY(24px);
+  transition: transform 320ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease;
+}
+.background-agent-count[data-active="true"] .background-agent-label { opacity: 1; transform: translateY(0); }
+@starting-style {
+  .background-agent-count[data-active="true"] { grid-template-rows: 0fr; }
+  .background-agent-count[data-active="true"] .background-agent-label { opacity: 0; transform: translateY(24px); }
+}
+.background-agent-shimmer {
+  animation: background-agent-shimmer 2.8s linear infinite;
+  background: linear-gradient(105deg, var(--av-sys-color-text-muted) 35%, var(--av-sys-color-text-default) 50%, var(--av-sys-color-text-muted) 65%) 100% 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+}
+.background-agent-count[data-active="false"] .background-agent-shimmer { animation-play-state: paused; }
+.background-agent-wheel {
+  --wheel-travel: 100%;
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  perspective: 80px;
+  vertical-align: bottom;
+}
+.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
+.background-agent-digit { grid-area: 1 / 1; text-align: center; }
+.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+@keyframes background-agent-shimmer { to { background-position: -100% 0; } }
+@keyframes background-agent-digit-in {
+  from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+@keyframes background-agent-digit-out {
+  from { opacity: 1; transform: translateY(0) rotateX(0); }
+  to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-agent-count, .background-agent-label { transition: none; }
+  .background-agent-shimmer, .background-agent-digit { animation: none; }
+  .background-agent-digit-out { display: none; }
+}
+@media (forced-colors: active) {
+  .background-agent-shimmer { background: none; color: CanvasText; }
+}

@@ -83,7 +83,7 @@
    * recede by darkening it, a light theme by greying it. */
   --av-sys-color-surface-canvas: #fcfcfc;
   --av-sys-color-surface-default: #fcfcfc;
-  --av-sys-color-surface-subtle: #f7f7f7;
+  --av-sys-color-surface-subtle: var(--av-ref-color-neutral-2);
   --av-sys-color-surface-sunken: #f3f3f3;
   --av-sys-color-surface-raised: #fcfcfc;
   --av-sys-color-surface-raised-hover: rgba(119, 119, 119, 0.17);
@@ -529,7 +529,7 @@
 
   --av-sys-color-surface-canvas: #070707;
   --av-sys-color-surface-default: #070707;
-  --av-sys-color-surface-subtle: #111111;
+  --av-sys-color-surface-subtle: var(--av-ref-color-neutral-2);
   --av-sys-color-surface-sunken: #070707;
   --av-sys-color-surface-raised: #2f2f2f;
   --av-sys-color-surface-raised-hover: #313131;

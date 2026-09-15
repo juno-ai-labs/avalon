@@ -15,9 +15,9 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
+import { BackgroundAgentActivity } from './background-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
-import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput, type ComposerModelControl } from './composer-input';
 import { Avatar, Button, IconButton, Modal } from './primitives';
 import type { RallyRegion } from '../../common/desktop';
@@ -89,8 +89,7 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
-  queueItems?: ComposerQueueItem[];
-  onReorderQueue?: (inputIds: string[]) => Promise<void>;
+  backgroundAgentCount?: number | null;
 }
 
 interface PendingMentionConfirmation {
@@ -137,8 +136,7 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
-  queueItems = [],
-  onReorderQueue,
+  backgroundAgentCount,
 }: WorkstreamComposerProps): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
@@ -346,13 +344,13 @@ export function WorkstreamComposer({
         text: trimmed,
         mentions: submitted.mentions,
         members: nonparticipants,
-        ...(workstream.harnessStatus === 'running' ? { deliveryMode: 'queue' as const } : {}),
+        ...(workstream.harnessStatus === 'running' ? { deliveryMode: 'steer' as const } : {}),
       });
       return;
     }
     const mentions = submitted.mentions;
     const revision = draftRevisionRef.current;
-    const submittedDeliveryMode = workstream.harnessStatus === 'running' ? 'queue' as const : undefined;
+    const submittedDeliveryMode = workstream.harnessStatus === 'running' ? 'steer' as const : undefined;
     resetDraft();
     try {
       await onSend(trimmed, mentions, undefined, submittedDeliveryMode);
@@ -434,12 +432,7 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      {queueItems.length > 0 && (
-        <ComposerQueue
-          items={queueItems}
-          onReorder={onReorderQueue ?? (async () => undefined)}
-        />
-      )}
+      <BackgroundAgentActivity count={backgroundAgentCount} />
       <ComposerInput
         api={api}
         ariaLabel={placeholder.replace(/…$/u, '')}

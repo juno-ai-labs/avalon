@@ -285,6 +285,14 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 
 ### Connection plugins and authority narrowing
 
+Tool definitions may carry optional `longRunning` metadata. Bind registration
+renders a light advisory sentence in the tool description, preserving it in
+`load_plugin` results and provider tool definitions. False or omission adds
+nothing. This does not change execution policy or require delegation; image
+generation and editing are the first producers. The parameterized harness
+test in `index.test.ts` covers deferred activation and direct execution for
+true, false, and omitted hints.
+
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
@@ -317,8 +325,8 @@ code-authored tool array. It still appears through the same static trusted
 catalog entry. After `load_plugin` reauthorizes the connection, the harness
 single-flights that callback, replaces the empty deferred Bind plugin with the
 returned live surface, and only then persists and exposes the activation. The
-result is cached for that run in both Bind's registry and the host plugin object
-used to narrow inline-child authority; a later run discovers again. Restored or
+result is cached for that run in both Bind's registry and the host plugin object;
+a later run discovers again. Restored or
 preloaded dynamic hints materialize and hash this surface before their initial
 activation receipt is written. A discovery failure
 returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
@@ -743,14 +751,21 @@ later either names its tools with a recognized verb or declares its own prose.
 
 ### Child agents
 
-Inline child Bind execution inside a parent `SubstreamAgent` is disabled. It
-would create a second logical loop inside the parent's authority while hiding it
-behind the parent's identity, which breaks the one-loop-per-substream invariant.
-A future child must receive its own stable child substream and `SubstreamAgent`;
-the parent loop ID plus tool-call ID may address that distinct child, but may
-never identify a loop executing inside the parent object. Until that durable
-routing exists, `workstream_run_subagent` is absent from production tool
-surfaces.
+Background agents have their own stable child substream and `SubstreamAgent`.
+The `rally_agents` plugin starts them through durable admission and returns
+without waiting for their execution. Each uses the same Bind harness, inherited
+model and execution principal, explicit opening context, and independent tool
+discovery. Normal authorized writes and recursive delegation are available.
+The obsolete inline child integration, runtime/storage entry points, and
+`workstream_run_subagent` surface are removed. Historical schema fields remain
+for existing data; new background work uses normal independent run recovery. [Agent communication](agent-communication.md) owns the tools,
+teams, reply references, Sidekick discovery and separate stop ownership.
+
+Bind remains the core owner of each feed's loop. Independent substreams provide
+responsiveness while preserving Bind's ordered input acceptance, tool receipts,
+suspension, checkpoint and completion protections. Rally routes and persists
+messages through existing harness ports. Missing loop capabilities belong in
+the Bind runtime library, not a parallel loop or a runtime patch in Rally.
 
 ### Scoped durable memory
 
@@ -1230,6 +1245,28 @@ configuration and isolated resource/tool state. Reexporting checkpoint functions
 alone left evals to reconstruct a different agent; a second loop was rejected.
 Canonical bootstrap no longer rejects complete history by an unrelated message/byte
 ceiling before Bind can apply its context preparation policy.
+### 2026-09-14 — Independent background conversations keep Rally available
+
+Tool definitions can flag long-running work without making that flag a dispatch
+rule. Image generation and editing supply the initial hints. The common Bind
+registration path carries the hint into loading results and provider-visible
+descriptions, so plugins do not each invent delegation prompts. This supports
+the uninterrupted-workstreams design while leaving execution, authorization,
+and model judgment unchanged; a worker must not be forced to delegate again.
+
+Background agents now use ordinary independent substreams, with team messaging
+and separate ownership for stops. The obsolete inline child integration is
+removed because it tied delegation to the parent's execution and imposed a
+different read-only, non-recursive harness. Sidekick drafting is restricted to
+its own authoring conversation; other agents contact it through messages.
+Responsiveness must preserve Bind's ownership of every feed's loop and its
+protocol, tool and completion protections; missing capabilities belong in Bind.
+Agent-to-agent delivery is explicit through messaging tools; ordinary assistant
+responses remain local, so background work needs no special completion tool.
+Lease renewal continues during settlement of an already-started step after
+archive. New model calls and tool calls retain their authority preflights.
+Reauthorizing in the stream liveness callback had instead classified a durable
+archive stop as a persistence failure before Bind could settle it.
 
 ### 2026-09-14 — Explain a slow first response before timing it out
 
