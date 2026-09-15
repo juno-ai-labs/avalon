@@ -2014,7 +2014,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition with sidekicks_list before revising it.`,
+    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it.`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
@@ -4541,8 +4541,8 @@ async function loadRunPromptContext(
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.agentExchange && (input.backgroundAgent || input.parentKind === "automation")
-      ? "\nUse send_message or reply for every message to another agent, including results, questions, and updates. Your standard assistant responses remain only in this conversation and are not forwarded. Finish normally when done; no special completion tool is needed. Ask the coordinating agent for missing information; this conversation has no participant-facing question form."
-      : "") + "\nStay available to participants. Use rally_agents to delegate substantial or blocking work when useful; continue prior agents through messages. Coordinate through send_message and reply, and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
+      ? "\nExplicitly send results, questions, and updates to the intended agent. Your standard assistant responses remain only in this conversation and are not forwarded. Finish normally when done; no special completion tool is needed. Ask the coordinating agent for missing information; this conversation has no participant-facing question form."
+      : "") + "\nStay available to participants. Delegate substantial or blocking work when useful; continue prior agents through messages. Coordinate through messages and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
   };

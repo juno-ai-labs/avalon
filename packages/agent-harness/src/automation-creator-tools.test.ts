@@ -138,7 +138,7 @@ describe("the automations plugin", () => {
 
     await expect(toolNamed(plugin.tools, "sidekicks_list").execute({}, toolContext))
       .resolves.toMatchObject({ output: listed });
-    expect(plugin.systemMessage).toContain("call sidekicks_list");
+    expect(plugin.systemMessage).toContain("start from its current definition");
     expect(plugin.systemMessage).toContain("with its sidekickId");
   });
 
