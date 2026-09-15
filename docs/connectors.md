@@ -1115,6 +1115,48 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-14 — A refused webhook delivery names the event it refused
+
+**What changed:** All four `unsupported_webhook_event` refusals — Fireflies'
+two, Granola's, and the generic webhook connector's — go through one
+`unsupportedWebhookEvent` helper. It logs `connector_webhook_event_refused`
+with the connector, connection and event type, and returns an `ApiError` whose
+message names the provider and event and whose `details` carry both.
+
+**Why:** The reason was always thrown; no operator could read it.
+`request_failed` records a refusal's `detail_keys` and deliberately withholds
+their values, and never records the message at all, so every one of these
+landed in Workers Logs as a bare `request_failed 400 unsupported_webhook_event`
+— you learn a delivery was refused and never which one. Recovering it meant
+joining against whatever `connector_operation_finished` happened to share the
+millisecond, which works only while traffic is thin enough for that to be
+unambiguous, and not at all once two connectors deliver at once.
+
+An event type is the provider's own vocabulary: it is in the connector manifest
+and `connector_operation_finished` already logs it. It is not member data, so
+it is named rather than withheld. The `details` carry it to the caller too,
+because a provider dashboard replaying a delivery shows the response body, and
+"Rally does not model the fireflies event meeting.bot_joined" is the whole
+diagnosis without anyone opening a log.
+
+**How it is proved:**
+`apps/api/test-workers/connector-installation-fireflies.test.ts` already
+delivered a verified `meeting.bot_joined` and asserted the 400; it now also
+asserts the message contains the event type and that `details` name the
+provider and event.
+
+**What a future change has to respect:** a connector added later gets this for
+free only if its refusal goes through the helper. A new
+`new ApiError(400, "unsupported_webhook_event", …)` is the regression.
+
+**Considered and rejected:** logging `details` values generically in
+`errorHandler`. Those values are arbitrary across every route that raises an
+`ApiError`, and the whole reason `detail_keys` exists is that they may be
+member data. The event type is safe because of what it is, not because of where
+it sits, so it is named at the site that knows that.
+
+Shipped in the pull request for this change.
+
 ### 2026-09-14 — A new Gmail email is demonstrated, not only described
 
 **What changed:** The non-threaded mail shape is present on every surface a
