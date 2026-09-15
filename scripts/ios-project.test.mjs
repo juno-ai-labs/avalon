@@ -109,6 +109,7 @@ test("required Swift surfaces exist for a complete conversation client", () => {
     "Rally/App/AppModel.swift",
     "Rally/App/RallyDeepLink.swift",
     "Rally/App/RallyAppDelegate.swift",
+    "Rally/App/RallyPush.swift",
     "Rally/Auth/PKCE.swift",
     "Rally/Auth/KeychainStore.swift",
     "Rally/Network/RallyClient.swift",
@@ -135,6 +136,7 @@ test("required Swift surfaces exist for a complete conversation client", () => {
     "Rally/Features/Workspace/DirectorySheets.swift",
     "Rally/Design/RallyAppearance.swift",
     "RallyTests/RallyContractTests.swift",
+    "RallyTests/RallyPushTests.swift",
     "RallyTests/RallySocketPolicyTests.swift",
     "RallyTests/RallyPagedDirectoryTests.swift",
     "RallyTests/RallyTicketedSocketTests.swift",
@@ -330,6 +332,18 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(read("RallyTests/RallyPagedDirectoryTests.swift"), /testSubscribeWithCursorKeepsLaterPagesAndRefreshesPageOne/);
   assert.match(read("RallyTests/RallyTicketedSocketTests.swift"), /testInvalidTicketURLClosesWithoutConnecting/);
   assert.match(read("RallyTests/RallyContractTests.swift"), /testDerivedAppearanceMatchesDesktopHash/);
+  const push = read("Rally/App/RallyPush.swift");
+  assert.match(push, /ai\.rallywith\.ios|bundleIdentifier/);
+  assert.match(push, /apnsEnvironment/);
+  assert.match(push, /sandbox/);
+  assert.match(read("Rally/Network/RallyClient.swift"), /\/push-devices\//);
+  assert.match(read("Rally/Network/RallyClient.swift"), /\/feature-flags/);
+  assert.match(read("Rally/App/AppModel.swift"), /registerPushDevice/);
+  assert.match(read("Rally/App/AppModel.swift"), /deletePushDevice/);
+  assert.doesNotMatch(read("Rally/App/RallyAppDelegate.swift"), /rally\.apns\.deviceToken/);
+  assert.doesNotMatch(read("Rally/App/RallyAppDelegate.swift"), /Worker does not yet accept/);
+  assert.match(read("Rally/Features/Settings/SettingsScreen.swift"), /Notify me on this iPhone/);
+  assert.match(read("RallyTests/RallyPushTests.swift"), /testParsesMentionPayloadURL/);
   assert.match(conversation, /New substream/);
   assert.match(conversation, /SubstreamLaunchView/);
   const deepLink = read("Rally/App/RallyDeepLink.swift");

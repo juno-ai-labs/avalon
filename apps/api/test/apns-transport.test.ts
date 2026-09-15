@@ -8,7 +8,7 @@ it('maps provider answers without disabling devices on a provider credential fai
     INFERENCE_PRICING_CACHE: { get: async () => ({ token: 'cached', iat: Math.floor(Date.now() / 1000) }), delete: del } });
   const request = vi.fn(async () => Response.json({ reason: 'TooManyProviderTokenUpdates' }, { status: 429 }));
   vi.stubGlobal('fetch', request);
-  const device = { id: 'device', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', last_seen_at: '2026-09-14' };
+  const device = { id: 'device', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', apns_environment: 'production', last_seen_at: '2026-09-14' };
   expect((await sendApns(env, device, '{}', 'collapse')).outcome).toBe('provider_token_throttled');
   expect(del).not.toHaveBeenCalled();
   request.mockResolvedValueOnce(Response.json({ reason: 'InvalidProviderToken' }, { status: 403 }));
@@ -20,4 +20,16 @@ it('maps provider answers without disabling devices on a provider credential fai
   expect((await sendApns(env, device, '{}', 'collapse')).outcome).toBe('transient');
   request.mockResolvedValueOnce(Response.json({ reason: 'TooManyRequests' }, { status: 429 }));
   expect((await sendApns(env, device, '{}', 'collapse')).outcome).toBe('transient');
+});
+it('sends a sandbox device to Apple sandbox and a production device to Apple production', async () => {
+  const env = createTestEnv({ APP_ENV: 'staging', APNS_AUTH_KEY: 'unused cached key', APNS_KEY_ID: 'KEY',
+    INFERENCE_PRICING_CACHE: { get: async () => ({ token: 'cached', iat: Math.floor(Date.now() / 1000) }), delete: vi.fn() } });
+  const request = vi.fn(async () => new Response(null, { status: 200 }));
+  vi.stubGlobal('fetch', request);
+  const production = { id: 'mac', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', apns_environment: 'production', last_seen_at: '2026-09-14' };
+  const sandbox = { id: 'phone', token: 'cd'.repeat(32), topic: 'ai.rallywith.ios', apns_environment: 'sandbox', last_seen_at: '2026-09-14' };
+  expect((await sendApns(env, production, '{}', 'collapse')).outcome).toBe('sent');
+  expect((await sendApns(env, sandbox, '{}', 'collapse')).outcome).toBe('sent');
+  expect(request).toHaveBeenNthCalledWith(1, `https://api.push.apple.com/3/device/${production.token}`, expect.anything());
+  expect(request).toHaveBeenNthCalledWith(2, `https://api.sandbox.push.apple.com/3/device/${sandbox.token}`, expect.anything());
 });

@@ -1,12 +1,24 @@
 import UIKit
 import UserNotifications
 
-/// Receives APNs device tokens. The Worker does not yet accept an iOS topic
-/// (`docs/PRDs/2026-09-11_apple-push-notifications/design.md`); the token is
-/// stored on-device so a later client change can register it without a second
-/// permission prompt.
+/// UIKit callbacks for APNs tokens and notification taps. Registration is
+/// `AppModel.reconcilePushRegistration`; this object only forwards.
 final class RallyAppDelegate: NSObject, UIApplicationDelegate {
-    static let deviceTokenDefaultsKey = "rally.apns.deviceToken"
+    private weak var model: AppModel?
+    private var pendingToken: String?
+    private var pendingURL: URL?
+
+    func attach(_ model: AppModel) {
+        self.model = model
+        if let token = pendingToken {
+            pendingToken = nil
+            Task { @MainActor in await model.didReceivePushDeviceToken(token) }
+        }
+        if let url = pendingURL {
+            pendingURL = nil
+            Task { @MainActor in await model.openPushURL(url) }
+        }
+    }
 
     func application(
         _ application: UIApplication,
@@ -17,12 +29,28 @@ final class RallyAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        let token = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-        UserDefaults.standard.set(token, forKey: Self.deviceTokenDefaultsKey)
+        forward(token: RallyPush.hexDeviceToken(deviceToken))
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        UserDefaults.standard.removeObject(forKey: Self.deviceTokenDefaultsKey)
+        // Simulator and unsigned Debug builds have no APNs token. Delivery is
+        // skipped until a signed device registers; do not clear a prior token.
+    }
+
+    private func forward(token: String) {
+        if let model {
+            Task { @MainActor in await model.didReceivePushDeviceToken(token) }
+        } else {
+            pendingToken = token
+        }
+    }
+
+    private func forward(url: URL) {
+        if let model {
+            Task { @MainActor in await model.openPushURL(url) }
+        } else {
+            pendingURL = url
+        }
     }
 }
 
@@ -32,5 +60,15 @@ extension RallyAppDelegate: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .badge]
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard let url = RallyPush.workstreamURL(from: response.notification.request.content.userInfo) else {
+            return
+        }
+        forward(url: url)
     }
 }

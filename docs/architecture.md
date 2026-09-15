@@ -695,7 +695,8 @@ access and no-egress symbolication.
 
 **What changed:** The map now includes `apps/ios`, a native SwiftUI client that
 signs in with the desktop Google PKCE exchange, holds sessions in the Keychain,
-and speaks the existing regional HTTP and conversation-feed contracts. Electron
+speaks the existing regional HTTP and conversation-feed contracts, and
+registers Apple push on the same device registry as the Mac. Electron
 remains the desktop surface; iOS is not a mode of it.
 
 **Why:** A phone client that wrapped the renderer would have imported a second

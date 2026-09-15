@@ -14,7 +14,10 @@ struct RallyApp: App {
                 .rallyColors()
                 .preferredColorScheme(model.preferredColorScheme)
                 .tint(RallyPalette.linkBlue)
-                .task { await model.bootstrap() }
+                .task {
+                    appDelegate.attach(model)
+                    await model.bootstrap()
+                }
                 .onOpenURL { url in
                     Task { await model.handleIncomingURL(url) }
                 }
@@ -23,7 +26,7 @@ struct RallyApp: App {
             if phase == .active {
                 Task {
                     await model.resumeSockets()
-                    await model.requestPushAuthorization()
+                    await model.reconcilePushRegistration()
                 }
             }
         }

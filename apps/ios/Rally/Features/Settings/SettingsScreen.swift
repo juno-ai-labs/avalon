@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
@@ -23,6 +24,29 @@ struct SettingsScreen: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityLabel("Appearance")
+                }
+
+                if model.pushNotificationsAvailable {
+                    Section("Notifications") {
+                        Toggle("Notify me on this iPhone about mentions and additions", isOn: Binding(
+                            get: { model.pushNotificationsEnabled },
+                            set: { enabled in
+                                Task { await model.setPushNotificationsEnabled(enabled) }
+                            }
+                        ))
+                        Text("Show notifications on this iPhone, even when Rally is closed.")
+                            .font(RallyType.caption())
+                            .foregroundStyle(colors.textSecondary)
+                        if model.pushNotificationDenied {
+                            Text("Notifications are turned off in iOS Settings.")
+                                .font(RallyType.caption())
+                                .foregroundStyle(colors.textSecondary)
+                            Button("Open Settings") {
+                                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
                 }
 
                 Section("Account") {
