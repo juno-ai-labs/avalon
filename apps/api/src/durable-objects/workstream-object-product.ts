@@ -1,4 +1,8 @@
-import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
+import {
+  WorkstreamAppearanceSchema,
+  WorkstreamAppearancePatchSchema,
+  type WorkstreamAppearancePatch,
+} from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -2348,15 +2352,10 @@ export class WorkstreamObjectProductService {
          LEFT JOIN resource_watches watch
            ON watch.resource_id = resource.id AND watch.enabled = 1
         WHERE resource.workspace_id = ? AND resource.id IN (${placeholders})
-          AND (resource.provider != 'avalon_note' OR EXISTS (
-            SELECT 1 FROM notes note
-             WHERE note.resource_id = resource.id AND note.archived_at IS NULL
-               AND (note.scope = 'workspace' OR note.owner_user_id = ?)
-          ))${listed}`,
+          AND resource.provider != 'avalon_note'${listed}`,
     ).bind(
       this.root().parent_workspace_key,
       ...links.map((link) => link.resource_id),
-      viewerUserId,
     ).all<Record<string, unknown>>();
     const byId = new Map((rows.results ?? []).map((row) => [String(row.id), row]));
     let connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
@@ -2741,10 +2740,9 @@ export class WorkstreamObjectProductService {
     await this.authorize(auth);
     const resource = await this.workspaceDatabase(auth.workspaceId).prepare(
       `SELECT resource.*, connection.scope AS connection_scope,
-              connection.owner_user_id, note.scope AS note_scope
+              connection.owner_user_id
          FROM resources resource
          LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
-         LEFT JOIN notes note ON note.resource_id = resource.id AND note.archived_at IS NULL
         WHERE resource.id = ? AND resource.workspace_id = ?`,
     ).bind(resourceId, auth.workspaceId).first<Record<string, unknown>>();
     if (!resource) throw new ApiError(404, "resource_not_found", "Resource not found");

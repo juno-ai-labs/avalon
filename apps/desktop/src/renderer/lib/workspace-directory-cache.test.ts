@@ -48,7 +48,6 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
   return {
     workstreams: [summary()],
     automations: [automation],
-    notes: [],
     projects: { waterline: 3, items: [] },
     inactiveProjects: { waterline: 3, items: [] },
     ...overrides,
@@ -67,7 +66,7 @@ describe('workspace directory cache', () => {
 
     expect(queryClient.getQueryData(WORKSTREAMS_QUERY_KEY)).toEqual([summary()]);
     expect(queryClient.getQueryData(['automations'])).toEqual([automation]);
-    expect(queryClient.getQueryData(['notes'])).toEqual([]);
+    expect(queryClient.getQueryData(['notes'])).toBeUndefined();
     expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 3, items: [] });
     expect(queryClient.getQueryData(['projects-inactive'])).toEqual({ waterline: 3, items: [] });
   });

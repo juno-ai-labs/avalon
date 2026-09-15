@@ -75,7 +75,7 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
       const located = sql.exec<{ parent_id: string }>('SELECT DISTINCT parent_id FROM authorization_locations WHERE resource_id = ?', target.id)
         .toArray().flatMap((location) => parentSubjects(location.parent_id));
       const owner = row.uploaded_by_user_id && active.has(row.uploaded_by_user_id) ? [row.uploaded_by_user_id] : [];
-      return pairs(row.provider === 'avalon_note' ? [...active] : [...located, ...owner], [resource(target.id)]);
+      return row.provider === 'avalon_note' ? [] : pairs([...located, ...owner], [resource(target.id)]);
     }
     case 'member': {
       if (!active.has(target.id)) return [];
@@ -90,7 +90,7 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
       }
       for (const row of sql.exec<{ id: string }>('SELECT id FROM connector_connections').toArray()) resources.push(connection(row.id));
       for (const row of sql.exec<{ id: string }>(
-        "SELECT id FROM resources WHERE connection_id IS NULL AND (provider = 'avalon_note' OR uploaded_by_user_id = ?)", target.id).toArray()) {
+        "SELECT id FROM resources WHERE connection_id IS NULL AND provider != 'avalon_note' AND uploaded_by_user_id = ?", target.id).toArray()) {
         resources.push(resource(row.id));
       }
       const unique = new Map(resources.map((item) => [JSON.stringify(item), item]));

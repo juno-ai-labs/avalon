@@ -1,22 +1,21 @@
-import { NoteSummarySchema, ProjectDirectorySchema, type ProjectDirectory } from '@rally/contracts';
+import { ProjectDirectorySchema, type ProjectDirectory } from '@rally/contracts';
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
-import type { AutomationSummary, NoteSummary, WorkstreamSummary } from './types';
+import type { AutomationSummary, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 /**
  * What the sidebar and the project space paint from before the workspace
  * socket answers: the last first page of the work-stream directory, the
- * automation and note lists, and both project directories. One row per
+ * automation list, and both project directories. One row per
  * workspace scope, written from the query cache after every live payload and
  * read back only into caches that are still empty.
  */
 export interface CachedWorkspaceDirectory {
   workstreams: WorkstreamSummary[];
   automations: AutomationSummary[];
-  notes: NoteSummary[];
   projects: ProjectDirectory | null;
   inactiveProjects: ProjectDirectory | null;
 }
@@ -86,16 +85,15 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   const candidate = value as Record<string, unknown>;
   const workstreams = parseList(candidate['workstreams'], isWorkstreamSummaryLike);
   const automations = parseList(candidate['automations'], isAutomationSummaryLike);
-  const notes = parseList(candidate['notes'], (item): item is NoteSummary => NoteSummarySchema.safeParse(item).success);
   const projects = parseProjects(candidate['projects']);
   const inactiveProjects = parseProjects(candidate['inactiveProjects']);
-  if (!workstreams || !automations || !notes || projects === undefined || inactiveProjects === undefined) return null;
-  return { workstreams, automations, notes, projects, inactiveProjects };
+  if (!workstreams || !automations || projects === undefined || inactiveProjects === undefined) return null;
+  return { workstreams, automations, projects, inactiveProjects };
 }
 
 export const workspaceDirectorySlice = defineLocalCacheSlice<CachedWorkspaceDirectory>({
   kind: 'directory',
-  version: 1,
+  version: 2,
   parse: parseCachedDirectory,
 });
 
@@ -126,9 +124,6 @@ export async function hydrateWorkspaceDirectory(
     if (queryClient.getQueryData(SIDEBAR_LIST_QUERY_KEYS.automations) === undefined) {
       queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, cached.automations);
     }
-    if (queryClient.getQueryData(SIDEBAR_LIST_QUERY_KEYS.notes) === undefined) {
-      queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.notes, cached.notes);
-    }
     if (cached.projects && queryClient.getQueryData(PROJECTS_QUERY_KEY) === undefined) {
       queryClient.setQueryData(PROJECTS_QUERY_KEY, cached.projects);
     }
@@ -154,7 +149,6 @@ export function mirrorWorkspaceDirectory(
     matches: queryKeyIsOneOf([
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
-      SIDEBAR_LIST_QUERY_KEYS.notes,
       PROJECTS_QUERY_KEY,
       INACTIVE_PROJECTS_QUERY_KEY,
     ]),
@@ -168,7 +162,6 @@ export function mirrorWorkspaceDirectory(
         // page one and the live answer replaces it without a visible collapse.
         workstreams: workstreams.slice(0, WORKSTREAM_PAGE_SIZE),
         automations: queryClient.getQueryData<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations) ?? [],
-        notes: queryClient.getQueryData<NoteSummary[]>(SIDEBAR_LIST_QUERY_KEYS.notes) ?? [],
         projects: queryClient.getQueryData<ProjectDirectory>(PROJECTS_QUERY_KEY) ?? null,
         inactiveProjects: queryClient.getQueryData<ProjectDirectory>(INACTIVE_PROJECTS_QUERY_KEY) ?? null,
       };
