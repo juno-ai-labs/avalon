@@ -374,8 +374,16 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   Before either reply write, the adapter checks `gmail.read` and reads that
   message's metadata from the same account. Its subject, thread id, and validated
   RFC Message-ID determine the outgoing MIME and Gmail request together. Valid
-  ancestor Message-IDs from References are preserved and deduplicated, and the
-  parent Message-ID is appended; malformed ancestor tokens are ignored. A
+  ancestor Message-IDs from References are preserved and deduplicated in linear
+  time, with the parent Message-ID once at the end; malformed or oversized
+  ancestor tokens are ignored. Both `References` and `In-Reply-To` are folded
+  between complete IDs, targeting 78 bytes per physical line. An indivisible ID
+  may exceed that target, but must fit within the 998-byte line maximum including
+  a continuation's leading space: at most 997 UTF-8 bytes per ID. These are the
+  [email format's line limits](https://www.rfc-editor.org/rfc/rfc6532.html#section-3.4),
+  with the folding target conservatively measured in bytes. Valid ancestry is
+  retained without a count cap; the existing metadata response bound still
+  bounds the input. A
   missing or invalid parent Message-ID, missing thread id, or unreadable message
   stops before the write. It never falls back to sending a new conversation.
   New messages need only the existing send/draft capability and perform no read.
@@ -1155,7 +1163,9 @@ fixture table instead, where it is reviewable.
 messages supply recipients, subject, and body. Replies supply an existing
 message id, recipients, and body, and the adapter fetches the original subject
 and threading headers under the same connection. One Zod schema defines both
-advertised inputs and runtime validation.
+advertised inputs and runtime validation. Threading headers are deduplicated
+with a Set and folded between IDs, with byte validation ensuring that even an
+indivisible UTF-8 ID fits on one physical line.
 
 **Why:** Two fixes to examples and error wording still left a production run
 making nine rejected sends. Nonempty reply placeholders satisfied the advertised
@@ -1163,6 +1173,12 @@ schema but failed the executor, and the model repeated the same invalid shape.
 The 2026-09-15 new-email-example change below improved guidance but could not
 remove that contradictory contract or the unnecessary threading work assigned
 to the model.
+
+Automatically copying ancestry also exposed the inherited serializer's repeated
+array scans and single-line References join. Forty ordinary ancestor IDs already
+produced a 1,032-byte line, beyond the protocol maximum; the old 50-ID input cap
+did not guarantee a valid line either. Processing and folding the chain in linear
+time preserves the history without making long conversations expensive to send.
 
 **Considered and rejected:** Another prompt/error repair or accepting more
 placeholder spellings would keep that ambiguity. Separate new/reply tool names
@@ -1173,11 +1189,18 @@ and resolves the coupled fields required by
 [Gmail's threading contract](https://developers.google.com/workspace/gmail/api/guides/threads#adding_drafts_and_messages_to_threads)
 in code.
 
+An ancestor-count cap would discard valid history while still admitting an
+oversized individual ID. Folding preserves the chain, and the existing metadata
+response bound covers total input size.
+
 **Consequences:** Replies require read access and one metadata fetch before the
 write. Recipients stay explicit; unreadable or unthreadable originals produce a
 field-named error before any write. Existing flat inputs are deliberately
-rejected, so callers need refreshed tool definitions. The tests use
-synthetic messages and inspect provider requests; they do not send live email.
+rejected, so callers need refreshed tool definitions. A parent Message-ID that
+cannot fit on a continuation line is refused before the write; an oversized
+ancestor is omitted without truncating any ID. The tests use synthetic messages
+and inspect provider requests, including long duplicate-heavy chains and ASCII
+and UTF-8 byte boundaries; they do not send live email.
 
 PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
 

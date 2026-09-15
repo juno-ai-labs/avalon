@@ -2007,6 +2007,76 @@ describe("connectors", () => {
     });
   });
 
+  it.each(["gmail.create_draft", "gmail.send"])("%s folds a long References chain without losing or duplicating ancestors", async (name) => {
+    const ancestors = Array.from({ length: 2_000 }, (_, index) => `<message-${index}@example.com>`);
+    const parent = "<parent@example.com>";
+    const oversizedAncestor = `<${"é".repeat(492)}@example.com>`; // 998 UTF-8 bytes, before continuation whitespace.
+    const writes: Record<string, unknown>[] = [];
+    const isDraft = name === "gmail.create_draft";
+    const fetcher: typeof fetch = async (_input, init) => {
+      if (init?.method !== "POST") return googleJson({
+        threadId: "thread-original",
+        payload: { headers: [
+          { name: "Subject", value: "Long conversation" },
+          { name: "Message-ID", value: parent },
+          { name: "References", value: [parent, ...ancestors, ...ancestors, oversizedAncestor, "invalid-token"].join("\r\n ") },
+        ] },
+      });
+      writes.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return googleJson(isDraft
+        ? { id: "draft-1", message: { id: "reply", threadId: "thread-original" } }
+        : { id: "reply", threadId: "thread-original" });
+    };
+    await googleAdapter(fetcher).executeTool(name, {
+      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Reply body." },
+    }, {
+      connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send", "gmail.read"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(),
+    });
+    expect(writes).toHaveLength(1);
+    const message = isDraft ? writes[0]?.message as Record<string, unknown> : writes[0];
+    const mime = Buffer.from(String(message?.raw), "base64url").toString("utf8");
+    const [header, body] = mime.split("\r\n\r\n");
+    const lines = (header ?? "").split("\r\n");
+    // Each of these IDs fits under the recommended line length. This also
+    // proves the hard 998-byte limit, without a timing assertion about CPU.
+    expect(Math.max(...lines.map((line) => Buffer.byteLength(line, "utf8")))).toBeLessThanOrEqual(78);
+    const unfolded = (header ?? "").replace(/\r\n(?=[ \t])/gu, "").split("\r\n");
+    expect(unfolded.find((line) => line.startsWith("References:")))
+      .toBe(`References: ${ancestors.join(" ")} ${parent}`);
+    expect(unfolded.find((line) => line.startsWith("In-Reply-To:"))).toBe(`In-Reply-To: ${parent}`);
+    expect(body).toBe("Reply body.");
+    expect(message?.threadId).toBe("thread-original");
+  });
+
+  it.each([
+    { label: "ASCII", parent: `<${"a".repeat(983)}@example.com>` },
+    { label: "UTF-8", parent: `<${"é".repeat(491)}a@example.com>` },
+  ])("folds a $label parent Message-ID at the 998-byte physical-line boundary", async ({ parent }) => {
+    const writes: Record<string, unknown>[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      if (init?.method !== "POST") return googleJson({
+        threadId: "thread-original",
+        payload: { headers: [{ name: "Subject", value: "Boundary" }, { name: "Message-ID", value: parent }] },
+      });
+      writes.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return googleJson({ id: "reply", threadId: "thread-original" });
+    };
+    await googleAdapter(fetcher).executeTool("gmail.send", {
+      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Reply body." },
+    }, {
+      connection: googleConnection(["gmail.send", "gmail.read"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(),
+    });
+    expect(writes).toHaveLength(1);
+    const mime = Buffer.from(String(writes[0]?.raw), "base64url").toString("utf8");
+    expect(mime).toContain(`In-Reply-To:\r\n ${parent}\r\nReferences:\r\n ${parent}\r\n`);
+    const lines = (mime.split("\r\n\r\n")[0] ?? "").split("\r\n");
+    expect(Math.max(...lines.map((line) => Buffer.byteLength(line, "utf8")))).toBe(998);
+  });
+
   it.each(["gmail.create_draft", "gmail.send"])("%s refuses a reply without read permission before contacting Gmail", async (name) => {
     const requests: string[] = [];
     const adapter = googleAdapter(async (input) => {
@@ -2029,6 +2099,8 @@ describe("connectors", () => {
     { label: "missing thread", status: 200, payload: { payload: { headers: [{ name: "Message-ID", value: "<parent@example.com>" }] } }, reason: "reply_headers_unavailable" },
     { label: "missing Message-ID", status: 200, payload: { threadId: "thread-original" }, reason: "reply_headers_unavailable" },
     { label: "invalid Message-ID", status: 200, payload: { threadId: "thread-original", payload: { headers: [{ name: "Message-ID", value: "." }] } }, reason: "reply_headers_unavailable" },
+    { label: "oversized ASCII Message-ID", status: 200, payload: { threadId: "thread-original", payload: { headers: [{ name: "Message-ID", value: `<${"a".repeat(984)}@example.com>` }] } }, reason: "reply_headers_unavailable" },
+    { label: "oversized UTF-8 Message-ID", status: 200, payload: { threadId: "thread-original", payload: { headers: [{ name: "Message-ID", value: `<${"é".repeat(492)}@example.com>` }] } }, reason: "reply_headers_unavailable" },
   ])("refuses a reply with $label before any Gmail write", async ({ status, payload, reason }) => {
     const methods: string[] = [];
     const adapter = googleAdapter(async (_input, init) => {
