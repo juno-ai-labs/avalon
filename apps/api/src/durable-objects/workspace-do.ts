@@ -1,4 +1,9 @@
 import { readNotificationIntentForDelivery as readStoredPushIntent } from "./workspace-notification-intent-storage";
+import {
+  MEETING_NOTES_FINALIZATION_MIGRATION,
+  MEETING_NOTES_RETIREMENT_MIGRATION,
+  withMeetingRetirementPrerequisites,
+} from "./meeting-notes-retirement";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import { InstallationCredentialReplaceSchema, type InstallationCredentialReplace } from './connector-installation-protocol';
 import { replaceInstallationCredentials } from './connector-installation-storage';
@@ -454,7 +459,6 @@ import {
   retireWorkspaceNoteResourceDeletion,
   updateWorkspaceNote,
   visibleWorkspaceNoteResourceIds,
-  workspaceNoteBatchTargets,
   workspaceNoteResourceDeletionOutbox,
   workspaceNoteSidebar,
   workspaceNoteState,
@@ -3304,7 +3308,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
   "PRAGMA defer_foreign_keys = OFF"
 ]
-}];
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -3749,12 +3753,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.initialized = this.initializeDurableObject(async () => {
-      await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
+      await this.applyMigrations(() => withMeetingRetirementPrerequisites(
+        state.storage,
+        () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-      }));
+        }),
+      ));
       await this.armNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -7057,12 +7064,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     return WorkspaceDirectoryBatchTargetsResultSchema.parse({
       items: this.batchTargetIds(request.userId, request.filter),
-      noteIds: workspaceNoteBatchTargets(
-        this.state.storage,
-        request.workspaceId,
-        request.userId,
-        request.filter,
-      ),
+      noteIds: [],
     });
   }
 
@@ -7167,24 +7169,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           request.operationId,
           JSON.stringify(targetIds),
         );
-        // The note half is frozen in the same transaction, and for the same
-        // reason: selecting it again at archive time would let a note that
-        // entered the range in between be taken, which under an open-ended
-        // heading like "Last hour" is any note touched since the reader
-        // confirmed. The receipt alone only closes that for a *retry*.
-        if (request.update.kind === "archive") {
-          this.state.storage.sql.exec(
-            `INSERT INTO workspace_batch_dispatch_note_targets (operation_id, note_id)
-             SELECT ?, value FROM json_each(?)`,
-            request.operationId,
-            JSON.stringify(workspaceNoteBatchTargets(
-              this.state.storage,
-              request.workspaceId,
-              request.userId,
-              request.filter,
-            )),
-          );
-        }
         targetCount = targetIds.length;
       }
 
@@ -9517,15 +9501,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
         'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
       ).toArray()[0] : null;
-      const note = row.provider === 'avalon_note' ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string; archived_at: string | null }>(
-        'SELECT scope, owner_user_id, archived_at FROM notes WHERE resource_id = ?', resourceId,
-      ).toArray()[0] : null;
       const owned = row.uploaded_by_user_id === request.userId;
       return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
-        noteAllowed: row.provider !== 'avalon_note' || Boolean(note && note.archived_at === null
-          && (note.scope === 'workspace' || note.owner_user_id === request.userId)),
+        noteAllowed: row.provider !== 'avalon_note',
         draftAllowed: row.provider !== 'avalon_upload' || row.attachment_status === 'attached' || owned,
         requiresAttachment: ((row.provider === 'avalon_upload' || row.provider === 'avalon_generated') && !owned)
           || (row.provider === 'resend' && row.resource_type === 'email'),
@@ -9944,7 +9924,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     userId: string,
   ): { items: NoteSummary[]; nextCursor: string | null } {
-    return workspaceNoteSidebar(this.state.storage, workspaceId, userId, SIDEBAR_LIST_LIMIT);
+    void workspaceId;
+    void userId;
+    return { items: [], nextCursor: null };
   }
 
   private pinnedDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
@@ -10093,7 +10075,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
       },
       notes: {
-        waterline: this.sidebarListWaterline("notes"),
+        waterline: 0,
         ...this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       },
       projects: this.projectSnapshot(attachment.userId),

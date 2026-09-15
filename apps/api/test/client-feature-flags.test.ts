@@ -358,7 +358,7 @@ describe("client feature flags", () => {
     for (const context of contexts) expect(context).toEqual(contexts[0]);
   });
 
-  it("evaluates application booleans under enabled-named Flagship keys", async () => {
+  it("evaluates active application booleans under enabled-named Flagship keys", async () => {
     const flags = { ...serving(true), ...servingNumber(60) };
 
     await resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId));
@@ -377,7 +377,6 @@ describe("client feature flags", () => {
         "developer-settings",
         "digests-enabled",
         "live-artifacts-enabled",
-        "meeting-recording-enabled",
         "multiple-workspaces-enabled",
         "push-notifications-enabled",
         "suggested-work-enabled",
@@ -418,7 +417,7 @@ describe("GET /feature-flags", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       developerSettings: true,
-      meetingRecordingEnabled: true,
+      meetingRecordingEnabled: false,
       suggestedWorkEnabled: true,
       multipleWorkspacesEnabled: true,
       pushNotificationsEnabled: true,

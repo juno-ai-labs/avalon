@@ -109,6 +109,7 @@ const EXPECTED_TABLES = [
   "resident_context_blocks",
   "resident_context_compactions",
   "resource_inventory_revision",
+  "retired_meeting_attachment_ids",
   "run_lifecycle_events",
   "run_memory_contexts",
   "run_plugin_activations",
