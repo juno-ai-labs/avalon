@@ -74,6 +74,7 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { parseRpcInput } from "../lib/rpc-input";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
@@ -5064,7 +5065,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     effectiveAfterEventSequence: number;
   }> {
     await this.initialized;
-    const request = ExternalEventRegistrationProjectionV1Schema.parse(input);
+    const request = parseRpcInput(
+      ExternalEventRegistrationProjectionV1Schema,
+      input,
+      "external_event_registration_projection",
+    );
     this.assertWorkspace(request.workspaceId);
     return this.state.storage.transactionSync(() => {
       const destinationKind = request.destination.kind;

@@ -2808,7 +2808,9 @@ export class ConnectionService {
     // having subscribed something Rally never asked for, while a handled event
     // outside this registration's grant is an authorization question.
     if (!isFirefliesEventType(envelope.eventType)) {
-      throw new ApiError(400, "unsupported_webhook_event", "This Fireflies event is not one Rally subscribes to");
+      throw unsupportedWebhookEvent(this.env, {
+        provider: "fireflies", connectionId, eventType: envelope.eventType,
+      });
     }
     if (!authorizedEvents.includes(envelope.eventType) || !installation.selectedEvents.includes(envelope.eventType)) {
       throw new ApiError(401, "event_not_authorized", "This signing key does not authorize this event");
@@ -2830,7 +2832,9 @@ export class ConnectionService {
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/fireflies/${connectionId}/${envelope.bodyHash}.json`;
     await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
     const normalized = source.normalize(context, envelope, payloadKey);
-    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Fireflies webhook event is not supported");
+    if (!normalized) throw unsupportedWebhookEvent(this.env, {
+      provider: "fireflies", connectionId, eventType: envelope.eventType,
+    });
     const accepted = await persistNormalizedActivity(this.env, normalized, "fireflies");
     // The delivery is the verification: Fireflies exposes nothing to inspect,
     // so this is what moves the installation from Action required to Current.
@@ -2889,7 +2893,9 @@ export class ConnectionService {
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/granola-${verified.event_id}.json`;
     await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
     const normalized = source.normalize(context, envelope, payloadKey);
-    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Granola webhook event is not supported");
+    if (!normalized) throw unsupportedWebhookEvent(this.env, {
+      provider: "granola", connectionId: connection.id, eventType: envelope.eventType,
+    });
     if (this.env.WORKSPACE_DOS) {
       const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
         await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
@@ -3021,7 +3027,9 @@ export class ConnectionService {
     const receiptId = newId();
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/webhook-${envelope.bodyHash}.json`;
     const normalized = source.normalize(context, envelope, payloadKey);
-    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Webhook event is not supported");
+    if (!normalized) throw unsupportedWebhookEvent(this.env, {
+      provider: connection.connector_type, connectionId: connection.id, eventType: envelope.eventType,
+    });
     if (connection.scope === "workspace" && normalized.targetUserIds.length > 0) {
       const uniqueTargets = [...new Set(normalized.targetUserIds)];
       const members = await this.env.DB.prepare(
@@ -3822,6 +3830,48 @@ export class ConnectionService {
   private async refreshScheduler(workspaceId: string): Promise<void> {
     await refreshWorkspaceSchedule(this.env, workspaceId);
   }
+}
+
+/**
+ * One refusal for a delivery whose event type a connector does not model.
+ *
+ * The reason was always thrown — each site's message said it in prose — but no
+ * operator could read it. `request_failed` records a refusal's `detail_keys`
+ * and deliberately withholds their values, and it never records the message at
+ * all, so every one of these landed in the log as a bare
+ * `request_failed 400 unsupported_webhook_event`: you learn that a delivery was
+ * refused and never which one. Recovering it meant joining against whatever
+ * `connector_operation_finished` happened to share the millisecond, which works
+ * only while traffic is this thin.
+ *
+ * Naming the event type is safe for two different reasons, depending on the
+ * connector. For one Rally ships, it is published vocabulary: the type is in
+ * the manifest and `connector_operation_finished` already logs it. For
+ * `generic_webhook` there is no manifest to check it against — the type is
+ * whatever the workspace's own sender put in the body — so what makes it safe
+ * is that it is the caller's own string going back to the caller that signed
+ * the request, with `redact` bounding it in the log.
+ *
+ * The `details` carry it too: a provider dashboard replaying a delivery shows
+ * the response body, and "Rally does not model the fireflies event
+ * meeting.bot_joined" is the whole diagnosis without anyone opening a log.
+ */
+function unsupportedWebhookEvent(
+  env: Env,
+  input: { provider: string; connectionId: string; eventType: string },
+): ApiError {
+  logWarn(env, "connector_webhook_event_refused", {
+    connection_id: input.connectionId,
+    connector_type: input.provider,
+    event_type: input.eventType,
+    code: "unsupported_webhook_event",
+  });
+  return new ApiError(
+    400,
+    "unsupported_webhook_event",
+    `Rally does not model the ${input.provider} event ${input.eventType}`,
+    { provider: input.provider, eventType: input.eventType },
+  );
 }
 
 function installationActionError(error: unknown): unknown {
