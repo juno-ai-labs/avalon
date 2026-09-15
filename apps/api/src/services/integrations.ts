@@ -1,5 +1,9 @@
 import { buildAttachmentManifestPart } from "./attachment-model-content";
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { conversationParentStub } from "./conversation-parent-client";
+import { AgentCommunicationService } from "./agent-communication-service";
+import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
+import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
@@ -1440,6 +1444,15 @@ async function projectModelProtocolTranscript(
         "participant_turn",
         message.id,
         message.sequenceNumber,
+      ));
+      continue;
+    }
+
+    if (message.structuredContent?.kind === "agent_message") {
+      const content = AgentMessageContentSchema.parse(message.structuredContent);
+      projected.push(modelDerivative(
+        { role: "user", content: renderAgentMessage(content, modelMessageContent(message)) },
+        "participant_turn", message.id, message.sequenceNumber,
       ));
       continue;
     }
@@ -5597,7 +5610,7 @@ async function loadRunPromptContext(
             : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
-    }),
+    }) + "\nStay available to participants. Use rally_agents to delegate substantial or blocking work when useful; continue prior agents through messages. Coordinate through send_message and reply, and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
   };
@@ -5978,15 +5991,12 @@ async function loadHarnessTools(
     input,
     inObjectResourceAttacher,
   );
-  // Withheld from an automation occurrence, and this is where that call is
-  // made: a run carrying a frozen context is an automation doing its work, and
-  // one that could draft automations from the email it just read is a spam
-  // engine with a human approval step in front of it. It does its work, writes
-  // its result, and what happens to that result is decided outside it.
+  // Drafting belongs to the Sidekick's authoring conversation. Other agents
+  // discover or create that conversation and send it the setup request.
   const loadedAutomationPluginIds = new Set<string>();
-  const automationsPlugin = input.automationRun
-    ? null
-    : createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds);
+  const automationsPlugin = input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && !input.automationRun
+    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds)
+    : null;
   // The one way a run reaches the room that owns its automation. Offered only
   // to a run of a room's automation, so a personal or workspace automation
   // cannot post into a room at all.
@@ -5998,6 +6008,7 @@ async function loadHarnessTools(
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, input)),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
@@ -6823,6 +6834,12 @@ async function assertRunAuthorityStillValid(
     .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
+  }
+
+  if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
+    const parent = await conversationParentStub(env, input);
+    const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
+    if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
   if (!input.automationRun) {
