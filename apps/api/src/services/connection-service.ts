@@ -330,13 +330,27 @@ async function attemptConnectorRepair(
   connection: AuthorizedConnectorConnection,
   identity: { connectionId: string; connectorType: string },
 ): Promise<string | null> {
-  if (!adapter.repair) return null;
+  const repair = adapter.repair;
+  if (!repair) return null;
+  return reportConnectorRepair(env, identity, (signal) => repair(connection, signal));
+}
+
+/**
+ * The reporting half of `attemptConnectorRepair`, for a repair that does not
+ * take the credential door's connection: a managed installation's repair runs
+ * the lifecycle runner, which authorizes itself.
+ */
+async function reportConnectorRepair(
+  env: Env,
+  identity: { connectionId: string; connectorType: string },
+  repair: (signal: AbortSignal) => Promise<{ repaired: boolean; message?: string }>,
+): Promise<string | null> {
   try {
-    const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
+    const outcome = await repair(AbortSignal.timeout(10_000));
     // Not repaired is still an outcome. The managed lifecycle's repair says
     // why it could not — "needs attention; inspect installation details" —
     // and dropping that left Test showing only the health check's sentence.
-    return repair.repaired ? repair.message ?? "Repaired the connection" : repair.message ?? null;
+    return outcome.repaired ? outcome.message ?? "Repaired the connection" : outcome.message ?? null;
   } catch (error) {
     logWarn(env, "connector_repair_failed", {
       connection_id: identity.connectionId,
@@ -1670,17 +1684,34 @@ export class ConnectionService {
     await this.adoptGranolaInstallation(connection);
     const managed = connection.scope === "workspace" && this.registry().get(connection.connector_type).installationManagement ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
     const previousHealth = telemetryConnectionHealth(connection.status);
-    const context = await this.context(connection);
-    const baseAdapter = this.registry().get(connection.connector_type);
-    const adapter = managed ? { ...baseAdapter, repair: async (_connection: ConnectorConnectionContext, signal: AbortSignal) => {
-      const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
-      await this.recordInstallationAudit(repaired, "connector.installation.repair");
-      const result = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
-      return { repaired: result?.state === "current", message: result?.state === "current" ? "Approved webhook configuration is verified" : "Webhook repair needs attention; inspect installation details" };
-    } } : baseAdapter;
+    const adapter = this.registry().get(connection.connector_type);
+    const identity = { connectionId: String(connection.id), connectorType: String(connection.connector_type) };
+    let context = await this.context(connection);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
     let repairOutcome: string | null = null;
     try {
+      // Testing a connection is the one moment somebody has asked Avalon to
+      // put it right, so this is where a provider-side repair belongs — not
+      // in the health check, which reauthorization runs on every plugin
+      // activation. A repair that fails must not fail the test: the check
+      // below is still the answer being asked for.
+      //
+      // A managed installation's repair runs the lifecycle runner, and a
+      // retried create settles what the provider returned — for Granola, the
+      // endpoint id and signing secret — into the stored envelope through the
+      // generation-fenced path, not the credential door. So it runs before the
+      // door, and the context the health check reads is loaded after it.
+      // Checked against the envelope read beforehand, the check reported the
+      // endpoint missing beside a repair that had just registered it.
+      if (managed) {
+        repairOutcome = await reportConnectorRepair(this.env, identity, async (signal) => {
+          const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
+          await this.recordInstallationAudit(repaired, "connector.installation.repair");
+          const installation = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
+          return { repaired: installation?.state === "current", message: installation?.state === "current" ? "Approved webhook configuration is verified" : "Webhook repair needs attention; inspect installation details" };
+        });
+        context = await this.context(await this.loadAuthorized(id));
+      }
       result = await withAuthorizedConnection(
         this.env,
         {
@@ -1689,15 +1720,7 @@ export class ConnectionService {
           signal: AbortSignal.timeout(10_000),
         },
         async (authorized) => {
-          // Testing a connection is the one moment somebody has asked Avalon to
-          // put it right, so this is where a provider-side repair belongs — not
-          // in the health check, which reauthorization runs on every plugin
-          // activation. A repair that fails must not fail the test: the check
-          // below is still the answer being asked for.
-          repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, {
-            connectionId: String(connection.id),
-            connectorType: String(connection.connector_type),
-          });
+          if (!managed) repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, identity);
           return adapter.healthCheck(authorized, AbortSignal.timeout(10_000));
         },
       );
