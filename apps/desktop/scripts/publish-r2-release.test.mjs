@@ -96,7 +96,13 @@ test('dry-run resolves the complete release transaction without cloud access or 
     ]);
     assert.ok(plan.immutableCachePurgeUrls.every((url) => !url.includes('?')));
     assert.equal(plan.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
-    assert.equal(plan.latestManifest, 'stable/darwin/arm64/latest-mac.yml');
+    assert.deepEqual(plan.channelManifests, {
+      legacy: 'stable/darwin/arm64/latest-mac.yml',
+      stable: 'stable/darwin/arm64/stable-mac.yml',
+      faster: 'stable/darwin/arm64/faster-mac.yml',
+    });
+    assert.equal(plan.stableChannelReceipt, 'stable/darwin/arm64/stable-channel.json');
+    assert.equal(plan.stablePromotionIntervalHours, 24);
     assert.equal(plan.siteRelease.published, true);
     assert.equal(plan.siteRelease.objects.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
     assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);

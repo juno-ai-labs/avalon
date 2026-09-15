@@ -496,9 +496,12 @@ objects:
 - The DMG and ZIP blockmaps
 - `<version>/SHA256SUMS`
 
-`stable/darwin/arm64/Rally.dmg` and
-`stable/darwin/arm64/latest-mac.yml` are mutable channel pointers, not releases.
-They must always remain in the public bucket.
+`stable/darwin/arm64/Rally.dmg`, the three `*-mac.yml` manifests, and
+`stable/darwin/arm64/stable-channel.json` are mutable pointers, not releases.
+They must remain in the public bucket. `latest-mac.yml` is the compatibility
+feed for builds released before channel selection, `faster-mac.yml` advances on
+every desktop release, and `stable-mac.yml` advances no more than once in a
+rolling 24-hour window. The JSON receipt records when Stable last moved.
 
 Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
@@ -524,9 +527,12 @@ Each admitted invocation performs this fail-closed transaction:
 
 1. Page through every active object under `stable/darwin/arm64/`. Parse and sort
    semantic versions, require all five immutable objects for every release, and
-   require the two mutable pointers. An unexpected, duplicate, or incomplete
-   key aborts the run before any copy or deletion.
-2. Select all versions older than the highest five. For each exact candidate
+   require the mutable pointers. A bucket that predates channel selection may
+   temporarily carry only the compatibility manifest; once any new channel
+   pointer exists, all three new pointers are required. An unexpected,
+   duplicate, or incomplete key aborts the run before any copy or deletion.
+2. Select all versions older than the highest five, except the version still
+   named by `stable-mac.yml`. For each exact candidate
    key, stream the source object into the archive with its HTTP and custom
    metadata and `InfrequentAccess`. A matching existing archive object is reused
    without another write, which keeps retries idempotent and avoids resetting
@@ -539,9 +545,11 @@ Each admitted invocation performs this fail-closed transaction:
    changed while copies were in progress. This protects a release that races the
    nightly job.
 5. Delete only the computed, verified candidate-key array. Re-list both sides,
-   require exactly five complete releases plus `Rally.dmg` and
-   `latest-mac.yml` in active storage, prove every candidate is absent from the
-   active bucket, and prove its verified archive copy remains present.
+   require the calculated complete release set plus every mutable pointer in
+   active storage, prove every candidate is absent from the active bucket, and
+   prove its verified archive copy remains present. Stable may make the active
+   set temporarily larger than five when more than five Faster releases land
+   inside its 24-hour window.
 
 The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
 retry after a partial failure; the next nightly invocation safely reuses any
@@ -991,6 +999,38 @@ Two states fail *open* — an unrecorded `commit` (the first plan after this lan
 A release that fails *after* the bump is pushed leaves `main` bumped and unpublished. That is resumable, not broken: the record still names the old version, so the next plan picks the same next minor, `apply-release-version.mjs` finds the manifests already stamped and commits nothing, and the same version is rebuilt.
 
 The API and the desktop app are ordered by their own durations rather than by coordination between runners. A merge that changes both starts the two workflows together; the Workers deploy in minutes while the signed, notarized app takes tens of minutes, so the API is live long before anything reaches the update channel. The guarantee that matters is not the start order but the regional health gate, which runs after the verified build and before the payloads are published, and blocks distribution when a region is unhealthy. Each workflow serializes itself through its own concurrency group, all of them non-cancelling with `queue: single`: a run already in flight is never killed, and a newer arrival supersedes the older *pending* one. For releases that is the intended policy — intermediate versions do not need to ship, and the newest pending run carries the newest work.
+
+One verified artifact set serves two desktop release channels. The publisher
+always advances `faster-mac.yml` and the legacy `latest-mac.yml`; the latter is
+kept so an older installation can receive the build that introduces channel
+selection. `stable-mac.yml` is the default for channel-aware builds. It advances
+only when `stable-channel.json` proves that at least 24 hours have elapsed since
+the previous public Stable promotion. Faster's manifest is also the durable
+newest candidate for Stable: the hourly `promote-desktop-stable.yml` workflow
+promotes it on the first scheduled run after the gate opens even when no newer
+desktop release is published. GitHub schedules may run late, so the workflow
+provides a minimum interval rather than an exact promotion time. The receipt is
+written after the Stable manifest is publicly verified, so upload time cannot
+shorten the interval. If the receipt is missing or behind the manifest after an
+interrupted publish, either reconciler repairs it at the current time and skips
+that promotion. This deliberately delays Stable rather than risking two
+promotions inside one day. Before the first channel-aware release, the cron sees
+both manifests absent and exits successfully, so deploying the workflow does
+not disturb current installations.
+
+The cron has its own `desktop-stable-promotion` concurrency group. Sharing the
+release workflow's `queue: single` group would let an hourly tick cancel a
+pending desktop release. Both paths instead serialize the authoritative R2
+read, decision, and writes through the same `release-publish.lock`. A cron that
+finds an active publisher defers successfully; the next hourly run reconciles
+the still-durable Faster pointer.
+
+The setting is a device preference, not an account or workspace preference.
+Electron Updater selects `stable-mac.yml` or `faster-mac.yml` from the embedded,
+signature-checked generic feed. Changing channels never enables downgrade: a
+Mac moving from Faster to Stable stays on its installed version until Stable
+advances past it. The site and `Rally.dmg` continue to advertise the newest
+published desktop release; the channel choice governs automatic updates.
 
 The release and the site deployment deliberately keep separate groups. Sharing one would order them, but `single` cancels the pending member when another queues, so a site deployment could discard a pending release. The residual overlap runs in both directions. A standalone site deployment of an older commit landing immediately after a release could restore the superseded version; the guard is `check-site-release-config.mjs`, which runs against the live channel in the step immediately before the publish, leaving only a seconds-wide window. In the other direction the release itself redeploys the site as its final step, and until 2026-08-27 it built that site from its own checkout — the release commit, by then up to a build's length behind — so a site fix that merged and deployed during the 1.182.0 build was reverted in production for twenty-five minutes. The release now builds the site from the tip of `main`, fetched inside that final step. Every push-triggered `deploy-site.yml` run deploys a commit on `main`, so the fetched tip is never older than one of those; a manual dispatch of that workflow against another branch sits outside the guarantee, and the next release will overwrite whatever it deployed. The race that remains is bounded by work rather than by any timing measurement: for the release to regress the site, an entire `deploy-site.yml` run — runner acquisition, checkout, install, full lint and typecheck, the site tests, and its deploy — would have to finish inside the span of the release's site step, which performs a strict subset of that work. That group is declared at **workflow** level, so the planning job runs inside the queue rather than ahead of it. When the plan is made matters: a plan made while another release is in flight reads a release record that run has not finished writing, so it picks a version that release is about to take, and the bump step can no longer tell a genuine resume of a failed release from a version that has just shipped — that merge's run then dies at the tag or at publish, and its desktop work ships in no release until an unrelated later push happens to match `paths:`. Planning inside the queue settles the record before it is read. The cost is that a plan now waits behind a running release before it can even skip. The admission filter still excludes unrelated packages; an admitted contract change outside the desktop closure consumes only this cheap planner job. Ubuntu release verification has a team-selected 60-minute ceiling after the full repository suite exceeded the previous 30-minute budget. It runs only the Electron desktop tests and release invariants; the broader test suites remain in repository CI. This keeps unrelated backend tests out of the desktop release queue while bounding how long a wedged verification can hold it.
 

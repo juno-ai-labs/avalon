@@ -12,6 +12,8 @@ import {
 class FakeUpdater extends EventEmitter implements AutoUpdaterPort {
   autoDownload = false;
   autoInstallOnAppQuit = false;
+  allowDowngrade = true;
+  channel: string | null = null;
   disableDifferentialDownload = false;
   logger: AutoUpdaterPort['logger'] = null;
   checkForUpdates = vi.fn(async () => null);
@@ -37,6 +39,7 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
     arch: 'arm64',
     env: {},
     currentVersion: '1.0.0',
+    releaseChannel: 'stable',
     showMessageBox,
     openExternal,
     onStatusChange: (status) => statuses.push(status),
@@ -81,17 +84,30 @@ describe('desktop auto-update runtime', () => {
     ]);
   });
 
-  it('checks immediately and every three hours without disabling differential downloads', () => {
+  it('checks the stable channel immediately and every three hours without allowing downgrades', () => {
     const { controller, updater, statuses, scheduleInterval, unref } = setup();
 
     expect(controller.enabled).toBe(true);
     expect(updater.autoDownload).toBe(true);
     expect(updater.autoInstallOnAppQuit).toBe(true);
+    expect(updater.channel).toBe('stable');
+    expect(updater.allowDowngrade).toBe(false);
     expect(updater.disableDifferentialDownload).toBe(false);
     expect(updater.checkForUpdates).toHaveBeenCalledOnce();
     expect(statuses).toEqual([{ kind: 'checking' }]);
     expect(scheduleInterval).toHaveBeenCalledWith(expect.any(Function), 10_800_000);
     expect(unref).toHaveBeenCalledOnce();
+  });
+
+  it('moves to Faster immediately without allowing an older build to install', () => {
+    const { controller, updater } = setup();
+    updater.emit('update-not-available', { version: '1.0.0' });
+
+    controller.setReleaseChannel('faster');
+
+    expect(updater.channel).toBe('faster');
+    expect(updater.allowDowngrade).toBe(false);
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
   });
 
   it('surfaces progress and installs a downloaded update after confirmation', async () => {
