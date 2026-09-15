@@ -154,6 +154,7 @@ function fixture(
       return { id: "sandbox-runtime", name: input.stableName, state: "running" as const, domainAllowList: input.domainAllowList };
     }),
     getSandbox: vi.fn(async (name) => ({ id: "sandbox-runtime", name, state: sandboxState.current, domainAllowList: [] })),
+    recoverSandbox: vi.fn(async () => undefined),
     startSandbox: vi.fn(async () => { sandboxState.current = "running"; }),
     stopSandbox: vi.fn(async () => { sandboxState.current = "stopped"; }),
     archiveSandbox: vi.fn(async () => { sandboxState.current = "archived"; }),
@@ -824,7 +825,7 @@ describe("Daytona Terminal runtime", () => {
     )).toEqual({ operation_run_id: R });
   });
 
-  it("retires and reprovisions when the retained provider sandbox is already absent", async () => {
+  it.each(["absent", "archived"] as const)("reconciles a stop 404 against the retained sandbox metadata: %s", async (providerState) => {
     const { objectStore, provider, runtime } = fixture();
     vi.mocked(provider.createSandbox).mockImplementation(async (input) => ({
       id: input.generation === 1 ? "sandbox-runtime" : `sandbox-runtime-${input.generation}`,
@@ -848,17 +849,26 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
+    if (providerState === "absent") {
+      vi.mocked(provider.getSandbox).mockRejectedValueOnce(Object.assign(new Error("sandbox missing"), { status: 404 }));
+    } else {
+      vi.mocked(provider.getSandbox).mockResolvedValue({
+        id: "sandbox-runtime", name: "sandbox-runtime", state: "archived", domainAllowList: [],
+      });
+    }
+    const expectedId = providerState === "absent" ? "sandbox-runtime-2" : "sandbox-runtime";
+    const expectedGeneration = providerState === "absent" ? 2 : 1;
     await expect(runtime.readFile(
       { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" },
       "src/file.txt",
     )).resolves.toEqual(new TextEncoder().encode("hello\n"));
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime-2", "/workspace/src/file.txt");
+    expect(provider.createSandbox).toHaveBeenCalledTimes(expectedGeneration);
+    expect(provider.readFile).toHaveBeenCalledWith(expectedId, "/workspace/src/file.txt");
     expect(workstreamObjectGet(
       objectStore,
       "SELECT generation, sandbox_id, operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: 2, sandbox_id: "sandbox-runtime-2", operation_run_id: R2 });
+    )).toEqual({ generation: expectedGeneration, sandbox_id: expectedId, operation_run_id: R2 });
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",

@@ -29,6 +29,9 @@ export interface TerminalSandboxSnapshot {
   name: string;
   state: TerminalSandboxState;
   domainAllowList: string[];
+  labels?: Record<string, string> | undefined;
+  /** Undefined means the provider has not established recoverability. */
+  recoverable?: boolean | undefined;
 }
 
 export type TerminalManagedBootstrapCapability = "sqlite3" | "gh" | "pnpm" | "tsx";
@@ -73,6 +76,7 @@ export interface TerminalSandboxProvider {
   prepareSandbox?(idOrName: string, expectedDomainAllowList: string[]): Promise<TerminalSandboxSnapshot>;
   getSandbox(idOrName: string): Promise<TerminalSandboxSnapshot>;
   startSandbox(idOrName: string): Promise<void>;
+  recoverSandbox(idOrName: string): Promise<void>;
   stopSandbox(idOrName: string): Promise<void>;
   archiveSandbox(idOrName: string): Promise<void>;
   deleteSandbox(idOrName: string): Promise<void>;
@@ -116,6 +120,50 @@ export function isTerminalProviderNotFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const value = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } };
   return value.status === 404 || value.statusCode === 404 || value.response?.status === 404;
+}
+
+/** Only a metadata lookup can establish absence; a toolbox 404 cannot. */
+export async function observeTerminalSandbox(
+  provider: Pick<TerminalSandboxProvider, "getSandbox">,
+  id: string,
+): Promise<TerminalSandboxSnapshot | null> {
+  try {
+    return await provider.getSandbox(id);
+  } catch (error) {
+    if (isTerminalProviderNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/** Missing recovery metadata is uncertainty, never permission to discard files. */
+export function isTerminalSandboxLost(snapshot: TerminalSandboxSnapshot | null): boolean {
+  return snapshot === null || snapshot.state === "expired"
+    || (snapshot.state === "failed" && snapshot.recoverable === false);
+}
+
+/** A failed operation is reconciled through metadata, never its HTTP status. */
+export async function deleteTerminalSandbox(provider: TerminalSandboxProvider, id: string): Promise<void> {
+  try {
+    await provider.deleteSandbox(id);
+  } catch (error) {
+    const observed = await observeTerminalSandbox(provider, id);
+    if (observed && observed.state !== "expired") throw error;
+  }
+}
+
+export async function stopTerminalSandbox(
+  provider: TerminalSandboxProvider,
+  id: string,
+): Promise<"stopped" | "absent"> {
+  try {
+    await provider.stopSandbox(id);
+    return "stopped";
+  } catch (error) {
+    const observed = await observeTerminalSandbox(provider, id);
+    if (!observed || observed.state === "expired") return "absent";
+    if (observed.state === "stopped" || observed.state === "archived") return "stopped";
+    throw error;
+  }
 }
 
 export function terminalShellQuote(value: string): string {

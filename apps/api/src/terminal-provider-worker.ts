@@ -79,6 +79,10 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
     return terminalProviderRpcCall(() => this.provider.getSandbox(idOrName));
   }
 
+  recoverSandbox(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.recoverSandbox(idOrName));
+  }
+
   startSandbox(idOrName: string) {
     return terminalProviderRpcCall(() => this.provider.startSandbox(idOrName));
   }
