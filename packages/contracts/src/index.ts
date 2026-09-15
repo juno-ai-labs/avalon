@@ -3882,4 +3882,3 @@ export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClien
 export { ConnectorInstallationSchema, ConnectorInstallationProviderSchema, ConnectorInstallationProviders, ConnectorRegistrationSchema, type ConnectorInstallation, type InstallationRegistration } from "./connector-installation";
 
 export { AshbyEventTypes, AshbyEventLabels } from "./ashby-events";
-export * from "./zod-diagnostics";
