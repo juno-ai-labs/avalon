@@ -148,7 +148,7 @@ import {
   summarizeHarnessRun,
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
-import { logStructuredEvent } from "../observability/logger";
+import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
@@ -5230,6 +5230,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           workspace_id: parentInput.workspaceId,
           workstream_id: parentInput.parentId,
           failure_classification: error instanceof Error ? error.name : "unknown",
+          failure_code: diagnosticErrorCode(error, "harness_execution_failed"),
         });
       } finally {
         await childMonitor.stop();

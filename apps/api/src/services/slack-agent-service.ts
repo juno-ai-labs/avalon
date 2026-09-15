@@ -24,25 +24,7 @@ import {
   type SlackAgentSessionOrigin,
   type SlackIngressEnvelope,
 } from "@rally/connectors";
-import {
-  AutomationSummarySchema,
-  ExternalActorSchema,
-  SlackIngressQueueMessageSchema,
-  LEGACY_WORKSTREAM_LINK_ORIGINS,
-  SlackOriginContextSchema,
-  SlackSearchAuthorizationSchema,
-  asUserId,
-  asWorkspaceId,
-  addWorkspaceTarget,
-  isWorkstreamId,
-  parseWorkstreamLinkTarget,
-  workstreamCanonicalUrl,
-  type ExternalActor,
-  type SlackOriginAttachment,
-  type SlackOriginContext,
-  type SlackOriginNearbyMessage,
-  type SlackSearchAuthorization,
-} from "@rally/contracts";
+import { AutomationSummarySchema, ExternalActorSchema, SlackIngressQueueMessageSchema, LEGACY_WORKSTREAM_LINK_ORIGINS, SlackOriginContextSchema, SlackSearchAuthorizationSchema, asUserId, asWorkspaceId, addWorkspaceTarget, isWorkstreamId, parseWorkstreamLinkTarget, workstreamCanonicalUrl, type ExternalActor, type SlackOriginAttachment, type SlackOriginContext, type SlackOriginNearbyMessage, type SlackSearchAuthorization, codeShaped, describeZodIssues } from "@rally/contracts";
 import { HttpsUrlSchema, httpsUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
 import {
@@ -3754,7 +3736,9 @@ function slackErrorReason(error: unknown): string {
     }
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  // Slack answered with a body this binary does not model. The failing path
+  // is the diagnosis and is schema shape; the body's values stay behind.
+  if (error instanceof z.ZodError) return codeShaped(`invalid_slack_data:${describeZodIssues(error)}`);
   return error instanceof Error ? error.name : "unknown_error";
 }
 
@@ -4172,6 +4156,7 @@ function recordableUnfurlLinks(
 
 export const __slackAgentTesting = {
   SLACK_AUTHORIZATION_ERROR_CODES,
+  slackErrorReason,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,
   modalPromptSource,

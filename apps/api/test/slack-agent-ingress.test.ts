@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { ConnectorError, SlackWorkspaceBotScopes } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
@@ -857,5 +858,19 @@ describe("unfurl audience check", () => {
     })) as unknown as typeof fetch);
 
     await expect(slackChannelIsExternallyShared(logEnv, "tok", "CGENERAL")).resolves.toBeNull();
+  });
+});
+
+describe("a Slack answer this binary does not model", () => {
+  it("names the field in the reason that reaches the connection row and the ingress job", () => {
+    // `invalid_slack_data` is persisted on the ingress job and written to the
+    // connection's `error_json`, and it said only that something in Slack's
+    // body was off. The path is schema shape; the body's values stay behind.
+    const rejection = z.strictObject({ channel: z.strictObject({ is_private: z.boolean() }) })
+      .safeParse({ channel: { is_private: "member content must remain absent" } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    const reason = __slackAgentTesting.slackErrorReason(rejection.error);
+    expect(reason).toBe("invalid_slack_data:channel.is_private:invalid_type");
   });
 });

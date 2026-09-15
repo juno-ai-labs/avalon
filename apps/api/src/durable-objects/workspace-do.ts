@@ -9,7 +9,7 @@ import { prepareInstallationRotation } from "./connector-installation-storage";
 import { InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationDeliverySchema, InstallationSettleSchema, InstallationChangeSchema,
   type InstallationCreate, type InstallationClaim, type InstallationDelivery, type InstallationSettle, type InstallationChange } from "./connector-installation-protocol";
 import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation } from "./connector-installation-storage";
-import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
+import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema, isCodeShaped } from "@rally/contracts";
 
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
@@ -5965,6 +5965,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_committed",
+        // `reason` says the write landed. What the settler was told went
+        // wrong is `error`, persisted above; it is carried here only when it
+        // has the shape of a code, because a processing error can quote the
+        // provider.
+        ...(request.outcome === "failed" && typeof request.error === "string" && isCodeShaped(request.error)
+          ? { error_code: request.error }
+          : {}),
       });
       return;
     }

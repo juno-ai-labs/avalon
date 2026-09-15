@@ -1,3 +1,4 @@
+import { zodDiagnosticCode } from '@rally/contracts';
 import { regional, relayRegionalError } from './regional-api';
 import { ACCESS_PAGE_SIZE, AccessPageQuerySchema, AccessRecoverySchema, AccessRecoveryResultSchema, DownloadGrantInputSchema } from '@rally/contracts/private-access';
 import { downloadGrantUrl, issueDownloadGrant, listAccessRequests, listDownloadGrants, revokeDownloadGrant } from '@rally/db/private-access';
@@ -57,8 +58,11 @@ accessRoutes.post('/downloads', async (c) => {
       grantId: grant.id, requestId: body.data.requestId ?? null, expiresAt: grant.expiresAt }));
     return c.json({ id: grant.id, url: downloadGrantUrl(grant.token), expiresAt: grant.expiresAt }, 201);
   } catch (error) {
-    // A deadline can pass between request validation and the shared issuer.
-    if (error instanceof z.ZodError) return c.json({ error: 'invalid_download_request' }, 400);
+    // A deadline can pass between request validation and the shared issuer,
+    // which re-validates; the field it refused is what the operator corrects.
+    if (error instanceof z.ZodError) {
+      return c.json({ error: 'invalid_download_request', message: `The download grant was refused (${zodDiagnosticCode(error, 'download_grant')})` }, 400);
+    }
     throw error;
   }
 });

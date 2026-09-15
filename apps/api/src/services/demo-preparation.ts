@@ -23,14 +23,7 @@
  * inside one, which is what lets the whole sequence be proved on real objects
  * without a Workflow binding. `docs/demo-workspaces.md` owns the feature.
  */
-import {
-  DEMO_PREPARATION_PHASES,
-  DemoOperationStatusSchema,
-  asWorkspaceId,
-  type DemoOperationPhaseStatus,
-  type DemoOperationStatus,
-  type DemoPreparationPhase,
-} from "@rally/contracts";
+import { DEMO_PREPARATION_PHASES, DemoOperationStatusSchema, asWorkspaceId, type DemoOperationPhaseStatus, type DemoOperationStatus, type DemoPreparationPhase, zodDiagnosticCode } from "@rally/contracts";
 
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import type { Env } from "../env";
@@ -639,6 +632,10 @@ async function recordPhase(
  */
 function operatorError(error: unknown): { code: string; message: string } {
   if (error instanceof ApiError) return { code: error.code, message: error.message.slice(0, 1200) };
+  // A record this repository wrote that no longer parses names its field; the
+  // rejection's text stays in the log.
+  const rejected = zodDiagnosticCode(error, "demo_phase");
+  if (rejected) return { code: rejected, message: "A stored demo record no longer matches its schema; the code names the field and the log has the detail" };
   return { code: "demo_internal_error", message: "An internal error stopped this phase; the log has the detail" };
 }
 
@@ -910,3 +907,5 @@ function requireWorkspace(record: OperationRecord): string {
   if (!record.workspace_id) throw new ApiError(409, "demo_workspace_not_created", "The workspace has not been created yet");
   return record.workspace_id;
 }
+
+export const __demoPreparationTesting = { operatorError };

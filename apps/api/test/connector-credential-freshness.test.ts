@@ -602,6 +602,23 @@ describe("repairing a connection under test", () => {
       .resolves.toBeNull();
   });
 
+  it("reports a repair that could not complete, with the adapter's own reason", async () => {
+    // Granola's shared installation runner answers the Test button's repair
+    // with `repaired: false` and a sentence saying what still needs attention.
+    // That sentence used to be dropped on the floor — no log, and the Test
+    // result read the same as one where nothing needed repairing.
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const adapter = { repair: async () => ({ repaired: false, message: "Webhook repair needs attention; inspect installation details" }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair({ LOG_LEVEL: "warn" } as never, adapter, connection, identity))
+      .resolves.toBe("Webhook repair needs attention; inspect installation details");
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_repair_incomplete",
+      connection_id: "connection",
+      reason: "Webhook repair needs attention; inspect installation details",
+    }));
+    warning.mockRestore();
+  });
+
   it("reports a failed repair without failing the test", async () => {
     // The health check that follows is still the answer being asked for, so
     // this must not throw — but a connection whose delivery is still broken

@@ -1,3 +1,4 @@
+import { codeShaped, describeZodIssues } from "@rally/contracts";
 import { ConnectorError, slackApi } from "@rally/connectors";
 import { z } from "zod";
 
@@ -105,7 +106,9 @@ function slackErrorReason(error: unknown): string {
     }
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  // Slack answered with a body this binary does not model. The failing path
+  // is the diagnosis and is schema shape; the body's values stay behind.
+  if (error instanceof z.ZodError) return codeShaped(`invalid_slack_data:${describeZodIssues(error)}`);
   return "unknown";
 }
 

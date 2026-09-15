@@ -1,3 +1,4 @@
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { RegionSchema } from "@rally/contracts/regions";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
@@ -142,6 +143,17 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
       }
     } catch (error) {
       if (isRetirementRefusal(error)) throw error;
+      // The receipt carries a fixed sentence for the person; the log carries
+      // the step and the provider's own code, which the sentence does not.
+      logWarn(env, "connector_installation_step_failed", {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        provider: installation?.provider ?? null,
+        action: registration.action,
+        step_id: registration.stepId ?? null,
+        write_dispatched: writeDispatched,
+        code: diagnosticErrorCode(error, "connector_installation_step_failed"),
+      });
       result = { ...result, ...(registration.action === "rotate" && writeDispatched ? { rotation: "unknown" as const } : {}), state: writeDispatched ? "unknown" : "failed",
         error: !writeDispatched ? "Provider inspection failed. Check credentials and test again." : "The provider operation may have completed. Inspect the exact recorded webhook before retrying." };
     }
