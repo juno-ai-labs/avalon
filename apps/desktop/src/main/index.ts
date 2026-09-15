@@ -588,6 +588,7 @@ let telemetryLaunchId: string | null = null;
 let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: DesktopDeepLinkNavigation[] = [];
+let mainWindowReadyToShow = false;
 let mainWindowLoading: Promise<void> | null = null;
 let resolveMainWindowStartup!: () => void;
 const mainWindowStartup = new Promise<void>((resolve) => { resolveMainWindowStartup = resolve; });
@@ -4431,12 +4432,14 @@ async function createMainWindow(): Promise<void> {
   await mainWindowStartup;
   if (mainWindowLoading) return mainWindowLoading;
   if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!mainWindowReadyToShow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
     return;
   }
   rendererReady = false;
+  mainWindowReadyToShow = false;
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 940,
@@ -4465,7 +4468,10 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.on('render-process-gone', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindowReadyToShow = true;
+    mainWindow?.show();
+  });
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as
     // a renderer restart strands later OAuth/invitation callbacks in the main
