@@ -63,7 +63,9 @@ IDs and validates the whole list before linking any resource to the recipient
 through existing runtime resource attachment operations. Admission retains their
 ordered canonical attachment descriptors, and context rebuilding uses normal
 attachment manifests and current-turn image projection. Resource IDs alone are
-not a substitute for those durable message attachments.
+not a substitute for those durable message attachments. Model-facing tools keep
+composed-input limits; internal admission carries generated final responses and
+all their attachments in full, without applying the composer ceilings to output.
 
 Conversation migration 57 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
