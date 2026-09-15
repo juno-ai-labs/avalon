@@ -181,6 +181,8 @@ import {
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import {
+  buildAttachmentManifestPart,
+  buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
 import {
@@ -1393,8 +1395,19 @@ async function projectModelProtocolTranscript(
 
     if (message.structuredContent?.kind === "agent_message") {
       const content = AgentMessageContentSchema.parse(message.structuredContent);
+      const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
+        id: attachment.id, fileName: attachment.fileName, mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes, contentRef: null,
+        modelContentStatus: "failed" as const, modelContentErrorCode: "source_unavailable",
+      });
+      const parts = sources.length === 0 ? [] : message.id === input.triggerMessageId
+        ? await buildAttachmentModelParts(env.PAYLOADS, sources, {
+            database: env.DB, images: env.IMAGES, documentProcessor: env.DOCUMENT_PROCESSOR,
+          })
+        : [buildAttachmentManifestPart(sources)];
+      const text = renderAgentMessage(content, modelMessageContent(message));
       projected.push(modelDerivative(
-        { role: "user", content: renderAgentMessage(content, modelMessageContent(message)) },
+        { role: "user", content: parts.length > 0 ? [{ type: "text", text }, ...parts] : text },
         "participant_turn", message.id, message.sequenceNumber,
       ));
       continue;

@@ -106,6 +106,7 @@ import {
 } from "./substream-loop-storage";
 import {
   WorkstreamTranscriptStorage,
+  type PendingInputAttachmentDescriptor,
   type PendingInputDeliveryEffectInput,
   type PreparedParticipantMessage,
 } from "./workstream-transcript-storage";
@@ -3679,6 +3680,20 @@ export class WorkstreamObjectProductService {
   }
 
   private async prepareSystemActivation(input: AdmitSystemActivationInput) {
+    const attachments: PendingInputAttachmentDescriptor[] = ("agentExchange" in input ? input.attachmentIds : [])
+      .map((resourceId, position) => {
+        const linked = first(this.storage.sql.exec<{ resource_json: string }>(
+          "SELECT resource_json FROM workstream_resource_links WHERE resource_id = ?", resourceId,
+        ));
+        if (!linked) throw new ApiError(422, "agent_attachment_unavailable", "The agent attachment is not attached to this conversation");
+        return {
+          resourceId, position, resourceJson: linked.resource_json,
+          attachmentJson: JSON.stringify({ attachedAt: new Date(input.now).toISOString() }),
+          attachedByUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+          watchEnabled: false, relationshipType: "message_attachment",
+          attachedAt: input.now, updatedAt: input.now,
+        };
+      });
     const agentExchange = "agentExchange" in input ? input.agentExchange : null;
     const agentContent = "agentExchange" in input
       ? { kind: "agent_message" as const, ...input.agentExchange, attachmentIds: input.attachmentIds } : null;
@@ -3709,12 +3724,12 @@ export class WorkstreamObjectProductService {
             input.text,
           ].join("\n"),
     };
-    return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
+    return { participant, attachments, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
   }
 
   private completePreparedSystemActivation(
     input: AdmitSystemActivationInput,
-    prepared: { participant: PreparedParticipantMessage; bindPayloadJson: string },
+    prepared: { participant: PreparedParticipantMessage; attachments: PendingInputAttachmentDescriptor[]; bindPayloadJson: string },
     expectedLoopId: string,
   ) {
     const currentLoop = this.loops.loop();
@@ -3763,7 +3778,7 @@ export class WorkstreamObjectProductService {
         slackOrigin: null,
         slackSearchAuthorization: null,
       }),
-      attachmentsJson: "[]",
+      attachmentsJson: JSON.stringify(prepared.attachments),
       mentionsJson: "[]",
       now: input.now,
     });
