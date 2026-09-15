@@ -930,42 +930,48 @@ describe('Work-stream row geometry', () => {
  * `surface-default` used to fake the gap around it, which is a circle over a
  * blob and an opaque patch of the default surface on a row that is painted in
  * a hover fill half the time. jsdom lays nothing out, so a component test
- * cannot tell a hole from a disc; the square mask and the missing fill are
- * the two declarations that make the difference, and they live here so
- * deleting either fails. See docs/workstream-markers.md.
+ * cannot tell a hole from a disc; the rounded-square mask, the concentric
+ * hole radius, and the missing fill are the declarations that make the
+ * difference, and they live here so deleting any fails. See
+ * docs/workstream-markers.md.
  */
 describe('workstream glyph status knockout', () => {
-  it('punches the status hole with a square mask rather than a surface-default disc', () => {
+  it('punches the status hole with a rounded-square mask rather than a surface-default disc', () => {
     const glyph = rule('.workstream-row .sidebar-row-icon:has(.workstream-row-status) .workstream-glyph');
     const indicator = rule('.workstream-row-status .status-indicator');
     const icon = rule('.workstream-row .sidebar-row-icon');
 
     expect(glyph).not.toBeNull();
-    expect(glyph).toContain('-webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);');
-    expect(glyph).toContain('mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);');
-    expect(glyph).toContain('-webkit-mask-composite: xor;');
-    expect(glyph).toContain('mask-composite: exclude;');
-    expect(glyph).toContain('var(--workstream-status-hole)');
-    expect(glyph).toContain('right var(--workstream-status-hole-right) bottom var(--workstream-status-hole-bottom)');
-    expect(glyph).not.toContain('radial-gradient');
+    expect(glyph).toContain('-webkit-mask-composite: destination-out');
+    expect(glyph).toContain('mask-composite: subtract');
+    expect(glyph).toContain('radial-gradient(circle closest-side');
+    expect(glyph).toContain('var(--workstream-status-hole-radius)');
     expect(indicator).not.toBeNull();
     expect(indicator).not.toContain('surface-default');
     expect(indicator).not.toContain('radius-pill');
     expect(indicator).toContain('height: var(--workstream-status-hole);');
+    expect(indicator).toContain('border-radius: var(--workstream-status-hole-radius);');
     const status = rule('.workstream-row-status');
     expect(status).toContain('display: block;');
     expect(status).toContain('height: var(--workstream-status-hole);');
     expect(status).toContain('line-height: 0;');
     expect(icon).toContain('--workstream-status-hole: 12px;');
+    expect(icon).toContain('--workstream-status-dot: 6px;');
+    expect(icon).toContain('--workstream-status-dot-radius: var(--av-cmp-marker-radius);');
+    expect(icon).toContain('+ (var(--workstream-status-hole) - var(--workstream-status-dot)) / 2');
     expect(rule('.app-shell .workstream-row .sidebar-row-icon'))
       .toContain('--workstream-status-hole: 14px;');
+    expect(rule('.app-shell .workstream-row .sidebar-row-icon'))
+      .toContain('--workstream-status-dot: 8px;');
   });
 
-  it('keeps the compact badge a sharp square, not the navigation tick', () => {
+  it('keeps the compact badge the navigation tick radius, not the hole radius', () => {
     const dot = rule('.workstream-row .workstream-row-status .status-dot');
-    expect(dot).toContain('border-radius: 0;');
+    expect(dot).toContain('border-radius: var(--workstream-status-dot-radius);');
     expect(dot).not.toContain('radius-pill');
+    expect(dot).not.toContain('border-radius: 0;');
     expect(dot).toContain('box-shadow: none;');
+    expect(dot).toContain('height: var(--workstream-status-dot);');
   });
 });
 

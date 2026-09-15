@@ -336,10 +336,11 @@ describe('token references', () => {
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
     // The compact status badge's overlay box, shared by the badge and the
-    // glyph's square knockout so the two cannot drift. Layout geometry on
-    // the icon slot, restated at the app-shell's 36px mark; no theme has
-    // an opinion about it.
+    // glyph's knockout so the two cannot drift. Layout geometry on the icon
+    // slot; the hole radius is derived from the tick radius plus the gap.
+    // No theme has an opinion about it.
     '--workstream-status-hole', '--workstream-status-hole-right', '--workstream-status-hole-bottom',
+    '--workstream-status-hole-radius', '--workstream-status-dot', '--workstream-status-dot-radius',
     '--turn-bubble-radius',
     // The in-flight sweep's band, a twentieth of the surface's own ink: it is
     // derived from `currentColor` on the surface it paints, so one rule reads
