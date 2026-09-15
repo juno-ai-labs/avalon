@@ -1,3 +1,4 @@
+import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
@@ -2115,6 +2116,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       parts: operation.preparedContext.parts.map((part) => part.content),
     } });
     return { installed: true };
+  }
+
+  /** The private-child receipt authorizes initialization before parent publication. */
+  async installPreparedConversation(input: {
+    workspaceId: string; workstreamId: string; substreamId: string;
+    operationId: string; conversation: PreparedConversation;
+  }) {
+    await this.initialized;
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== input.workspaceId || identity.parentId !== input.workstreamId
+      || this.externalSubstreamId() !== input.substreamId || input.substreamId === "0") throw new Error("substream_target_identity_mismatch");
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+      asWorkspaceId(input.workspaceId), workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId), asWorkstreamId(input.workstreamId)));
+    const operation = await parent.readPrivateChildPreparation({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.workstreamId, operationId: input.operationId });
+    if (!operation || operation.substreamId !== input.substreamId || !["confirming", "ready"].includes(operation.status)) throw new Error("substream_preparation_not_ready");
+    return this.product.installPreparedConversation({ workspaceId: asWorkspaceId(input.workspaceId),
+      userId: asUserId(operation.creatorUserId), sessionId: input.operationId, region: this.env.AVALON_REGION, role: "member" },
+      input.operationId, PreparedConversationSchema.parse(input.conversation));
   }
 
   /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */

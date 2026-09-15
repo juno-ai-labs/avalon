@@ -27,12 +27,12 @@ describe("shared session import", () => {
     ]);
   });
 
-  it("reads the observed public Claude snapshot shape without non-text blocks", () => {
+  it("reads public Claude text and preserves unavailable file references", () => {
     const result = parseSessionExport("claude", JSON.stringify({ snapshot_name: "Comments", chat_messages: [
       { sender: "human", text: "", content: [{ type: "text", text: "Why two comments?" }], files: [{ name: "hidden.png" }] },
       { sender: "assistant", text: "", content: [{ type: "thinking", thinking: "private" }, { type: "tool_use", name: "read" }, { type: "text", text: "Check the header." }], compaction_summary: "omit" },
     ] }));
-    expect(result.content.messages).toEqual([{ role: "user", text: "Why two comments?" }, { role: "assistant", text: "Check the header." }]);
+    expect(result.content.messages).toMatchObject([{ role: "user", text: "Why two comments?", files: [{ name: "hidden.png", source: { kind: "unavailable" } }] }, { role: "assistant", text: "Check the header." }]);
   });
   it("reads Code JSONL messages but omits tool results and compaction", () => {
     const result = parseSessionExport("claude", [
@@ -43,6 +43,42 @@ describe("shared session import", () => {
       { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Fixed" }] } },
     ].map((value) => JSON.stringify(value)).join("\n"));
     expect(result.content.messages).toEqual([{ role: "user", text: "Fix this" }, { role: "assistant", text: "Fixed" }]);
+  });
+  it("retains attachment-only messages, embedded image bytes and artifact documents", () => {
+    const result = parseSessionExport("claude", JSON.stringify({ chat_messages: [
+      { sender: "human", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }] },
+      { sender: "assistant", content: [{ type: "text", text: '<antArtifact title="Chart.html" type="text/html"><h1>Chart</h1></antArtifact>' }] },
+    ] }));
+    expect(result.content.messages).toMatchObject([
+      { role: "user", text: "", files: [{ source: { kind: "inline", encoding: "base64", data: "aGVsbG8=" } }] },
+      { role: "assistant", files: [{ name: "Chart.html", kind: "artifact", source: { kind: "inline", data: "<h1>Chart</h1>" } }] },
+    ]);
+  });
+  it("reads a one-record Code JSONL export and refuses unsupported visible text shapes", () => {
+    expect(parseSessionExport("claude", JSON.stringify({ type: "user", message: { role: "user", content: "Only turn" } })).content.messages)
+      .toEqual([{ role: "user", text: "Only turn" }]);
+    expect(() => parseSessionExport("claude", JSON.stringify({ chat_messages: [
+      { sender: "human", content: "Question" }, { sender: "assistant", content: [{ type: "unknown secret payload" }] },
+    ] }))).toThrow("Unsupported Claude content block type");
+  });
+  it("labels extracted text separately from the unavailable original document", () => {
+    const result = parseSessionExport("claude", JSON.stringify({ chat_messages: [
+      { sender: "human", content: "", attachments: [{ file_name: "notes.pdf", file_type: "application/pdf", extracted_content: "Notes" }] },
+    ] }));
+    expect(result.content.messages[0]?.files).toMatchObject([
+      { name: "notes.pdf", source: { kind: "unavailable" } },
+      { name: "notes.pdf (extracted text).txt", mimeType: "text/plain", source: { kind: "inline", data: "Notes" } },
+    ]);
+  });
+  it("preserves complete and partial Claude artifact events without importing tool calls", () => {
+    const result = parseSessionExport("claude", JSON.stringify({ type: "assistant", message: { role: "assistant", content: [
+      { type: "tool_use", name: "Write", input: { file_path: "/tmp/report.html", content: "<h1>Report</h1>" } },
+      { type: "tool_use", name: "artifacts", input: { id: "diagram", command: "update" } },
+    ] } }));
+    expect(result.content.messages).toMatchObject([{ role: "assistant", text: "", files: [
+      { name: "report.html", source: { kind: "inline", data: "<h1>Report</h1>" } },
+      { name: "diagram", source: { kind: "unavailable", reference: "diagram" } },
+    ] }]);
   });
   it("rejects arbitrary destinations and identifies Code login requirements", () => {
     for (const url of ["https://example.com/share/123", "https://claude.ai.evil.test/share/123", "http://claude.ai/share/123", "https://user:password@claude.ai/share/123"]) expect(() => sessionShareUrl(url)).toThrow();
@@ -58,7 +94,7 @@ describe("shared session import", () => {
     expect(calls).toEqual([{ redirect: "manual" }]);
   });
   it("rejects empty or non-conversation content", () => {
-    expect(() => parseSessionExport("claude", "{}")).toThrow("No readable");
-    expect(() => parseSessionExport("chatgpt", '<html>Log in</html>')).toThrow("No readable");
+    expect(() => parseSessionExport("claude", "{}")).toThrow("Expected Claude");
+    expect(() => parseSessionExport("chatgpt", '<html>Log in</html>')).toThrow("Share page has no conversation data");
   });
 });

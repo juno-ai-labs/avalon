@@ -1,3 +1,4 @@
+import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { env } from "cloudflare:workers";
@@ -123,6 +124,20 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("substream preparation on workerd", () => {
+  it("materializes prepared history before publishing a private child and rejects changed replay", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000ce99";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Prepared child", throughTurnId: "source-turn-1" });
+    const content = { messages: [{ role: "user" as const, text: "Prepared question" }, { role: "assistant" as const, text: "Prepared answer" }] };
+    const created = await service.confirm(WORKSTREAM_ID, operationId, null, null, content);
+    const boot = await new WorkstreamObjectClient(TEST_ENV, creatorAuth, WORKSTREAM_ID, created.substreamId).boot();
+    expect(boot.transcript.ranges.flatMap((range) => range.turns).map((turn) => turn.actor)).toEqual(["human", "assistant"]);
+    expect(JSON.stringify(boot.transcript)).toContain("Prepared answer");
+    expect(await service.confirm(WORKSTREAM_ID, operationId, null, null, content)).toMatchObject({ substreamId: created.substreamId });
+    await expect(service.confirm(WORKSTREAM_ID, operationId, null, null, { messages: [{ role: "user", text: "Changed" }] })).rejects.toThrow("different content");
+    expect(await runInDurableObject(conversation(created.substreamId), (_instance, ctx) => ctx.storage.sql.exec(`SELECT run_id FROM runs`).toArray())).toEqual([]);
+  });
+
   it("receipts private-child directory effects for a member absent from Main", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce22";

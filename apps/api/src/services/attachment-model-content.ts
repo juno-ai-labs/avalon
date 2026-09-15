@@ -72,7 +72,7 @@ interface ManifestOverride {
 export function buildAttachmentManifestPart(
   attachments: ModelAttachmentSource[],
   overrides: ReadonlyMap<string, ManifestOverride> = new Map(),
-): ModelMessageContentPart {
+): Extract<ModelMessageContentPart, { type: "text" }> {
   const entries = attachments.map((attachment): AttachmentManifestEntry => {
     const attachmentKind = classifyAttachmentKind({
       mimeType: attachment.mimeType,

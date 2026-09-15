@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 58;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 59;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3077,6 +3077,31 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
 
     ],
   },
+  { version: 59, description: "receipt prepared conversation materialization", statements: [
+    `CREATE TABLE prepared_conversation_receipts (
+      operation_id TEXT PRIMARY KEY, content_hash TEXT NOT NULL,
+      first_turn_id TEXT NOT NULL, content_json TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('preparing', 'committed', 'failed')),
+      created_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE prepared_attachment_recovery (
+      input_id TEXT NOT NULL CHECK(length(input_id) = 36),
+      resource_id TEXT NOT NULL CHECK(length(resource_id) = 36),
+      workspace_id TEXT NOT NULL CHECK(length(workspace_id) = 36),
+      workstream_id TEXT NOT NULL CHECK(length(workstream_id) = 36),
+      release_authority TEXT NOT NULL CHECK(release_authority IN ('preparation', 'projection')),
+      created_at INTEGER NOT NULL,
+      preparation_id TEXT REFERENCES prepared_conversation_receipts(operation_id),
+      mailbox_input_id TEXT GENERATED ALWAYS AS (CASE WHEN preparation_id IS NULL THEN input_id ELSE NULL END) VIRTUAL
+        REFERENCES pending_loop_input_mailbox(input_id) ON DELETE RESTRICT,
+      PRIMARY KEY(input_id, resource_id)
+    ) STRICT`,
+    `INSERT INTO prepared_attachment_recovery(input_id, resource_id, workspace_id, workstream_id, release_authority, created_at)
+      SELECT input_id, resource_id, workspace_id, workstream_id, release_authority, created_at FROM pending_attachment_reservation_recovery`,
+    `DROP TABLE pending_attachment_reservation_recovery`,
+    `ALTER TABLE prepared_attachment_recovery RENAME TO pending_attachment_reservation_recovery`,
+    `CREATE INDEX pending_attachment_reservation_recovery_input_idx ON pending_attachment_reservation_recovery(input_id, resource_id)`,
+  ] },
 ];
 
 /**
