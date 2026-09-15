@@ -130,7 +130,7 @@ const provider = useOpenRouterDouble(async (call) => {
   if (heldBackgroundModel && JSON.stringify(latestInput?.content ?? "").includes("HOLD_BACKGROUND")) await heldBackgroundModel;
   if (JSON.stringify(latestInput?.content ?? "").includes("LARGE_BACKGROUND_RESULT")) return { say: LARGE_RESULT_TEXT };
   if (JSON.stringify(latestInput?.content ?? "").includes("DELEGATE_FROM_MODEL")) {
-    if (call.messages.some((message) => message.role === "tool" && JSON.stringify(message.content).includes("agentId"))) {
+    if (call.messages.some((message) => message.role === "tool" && /"data"\s*:\s*\{\s*"agentId"\s*:/u.test(String(message.content)))) {
       return { say: "Research is running; I am available here." };
     }
     const start = call.toolNames.find((name) => name.endsWith("start_agent"));

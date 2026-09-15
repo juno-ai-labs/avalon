@@ -2973,7 +2973,7 @@ function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
     defined.push(defineTool({
       name: harnessTool.definition.name,
       description: harnessTool.definition.longRunning
-        ? `${harnessTool.definition.description}\nThis tool may take a while. Consider using a background agent when that helps keep the conversation available. This is a hint, not a requirement; already-asynchronous tools and background agents can execute it directly.`
+        ? `${harnessTool.definition.description}\nThis call may take a while. Consider delegating it to keep the participant conversation available. If you are already a background agent, or the call returns without waiting, use it directly when appropriate.`
         : harnessTool.definition.description,
       schema: z.unknown(),
       rawJsonSchema: harnessTool.definition.inputSchema,

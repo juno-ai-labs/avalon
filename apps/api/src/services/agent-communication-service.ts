@@ -239,15 +239,27 @@ export class AgentCommunicationService {
 class AgentCommunicationError extends Error {
   constructor(readonly code: string) {
     super({
-      agent_not_teammate: "Choose an agent returned by list_agents or an accessible Sidekick returned by sidekicks_list.",
-      agent_message_not_received: "Reply using the messageId of a message delivered to this agent.",
-      agent_not_owned: "This agent is not one of your owned descendants. Send its coordinator a message instead.",
-      agent_attachment_unavailable: "Attach the resource to this conversation before forwarding it.",
-      workstream_archived: "The destination workstream is archived and cannot receive work.",
-      agent_origin_stopped: "This agent has been stopped; wait for a continuation message before starting more work.",
-      sidekick_contact_forbidden: "This execution does not have access to that Sidekick.",
-      sidekick_owning_workstream_unavailable: "This conversation has no owning workstream. Choose personal or workspace scope when appropriate.",
-    }[code] ?? code);
+      agent_not_teammate: "List teammates or accessible Sidekicks, then copy a returned agentId. This recipient is not available to you.",
+      agent_message_not_received: "Copy Message ID from a message you received. You cannot respond using another agent’s message ID.",
+      agent_not_owned: "Message the agent instead. You can stop only agents you own.",
+      agent_attachment_unavailable: "Attach the resource to this conversation before forwarding it, or remove it from attachmentIds.",
+      workstream_archived: "Stop sending work to this destination. Its workstream is archived or no longer exists.",
+      agent_origin_stopped: "Wait for a continuation message. This agent is stopped and cannot start more work.",
+      agent_origin_unavailable: "Stop starting agents from this conversation. It is archived or no longer available.",
+      agent_destination_unavailable: "List teammates again and choose an available agentId. This recipient is unavailable.",
+      agent_destination_mismatch: "Copy the exact agentId from creation or discovery. The supplied ID does not match the recipient.",
+      sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
+      sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
+      sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
+      sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
+      sidekick_owning_workstream_forbidden: "Ask a participant in the owning workstream to create the Sidekick. This execution cannot create one there.",
+      agent_ownership_conflict: "Use the existing agent or report the conflict. This agent already has a different owner or team.",
+      agent_ownership_cycle: "Choose a different agent. An agent cannot own itself or one of its ancestors.",
+      agent_message_identity_conflict: "Report the delivery conflict. This message ID is already assigned to a different route; changing the recipient cannot repair it.",
+      agent_effect_identity_missing: "Report this runtime error. The host did not supply a delivery identity; changing tool arguments cannot repair it.",
+      agent_bootstrap_failed: "Report that the background agent could not start. Its runtime could not be initialized.",
+      workstream_authority_generation_stale: "Report that the recipient’s workstream state is stale. Changing the message cannot repair it.",
+    }[code] ?? `Report this agent communication error: ${code}.`);
     this.name = "AgentCommunicationError";
   }
 }
