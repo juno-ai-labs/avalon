@@ -106,8 +106,19 @@ const DEFINITION: AutomationDraft = {
  */
 let heldBackgroundModel: Promise<void> | null = null;
 const provider = useOpenRouterDouble(async (call) => {
-  if (heldBackgroundModel && JSON.stringify(call.messages).includes("HOLD_BACKGROUND")) await heldBackgroundModel;
   const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
+  if (heldBackgroundModel && JSON.stringify(latestInput?.content ?? "").includes("HOLD_BACKGROUND")) await heldBackgroundModel;
+  if (JSON.stringify(latestInput?.content ?? "").includes("DELEGATE_FROM_MODEL")) {
+    if (call.messages.some((message) => message.role === "tool" && JSON.stringify(message.content).includes("agentId"))) {
+      return { say: "Research is running; I am available here." };
+    }
+    const start = call.toolNames.find((name) => name.endsWith("start_agent"));
+    if (start) return { callTool: { name: start, arguments: { name: "Model-created researcher",
+      description: "Compare the options independently", message: "HOLD_BACKGROUND: compare these options" } } };
+    const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
+    if (!load) throw new Error("agent_plugin_loader_missing");
+    return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
+  }
   if (JSON.stringify(latestInput?.content ?? "").includes("NO_REPLY_REQUIRED")) {
     const endTurn = call.toolNames.find((name) => name.endsWith("end_turn"));
     if (endTurn) return { callTool: { name: endTurn, arguments: {}, text: "No further response is needed." } };
@@ -306,6 +317,47 @@ beforeEach(async () => {
 });
 
 describe("sidekick_post_result", () => {
+  it("delegates through a real Bind tool receipt and answers another message before the worker finishes", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const response = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "DELEGATE_FROM_MODEL: research this, and stay available. PRIVATE_PARENT_DETAIL",
+          clientMessageId: crypto.randomUUID(), mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(response.status).toBe(200);
+      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed", error_json: null });
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+      const { agents } = await new AgentCommunicationService(TEST_ENV, input).list();
+      expect(agents).toMatchObject([{ name: "Model-created researcher", description: "Compare the options independently", status: "executing" }]);
+      const address = agentAddressForId(agents[0]!.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      const workerRequest = () => provider.calls.find((call) => JSON.stringify(
+        call.messages.filter((message) => message.role === "user").at(-1)?.content ?? "",
+      ).includes("HOLD_BACKGROUND"));
+      // Executing begins before the independent provider request. Observe the
+      // boundary we are asserting on instead of racing that scheduled work.
+      await expect.poll(workerRequest, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeDefined();
+      expect(JSON.stringify(workerRequest()!.messages)).not.toContain("PRIVATE_PARENT_DETAIL");
+      const followUp = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "While that runs, acknowledge this unrelated request.", clientMessageId: crypto.randomUUID(),
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(followUp.status).toBe(200);
+      expect((await settledRun(roomConversation(), 2))[1]).toMatchObject({ status: "completed" });
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      release();
+      expect((await settledRun(child))[0]).toMatchObject({ status: "completed" });
+      expect((await settledRun(roomConversation(), 3))[2]).toMatchObject({ status: "completed" });
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
+  });
+
   it("ends through Bind without an automatic reply and continues on a later message", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
