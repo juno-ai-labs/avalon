@@ -19,6 +19,7 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | `apps/api/src/durable-objects/workstream-do.ts` | Owned archive stops and aggregate background count from child projections. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Ephemeral count updates and clearing unavailable state. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | Ordinary message entry and a noninteractive background count. |
+| `apps/desktop/src/renderer/components/background-agent-activity.tsx` | Retained count label, composer-edge reveal, shimmer and fading number wheel. |
 | `apps/api/test-workers/agent-teams.test.ts` | Real workerd migration and RPC coverage. |
 | `apps/api/test-workers/automation-post-result.test.ts` | Real creation, admission, continuation, reply and Sidekick contact coverage. |
 
@@ -100,7 +101,10 @@ The conversation parent counts running background substreams, including nested
 workers under that parent, and sends the count with control metadata. The
 desktop holds it only while that connection is available and renders a singular
 or plural line above the composer. It exposes no worker inspection or direct
-chat. Participant messages use the ordinary safe-boundary admission path.
+chat. The count shimmers subtly, emerges from behind the composer, and retreats
+behind it when work ends or the count becomes unavailable. Count changes roll
+vertically with fading digits. Reduced-motion preferences disable these effects.
+Participant messages use the ordinary safe-boundary admission path.
 
 Sidekick discovery uses the existing authorized directory and ranks the current
 workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
@@ -182,3 +186,8 @@ acknowledgment loop, then required a completion-suppression tool. Removing that
 path keeps ordinary completion in Bind and makes every inter-agent message an
 intentional tool call. The sole host-generated exception is a concise parent
 failure notice, because a failed agent may be unable to report its own failure.
+
+The count uses restrained motion to make background activity visible without
+turning it into a separate management surface. Its label stays mounted while
+the composer-edge reveal closes; changed digits roll and fade, and reduced-motion
+preferences disable movement and shimmer.
