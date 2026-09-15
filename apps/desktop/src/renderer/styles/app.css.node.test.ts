@@ -925,6 +925,40 @@ describe('Work-stream row geometry', () => {
   });
 });
 
+/**
+ * The sidebar's compact status badge sits on the filled glyph. A disc of
+ * `surface-default` used to fake the gap around it, which is a circle over a
+ * blob and an opaque patch of the default surface on a row that is painted in
+ * a hover fill half the time. jsdom lays nothing out, so a component test
+ * cannot tell a hole from a disc; the mask and the missing fill are the two
+ * declarations that make the difference, and they live here so deleting either
+ * fails. See docs/workstream-markers.md.
+ */
+describe('workstream glyph status knockout', () => {
+  it('punches the status hole with a circular mask rather than a surface-default disc', () => {
+    const glyph = rule('.workstream-row .sidebar-row-icon:has(.workstream-row-status) .workstream-glyph');
+    const indicator = rule('.workstream-row-status .status-indicator');
+    const icon = rule('.workstream-row .sidebar-row-icon');
+
+    expect(glyph).not.toBeNull();
+    expect(glyph).toContain('-webkit-mask-image: radial-gradient(');
+    expect(glyph).toContain('mask-image: radial-gradient(');
+    expect(glyph).toContain('var(--workstream-status-hole)');
+    expect(indicator).not.toBeNull();
+    expect(indicator).not.toContain('surface-default');
+    expect(indicator).toContain('height: var(--workstream-status-hole);');
+    expect(icon).toContain('--workstream-status-hole: 12px;');
+    expect(rule('.app-shell .workstream-row .sidebar-row-icon'))
+      .toContain('--workstream-status-hole: 14px;');
+  });
+
+  it('puts the compact badge back to a circle, because the row tick is not one', () => {
+    const dot = rule('.workstream-row .workstream-row-status .status-dot');
+    expect(dot).toContain('border-radius: var(--av-sys-size-radius-pill);');
+    expect(dot).toContain('box-shadow: none;');
+  });
+});
+
 describe('raised popover interaction states', () => {
   it('highlights ordinary menu rows and preserves the danger override', () => {
     const content = rule('.menu-content');

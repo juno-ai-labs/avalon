@@ -5550,10 +5550,36 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 3px 7px;
 }
 
-.workstream-row .sidebar-row-icon { align-items: center; display: flex; height: 30px; justify-content: center; position: relative; width: 30px; }
-.workstream-row-status { bottom: -2px; position: absolute; right: -3px; }
-.workstream-row-status .status-indicator { background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); height: 12px; width: 12px; }
+.workstream-row .sidebar-row-icon {
+  /* Hole geometry for the status marker, shared by the badge and the
+     glyph's knockout so the two cannot drift. The app-shell restates the
+     three values at the 36px mark. */
+  --workstream-status-hole: 12px;
+  --workstream-status-hole-right: -3px;
+  --workstream-status-hole-bottom: -2px;
+  align-items: center;
+  display: flex;
+  height: 30px;
+  justify-content: center;
+  position: relative;
+  width: 30px;
+}
+.workstream-row-status {
+  bottom: var(--workstream-status-hole-bottom);
+  position: absolute;
+  right: var(--workstream-status-hole-right);
+}
+.workstream-row-status .status-indicator {
+  border-radius: var(--av-sys-size-radius-pill);
+  height: var(--workstream-status-hole);
+  width: var(--workstream-status-hole);
+}
 .workstream-row .workstream-row-status .status-dot {
+  /* `.sidebar-row .status-dot` restyles the same element into the
+     navigation tick — 2px radius, a glow, a stretched height. The compact
+     badge on the glyph is a circle, so those have to be put back here. */
+  border-radius: var(--av-sys-size-radius-pill);
+  box-shadow: none;
   height: 6px;
   inset: auto;
   left: 50%;
@@ -5561,6 +5587,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   top: 50%;
   transform: translate(-50%, -50%);
   width: 6px;
+}
+/* Punch a circular hole in the filled glyph around the status marker.
+   A painted disc of `surface-default` used to stand in for this: the gap
+   was a circle sitting over a blob that is not one, and an opaque patch
+   of the default surface sat on a row that is painted in a hover fill
+   half the time. Masking the glyph leaves a hole instead, so the gap
+   follows the marker and takes the row's real background — the same
+   reason HexagonGlyph knocks its play out of the fill rather than laying
+   a badge on it. The gradient is the marker's own circle, not the blob;
+   the blob is the glyph's shape, and the hole is the marker's. */
+.workstream-row .sidebar-row-icon:has(.workstream-row-status) .workstream-glyph {
+  -webkit-mask-image: radial-gradient(circle calc(var(--workstream-status-hole) / 2) at calc(100% - var(--workstream-status-hole-right) - var(--workstream-status-hole) / 2) calc(100% - var(--workstream-status-hole-bottom) - var(--workstream-status-hole) / 2), transparent calc(var(--workstream-status-hole) / 2), #000 calc(var(--workstream-status-hole) / 2 + 0.5px));
+  mask-image: radial-gradient(circle calc(var(--workstream-status-hole) / 2) at calc(100% - var(--workstream-status-hole-right) - var(--workstream-status-hole) / 2) calc(100% - var(--workstream-status-hole-bottom) - var(--workstream-status-hole) / 2), transparent calc(var(--workstream-status-hole) / 2), #000 calc(var(--workstream-status-hole) / 2 + 0.5px));
 }
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
 .settings-navigation-group button,
@@ -5643,17 +5682,12 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 8px;
 }
 .app-shell .workstream-row .sidebar-row-icon {
+  --workstream-status-hole: 14px;
+  --workstream-status-hole-right: 0px;
+  --workstream-status-hole-bottom: 0px;
   flex: 0 0 36px;
   height: 36px;
   width: 36px;
-}
-.app-shell .workstream-row-status {
-  bottom: 0;
-  right: 0;
-}
-.app-shell .workstream-row-status .status-indicator {
-  height: 14px;
-  width: 14px;
 }
 .app-shell .workstream-row .workstream-row-status .status-dot {
   height: 8px;
