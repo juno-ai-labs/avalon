@@ -84,9 +84,9 @@ struct InspectorSheet: View {
                         if let email = stream.emailAddress {
                             LabeledContent("Email", value: email)
                         }
-                        LabeledContent("Visibility", value: stream.scope == "public" ? "Public" : "Private")
-                        Button(stream.scope == "public" ? "Make private" : "Make public") {
-                            Task { await model.setScope(stream, scope: stream.scope == "public" ? "private" : "public") }
+                        LabeledContent("Visibility", value: stream.scope == "workspace" ? "Workspace" : "Private")
+                        Button(stream.scope == "workspace" ? "Make private" : "Make public to workspace") {
+                            Task { await model.setScope(stream, scope: stream.scope == "workspace" ? "personal" : "workspace") }
                         }
                     }
                     Section("People") {

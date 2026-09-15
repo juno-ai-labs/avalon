@@ -131,9 +131,9 @@ struct WorkstreamListScreen: View {
                 Label("Rename", systemImage: "pencil")
             }
             Button {
-                Task { await model.setScope(item, scope: item.scope == "public" ? "private" : "public") }
+                Task { await model.setScope(item, scope: item.scope == "workspace" ? "personal" : "workspace") }
             } label: {
-                Label(item.scope == "public" ? "Make private" : "Make public", systemImage: item.scope == "public" ? "lock" : "globe")
+                Label(item.scope == "workspace" ? "Make private" : "Make public to workspace", systemImage: item.scope == "workspace" ? "lock" : "globe")
             }
             Button {
                 Task { await model.pin(item) }

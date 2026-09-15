@@ -14,6 +14,9 @@ actor ConversationSocket {
     enum Incoming: Sendable {
         case snapshot(ConversationBoot)
         case turnUpserted(TranscriptTurn)
+        case streamStarted(turnId: String, streamId: String, reset: Bool)
+        case streamDelta(turnId: String, streamId: String, delta: String, reset: Bool)
+        case streamCompleted(streamId: String)
         case olderTurns([TranscriptTurn], coveredStartInclusive: Int)
         case commandSucceeded(clientMessageId: String, turnId: String?)
         case commandFailed(message: String)
@@ -72,12 +75,17 @@ actor ConversationSocket {
         await transport.sendIfOpen(Self.json(["type": "stop_harness", "operationId": operationId]))
     }
 
-    func answerElicitation(id: String, answer: String?, skipped: Bool, operationId: String) async throws {
+    func answerElicitation(id: String, answer: RallyElicitation.RallyElicitationAnswer?, skipped: Bool, operationId: String) async throws {
         var inner: [String: Any] = [:]
         if skipped {
             inner["skipped"] = true
         } else if let answer {
-            inner["answer"] = answer
+            switch answer {
+            case .text(let value):
+                inner["answer"] = value
+            case .list(let values):
+                inner["answer"] = values
+            }
             inner["skipped"] = false
         }
         try await transport.send(Self.json([
@@ -135,7 +143,9 @@ actor ConversationSocket {
                 for await event in frames {
                     switch event {
                     case .frame(let data):
-                        await self.emit(data, into: continuation)
+                        if let incoming = Self.incoming(from: data) {
+                            continuation.yield(incoming)
+                        }
                     case .closed:
                         continuation.yield(.closed)
                         continuation.finish()
@@ -148,29 +158,46 @@ actor ConversationSocket {
         }
     }
 
-    private func emit(_ data: Data, into continuation: AsyncStream<Incoming>.Continuation) {
+    /// Maps a work-stream room frame. Live turns are `transcript_turn_upserted`;
+    /// `turn_upserted` is the range-protocol name and is ignored here.
+    nonisolated static func incoming(from data: Data) -> Incoming? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = object["type"] as? String else { return }
+              let type = object["type"] as? String else { return nil }
         switch type {
         case "snapshot":
-            if let boot = try? JSONCoding.decoder.decode(ConversationBoot.self, from: data) {
-                continuation.yield(.snapshot(boot))
-            }
-        case "turn_upserted":
-            if let turn = (object["turn"] as? [String: Any]).flatMap({
+            return (try? JSONCoding.decoder.decode(ConversationBoot.self, from: data)).map { .snapshot($0) }
+        case "transcript_turn_upserted":
+            return (object["turn"] as? [String: Any]).flatMap {
                 try? JSONSerialization.data(withJSONObject: $0)
-            }).flatMap({ try? JSONCoding.decoder.decode(TranscriptTurn.self, from: $0) }) {
-                continuation.yield(.turnUpserted(turn))
+            }.flatMap { try? JSONCoding.decoder.decode(TranscriptTurn.self, from: $0) }
+            .map { .turnUpserted($0) }
+        case "stream_started":
+            guard let turnId = object["turnId"] as? String, let streamId = object["streamId"] as? String else {
+                return nil
             }
+            return .streamStarted(turnId: turnId, streamId: streamId, reset: object["reset"] as? Bool ?? false)
+        case "stream_delta":
+            guard let turnId = object["turnId"] as? String, let streamId = object["streamId"] as? String else {
+                return nil
+            }
+            return .streamDelta(
+                turnId: turnId,
+                streamId: streamId,
+                delta: object["delta"] as? String ?? "",
+                reset: object["reset"] as? Bool ?? false
+            )
+        case "stream_completed":
+            guard let streamId = object["streamId"] as? String else { return nil }
+            return .streamCompleted(streamId: streamId)
         case "client_command_succeeded":
             let clientMessageId = object["clientMessageId"] as? String
                 ?? (object["turn"] as? [String: Any])?["clientMessageId"] as? String
                 ?? ""
             let turnId = (object["turn"] as? [String: Any])?["turnId"] as? String
-            continuation.yield(.commandSucceeded(clientMessageId: clientMessageId, turnId: turnId))
+            return .commandSucceeded(clientMessageId: clientMessageId, turnId: turnId)
         case "client_command_failed":
             let message = (object["error"] as? [String: Any])?["message"] as? String ?? "That message could not be sent."
-            continuation.yield(.commandFailed(message: message))
+            return .commandFailed(message: message)
         case "transcript_range":
             let result = object["result"] as? [String: Any]
             let turnsObject = result?["turns"] ?? []
@@ -179,14 +206,14 @@ actor ConversationSocket {
             let coveredStart = (result?["covered"] as? [String: Any])?["startInclusive"] as? Int
                 ?? turns.compactMap(\.transcriptSequence).min()
                 ?? 1
-            continuation.yield(.olderTurns(turns, coveredStartInclusive: coveredStart))
+            return .olderTurns(turns, coveredStartInclusive: coveredStart)
         case "resync_required":
-            continuation.yield(.resyncRequired)
+            return .resyncRequired
         case "error":
             let message = object["message"] as? String ?? "This part of the transcript could not be loaded."
-            continuation.yield(.commandFailed(message: message))
+            return .commandFailed(message: message)
         default:
-            break
+            return nil
         }
     }
 }

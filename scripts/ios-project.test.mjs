@@ -141,6 +141,8 @@ test("required Swift surfaces exist for a complete conversation client", () => {
     "RallyTests/RallyPagedDirectoryTests.swift",
     "RallyTests/RallyTicketedSocketTests.swift",
     "RallyUITests/LaunchUITests.swift",
+    "Config/Tests.xcconfig",
+    "Config/TestsRelease.xcconfig",
     "fastlane/ExportOptions.plist",
     "scripts/archive-testflight.sh",
     "README.md",
@@ -288,7 +290,11 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.doesNotMatch(client, /\/workstreams\?limit/);
   assert.doesNotMatch(client, /\/conversations\/\\\$\(id\)"/);
   assert.doesNotMatch(client, /get\(path: "\/sidekicks"/);
-  assert.match(read("Rally/Network/ConversationSocket.swift"), /stop_harness/);
+  assert.match(read("Rally/Network/ConversationSocket.swift"), /transcript_turn_upserted/);
+  assert.doesNotMatch(read("Rally/Network/ConversationSocket.swift"), /case "turn_upserted"/);
+  assert.match(read("Rally/Network/ConversationSocket.swift"), /stream_started/);
+  assert.match(read("Rally/Network/ConversationSocket.swift"), /stream_delta/);
+  assert.match(read("Rally/Network/ConversationSocket.swift"), /stream_completed/);
   assert.match(read("Rally/Network/ConversationSocket.swift"), /load_transcript_range/);
   assert.doesNotMatch(read("Rally/Network/ConversationSocket.swift"), /beforeSequence/);
   assert.match(read("Rally/Network/ConversationSocket.swift"), /snapshotId/);
@@ -348,7 +354,25 @@ test("iOS feed kinds and shell cover the Electron conversation and directory", (
   assert.match(conversation, /SubstreamLaunchView/);
   const deepLink = read("Rally/App/RallyDeepLink.swift");
   assert.match(deepLink, /substreams/);
+  assert.match(deepLink, /workspaceId/);
   assert.match(feed, /branchProvenance/);
+  assert.match(conversation, /multi_select/);
+  assert.match(conversation, /\.list\(selected\.sorted\(\)\)/);
+  assert.match(history, /scope == "workspace"/);
+  assert.doesNotMatch(history, /scope == "public"/);
+  assert.match(read("Rally/Network/RallyClient.swift"), /deliveryTargets/);
+  assert.match(read("Rally/Network/RallyClient.swift"), /refreshCurrentSession/);
+  assert.match(read("Rally/App/AppModel.swift"), /ASWebAuthenticationSessionError\.errorDomain/);
+  assert.match(read("Rally/App/AppModel.swift"), /bindIdentity\(identitySession\)/);
+  assert.match(read("fastlane/ExportOptions.plist"), /<string>export<\/string>/);
+  assert.doesNotMatch(read("fastlane/ExportOptions.plist"), /<string>upload<\/string>/);
+  assert.match(read("Config/Tests.xcconfig"), /INFOPLIST_FILE =/);
+  assert.match(read("Config/Tests.xcconfig"), /CODE_SIGN_ENTITLEMENTS =/);
+  assert.match(read("Rally.xcodeproj/project.pbxproj"), /Tests\.xcconfig/);
+  assert.match(read("RallyTests/RallyContractTests.swift"), /testLiveTurnUsesTranscriptTurnUpserted/);
+  assert.match(conversation, /onChange\(of: messages\.last\?\.id, initial: true\)/);
+  assert.match(conversation, /\.task\(id: message\.isStreaming\)/);
+  assert.match(read("Rally/App/RootView.swift"), /coordinator\.resolved == nil/);
   const desktopApp = readFileSync(join(repoRoot, "apps/desktop/src/renderer/App.tsx"), "utf8");
   for (const route of [
     "/workstreams/new",

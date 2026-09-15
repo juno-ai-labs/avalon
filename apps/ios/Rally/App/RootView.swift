@@ -47,10 +47,16 @@ struct WindowAnchorView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        DispatchQueue.main.async {
-            if let window = uiView.window {
-                onResolve(window)
-            }
-        }
+        guard context.coordinator.resolved == nil, let window = uiView.window else { return }
+        context.coordinator.resolved = window
+        DispatchQueue.main.async { onResolve(window) }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var resolved: UIWindow?
     }
 }
