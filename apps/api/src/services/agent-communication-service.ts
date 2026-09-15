@@ -51,9 +51,20 @@ export class AgentCommunicationService {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 
+  private async validateAttachments(ids: string[]) {
+    const sourceResources = createResourceObjectPort(this.env, this.input.workspaceId, this.input.parentId,
+      undefined, this.input.substreamId ?? "0");
+    const attachmentIds = [...new Set(ids)];
+    for (const resourceId of attachmentIds) {
+      if (!await sourceResources.isAttached({ resourceId })) throw new AgentCommunicationError("agent_attachment_unavailable");
+    }
+    return attachmentIds;
+  }
+
   async start(args: StartAgentInput, context: HarnessToolContext) {
     const source = await this.conversation(this.senderId);
     if ((await source.agentRuntimeInfo())?.status === "stopped") throw new AgentCommunicationError("agent_origin_stopped");
+    await this.validateAttachments(args.attachmentIds);
     const id = await this.messageId(context);
     const childId = agentIdForAddress({ parentKind: this.input.parentKind, parentId: this.input.parentId, substreamId: asSubstreamId(id) });
     const identity = await createIdentityObjectPort(this.env, this.input.workspaceId, this.input.parentId,
@@ -86,7 +97,16 @@ export class AgentCommunicationService {
       await child.stopOwnedAgent();
       throw new AgentCommunicationError("agent_origin_stopped");
     }
-    await this.send({ ...args, agentId: childId }, context);
+    let sourceStopped = false;
+    try {
+      await this.send({ ...args, agentId: childId }, context);
+    } finally {
+      // Admission may commit even when its confirmation is lost. Preserve an
+      // owner stop on both the successful and uncertain delivery paths.
+      sourceStopped = (await source.agentRuntimeInfo())?.status === "stopped";
+      if (sourceStopped) await child.stopOwnedAgent();
+    }
+    if (sourceStopped) throw new AgentCommunicationError("agent_origin_stopped");
     return { agentId: childId };
   }
 
@@ -107,12 +127,7 @@ export class AgentCommunicationService {
     const recipient = await this.conversation(target.recipientAgentId);
     const runtime = await recipient.agentRuntimeInfo();
     if (!runtime) throw new AgentCommunicationError("agent_destination_unavailable");
-    const sourceResources = createResourceObjectPort(this.env, this.input.workspaceId, this.input.parentId,
-      undefined, this.input.substreamId ?? "0");
-    const attachmentIds = [...new Set(args.attachmentIds)];
-    for (const resourceId of attachmentIds) {
-      if (!await sourceResources.isAttached({ resourceId })) throw new AgentCommunicationError("agent_attachment_unavailable");
-    }
+    const attachmentIds = await this.validateAttachments(args.attachmentIds);
     for (const resourceId of attachmentIds) {
       await attachWorkstreamRuntimeResource(this.env, { workspaceId: this.input.workspaceId,
         workstreamId: address.parentId, substreamId: address.substreamId, resourceId,

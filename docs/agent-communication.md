@@ -59,7 +59,7 @@ IDs when context is rebuilt. Admission puts messages at safe execution boundarie
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
 Attachments must already be attached to the sender. The host normalizes repeated
-IDs and validates the whole list before linking any resource to the recipient
+IDs and validates the whole list before creating a worker or linking any resource to the recipient
 through existing runtime resource attachment operations. Admission retains their
 ordered canonical attachment descriptors, and context rebuilding uses normal
 attachment manifests and current-turn image projection. Resource IDs alone are
@@ -72,7 +72,9 @@ Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it in
 the same transaction that admits the message.
 Replaying an old message does not clear a later stop. Recursive stops fence each owner before reading its descendants, so a
-concurrent start is either included or observes its stopped owner. Foreground
+concurrent start is either included or observes its stopped owner. Start checks
+the owner again after opening admission, including when confirmation is lost,
+and preserves the child stop before returning. Foreground
 stop remains local. Archive delivers the same
 stop request to owned conversations; independently owned Sidekicks continue.
 Liveness renewals allow Bind to finish the in-flight step and settle its stop,

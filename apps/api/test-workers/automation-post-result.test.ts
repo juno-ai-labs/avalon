@@ -587,6 +587,45 @@ describe("sidekick_post_result", () => {
     expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
   });
 
+  it.each([false, true])("keeps a child stopped when its opening admission races an owner stop (lost confirmation: %s)", async (loseConfirmation) => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const nestedService = new AgentCommunicationService(TEST_ENV, childInput);
+    const send = nestedService.send.bind(nestedService);
+    nestedService.send = async (args, deliveryContext) => {
+      await service.stop(started.agentId);
+      const result = await send(args, deliveryContext);
+      if (loseConfirmation) throw new Error("opening_confirmation_lost");
+      return result;
+    };
+    await expect(nestedService.start({ name: "Racing child", description: "Opening admission after stop",
+      message: "NO_REPLY_REQUIRED", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() }))
+      .rejects.toThrow(loseConfirmation ? "opening_confirmation_lost" : "stopped");
+    const descendants = await workspaceStub().ownedAgentDescendants({ workspaceId: WORKSPACE_ID, agentId: started.agentId });
+    expect(descendants.agentIds).toHaveLength(1);
+    const nestedAddress = agentAddressForId(descendants.agentIds[0]!);
+    const nested = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, nestedAddress.substreamId),
+    ));
+    expect(await nested.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+  });
+
   it("ends through Bind without an automatic reply and continues on a later message", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
@@ -663,6 +702,11 @@ describe("sidekick_post_result", () => {
     const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const beforeInvalidOpening = await service.list();
+    await expect(service.start({ name: "Invalid researcher", description: "Unavailable context",
+      message: "Read this", attachmentIds: [crypto.randomUUID()] }, { ...context, effectIntentId: crypto.randomUUID() }))
+      .rejects.toThrow("Attach the resource");
+    expect(await service.list()).toEqual(beforeInvalidOpening);
     const started = await service.start({ name: "Attachment researcher", description: "Read the supplied resource",
       message: "Read the attached research.", attachmentIds: [resourceId, ...attachmentIds] }, context);
     const address = agentAddressForId(started.agentId);
