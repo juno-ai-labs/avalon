@@ -1156,9 +1156,24 @@ function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {
   };
 }
 
-const RfcMessageIdSchema = z.string().min(3).max(998).refine(
+// RFC 5322 §2.1.1 / §2.2.3 and RFC 6532 §3.4, checked 2026-09-15:
+// https://www.rfc-editor.org/rfc/rfc5322.html#section-2.1.1
+// https://www.rfc-editor.org/rfc/rfc6532.html#section-3.4
+// Physical lines exclude CRLF and may contain at most 998 UTF-8 bytes. A
+// Message-ID cannot be split, so reserve one byte for continuation whitespace.
+// Folding at 78 bytes also satisfies the recommended 78-character target;
+// longer indivisible IDs occupy a continuation line of their own.
+const EMAIL_HEADER_LINE_MAX_BYTES = 998;
+const EMAIL_HEADER_FOLD_TARGET_BYTES = 78;
+const EMAIL_MESSAGE_ID_MAX_BYTES = EMAIL_HEADER_LINE_MAX_BYTES - 1;
+const emailHeaderEncoder = new TextEncoder();
+
+const RfcMessageIdSchema = z.string().min(3).refine(
   (value) => !/[\r\n]/u.test(value) && /^<[^<>\s]+>$/u.test(value),
   "Use one RFC Message-ID enclosed in angle brackets"
+).refine(
+  (value) => emailHeaderEncoder.encode(value).byteLength <= EMAIL_MESSAGE_ID_MAX_BYTES,
+  "Message-ID must fit on one email header continuation line"
 );
 
 const CalendarEventCreateArgsSchema = z.strictObject({
@@ -1716,8 +1731,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       );
     }
     // Preserve valid ancestors, including folded References headers. Malformed
-    // ancestor tokens are not copied into MIME; the validated parent Message-ID
-    // is always appended by serializeEmail, so the reply still has a reference.
+    // or oversized ancestor tokens are not copied into MIME; the validated
+    // parent Message-ID is always appended by serializeEmail.
     const references = (gmailHeader(original, "References")?.match(/<[^<>\s]+>/gu) ?? [])
       .filter((id) => RfcMessageIdSchema.safeParse(id).success);
     return {
@@ -5317,17 +5332,44 @@ interface EmailToSerialize {
   references: string[];
 }
 
+/** IDs have passed RfcMessageIdSchema and each fits on one continuation line. */
+function foldMessageIdHeader(name: "In-Reply-To" | "References", ids: Iterable<string>): string {
+  const lines: string[] = [];
+  let line = `${name}:`;
+  let lineBytes = line.length;
+  for (const id of ids) {
+    const idBytes = emailHeaderEncoder.encode(id).byteLength;
+    if (lineBytes + 1 + idBytes > EMAIL_HEADER_FOLD_TARGET_BYTES) {
+      lines.push(line);
+      line = ` ${id}`;
+      lineBytes = 1 + idBytes;
+    } else {
+      line += ` ${id}`;
+      lineBytes += 1 + idBytes;
+    }
+  }
+  lines.push(line);
+  return lines.join("\r\n");
+}
+
 function serializeEmail(input: EmailToSerialize): string {
+  const replyHeaders: string[] = [];
+  if (input.inReplyTo) {
+    // Preserve ancestor order in one pass, with the parent exactly once at the
+    // end, even if a malformed incoming chain already included that parent.
+    const references = new Set(input.references);
+    references.delete(input.inReplyTo);
+    references.add(input.inReplyTo);
+    replyHeaders.push(
+      foldMessageIdHeader("In-Reply-To", [input.inReplyTo]),
+      foldMessageIdHeader("References", references),
+    );
+  }
   const headers = [
     `To: ${input.to.join(", ")}`,
     ...(input.cc.length > 0 ? [`Cc: ${input.cc.join(", ")}`] : []),
     `Subject: ${encodeHeader(input.subject)}`,
-    ...(input.inReplyTo ? [`In-Reply-To: ${input.inReplyTo}`] : []),
-    ...(input.inReplyTo
-      ? [`References: ${[...input.references, input.inReplyTo]
-          .filter((value, index, values) => values.indexOf(value) === index)
-          .join(" ")}`]
-      : []),
+    ...replyHeaders,
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit"
