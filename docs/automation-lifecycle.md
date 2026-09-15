@@ -788,7 +788,7 @@ shape and worth doing, but it changes an apply path on the strength of a
 diagnosis made minutes ago; the guard that fails in CI is the cheaper half and
 does not.
 
-Shipped in the pull request for this change.
+Shipped in #765.
 
 ### 2026-09-14 — A publication that cannot parse says which field it choked on
 
