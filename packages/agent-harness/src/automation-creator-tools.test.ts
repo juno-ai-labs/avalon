@@ -185,7 +185,7 @@ describe("the automations plugin", () => {
     expect(drafts.every((draft) => !("sidekickId" in (draft as object)))).toBe(true);
   });
 
-  it("tells the agent to ask for a scope it cannot change afterwards", () => {
+  it("preserves the existing Sidekick scope while explaining its authority", () => {
     const { systemMessage } = createAutomationsPlugin(host());
 
     // The three scopes, and what each one means for who can manage the result.
@@ -193,6 +193,8 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("workspace");
     expect(systemMessage).toContain("workstream");
     expect(systemMessage).toContain("cannot be changed afterwards");
+    expect(systemMessage).toContain("Use the scope already selected");
+    expect(systemMessage).toContain("Do not ask participants to choose it again");
     // The room an automation belongs to is the one it was written in, so an
     // agent offering to deliver somewhere else is offering something that does
     // not exist.
