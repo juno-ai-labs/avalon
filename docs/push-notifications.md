@@ -71,6 +71,8 @@ iPhone builds sign the development APNs entitlement, so their tokens are
 `apnsEnvironment: sandbox` and the consumer posts to
 `api.sandbox.push.apple.com`; Release and TestFlight stay on production, like
 the Mac.
+Main-window creation waits for renderer protocol and IPC installation, including
+when a native notification response arrives during asynchronous app startup.
 
 ## Operations and release
 
@@ -134,6 +136,16 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-09-15 — Wait for application startup before opening a notification target
+
+Signed-Mac acceptance found that clicking a notification with Rally quit opened
+a blank window: Electron was ready before Rally's async initialization installed
+its renderer protocol and IPC. Main-window creation now waits for that setup,
+preserving the existing pending-link queue. This also covers early URL callbacks
+without a separate notification window or retry timer. Concurrent open requests
+share the in-flight renderer load and respect `ready-to-show` before revealing
+the window, including the interval between load completion and first paint.
 
 ### 2026-09-14 — iOS registers the same Apple push registry
 
