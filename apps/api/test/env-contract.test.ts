@@ -139,6 +139,13 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(env)).toThrow(/INFERENCE_PRICING_CACHE is missing/u);
   });
 
+  it("requires the platform-wide favicon KV binding", () => {
+    const env = contractCompleteEnv();
+    delete (env as Partial<Env>).FAVICON_CACHE;
+
+    expect(() => assertEnvContract(env)).toThrow(/FAVICON_CACHE is missing/u);
+  });
+
   it("rejects a numeric deadline that would silently fall back to its default", () => {
     expect(() => assertEnvContract(contractCompleteEnv({ CONNECTOR_POLL_TIMEOUT_MS: "20s" })))
       .toThrow(/CONNECTOR_POLL_TIMEOUT_MS is invalid/u);

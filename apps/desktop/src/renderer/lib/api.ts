@@ -1539,6 +1539,22 @@ export class RallyApi {
     return response.blob();
   }
 
+  async getFavicon(hostname: string, signal?: AbortSignal): Promise<Blob | null> {
+    const path = `/favicons/${encodeURIComponent(hostname)}`;
+    const headers = new Headers({ Accept: "image/*" });
+    const response = await this.traced(path, "GET", undefined, headers, () => this.execute(path, {
+      method: "GET",
+      headers,
+      ...(signal ? { signal } : {}),
+    }));
+    if (response.status === 404) return null;
+    if (!response.ok) return this.throwResponseError(response);
+    if (!response.headers.get("content-type")?.startsWith("image/")) {
+      throw new ApiError("The favicon response was not an image.", 502, "invalid_response");
+    }
+    return response.blob();
+  }
+
   async getSearchResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
     const response = await this.execute(`/search/resources/${encodeURIComponent(id)}/preview`, {
       method: 'GET',

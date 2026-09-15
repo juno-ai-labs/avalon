@@ -88,6 +88,7 @@
     { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
   ],
   "kv_namespaces": [
+    { "binding": "FAVICON_CACHE", "id": "00000000000000000000000000000003" },
     { "binding": "AUTHORIZATION_CACHE", "id": "00000000000000000000000000000002" },
     { "binding": "INFERENCE_PRICING_CACHE", "id": "00000000000000000000000000000001" }
   ]
