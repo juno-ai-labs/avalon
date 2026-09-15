@@ -1,9 +1,8 @@
-import { asHarnessRunId, type HarnessRunId, type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { type StructuredFailureDetail, type WorkstreamWorkflowInput } from "@rally/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import {
-  TERMINAL_RUN_STATUSES,
   type TerminalRunStatus,
   type TerminalLoopExecutionFence,
 } from "../durable-objects/workstream-harness-run-storage";
@@ -38,49 +37,6 @@ export type AttemptClaim =
 export interface AttemptIdentity {
   attemptId: string;
   owner: string;
-}
-
-export type HarnessRunCoordinates = Pick<
-  WorkstreamWorkflowInput,
-  "workspaceId" | "parentId" | "harnessRunId"
->;
-
-export interface InlineChildResult {
-  status: "completed" | "failed" | "stopped";
-  result?: unknown;
-  error?: { code: string; message: string };
-  model?: string;
-  usage?: Record<string, unknown>;
-}
-
-export type InlineChildResultLookup =
-  | { state: "missing" }
-  | { state: "running"; childInput: HarnessRunCoordinates; leaseExpiresAt: string | null }
-  | { state: "replay"; childInput: HarnessRunCoordinates; outcome: InlineChildResult };
-
-export type InlineChildAdmission =
-  | {
-      state: "claimed";
-      childInput: HarnessRunCoordinates;
-      lease: AttemptLease;
-      chainRootRunId: string;
-      chainDepth: number;
-      reused: boolean;
-    }
-  | { state: "replay"; childInput: HarnessRunCoordinates; outcome: InlineChildResult }
-  | { state: "busy"; childInput: HarnessRunCoordinates; leaseExpiresAt: string | null }
-  | {
-      state: "refused";
-      reason: "chain_budget_exhausted" | "depth_limit";
-    };
-
-export interface AdmitInlineChildOptions extends Partial<AttemptIdentity> {
-  parentToolCallId: string;
-  objective: string;
-  childHarnessRunId?: HarnessRunId;
-  maxChainRuns?: number;
-  maxDepth?: number;
-  leaseSeconds?: number;
 }
 
 export interface ImmutableRunScope {
@@ -220,40 +176,6 @@ function safeErrorJson(error: TerminalOutcome["error"]): string | null {
   return JSON.stringify({ code: error.code.slice(0, 120), message: error.message.slice(0, 500) });
 }
 
-function parseInlineChildResult(value: string | null): InlineChildResult | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Partial<InlineChildResult>;
-    if (
-      parsed.status !== "completed"
-      && parsed.status !== "failed"
-      && parsed.status !== "stopped"
-    ) return null;
-    return {
-      status: parsed.status,
-      ...(Object.hasOwn(parsed, "result") ? { result: parsed.result } : {}),
-      ...(parsed.error && typeof parsed.error.code === "string" && typeof parsed.error.message === "string"
-        ? { error: { code: parsed.error.code, message: parsed.error.message } }
-        : {}),
-      ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
-      ...(parsed.usage && typeof parsed.usage === "object" ? { usage: parsed.usage } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function parseVerifiedInlineChildResult(
-  value: string | null,
-  expectedHash: string | null,
-): Promise<InlineChildResult | null> {
-  if (!value || !expectedHash) return null;
-  if (await sha256Hex(value) !== expectedHash) {
-    throw new Error("inline_child_result_hash_mismatch");
-  }
-  return parseInlineChildResult(value);
-}
-
 /**
  * The published spelling of a stored run status.
  *
@@ -321,120 +243,6 @@ export async function claimHarnessAttempt(
     default:
       throw new Error("harness_run_not_found");
   }
-}
-
-/**
- * Admit an inline child run without entering the ordinary workstream queue.
- *
- * The conditional INSERT is the capacity reservation: D1 serializes the
- * statement, so concurrent children cannot both observe the last available
- * chain/workspace slot. The parent tool-call ID is the durable idempotency key.
- * Only a hash of the delegated objective is persisted.
- */
-export async function admitInlineChildAttempt(
-  runs: HarnessRunObjectPort,
-  parentInput: HarnessRunCoordinates,
-  parentLease: AttemptLease,
-  options: AdmitInlineChildOptions,
-): Promise<InlineChildAdmission> {
-  if (!options.parentToolCallId.trim()) throw new Error("parent_tool_call_id_required");
-  if (!options.objective.trim()) throw new Error("child_objective_required");
-  const childHarnessRunId = options.childHarnessRunId ?? asHarnessRunId(uuidV7());
-  const attemptId = options.attemptId ?? uuidV7();
-  const admitted = await runs.admitInlineChild({
-    parentRunId: parentInput.harnessRunId,
-    parentAttemptId: parentLease.attemptId,
-    parentOwner: parentLease.owner,
-    parentToolCallId: options.parentToolCallId,
-    childRunId: childHarnessRunId,
-    childAttemptId: attemptId,
-    childOwner: options.owner ?? `inline-child:${childHarnessRunId}:${attemptId}`,
-    objectiveHash: await sha256Hex(options.objective),
-    leaseSeconds: Math.max(10, Math.min(300, Math.trunc(options.leaseSeconds ?? 60))),
-    maxDepth: Math.max(1, Math.min(16, Math.trunc(options.maxDepth ?? 2))),
-    maxChainRuns: Math.max(2, Math.min(64, Math.trunc(options.maxChainRuns ?? 4))),
-    lifecycleEventId: uuidV7(),
-    now: Date.now(),
-  });
-
-  if (admitted.outcome === "ownership_lost") throw new RunOwnershipLostError();
-  if (admitted.outcome === "cancelled") throw new RunCancelledError();
-  if (admitted.outcome === "objective_mismatch") throw new Error("inline_child_objective_mismatch");
-  if (admitted.outcome === "parent_scope_missing") {
-    throw new Error("inline_child_parent_scope_missing");
-  }
-  if (admitted.outcome === "refused") return { state: "refused", reason: admitted.reason };
-
-  const childInput = {
-    workspaceId: parentInput.workspaceId,
-    parentId: parentInput.parentId,
-    harnessRunId: asHarnessRunId(admitted.childRunId),
-  };
-  if (admitted.outcome === "replay") {
-    const outcome = await parseVerifiedInlineChildResult(
-      admitted.childResultJson,
-      admitted.childResultHash,
-    );
-    if (!outcome) throw new Error("inline_child_terminal_result_missing");
-    return { state: "replay", childInput, outcome };
-  }
-  if (admitted.outcome === "busy") {
-    return {
-      state: "busy",
-      childInput,
-      leaseExpiresAt: admitted.leaseExpiresAt === null
-        ? null
-        : new Date(admitted.leaseExpiresAt).toISOString(),
-    };
-  }
-  return {
-    state: "claimed",
-    childInput,
-    lease: {
-      attemptId: admitted.attemptId,
-      owner: admitted.owner,
-      attemptNumber: admitted.attemptEpoch,
-      leaseExpiresAt: new Date(admitted.leaseExpiresAt).toISOString(),
-    },
-    chainRootRunId: admitted.chainRootRunId,
-    chainDepth: admitted.chainDepth,
-    reused: admitted.reused,
-  };
-}
-
-export async function loadInlineChildResult(
-  runs: HarnessRunObjectPort,
-  parentInput: HarnessRunCoordinates,
-  parentToolCallId: string,
-): Promise<InlineChildResultLookup> {
-  const row = await runs.inlineChildByToolCall({
-    parentRunId: parentInput.harnessRunId,
-    parentToolCallId,
-  });
-  if (!row) return { state: "missing" };
-  // A sub-agent is always in its parent's work stream — a delegated run is a
-  // fork of this conversation, not a new one — so the coordinates are the
-  // caller's own rather than columns projected back out of the row.
-  const childInput = {
-    workspaceId: parentInput.workspaceId,
-    parentId: parentInput.parentId,
-    harnessRunId: asHarnessRunId(row.run_id),
-  };
-  if (row.terminalized_at === null && !TERMINAL_RUN_STATUSES.has(row.status)) {
-    return {
-      state: "running",
-      childInput,
-      leaseExpiresAt: row.lease_expires_at === null
-        ? null
-        : new Date(row.lease_expires_at).toISOString(),
-    };
-  }
-  const outcome = await parseVerifiedInlineChildResult(
-    row.child_result_json,
-    row.child_result_hash,
-  );
-  if (!outcome) throw new Error("inline_child_terminal_result_missing");
-  return { state: "replay", childInput, outcome };
 }
 
 /**
@@ -517,82 +325,6 @@ export async function persistImmutableRunScope(
   return { scopeHash, reused: persisted.outcome === "reused" };
 }
 
-/** Persist a child scope only when it is a read-only narrowing of its parent. */
-export async function persistInlineChildScope(
-  runs: HarnessRunObjectPort,
-  parentInput: HarnessRunCoordinates,
-  parentLease: AttemptLease,
-  childInput: HarnessRunCoordinates,
-  childLease: AttemptLease,
-  scope: ImmutableRunScope,
-): Promise<{ scopeHash: string; reused: boolean }> {
-  await assertHarnessAttemptOwned(runs, parentInput.harnessRunId, parentLease);
-  await assertInlineChildAttemptOwned(
-    runs,
-    parentInput,
-    parentLease,
-    childInput,
-    childLease,
-  );
-  // The routed version was one statement joining the parent's scope to the
-  // child, so a child inheriting a *different* scope hash simply produced no
-  // row — indistinguishable from the parent having no scope at all. Both are
-  // still the same refusal, but the join is now two reads and a comparison.
-  //
-  // `!parentScope` is unreachable through the public path and stays for the
-  // type: `admitInlineChild` refuses to create a child at all when the parent
-  // has no frozen scope, and a scope is never deleted. The comparison below it
-  // is the check with teeth.
-  const [parentScope, child] = await Promise.all([
-    runs.scope({ runId: parentInput.harnessRunId }),
-    runs.run({ runId: childInput.harnessRunId }),
-  ]);
-  if (!parentScope
-    || !child
-    || child.parent_run_id !== parentInput.harnessRunId
-    || child.parent_tool_call_id === null
-    || child.inherited_scope_hash !== parentScope.scope_hash) {
-    throw new Error("inline_child_parent_scope_missing");
-  }
-
-  const parentConnectionIds = new Set(JSON.parse(parentScope.eligible_connection_ids_json) as string[]);
-  const parentCapabilities = new Set(JSON.parse(parentScope.eligible_capabilities_json) as string[]);
-  const parentConnectionCapabilities = JSON.parse(
-    parentScope.eligible_connection_capabilities_json,
-  ) as Record<string, string[]>;
-  if (stableJson(scope.executionPrincipal) !== stableJson(JSON.parse(parentScope.execution_principal_json))) {
-    throw new Error("inline_child_principal_mismatch");
-  }
-  if (scope.triggerPolicy.readOnly !== true || scope.triggerPolicy.kind !== "sub_agent") {
-    throw new Error("inline_child_scope_not_read_only");
-  }
-  if (scope.eligibleConnectionIds.some((connectionId) => !parentConnectionIds.has(connectionId))) {
-    throw new Error("inline_child_scope_widened");
-  }
-  if (scope.eligibleCapabilities.some((capability) => !parentCapabilities.has(capability))) {
-    throw new Error("inline_child_scope_widened");
-  }
-  for (const [connectionId, capabilities] of Object.entries(scope.eligibleConnectionCapabilities)) {
-    if (!parentConnectionIds.has(connectionId)) throw new Error("inline_child_scope_widened");
-    const parentGranted = new Set(parentConnectionCapabilities[connectionId] ?? []);
-    if (capabilities.some((capability) => !parentGranted.has(capability))) {
-      throw new Error("inline_child_scope_widened");
-    }
-  }
-
-  const persisted = await persistImmutableRunScope(runs, childInput, childLease, scope);
-  // A scope persisted after the parent lost ownership is never exposed to the
-  // child model: this final fence turns the call into an authoritative abort.
-  await assertInlineChildAttemptOwned(
-    runs,
-    parentInput,
-    parentLease,
-    childInput,
-    childLease,
-  );
-  return persisted;
-}
-
 export async function persistRunPluginActivation(
   runs: HarnessRunObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">,
@@ -632,29 +364,6 @@ export async function heartbeatHarnessAttempt(
   return { ...lease, leaseExpiresAt: new Date(beat.leaseExpiresAt).toISOString() };
 }
 
-export async function heartbeatInlineChildAttempt(
-  runs: HarnessRunObjectPort,
-  parentInput: HarnessRunCoordinates,
-  parentLease: AttemptLease,
-  childInput: HarnessRunCoordinates,
-  childLease: AttemptLease,
-  leaseSeconds = 60,
-): Promise<AttemptLease> {
-  const renewed = await runs.heartbeatInlineChild({
-    parentRunId: parentInput.harnessRunId,
-    parentAttemptId: parentLease.attemptId,
-    parentOwner: parentLease.owner,
-    childRunId: childInput.harnessRunId,
-    childAttemptId: childLease.attemptId,
-    childOwner: childLease.owner,
-    leaseSeconds: Math.max(10, Math.min(300, Math.trunc(leaseSeconds))),
-    now: Date.now(),
-  });
-  if (renewed.outcome === "cancelled") throw new RunCancelledError();
-  if (renewed.outcome === "ownership_lost") throw new RunOwnershipLostError();
-  return { ...childLease, leaseExpiresAt: new Date(renewed.leaseExpiresAt).toISOString() };
-}
-
 export async function assertHarnessAttemptOwned(
   runs: HarnessRunObjectPort,
   runId: string,
@@ -689,26 +398,6 @@ export async function assertHarnessToolSettlementOwned(
     allowCancellationRequested: true,
   });
   if (owned.outcome !== "owned") throw new RunOwnershipLostError();
-}
-
-export async function assertInlineChildAttemptOwned(
-  runs: HarnessRunObjectPort,
-  parentInput: HarnessRunCoordinates,
-  parentLease: AttemptLease,
-  childInput: HarnessRunCoordinates,
-  childLease: AttemptLease,
-): Promise<void> {
-  const owned = await runs.inlineChildOwnership({
-    parentRunId: parentInput.harnessRunId,
-    parentAttemptId: parentLease.attemptId,
-    parentOwner: parentLease.owner,
-    childRunId: childInput.harnessRunId,
-    childAttemptId: childLease.attemptId,
-    childOwner: childLease.owner,
-    now: Date.now(),
-  });
-  if (owned.outcome === "cancelled") throw new RunCancelledError();
-  if (owned.outcome === "ownership_lost") throw new RunOwnershipLostError();
 }
 
 export async function persistHarnessHostOutcome(
@@ -1070,136 +759,6 @@ export class CoalescedRunLiveness {
       },
     };
   }
-}
-
-/** Coalesced child heartbeat that is fenced by both child and parent leases. */
-export class InlineChildRunLiveness {
-  readonly controller = new AbortController();
-  private inFlight: Promise<void> | null = null;
-  private nextHeartbeatAt = 0;
-  private currentLease: AttemptLease;
-
-  constructor(
-    private readonly runs: HarnessRunObjectPort,
-    private readonly parentInput: HarnessRunCoordinates,
-    private readonly parentLease: AttemptLease,
-    private readonly childInput: HarnessRunCoordinates,
-    childLease: AttemptLease,
-    private readonly options: { leaseSeconds?: number; minimumIntervalMs?: number } = {},
-  ) {
-    this.currentLease = childLease;
-  }
-
-  get signal(): AbortSignal {
-    return this.controller.signal;
-  }
-
-  get lease(): AttemptLease {
-    return this.currentLease;
-  }
-
-  async pulse(_stage: string, force = false): Promise<void> {
-    if (this.controller.signal.aborted) throw this.controller.signal.reason;
-    if (!force && Date.now() < this.nextHeartbeatAt) return;
-    if (!this.inFlight) {
-      this.inFlight = (async () => {
-        try {
-          this.currentLease = await heartbeatInlineChildAttempt(
-            this.runs,
-            this.parentInput,
-            this.parentLease,
-            this.childInput,
-            this.currentLease,
-            this.options.leaseSeconds ?? 60,
-          );
-          this.nextHeartbeatAt = Date.now() + (this.options.minimumIntervalMs ?? 5_000);
-        } catch (error) {
-          this.controller.abort(error);
-          throw error;
-        } finally {
-          this.inFlight = null;
-        }
-      })();
-    }
-    await this.inFlight;
-  }
-
-  startMonitor(intervalMs = 5_000): { stop: () => Promise<void> } {
-    const monitorController = new AbortController();
-    const delay = Math.max(1_000, Math.trunc(intervalMs));
-    const done = (async () => {
-      while (!monitorController.signal.aborted && !this.controller.signal.aborted) {
-        try {
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, delay);
-            monitorController.signal.addEventListener("abort", () => {
-              clearTimeout(timer);
-              resolve();
-            }, { once: true });
-          });
-          if (monitorController.signal.aborted || this.controller.signal.aborted) break;
-          await this.pulse("lease_monitor", true);
-        } catch {
-          break;
-        }
-      }
-    })();
-    return {
-      stop: async () => {
-        monitorController.abort();
-        await done;
-      },
-    };
-  }
-}
-
-export async function terminalizeInlineChildAttempt(
-  runs: HarnessRunObjectPort,
-  parentInput: HarnessRunCoordinates,
-  parentLease: AttemptLease,
-  childInput: HarnessRunCoordinates,
-  childLease: AttemptLease,
-  outcome: InlineChildResult,
-): Promise<"terminalized" | "already_terminal"> {
-  if (outcome.status === "completed" && !Object.hasOwn(outcome, "result")) {
-    throw new Error("child_result_required");
-  }
-  const sanitizedOutcome: InlineChildResult = {
-    status: outcome.status,
-    ...(Object.hasOwn(outcome, "result") ? { result: outcome.result } : {}),
-    ...(outcome.error
-      ? {
-          error: {
-            code: outcome.error.code.slice(0, 120),
-            message: outcome.error.message.slice(0, 500),
-          },
-        }
-      : {}),
-    ...(outcome.model ? { model: outcome.model.slice(0, 200) } : {}),
-    ...(outcome.usage ? { usage: outcome.usage } : {}),
-  };
-  const resultJson = stableJson(sanitizedOutcome);
-  const settled = await runs.terminalizeInlineChild({
-    parentRunId: parentInput.harnessRunId,
-    parentAttemptId: parentLease.attemptId,
-    parentOwner: parentLease.owner,
-    childRunId: childInput.harnessRunId,
-    childAttemptId: childLease.attemptId,
-    childOwner: childLease.owner,
-    status: storedRunStatus(sanitizedOutcome.status),
-    model: sanitizedOutcome.model ?? null,
-    usageJson: sanitizedOutcome.usage ? stableJson(sanitizedOutcome.usage) : null,
-    errorJson: safeErrorJson(sanitizedOutcome.error),
-    childResultJson: resultJson,
-    childResultHash: await sha256Hex(resultJson),
-    memberSafePayloadJson: stableJson({
-      ...(sanitizedOutcome.error ? { code: sanitizedOutcome.error.code } : {}),
-    }),
-    lifecycleEventId: uuidV7(),
-    now: Date.now(),
-  });
-  if (settled.outcome === "ownership_lost") throw new RunOwnershipLostError();
-  return settled.outcome;
 }
 
 export async function cancelDescendantHarnessRuns(
@@ -1634,7 +1193,6 @@ export async function reapStaleHarnessRuns(
   const { workspaceId, workstreamId } = options;
   const receipts = options.receipts(workspaceId, workstreamId);
   const reaped: string[] = [];
-  let processed = 0;
 
   const reportFailure = (
     phase: "stale_root" | "stale_child",
@@ -1656,11 +1214,10 @@ export async function reapStaleHarnessRuns(
   // No early return on a full repair page: the reaps below are the
   // time-sensitive half and must run on every activation.
   //
-  // Reaping work, which the root and child passes share. The repair pass above
-  // is bounded by its own LIMIT and deliberately does not count against this.
+  // Reaping and residual repair each have their own bounded page.
   for (const row of await runs.staleLeaseRuns({
     now: Date.now(),
-    limit: limit - processed,
+    limit,
   })) {
     const now = Date.now();
     const settled = await runs.reapStaleRoot({
@@ -1672,7 +1229,6 @@ export async function reapStaleHarnessRuns(
     });
     if (settled.outcome === "not_stale") continue;
     reaped.push(row.run_id);
-    processed += 1;
     // Every live-lease receipt operation must refuse here because that lease is
     // precisely what expired. Residual settlement instead re-reads this exact
     // terminal stamp inside the object transaction. Its lifecycle marker lands
@@ -1707,66 +1263,7 @@ export async function reapStaleHarnessRuns(
     }
   }
 
-  const childLimit = limit - processed;
-  if (childLimit <= 0) return reaped;
 
-  for (const row of await runs.reapableInlineChildren({ now: Date.now(), limit: childLimit })) {
-    const now = Date.now();
-    const status = row.cancellation_requested_at === null ? "failed" : "stopped";
-    const error = row.cancellation_requested_at === null
-      ? { code: "parent_run_unavailable", message: "The parent run no longer owns a live attempt" }
-      : { code: "run_cancelled", message: "The child run was cancelled" };
-    const childResultJson = stableJson({ error, status });
-    const memberSafePayloadJson = stableJson({ code: error.code });
-    const errorJson = safeErrorJson(error);
-    const settled = await runs.reapStaleInlineChild({
-      runId: row.run_id,
-      attemptId: row.attempt_id,
-      owner: row.lease_owner,
-      leaseExpiresAt: row.lease_expires_at,
-      status: storedRunStatus(status),
-      errorJson,
-      childResultJson,
-      childResultHash: await sha256Hex(childResultJson),
-      memberSafePayloadJson,
-      lifecycleEventId: uuidV7(),
-      now,
-    });
-    if (settled.outcome === "not_stale") continue;
-    // Same rule, and the same ordering, as a stopped parent: the child's own
-    // receipts are classified and closed once it is terminal.
-    const repair = {
-      runId: row.run_id,
-      workspaceId,
-      workstreamId,
-      attemptId: row.attempt_id,
-      status,
-      terminalizedAt: now,
-      errorJson,
-      memberSafePayloadJson,
-      parentToolCallId: row.parent_tool_call_id,
-      // A reaped child, by construction: this is the pass that reaps them.
-      terminalization: "reaped",
-    } satisfies TerminalizedReceiptRepair;
-    try {
-      await settleAndRecordResidualReceipts(runs, receipts, repair);
-    } catch (receiptError) {
-      reportFailure("stale_child", repair, receiptError);
-    }
-    // The parent will read this back through `loadInlineChildResult`, which
-    // refuses a result whose hash does not match. Verifying it here turns a
-    // corrupt write into a failure of the sweep rather than of the parent's
-    // next tool call.
-    const persisted = await runs.run({ runId: row.run_id });
-    const verified = await parseVerifiedInlineChildResult(
-      persisted?.child_result_json ?? null,
-      persisted?.child_result_hash ?? null,
-    );
-    if (!verified || verified.status !== status) {
-      throw new Error("inline_child_terminal_result_missing");
-    }
-    reaped.push(row.run_id);
-  }
   return reaped;
 }
 
