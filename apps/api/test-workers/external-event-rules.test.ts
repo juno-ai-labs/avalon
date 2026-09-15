@@ -409,7 +409,7 @@ describe("external event rules across connectors", () => {
     // calls this over a Durable Object RPC hop, and the serializer reduces a
     // `ZodError` to a bare `Error` — no `issues`, no derived message, not even
     // the name — so a `sidekick_publication` alarm retrying against a malformed
-    // projection logged the five letters `ZodError` and nothing else. Only the
+    // projection logged the bare word `ZodError` and nothing else. Only the
     // message text crosses, so the paths have to be in it.
     const rejection = await register(AUTOMATIONS.unlabelled, [
       { ...rule(AUTOMATIONS.unlabelled, 1, "linear", "linear.issue.created", { kind: "always" }), source: { connectorType: "linear", connectionId: 7 } },

@@ -47,7 +47,7 @@ function codeShaped(message: string): string {
  * A `ZodError` does not cross an RPC boundary. The serializer reduces it to a
  * plain `Error` carrying no `issues`, no message and not even the name —
  * `structuredClone` of one keeps `stack` and nothing else — so the calling
- * object logs the five letters `ZodError` and stops. That named neither the
+ * object logs the bare word `ZodError` and stops. That named neither the
  * field, nor the schema, nor which of a handler's several parses failed.
  *
  * It cost a day in production: a Sidekick's `sidekick_publication` alarm threw
