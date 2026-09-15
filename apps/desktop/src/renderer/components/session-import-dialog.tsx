@@ -84,7 +84,7 @@ export function SessionImportForm({ api, onImported, open, onOpenChange }: Sessi
       </label>
       </details>
       {preview && <div className="session-import-preview">
-        <label className="form-field">Work stream title<input value={preview.title} maxLength={180} onChange={(event) => {
+        <label className="form-field">Work stream title<input value={preview.title} disabled={busy} maxLength={180} onChange={(event) => {
           setPreview({ ...preview, title: event.target.value }); setRequestId(crypto.randomUUID());
         }} /></label>
         <p>{preview.content.messages.length} messages · Tools and thinking omitted</p>

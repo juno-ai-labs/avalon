@@ -61,6 +61,17 @@ describe("shared session import", () => {
       { sender: "human", content: "Question" }, { sender: "assistant", content: [{ type: "unknown secret payload" }] },
     ] }))).toThrow("Unsupported Claude content block type");
   });
+  it("preserves Claude document text sources as original file content", () => {
+    const result = parseSessionExport("claude", JSON.stringify({ chat_messages: [
+      { sender: "human", content: [{ type: "document", title: "Meeting notes", source: {
+        type: "text", media_type: "text/plain", data: "Café notes\nFollow up tomorrow.",
+      } }] },
+    ] }));
+    expect(result.content.messages).toEqual([{ role: "user", text: "", files: [{
+      name: "Meeting notes", mimeType: "text/plain", kind: "attachment",
+      source: { kind: "inline", encoding: "utf8", data: "Café notes\nFollow up tomorrow." },
+    }] }]);
+  });
   it("labels extracted text separately from the unavailable original document", () => {
     const result = parseSessionExport("claude", JSON.stringify({ chat_messages: [
       { sender: "human", content: "", attachments: [{ file_name: "notes.pdf", file_type: "application/pdf", extracted_content: "Notes" }] },

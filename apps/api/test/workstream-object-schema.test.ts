@@ -201,7 +201,7 @@ describe("the Workstream Durable Object relational schema", () => {
     database.exec("PRAGMA foreign_keys = ON");
     try {
       applyDurableObjectSqliteMigrations({ storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 58),
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 59),
         component: "substream_agent_do", workerVersionId: "before-prepared-content", now: 1_000 });
       new SubstreamLoopStorage(storage).ensureLoop({ loopId: WORKSTREAM_ID, bindStateRevision: 0, now: 1_000 });
       database.prepare(`INSERT INTO pending_loop_input_mailbox
