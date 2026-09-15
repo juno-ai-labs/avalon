@@ -96,7 +96,14 @@ test('dry-run resolves the complete release transaction without cloud access or 
     ]);
     assert.ok(plan.immutableCachePurgeUrls.every((url) => !url.includes('?')));
     assert.equal(plan.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
-    assert.equal(plan.latestManifest, 'stable/darwin/arm64/latest-mac.yml');
+    assert.deepEqual(plan.channelManifests, {
+      legacy: 'stable/darwin/arm64/latest-mac.yml',
+      stable: 'stable/darwin/arm64/stable-mac.yml',
+      faster: 'stable/darwin/arm64/faster-mac.yml',
+    });
+    assert.equal(plan.stableChannelReceipt, 'stable/darwin/arm64/stable-channel.json');
+    assert.equal(plan.releasePublicationReceipt, 'stable/darwin/arm64/release-publication.json');
+    assert.equal(plan.stablePromotionIntervalHours, 24);
     assert.equal(plan.siteRelease.published, true);
     assert.equal(plan.siteRelease.objects.canonicalDmg, 'stable/darwin/arm64/Rally.dmg');
     assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);
@@ -109,6 +116,21 @@ test('live publication executes the entire release transaction under the remote 
   const source = await readFile(publisherPath, 'utf8');
   assert.match(source, /await withR2ReleaseLock\(\{/u);
   assert.match(source, /operation: executeReleaseTransaction,/u);
+});
+
+test('validates all channel state and prepares exact recovery bytes before mutable writes', async () => {
+  const source = await readFile(publisherPath, 'utf8');
+  const planIndex = source.indexOf('const publicationPlan = planReleasePointerPublication({');
+  const preparedReceiptIndex = source.indexOf('await publishPreparedPublication(', planIndex);
+  const canonicalIndex = source.indexOf('await publishCanonicalDmg(', preparedReceiptIndex);
+  const firstManifestIndex = source.indexOf('await publishManifest(', planIndex);
+
+  assert.ok(planIndex > 0);
+  assert.ok(preparedReceiptIndex > planIndex);
+  assert.ok(canonicalIndex > preparedReceiptIndex);
+  assert.ok(firstManifestIndex > preparedReceiptIndex);
+  assert.match(source, /candidateManifestBytes = preparedPublication\.manifestBytes/u);
+  assert.match(source, /restorePreparedPublication/u);
 });
 
 test('accepts pnpm argument separators forwarded by the root release command', async () => {

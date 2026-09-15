@@ -3,7 +3,7 @@ import { appearanceModeDescriptions } from '../../common/themes';
 import { applicationIconChoices } from '../../common/application-icons';
 import { DAY_PRESETS, WEEKDAYS, githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from './choices';
 
-export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login';
+export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login' | 'releaseChannel';
 export interface SettingDefinition {
   readonly id: string;
   readonly section: DesktopSettingsSection;
@@ -67,6 +67,7 @@ export const settings = {
   pushNotifications: defineSetting({ id: 'pushNotifications', section: 'notifications', label: "Notify me on this Mac about mentions and additions", description: "Show notifications on this Mac, even when Rally is closed.", kind: 'toggle' }),
   menuBar: defineSetting({ id: 'menuBar', section: 'application', label: "Show Rally in the menu bar", kind: 'toggle', description: "Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent work streams.", availability: 'menuBar', aliases: ["status item","meetings"] }),
   appIcon: defineSetting({ id: 'appIcon', section: 'application', label: "App icon", kind: 'custom', description: "Choose how Rally appears in the Dock, Finder, Launchpad, and Spotlight.", options: applicationIconChoices.map((option) => option.label) }),
+  releaseChannel: defineSetting({ id: 'releaseChannel', section: 'application', label: "Update channel", kind: 'select', description: "Stable receives no more than one desktop release every 24 hours. Faster receives every desktop release.", options: ['Stable', 'Faster'], availability: 'releaseChannel', aliases: ['release pace', 'updates'] }),
   login: defineSetting({ id: 'login', section: 'application', label: "Open Rally at login", kind: 'toggle', description: "Start Rally when you log in. With Rally in the menu bar it starts there quietly, with no window; without it, a window opens as usual.", availability: 'login', aliases: ["startup"] }),
   debug: defineSetting({ id: 'debug', section: 'application', label: "Debug enabled", kind: 'toggle', description: "Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.", availability: 'developer', aliases: ["developer","diagnostics"] }),
   about: defineSetting({ id: 'about', section: 'application', label: "About", kind: 'information', description: "Which release of Rally this Mac is running." }),
@@ -84,6 +85,7 @@ export interface SettingsSearchContext {
   readonly developer: boolean;
   readonly menuBar: boolean;
   readonly login: boolean;
+  readonly releaseChannel: boolean;
 }
 export function isSettingAvailable(setting: SettingDefinition, context: SettingsSearchContext): boolean {
   return context.sections.has(setting.section)
