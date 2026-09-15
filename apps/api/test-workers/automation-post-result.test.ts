@@ -753,6 +753,24 @@ describe("sidekick_post_result", () => {
     await runInDurableObject(emptyChild, (_instance, state) => {
       expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM workstream_resource_links").one().n).toBe(0);
     });
+    // Archive after the sender's authority check but before recipient admission.
+    // The real recipient refuses the input and must retain no attachment link.
+    const boundary = service as unknown as { validateAttachments(ids: string[]): Promise<string[]> };
+    const validate = boundary.validateAttachments.bind(service);
+    boundary.validateAttachments = async (ids) => {
+      const validated = await validate(ids);
+      const archived = await post(roomConversation(), "/internal/product", {
+        operation: "update", auth: AUTH, input: { archived: true },
+      });
+      expect(archived.status).toBe(200);
+      await deliverEffectsToWorkspace(TEST_ENV, roomConversation());
+      return validated;
+    };
+    await expect(service.send({ agentId: empty.agentId, message: "Read after archive", attachmentIds: [resourceId] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("archived");
+    await runInDurableObject(emptyChild, (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM workstream_resource_links").one().n).toBe(0);
+    });
   });
 
   it("lets Bind settle an owned stop after the in-flight model step returns", async () => {
@@ -995,7 +1013,9 @@ describe("sidekick_post_result", () => {
     await settledRun(grandchild);
     await service.stop(started.agentId);
     expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
-    await service.send({ agentId: started.agentId, message: "Continue only your own summary.", attachmentIds: [] },
+    // Suppress a fresh reply to the run's originating teammate: direct messages
+    // legitimately wake stopped recipients, independently of owned continuation.
+    await service.send({ agentId: started.agentId, message: "NO_REPLY_REQUIRED: Continue only your own summary.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Continue only your own summary.")),
       { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);

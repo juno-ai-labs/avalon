@@ -3685,20 +3685,33 @@ export class WorkstreamObjectProductService {
   }
 
   private async prepareSystemActivation(input: AdmitSystemActivationInput) {
-    const attachments: PendingInputAttachmentDescriptor[] = ("agentExchange" in input ? input.attachmentIds : [])
-      .map((resourceId, position) => {
-        const linked = first(this.storage.sql.exec<{ resource_json: string }>(
-          "SELECT resource_json FROM workstream_resource_links WHERE resource_id = ?", resourceId,
-        ));
-        if (!linked) throw new ApiError(422, "agent_attachment_unavailable", "The agent attachment is not attached to this conversation");
-        return {
-          resourceId, position, resourceJson: linked.resource_json,
-          attachmentJson: JSON.stringify({ attachedAt: new Date(input.now).toISOString() }),
-          attachedByUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
-          watchEnabled: false, relationshipType: "message_attachment",
-          attachedAt: input.now, updatedAt: input.now,
-        };
-      });
+    const attachmentIds = "agentExchange" in input ? input.attachmentIds : [];
+    const resources = attachmentIds.length === 0 ? [] : (await (await this.workspaceDirectory(input.workspaceId))
+      .resourceDescriptors({ workspaceId: input.workspaceId, resourceIds: attachmentIds, draftUploadedByUserId: null })).items;
+    // Prepare immutable descriptors without linking anything. The ordinary
+    // input promotion commits attachment links with the admitted transcript.
+    const attachments: PendingInputAttachmentDescriptor[] = attachmentIds.map((resourceId, position) => {
+      const resource = resources.find((row) => String(row.id) === resourceId);
+      if (!resource) throw new ApiError(422, "agent_attachment_unavailable", "The agent attachment is unavailable");
+      return {
+        resourceId, position,
+        resourceJson: JSON.stringify({
+          id: resourceId,
+          connectionId: resource.connection_id == null ? null : String(resource.connection_id),
+          type: String(resource.resource_type), provider: String(resource.provider),
+          providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
+          title: String(resource.title),
+          mimeType: resource.mime_type == null ? null : String(resource.mime_type),
+          contentRef: resource.content_ref == null ? null : String(resource.content_ref),
+          canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
+          metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
+        }),
+        attachmentJson: JSON.stringify({ attachedAt: new Date(input.now).toISOString() }),
+        attachedByUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+        watchEnabled: false, relationshipType: "message_attachment",
+        attachedAt: input.now, updatedAt: input.now,
+      };
+    });
     const agentExchange = "agentExchange" in input ? input.agentExchange : null;
     const agentContent = "agentExchange" in input
       ? { kind: "agent_message" as const, ...input.agentExchange, attachmentIds: input.attachmentIds } : null;

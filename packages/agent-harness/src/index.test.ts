@@ -1811,6 +1811,57 @@ describe("agent harness", () => {
     ]));
   });
 
+  it("delivers host-committed input before a tool completion can end the loop", async () => {
+    const requests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDelta(0, "finish-1", "finish")] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "Steered answer" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    let delivered = false;
+    const settled: boolean[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([{
+        ...harnessTool("finish", "read", []),
+        execute: async () => ({ output: {}, summary: "Finished", halt: "completed" }),
+      }])],
+      onStepSettled: (step) => {
+        settled.push(step.wouldEnd);
+        if (delivered) return { transitions: [], stop: false };
+        delivered = true;
+        return {
+          transitions: [{
+            kind: "protocol_user_appended" as const,
+            loopId: step.loopId,
+            generation: step.generation,
+            stateRevision: step.stateRevision + 1,
+            message: { role: "user", content: "A durable steer" },
+            provenance: {
+              originKind: "derived" as const,
+              sourceKind: "pending_input",
+              sourceId: "participant-turn-2",
+              sourceRevision: 1,
+            },
+            activationInputId: null,
+          }],
+          stop: false,
+        };
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "Steered answer" });
+    expect(outcome).not.toHaveProperty("completedByTool");
+    expect(settled).toEqual([true, true]);
+    expect(requests[1]!.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "A durable steer" }),
+    ]));
+  });
+
   it("honors a safe-boundary stop before a tool-less host nudge can continue", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "Final" }, finish_reason: "stop" }],
