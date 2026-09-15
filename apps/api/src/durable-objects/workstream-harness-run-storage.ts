@@ -51,6 +51,8 @@ export interface TerminalLoopExecutionFence {
 }
 
 export interface PublishHostOutcomeInput extends AttemptFence {
+  /** Bind's explicit tool-ended completion, never inferred from missing text. */
+  completedByTool?: true;
   finalTurn: { turnId: string; text: string } | null;
   participantNotice: { turnId: string; text: string } | null;
   hostOutcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
@@ -1614,6 +1616,7 @@ export class WorkstreamHarnessRunStorage {
 
       const priorEvent = this.lifecycleEvent({ runId: input.runId, eventKey: "host_outcome" });
       const eventPayloadJson = JSON.stringify({
+        ...(input.completedByTool ? { completedByTool: true } : {}),
         finalTurnId: input.finalTurn?.turnId ?? null,
         participantNoticeTurnId: input.participantNotice?.turnId ?? null,
         ...(input.hostOutcomeError ? {

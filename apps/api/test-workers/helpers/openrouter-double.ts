@@ -51,7 +51,7 @@ export interface ProviderCall {
  */
 export type ProviderReply =
   | { readonly say: string }
-  | { readonly callTool: { readonly id?: string; readonly name: string; readonly arguments: unknown } }
+  | { readonly callTool: { readonly id?: string; readonly name: string; readonly arguments: unknown; readonly text?: string } }
   | { readonly httpError: { readonly status: number; readonly body?: unknown } }
   | { readonly raw: Response };
 
@@ -94,6 +94,7 @@ function streamedReply(reply: Exclude<ProviderReply, { raw: Response } | { httpE
     {
       choices: [{
         delta: {
+          ...(call.text === undefined ? {} : { content: call.text }),
           tool_calls: [{
             index: 0,
             id: call.id ?? `call-${call.name}`,
@@ -118,7 +119,7 @@ function jsonReply(
     ? { role: "assistant", content: reply.say }
     : {
         role: "assistant",
-        content: null,
+        content: reply.callTool.text ?? null,
         tool_calls: [{
           id: reply.callTool.id ?? `call-${reply.callTool.name}`,
           type: "function",

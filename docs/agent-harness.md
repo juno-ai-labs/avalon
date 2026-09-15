@@ -10,15 +10,17 @@ terminal, or general code-execution environment.
 A Sidekick is drafted in a conversation of its own, and every run of it is a
 conversation of its own, both `SubstreamAgent`s under the Sidekick's
 `SidekickDO`; there is no second host. The drafting tools are the loadable
-`rally:sidekicks` plugin (`rally_sidekicks` to the model), available in a work
-stream and in a Sidekick's chat alike and withheld from a run, and a run's loop
+`rally:sidekicks` plugin (`rally_sidekicks` to the model), available only in a Sidekick's main authoring chat and withheld from a run, and a run's loop
 reads its definition from the parent by revision at start. See
 [`automation-lifecycle.md`](automation-lifecycle.md).
 
 Sidekick submission returns to the conversation loop after publication. The model
-acknowledges the save, and conversational completion requires a persisted final
-assistant turn. The generic `completedByTool` harness outcome does not exempt a
-SubstreamAgent run from that terminalization requirement.
+acknowledges the save through its normal response. Ordinary conversational completion
+requires a persisted final assistant turn. An explicit Bind `completedByTool`
+outcome instead requires the matching durable host-outcome receipt; missing text
+alone never proves completion. The agent plugin's proposed `end_turn` tool uses
+Bind's native `halt: "completed"` result to finish without an automatic teammate
+reply, including when explicit replies have already been sent.
 
 
 `runRallyEvaluation` uses the production `runHarnessWithBind` assembly from an
@@ -1260,6 +1262,9 @@ different read-only, non-recursive harness. Sidekick drafting is restricted to
 its own authoring conversation; other agents contact it through messages.
 Responsiveness must preserve Bind's ownership of every feed's loop and its
 protocol, tool and completion protections; missing capabilities belong in Bind.
+Explicit silent completion uses Bind's existing tool-ended outcome and persists
+that fact in the existing host receipt. Enabling empty completions would hide
+defects and cannot substitute for that outcome.
 
 ### 2026-09-14 — Explain a slow first response before timing it out
 
