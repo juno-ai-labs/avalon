@@ -815,6 +815,8 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from substream' }));
     await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator'));
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add New member to substream' })).toBeVisible();
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([creator, newcomer]);
     expect(api.addParticipant).not.toHaveBeenCalled();
     expect(api.removeParticipant).not.toHaveBeenCalled();
@@ -1061,6 +1063,42 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, jordan.id));
     expect(api.addParticipant).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+  });
+
+  it('closes the participant dialog when the current person leaves a workspace-scoped room', async () => {
+    const adam = {
+      id: '00000000-0000-7000-8000-000000000651',
+      name: 'Adam',
+      email: 'adam@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const katherine = {
+      id: '00000000-0000-7000-8000-000000000652',
+      name: 'Katherine',
+      email: 'katherine@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    session.current = {
+      user: { id: adam.id, name: adam.name, email: adam.email },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    const detail = recoveryBoot({ participants: [adam, katherine], scope: 'workspace' });
+    api.getWorkspaceMembers.mockResolvedValue([adam, katherine]);
+    api.removeParticipant.mockResolvedValue(undefined);
+    const client = renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
+    });
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from work stream' }));
+    await waitFor(() => expect(api.removeParticipant).toHaveBeenCalledWith(workstreamId, adam.id));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a participant' })).not.toBeInTheDocument());
+    expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([katherine]);
   });
 
   it('retries the authoritative socket after the first attempt fails', async () => {
