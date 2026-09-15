@@ -24,7 +24,7 @@ token and which state wins.
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
 | `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
-| `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. The sidebar's compact badge knocks a circular hole in the filled glyph with a CSS `mask`, rather than painting a disc of `surface-default` over it. |
+| `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. The sidebar's compact badge knocks a square hole in the filled glyph with a CSS `mask`, rather than painting a disc of `surface-default` over it. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | The authority for the three personal states: `member_attention` for unread and mentions, `participants.first_opened_at` for unseen. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v18: the column, its backfill, and the rebuilt `_runtime_workstream_participants` triggers that keep a re-add through the compatibility views unseen. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |
@@ -229,13 +229,14 @@ row** — the numbers above are one platform's font.
   it hears about every other viewer change. Anything that bypasses that commit
   leaves a lit dot on a work stream the person is looking at.
 - **The sidebar glyph's gap is a hole, not a painted disc.** The compact badge
-  on a work-stream row knocks a circle out of the filled glyph with a CSS
+  on a work-stream row knocks a square out of the filled glyph with a CSS
   `mask` whose size and position are the same custom properties the badge is
   laid out with. A disc of `surface-default` under the dot is the same defect
   the Sidekick hexagon already retired: the gap is then a circle over a blob
   that is not one, and an opaque patch of the default surface sits on a row
   that is painted in a hover fill half the time. A hole shows whatever is
-  behind it.
+  behind it. The hole is the overlay's own box, not a circle inscribed in it,
+  because the compact tick is already the navigation square.
 
 ## Boundary
 
@@ -279,7 +280,7 @@ own:
 | Suite | What it proves | How to run |
 | --- | --- | --- |
 | `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the queued-run fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
-| `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The sidebar glyph knocks the compact badge out with a circular `mask`, and does not paint a `surface-default` disc under it. | `pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.test.ts` |
+| `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The sidebar glyph knocks the compact badge out with a square `mask`, and does not paint a `surface-default` disc under it. | `pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.test.ts` |
 | `apps/desktop/src/renderer/screens/workstream.test.tsx` | The header draws a queued run as running, which is what holds the second call site to the fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workstream.test.tsx` |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | The sidebar omits completed markers, draws a queued run as running, and preserves personal attention markers and their tooltips. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
 | `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
@@ -310,14 +311,15 @@ existing rows as seen.
 ### 2026-09-15 — The sidebar glyph knocks the compact badge out with a mask
 
 **What changed:** The compact status badge on a work-stream row no longer sits
-on a disc of `surface-default`. The filled glyph takes a CSS `mask` — a
-radial gradient whose circle is the badge's own size and position — and the
-indicator itself is transparent, so the gap is a hole. The three custom
-properties that size and place the badge (`--workstream-status-hole` and the
-two insets) are declared on the icon slot, and both the badge and the mask
-read them. The compact dot also puts `border-radius: pill` and `box-shadow:
-none` back, because `.sidebar-row .status-dot` had restyled the same element
-into the navigation tick.
+on a disc of `surface-default`. The filled glyph takes a CSS `mask` — two
+solid layers xor'd, the second the badge's own square at the badge's own
+`right`/`bottom` — and the indicator itself is transparent, so the gap is a
+hole. The three custom properties that size and place the badge
+(`--workstream-status-hole` and the two insets) are declared on the icon
+slot, and both the badge and the mask read them. The compact tick keeps the
+navigation square (`.sidebar-row .status-dot`'s 2px radius); only the glow
+and the row-height stretch are put back, because those are the tick's other
+job, not this badge's.
 
 **Why:** The disc bought separation the same way the Sidekick strip used to:
 a circle of the default surface under a coloured mark. That costs two things
@@ -326,22 +328,26 @@ sits over a shape it is not; and the row is painted in a hover fill half the
 time, so an opaque `surface-default` disc is the wrong colour whenever a
 pointer is on the row. Masking the glyph is the treatment
 [`automation-lifecycle.md`](automation-lifecycle.md) already chose for the
-hexagon's play, for the same two reasons.
+hexagon's play, for the same two reasons. The hole is a square because that
+is the overlay's box — 12×12, 14×14 in the app shell — and the compact tick
+was already the navigation square; inscribing a circle in that box was the
+disc's shape leaking into the mask.
 
 **Considered and rejected:** Keeping the disc and pointing it at the row's
 hover token instead. That matches one state and misses the rest — selected,
 the compact rail, any future fill — and still leaves a circle over a blob.
 Also rejected: knocking the hole out of only `.workstream-glyph-shape` and
 leaving the Lucide symbol unmasked, which lets the icon draw into the gap
-the hole was meant to keep.
+the hole was meant to keep. A circular `radial-gradient` hole was tried and
+failed the same way the disc did: it is a circle over a blob, and it does
+not share an edge with the square tick it is meant to frame.
 
 **Consequences:** A second badge on this glyph (the public-scope globe still
 paints its own `surface-default` disc at the top-right) is a second mask, not
 a second disc. Changing the badge's size or inset without restating the
 custom properties on the icon slot is how the hole and the marker come
-apart. The compact dot's pill radius is load-bearing against the tick rule
-above it; dropping that override turns the badge back into a rounded square
-with a glow.
+apart. The compact tick's missing pill override is load-bearing; putting
+one back turns the badge into a circle inside a square hole.
 
 ### 2026-09-10 — Needs attention is retired, and the rule it carried is unhoused
 
