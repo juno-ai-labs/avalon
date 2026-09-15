@@ -1,3 +1,4 @@
+import type { ImportedMessageProvenance } from "@rally/contracts";
 import type { PersonalPresentation, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
@@ -497,6 +498,7 @@ export interface Message {
     | 'work_accordion';
   text?: string;
   contextLabel?: string;
+  importProvenance?: ImportedMessageProvenance;
   mentions?: MessageMention[];
   attachments?: MessageAttachment[];
   createdAt: string;

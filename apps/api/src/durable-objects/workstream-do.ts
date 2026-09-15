@@ -1,3 +1,4 @@
+import { parseRpcInput } from "../lib/rpc-input";
 import type { Region } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
@@ -177,6 +178,7 @@ interface PrivateChildPreparationRow extends Record<string, SqlStorageValue> {
   capture_json: string | null;
   completed_parts_json: string;
   prepared_context_json: string | null;
+  prepared_conversation_hash: string | null;
   status: "preparing" | "prepared" | "confirming" | "ready" | "failed";
   error_code: string | null;
   created_at: number;
@@ -576,6 +578,12 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   "DROP TABLE \"_region_copy_workstream_metadata\"",
   "PRAGMA defer_foreign_keys = OFF"
 ]
+}, {
+  version: 12, description: "freeze private child historical content before publication", statements: [
+    // Previously claimed operations had no prepared-history input. Null keeps their replay semantics.
+    `ALTER TABLE private_child_preparations ADD COLUMN prepared_conversation_hash TEXT
+      CHECK (prepared_conversation_hash IS NULL OR (length(prepared_conversation_hash) = 24 AND substr(prepared_conversation_hash, 1, 8) = 'fnv1a64:'))`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -1076,7 +1084,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     input: ClaimPrivateChildConfirmationRequest,
   ): Promise<PrivateChildPreparationOperation> {
     await this.initialized;
-    const request = ClaimPrivateChildConfirmationRequestSchema.parse(input);
+    const request = parseRpcInput(ClaimPrivateChildConfirmationRequestSchema, input, "private_child_confirmation");
     this.assertParent(request.workspaceId, request.parentId);
     this.state.storage.transactionSync(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
@@ -1084,10 +1092,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (!this.canRead(request.actorUserId)) throw new Error("private_child_confirmation_forbidden");
       if (operation.status === "failed") throw new Error("private_child_preparation_failed");
       if (operation.status === "preparing") throw new Error("private_child_context_not_prepared");
+      if (operation.status !== "prepared" && operation.preparedConversationHash !== (request.preparedConversationHash ?? null)) {
+        throw new Error("private_child_initialization_conflict");
+      }
       if (operation.status === "prepared") {
         this.parentSql.exec(
-          `UPDATE private_child_preparations SET status = 'confirming', updated_at = ? WHERE operation_id = ?`,
-          Date.now(), request.operationId,
+          `UPDATE private_child_preparations SET status = 'confirming', prepared_conversation_hash = ?, updated_at = ? WHERE operation_id = ?`,
+          request.preparedConversationHash ?? null, Date.now(), request.operationId,
         );
       }
     });
@@ -1328,6 +1339,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       sourceThroughTurnId: request.sourceThroughTurnId,
       recipe: request.recipe,
       status: row.status,
+      preparedConversationHash: row.prepared_conversation_hash,
       capture: row.capture_json ? JSON.parse(row.capture_json) : null,
       completedParts: JSON.parse(row.completed_parts_json),
       preparedContext: row.prepared_context_json ? JSON.parse(row.prepared_context_json) : null,

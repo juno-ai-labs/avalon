@@ -1,3 +1,4 @@
+import { SessionImportPreviewSchema, type SessionImportPreview, type SessionImportPreviewRequestSchema } from "@rally/contracts";
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
@@ -1318,6 +1319,17 @@ export class RallyApi {
       schema: wirePinnedWorkstreamsSchema,
     });
     return page.items.map(mapWorkstreamSummary);
+  }
+
+  async previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>): Promise<SessionImportPreview> {
+    return this.request('/workstreams/import/preview', { method: 'POST', body: input, schema: SessionImportPreviewSchema });
+  }
+
+  async importSession(preview: SessionImportPreview, clientMessageId: string): Promise<string> {
+    const result = await this.request('/workstreams/import', {
+      method: 'POST', body: { ...preview, clientMessageId }, schema: createWorkstreamResponseSchema,
+    });
+    return result.workstream.id;
   }
 
   async createWorkstream(input: {
