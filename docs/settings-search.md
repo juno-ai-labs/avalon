@@ -170,7 +170,9 @@ workspace would unexpectedly move every installation together.
 
 **Consequences:** Stable is the migration default for old or invalid preference
 files. The browser hides the control, and changing from Faster to Stable never
-downgrades an installed build.
+downgrades an installed build. A channel change invalidates in-flight and staged
+work from the old feed, disables its install-on-quit path, and checks the newly
+selected feed as soon as the old updater operation settles.
 
 ### 2026-09-12 — Separate Ashby personal setup from shared event installation
 

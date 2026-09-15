@@ -31,7 +31,8 @@ test('the cron cannot evict a pending release and relies on the shared R2 lock',
   assert.match(releaseWorkflow, /^ {2}group: desktop-macos-release$/mu);
   assert.match(promoter, /withR2ReleaseLock\(\{/u);
   assert.match(promoter, /release-publish\.lock/u);
-  assert.match(promoter, /error instanceof R2ReleaseLockHeldError/u);
+  assert.match(promoter, /strictCleanup: true/u);
+  assert.doesNotMatch(promoter, /R2ReleaseLockHeldError/u);
 });
 
 test('the Stable promoter has read-only repository access and the release environment', async () => {

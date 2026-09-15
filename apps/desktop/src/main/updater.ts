@@ -152,6 +152,9 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let downloadRetryScheduled = false;
   let manualRecoveryPrompted = false;
   let installInFlight = false;
+  let currentChannel = deps.releaseChannel;
+  let channelRecheckPending = false;
+  let channelRecheckScheduled = false;
   let checkStartedAt: number | null = null;
   let downloadStartedAt: number | null = null;
   let applyStartedAt: number | null = null;
@@ -199,7 +202,9 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     });
   };
   const installUpdate = (): void => {
-    if (installInFlight) return;
+    // A channel change invalidates any dialog or renderer command associated
+    // with the previously downloaded build.
+    if (installInFlight || status.kind !== 'downloaded') return;
     installInFlight = true;
     applyStartedAt = now();
     void Promise.resolve()
@@ -253,10 +258,12 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       `[rally] retrying update download in ${delayMs}ms `
         + `(${downloadRetryCount}/${MAX_DOWNLOAD_RETRIES})`,
     );
+    const retryChannel = currentChannel;
     const retryTimer = scheduleTimeout(() => {
       // Clear before starting the next attempt: electron-updater may emit the
       // error synchronously before downloadUpdate's promise rejects.
       downloadRetryScheduled = false;
+      if (retryChannel !== currentChannel) return;
       void Promise.resolve()
         .then(() => updater.downloadUpdate())
         .catch((retryError: unknown) => handleDownloadFailure(retryError));
@@ -275,6 +282,29 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   // Cloudflare feed supports HTTP range requests and blockmap downloads.
   updater.logger = log;
 
+  const finishSupersededChannelWork = (): void => {
+    if (!channelRecheckPending || channelRecheckScheduled) return;
+    channelRecheckScheduled = true;
+    checkInFlight = false;
+    downloadInFlight = false;
+    downloadRetryCount = 0;
+    downloadRetryScheduled = false;
+    manualCheck = false;
+    checkStartedAt = null;
+    downloadStartedAt = null;
+    setStatus({ kind: 'idle' });
+    // electron-updater decides whether to auto-download immediately after it
+    // emits update-available. Leave autoDownload false until that synchronous
+    // emission is over, then check the newly selected feed.
+    void Promise.resolve().then(() => {
+      channelRecheckScheduled = false;
+      if (!channelRecheckPending) return;
+      channelRecheckPending = false;
+      updater.autoDownload = true;
+      runCheck(false);
+    });
+  };
+
   updater.on('checking-for-update', () => {
     checkInFlight = true;
     checkStartedAt ??= now();
@@ -286,6 +316,11 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     checkStartedAt = null;
     checkInFlight = false;
     manualCheck = false;
+    if (channelRecheckPending) {
+      log.info(`[rally] ignoring update ${info.version} from the previous channel`);
+      finishSupersededChannelWork();
+      return;
+    }
     downloadInFlight = true;
     downloadRetryCount = 0;
     downloadRetryScheduled = false;
@@ -298,6 +333,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     outcome('check', 'current', checkStartedAt);
     checkStartedAt = null;
     checkInFlight = false;
+    if (channelRecheckPending) {
+      finishSupersededChannelWork();
+      return;
+    }
     setStatus({ kind: 'idle' });
     log.info('[rally] is up to date');
     if (!manualCheck) return;
@@ -311,6 +350,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   });
   updater.on('download-progress', (progress) => {
     downloadInFlight = true;
+    if (channelRecheckPending) return;
     setStatus({ kind: 'downloading', percent: progress.percent });
   });
   updater.on('update-downloaded', (info) => {
@@ -320,6 +360,12 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     downloadInFlight = false;
     downloadRetryCount = 0;
     downloadRetryScheduled = false;
+    if (channelRecheckPending) {
+      log.info(`[rally] discarded downloaded update ${info.version} after the channel changed`);
+      finishSupersededChannelWork();
+      return;
+    }
+    updater.autoInstallOnAppQuit = true;
     setStatus({ kind: 'downloaded', version: info.version });
     log.info(`[rally] update ${info.version} downloaded`);
     void showDialog({
@@ -335,6 +381,11 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   });
   updater.on('error', (error) => {
     checkInFlight = false;
+    if (channelRecheckPending) {
+      log.info('[rally] previous-channel update work settled after the channel changed');
+      finishSupersededChannelWork();
+      return;
+    }
     if (downloadInFlight) {
       handleDownloadFailure(error);
       return;
@@ -346,7 +397,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     showCheckFailure();
   });
 
-  const runCheck = (manual: boolean): void => {
+  function runCheck(manual: boolean): void {
     if (checkInFlight || status.kind === 'downloading' || status.kind === 'downloaded') return;
     manualCheck = manual;
     checkInFlight = true;
@@ -356,11 +407,15 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       checkInFlight = false;
       outcome('check', 'failed', checkStartedAt);
       checkStartedAt = null;
+      if (channelRecheckPending) {
+        finishSupersededChannelWork();
+        return;
+      }
       setStatus({ kind: 'idle' });
       log.error('[rally] update check failed', error);
       showCheckFailure();
     });
-  };
+  }
 
   log.info(
     `[rally] auto-update initialized (current=${deps.currentVersion}, platform=${deps.platform}, `
@@ -380,9 +435,22 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     checkForUpdates: () => runCheck(true),
     installDownloadedUpdate: installUpdate,
     setReleaseChannel: (channel) => {
+      if (channel === currentChannel) return;
+      currentChannel = channel;
       updater.channel = channel;
       updater.allowDowngrade = false;
       log.info(`[rally] update channel changed to ${channel}`);
+      if (checkInFlight || downloadInFlight || status.kind === 'downloaded') {
+        channelRecheckPending = true;
+        // Prevent a previous-feed update from beginning a download after its
+        // check returns, or installing on quit if it is already staged.
+        updater.autoDownload = false;
+        updater.autoInstallOnAppQuit = false;
+        if (status.kind === 'downloaded' || downloadRetryScheduled) {
+          finishSupersededChannelWork();
+        }
+        return;
+      }
       runCheck(false);
     },
   };
