@@ -952,6 +952,10 @@ describe('workstream glyph status knockout', () => {
     expect(indicator).not.toContain('surface-default');
     expect(indicator).not.toContain('radius-pill');
     expect(indicator).toContain('height: var(--workstream-status-hole);');
+    const status = rule('.workstream-row-status');
+    expect(status).toContain('display: block;');
+    expect(status).toContain('height: var(--workstream-status-hole);');
+    expect(status).toContain('line-height: 0;');
     expect(icon).toContain('--workstream-status-hole: 12px;');
     expect(rule('.app-shell .workstream-row .sidebar-row-icon'))
       .toContain('--workstream-status-hole: 14px;');
