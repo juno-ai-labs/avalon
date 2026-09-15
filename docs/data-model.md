@@ -32,6 +32,14 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+## Agent communication relationships
+
+WorkspaceDO migration 57 adds `agent_teams`, `agent_team_members`,
+`agent_delegations`, and `agent_message_routes`. These hold implicit communication
+scope, additive membership, separate execution ownership, and immutable reply
+addresses. They contain no message bodies or task state. The typed host RPCs and
+their invariants are described in [Agent communication](agent-communication.md).
+
 ## Personal work-stream access history
 
 WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
