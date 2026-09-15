@@ -10,6 +10,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | File | Responsibility |
 | --- | --- |
 | `packages/contracts/src/substream-content.ts` | Source content/files, resolved prepared conversations, initialization modes and import provenance. |
+| `apps/api/src/lib/firecrawl.ts` | Shared Firecrawl client, including uncached source capture. |
 | `apps/api/src/services/session-import.ts` | Provider envelope decoding and visible message/file extraction. |
 | `apps/api/src/services/session-import-files.ts` | Constrained file retrieval, unavailable outcomes, upload reconciliation and trusted attribution. |
 | `apps/api/src/services/resource-service.ts` | Existing verified upload, staged R2 cleanup and resource creation. |
@@ -28,6 +29,15 @@ references remain visible in the imported conversation. The source roles stay
 intact; the byline says who imported them. After creation, the standard background
 LLM naming path reads the prepared history and names the work stream. The source
 title provides its objective and provisional fallback.
+
+Public links are acquired through the existing Firecrawl client using uncached
+`rawHtml` output, with main-content filtering and base64-image removal disabled.
+ChatGPT share HTML carries a reference table; Claude's public snapshot endpoint
+returns JSON through the same acquisition primitive. Markdown is not a transcript:
+it can contain only navigation even when the embedded conversation is present.
+The service requires a successful source status and the expected final URL before
+decoding; a successful scraper envelope can still contain a block or login page.
+`FIRECRAWL_API_KEY` must be configured in the API environment.
 
 There are three separate boundaries:
 
@@ -112,13 +122,19 @@ unavailable references. Known Claude image/document blocks (including plain-text
 document sources), artifact documents and
 full-content Write/artifacts tool payloads preserve file content without importing
 the tool invocation. ChatGPT exports preserve attachment descriptors and image
-references. Source sandbox links without bytes remain unavailable.
+references. Final tool-authored image outputs become assistant artifact turns;
+hidden/intermediate copies, tool-directed calls, thoughts, reasoning recaps and
+model-editable context are omitted. Unknown visible content still fails closed.
+Claude snapshot file counts preserve a missing-file notice even when descriptors
+are hidden; explicitly truncated messages are rejected. Source sandbox and sediment
+references without bytes remain unavailable.
 
 ## Failure modes and limits
 
-Provider share formats are not stable APIs. Public Claude snapshots can challenge
-server HTTP clients; Claude Code URLs require login in the tested browser. These
-cases cannot be imported through the URL-only dialog.
+Provider share formats are not stable APIs. Firecrawl fetched the tested ChatGPT
+share that Cloudflare Browser Run blocked, and fetched Claude snapshot JSON. This
+is not a guarantee that every future share is accessible. Claude Code URLs require
+login and remain unsupported by the URL-only dialog.
 Expired/private file URLs, absent export bytes and unsupported download origins
 remain unavailable and are recorded in the imported transcript.
 
@@ -158,6 +174,8 @@ cannot reconstruct original files automatically.
 
 **What changed:** Root/private creation and text-only demos share authority-owned
 materialization. Imports preserve available files and explicit unavailable references.
+Firecrawl source acquisition preserves structured payloads that Markdown loses;
+provider adapters filter internal events and retain visible generated-image turns.
 The URL-only dialog imports directly and reuses background naming from canonical
 history, avoiding an additional preview or manual naming step.
 Prepared receipts own content and draft reservations. Evals reuse Rally's production
@@ -166,6 +184,9 @@ Bind runtime and capture both Bind state and Rally projection/activation binding
 **Why:** A text-to-model field rename did not share actual creation behavior.
 Inferring execution from an optional import field, dropping files and wrapping Bind
 checkpoint exports left each next consumer to invent lifecycle and restoration.
+Live testing also showed Cloudflare Browser Run blocked by ChatGPT and Firecrawl
+Markdown losing the transcript despite raw HTML containing it; raw acquisition
+and explicit source decoding preserve both access and message fidelity.
 
 **Consequences:** Publication remains with the destination authority, resources remain
 with WorkspaceDO/R2, and execution remains with Bind. Source decoding and file

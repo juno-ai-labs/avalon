@@ -95,26 +95,52 @@ describe("shared session import", () => {
     for (const url of ["https://example.com/share/123", "https://claude.ai.evil.test/share/123", "http://claude.ai/share/123", "https://user:password@claude.ai/share/123"]) expect(() => sessionShareUrl(url)).toThrow();
     expect(() => sessionShareUrl("https://claude.ai/code/session_01As61kVEUr9wNkGSohfNaZb")).toThrow("signed-in");
   });
-  it("does not follow a provider redirect", async () => {
-    const calls: RequestInit[] = [];
-    const fetcher: typeof fetch = async (_url, init) => {
-      calls.push(init ?? {});
-      return new Response("", { status: 302, headers: { location: "http://localhost/" } });
+  it("fetches source JSON through Firecrawl and rejects source redirects and block pages", async () => {
+    const url = "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2";
+    const endpoint = "https://claude.ai/api/chat_snapshots/f027df6e-0004-460c-8ec7-0666310a2ee2?rendering_mode=messages&render_all_tools=true";
+    const requests: { url: string; body: Record<string, unknown> }[] = [];
+    const fetcher: typeof fetch = async (destination, init) => {
+      requests.push({ url: String(destination), body: JSON.parse(String(init?.body)) });
+      return Response.json({ success: true, data: { rawHtml: JSON.stringify({ chat_messages: [{ sender: "human", content: "Question", file_count: 1 }] }), metadata: { url: endpoint, statusCode: 200 } } });
     };
-    await expect(previewSessionImport({ kind: "link", url: "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2" }, fetcher)).rejects.toThrow("could not return");
-    expect(calls).toEqual([{ redirect: "manual" }]);
+    const result = await previewSessionImport({ kind: "link", url }, { FIRECRAWL_API_KEY: "test-key" }, fetcher);
+    expect(result.content.messages).toMatchObject([{ role: "user", text: "Question", files: [{ source: { kind: "unavailable" } }] }]);
+    expect(requests).toEqual([{ url: "https://api.firecrawl.dev/v2/scrape", body: expect.objectContaining({ url: endpoint, formats: ["rawHtml"], onlyMainContent: false, removeBase64Images: false, maxAge: 0, storeInCache: false }) }]);
+    for (const metadata of [{ url: "https://claude.ai/login", statusCode: 200 }, { url: endpoint, statusCode: 403 }]) {
+      await expect(previewSessionImport({ kind: "link", url }, { FIRECRAWL_API_KEY: "test-key" }, async () => Response.json({ success: true, data: { rawHtml: "Blocked", metadata } })))
+        .rejects.toMatchObject({ code: "session_unavailable" });
+    }
+  });
+  it("omits internal ChatGPT content while preserving final generated image outputs", () => {
+    const node = (role: string, content: unknown, extra = {}) => ({ message: { author: { role }, content, ...extra } });
+    const image = { content_type: "image_asset_pointer", asset_pointer: "sediment://image-1", mime_type: "image/png" };
+    const result = parseSessionExport("chatgpt", JSON.stringify({ linear_conversation: [
+      node("user", { content_type: "text", parts: ["Draw a garden"] }),
+      ...["model_editable_context", "thoughts", "reasoning_recap"].map((content_type) => node("assistant", { content_type })),
+      node("assistant", { content_type: "code", text: "tool arguments" }, { recipient: "image_tool" }),
+      node("tool", { content_type: "multimodal_text", parts: [image, "private tool diagnostics"] }, { channel: "commentary" }),
+      node("tool", { content_type: "multimodal_text", parts: [image] }, { channel: "final", metadata: { image_gen_title: "Garden.png" } }),
+      node("assistant", { content_type: "text", parts: ["Here is your garden"] }),
+    ] }));
+    expect(result.content.messages).toEqual([
+      { role: "user", text: "Draw a garden" },
+      { role: "assistant", text: "", files: [{ name: "Garden.png", mimeType: "image/png", kind: "artifact", source: { kind: "unavailable", reference: "sediment://image-1", reason: expect.any(String) } }] },
+      { role: "assistant", text: "Here is your garden" },
+    ]);
+  });
+  it("refuses truncated Claude messages and unknown visible ChatGPT blocks", () => {
+    expect(() => parseSessionExport("claude", JSON.stringify({ chat_messages: [{ sender: "human", content: "partial", truncated: true }] }))).toThrow("truncated");
+    expect(() => parseSessionExport("chatgpt", JSON.stringify({ linear_conversation: [{ message: { author: { role: "assistant" }, content: { content_type: "unknown" } } }] }))).toThrow("content.content_type");
   });
   it("identifies invalid canonical fields without echoing source values", () => {
     expect(() => parseSessionExport("claude", JSON.stringify({ chat_messages: [] })))
       .toThrow("content.messages:too_small");
   });
-  it("maps network and response-stream failures to the export fallback", async () => {
+  it("reports missing configuration and provider failures without disclosing provider details", async () => {
     const input = { kind: "link" as const, url: "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2" };
-    await expect(previewSessionImport(input, async () => { throw new Error("private network detail"); }))
+    await expect(previewSessionImport(input, {})).rejects.toMatchObject({ code: "session_import_unavailable" });
+    await expect(previewSessionImport(input, { FIRECRAWL_API_KEY: "test-key" }, async () => Response.json({ error: "private provider detail" }, { status: 400 })))
       .rejects.toMatchObject({ code: "session_unavailable" });
-    await expect(previewSessionImport(input, async () => new Response(new ReadableStream({ start(controller) {
-      controller.error(new Error("private stream detail"));
-    } })))) .rejects.toMatchObject({ code: "session_unavailable" });
   });
   it("rejects empty or non-conversation content", () => {
     expect(() => parseSessionExport("claude", "{}")).toThrow("Expected Claude");
