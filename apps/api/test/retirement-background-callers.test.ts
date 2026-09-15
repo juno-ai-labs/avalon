@@ -115,7 +115,7 @@ describe("background callers meeting a retired object", () => {
       }),
     });
     await consumeProductFeatureFlagQueue(batch("avalon-global-product-feature-flags", [
-      queued("flag", { kind: "product_feature_flag_changed", flagKey: "meeting-recording-enabled", workspaceId: OPEN_WORKSPACE }, outcomes),
+      queued("flag", { kind: "product_feature_flag_changed", flagKey: "suggested-work-enabled", workspaceId: OPEN_WORKSPACE }, outcomes),
     ]), env);
     expect(outcomes).toEqual({ acked: ["flag"], retried: [] });
   });

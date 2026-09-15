@@ -44,7 +44,6 @@ describe('copy controls', () => {
   it('write to the clipboard through the hook, except from a menu item', () => {
     expect(callers(/\.copyText\(/u)).toEqual([
       // The context menu's copy-id items, and the link item beside them.
-      'components/sidebar.tsx',
       // The message-action row's Copy: a pill among labelled pills, not an icon
       // beside a value, and the row is owned by conversation-surfaces.md.
       'components/workstream-blocks.tsx',

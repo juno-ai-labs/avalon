@@ -1,21 +1,22 @@
-import type { Region } from "@rally/contracts/regions";
-import type { AccountOnboarding, UpdateAccountOnboarding } from '@rally/contracts';
-import type { DesktopSettingsSection } from './settings';
-import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
-import type { ThemeChoice } from './themes';
-import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type {
   TelemetryEventProperties,
   WorkspaceAttention,
   WorkspaceDeparture,
   WorkspaceDepartureOutcome,
+  AccountOnboarding,
+  UpdateAccountOnboarding,
 } from '@rally/contracts';
+import type { Region } from "@rally/contracts/regions";
+import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
+import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type {
   DesktopRealtimeSocketCloseInput,
   DesktopRealtimeSocketEvent,
   DesktopRealtimeSocketOpenInput,
   DesktopRealtimeSocketSendInput,
 } from './realtime-socket';
+import type { DesktopSettingsSection } from './settings';
+import type { ThemeChoice } from './themes';
 
 export type RallyRegion = Region;
 
@@ -235,34 +236,6 @@ export type DesktopTelemetryProductIntent =
     resourceId: string;
     workstreamId?: string;
   }
-  | {
-    kind: 'note_opened';
-    noteId: string;
-    visibility: 'private' | 'public';
-    recordingState: 'idle' | 'recording' | 'complete';
-    navigation: 'opened' | 'reopened';
-  }
-  | {
-    kind: 'note_created';
-    noteId: string;
-    visibility: 'private' | 'public';
-    noteType: 'meeting_or_voice';
-    entrypoint: 'sidebar' | 'menu_bar' | 'unknown';
-  }
-  | {
-    kind: 'note_action_completed';
-    noteId: string;
-    action: 'make_public' | 'make_private' | 'archive';
-    visibility: 'private' | 'public';
-    recordingState: 'idle' | 'recording' | 'complete';
-  }
-  | {
-    kind: 'transcription_state_changed';
-    noteId: string;
-    state: 'started' | 'paused' | 'resumed' | 'completed';
-    visibility: 'private' | 'public';
-    audioSource: 'microphone_and_system' | 'microphone_only' | 'system_only' | 'unknown';
-  }
   | DesktopTelemetrySemanticIntent;
 
 export interface DesktopJavascriptErrorCandidate {
@@ -324,27 +297,6 @@ export type DesktopMediaPermissionStatus =
   | 'denied'
   | 'restricted'
   | 'unknown';
-
-export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
-
-/**
- * Who asked a meeting window to close, which decides whether the recording
- * screen may stop and ask first.
- *
- * `user` is a close the person performed on that window — its traffic light or
- * Command-W — and a recording in progress is worth a confirmation, because the
- * window is the only place the meeting exists until finalization lands.
- * `quit` is the application shutting down, where a window that stops to ask is
- * a window that refuses to close, and a quit vetoed that way leaves Rally
- * running with no way to finish. That path finalizes and closes as it always
- * has.
- */
-export type MeetingCloseReason = 'user' | 'quit';
-
-export interface DesktopMeetingAudioPermissions {
-  microphone: DesktopMediaPermissionStatus;
-  systemAudio: DesktopMediaPermissionStatus;
-}
 
 export interface DesktopSystemAudioCaptureInfo {
   channels: 1;
@@ -517,25 +469,9 @@ export interface RallyDesktopBridge {
    */
   openSidekicks: (target?: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
-  openMeetingNotes: (noteId?: string) => Promise<void>;
-  /**
-   * Closes the meeting window. Given a note id, the main window is raised and
-   * taken to that note on the way out — the meeting is over, and the note is
-   * the thing the person is left with.
-   */
-  closeMeetingNotes: (noteId?: string) => Promise<void>;
-  setMeetingRecordingState: (input: {
-    region: RallyRegion;
-    workspaceId: string;
-    recording: boolean;
-  }) => Promise<void>;
-  getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
-  prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
-  startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
-  stopMeetingSystemAudioCapture: () => Promise<void>;
-  onMeetingSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
-  openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
-  onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
+  startSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
+  stopSystemAudioCapture: () => Promise<void>;
+  onSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   /**
    * The settings window has been put on screen for the first time.

@@ -905,13 +905,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         else if (requireActiveWorkspace('Sign in before opening this work-stream link.')) openWorkstream();
         return;
       }
-      if (intent.kind === 'note') {
-        if (!requireActiveWorkspace('Sign in before opening this note.')) return;
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = `/notes/${intent.noteId}`;
-        return;
-      }
       if (intent.kind === 'settings') {
         const openSettings = async (): Promise<void> => {
           setDeepLinkError(null);

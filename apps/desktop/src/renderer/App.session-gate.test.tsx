@@ -236,18 +236,6 @@ describe('SessionGate identity-first ordering', () => {
     expect(window.location.hash).toBe(`#${route}`);
   });
 
-  it('renders the dedicated meeting surface without the workspace shell', async () => {
-    window.history.replaceState({}, '', '/?surface=meeting#/meeting');
-    sessionState.session = {
-      ...identitySession,
-      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
-    };
-    renderGate();
-
-    expect(await screen.findByText('meeting notes')).toBeVisible();
-    expect(screen.queryByText('main workspace UI')).not.toBeInTheDocument();
-  });
-
   it('does not poll members while the WorkspaceDO socket owns invalidation', async () => {
     vi.useFakeTimers();
     sessionState.session = {

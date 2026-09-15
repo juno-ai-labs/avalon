@@ -5688,6 +5688,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return (await this.socketAdmissionAuth(attachment))?.auth ?? null;
   }
 
+  /** Content-free operator inventory, including retired conversations. */
+  async meetingRetirementInventory(resourceIds: string[] = []) {
+    await this.storageReady;
+    const ids = z.array(z.string().uuid()).parse(resourceIds);
+    const sql = this.state.storage.sql;
+    const retired = sql.exec<{ resource_id: string }>(
+      'SELECT resource_id FROM retired_meeting_attachment_ids ORDER BY resource_id',
+    ).toArray();
+    const selected = [...new Set([...ids, ...retired.map(row => row.resource_id)])];
+    const imports: Array<{ resource_id: string; destination_path: string; sandbox_generation: number }> = [];
+    let toolCopies = 0;
+    for (const id of selected) {
+      imports.push(...sql.exec<{ resource_id: string; destination_path: string; sandbox_generation: number }>(
+        'SELECT resource_id, destination_path, sandbox_generation FROM terminal_imported_resources WHERE resource_id = ?', id,
+      ).toArray());
+      toolCopies += sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM tool_effects effect
+        WHERE EXISTS (SELECT 1 FROM json_tree(effect.input_json) field
+          WHERE field.key IN ('resourceId', 'resource_id') AND field.value = ?)`, id).one().count;
+    }
+    return {
+      identity: sql.exec('SELECT workstream_key, parent_workspace_key FROM workstream WHERE id = 1').toArray()[0] ?? null,
+      retiredResourceIds: retired.map(row => row.resource_id),
+      imports, toolCopies,
+    };
+  }
+
   protected override migrationPlan(): DurableObjectMigrationPlan {
     return {
       component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
@@ -7099,6 +7125,7 @@ applyRetirementGate(SubstreamAgent, {
     // fences the object out of existence rather than out of use. What recovery
     // must not do, re-arm an alarm, is prevented by those methods being inert.
     "startRuntimeRecovery",
+    "meetingRetirementInventory",
   ],
   drop: {
     fetch: () => retiredObjectResponse(),
