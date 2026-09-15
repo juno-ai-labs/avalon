@@ -144,7 +144,7 @@ describe('running work-stream message delivery', () => {
     expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
   });
 
-  it('queues a message for the in-flight loop without a delivery dropdown', async () => {
+  it('delivers a message at the running loop safe boundary without a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
       <MemoryRouter>
@@ -169,14 +169,14 @@ describe('running work-stream message delivery', () => {
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
-    fireEvent.change(composer, { target: { value: 'Do this after the current loop stops' } });
+    fireEvent.change(composer, { target: { value: 'Add this context to the current conversation' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
-      'Do this after the current loop stops',
+      'Add this context to the current conversation',
       [],
       undefined,
-      'queue',
+      'steer',
     ));
   });
 });

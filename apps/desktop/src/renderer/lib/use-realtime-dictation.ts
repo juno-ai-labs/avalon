@@ -120,9 +120,9 @@ function stopMediaStream(stream: MediaStream): void {
 async function requestSystemAudioCapture(): Promise<SystemAudioCapture> {
   const bridge = desktopBridge();
   let audioListener: ((data: ArrayBuffer, sampleRate: number) => void) | undefined;
-  const unsubscribe = bridge.onMeetingSystemAudioData((data, sampleRate) => audioListener?.(data, sampleRate));
+  const unsubscribe = bridge.onSystemAudioData((data, sampleRate) => audioListener?.(data, sampleRate));
   try {
-    await bridge.startMeetingSystemAudioCapture();
+    await bridge.startSystemAudioCapture();
   } catch (error) {
     unsubscribe();
     throw new SystemAudioCaptureError(
@@ -140,7 +140,7 @@ async function requestSystemAudioCapture(): Promise<SystemAudioCapture> {
       if (stopped) return;
       stopped = true;
       try {
-        await bridge.stopMeetingSystemAudioCapture();
+        await bridge.stopSystemAudioCapture();
       } finally {
         audioListener = undefined;
         unsubscribe();

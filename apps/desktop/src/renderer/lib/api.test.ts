@@ -1,10 +1,10 @@
-import "../../../../../tests/isolated-region";
 import { WorkstreamSchema } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
-import type { ApiError } from './api';
+import "../../../../../tests/isolated-region";
 import type { DesktopSession } from '../../common/desktop';
+import type { ApiError } from './api';
+import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
 
 const reportJavascriptError = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
@@ -24,7 +24,6 @@ const resourceId = '00000000-0000-7000-8000-000000000006';
 const automationId = '00000000-0000-7000-8000-000000000008';
 const runId = '00000000-0000-7000-8000-000000000009';
 const taskId = '00000000-0000-7000-8000-000000000013';
-const noteId = '00000000-0000-7000-8000-000000000014';
 
 const user = {
   id: userId,
@@ -474,18 +473,6 @@ describe('Rally API wire adapter', () => {
     const api = new RallyApi('https://api.rally.test', session);
     await expect(api[method](workstreamId, runId, userId)).resolves.toBeUndefined();
     await expect(api[method](workstreamId, runId, userId)).rejects.toThrow();
-  });
-
-  it('accepts successful 204 responses for note archive endpoints', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.archiveNote(noteId)).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      `https://api.rally.test/notes/${noteId}/archive`,
-      expect.objectContaining({ method: 'POST' }),
-    );
   });
 
   it('uses the regional organization invitation contracts end to end', async () => {

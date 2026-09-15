@@ -75,14 +75,15 @@ transcript's use of it.
 ### Marks are monochrome
 
 `ConnectorMark` asks for `variant="mono"`, the package's own single-colour art,
-which paints in `currentColor`. Six of the eight brands ship one. **Slack and
+which paints in `currentColor`. Eight of the ten brands ship one. **Slack and
 Granola do not** — their variant unions are `default | wordmark` and
 `default | light | dark` — so `PLUGIN_BRAND_MARKS` records that per brand and
 asking for `mono` there is a *type error* rather than a silent fallback. Those
 two render their colour art, and `.connector-mark` recolours any painted shape
 inside: a CSS `fill` beats an SVG presentation attribute, and `[fill="none"]` is
 deliberately left alone, because those shapes are hollow and filling them turns
-a mark into a blob.
+a mark into a blob. Ashby and Fireflies are not in the package; their local
+components only ship the monochrome art.
 
 Two smaller consequences of rendering real SVG, both handled:
 
@@ -135,6 +136,22 @@ to `PLUGIN_BRAND_MARKS`. A connector absent from that table draws a generic plug
 in Settings and no row at all in the transcript, so the table is the only thing
 to update.
 
+If the catalog has no slug — Ashby and Fireflies today — a local component in
+`apps/desktop/src/renderer/lib/brand-marks/` draws the company's own mark the
+same way: `currentColor`, through `ConnectorMark`, one file per brand. A Lucide
+or Tabler stand-in is not a company mark and is not the fallback. The generic
+plug is only for a connector that has not been named in the table yet.
+
+The local file has to fill the same square slot the catalogued marks do.
+`.connector-mark` is a square box and the SVG scales by height, so a tall
+lockup draws as a sliver — Ashby's stacked marketing mark was 7.5px wide in
+the 16px box. Use the company's square product icon (Ashby's is the serif A
+punched from the rounded square at `ashbyhq.com/favicon.png`), drop the
+wordmark, paint in `currentColor`, and ship no element ids or `url(#…)`
+references: two cards on Settings would duplicate them, which is why Google's
+`default` art is refused. Look at it at 14px, 15px, and 16px in a real window
+before it ships; a passing DOM test does not catch a half-width glyph.
+
 Not every glyph is a company. The two virtual groups, the public web, and an
 inbound webhook are shapes no brand owns and keep their Tabler line icons; an
 inbound webhook deliberately draws nothing in a Settings row rather than a
@@ -157,6 +174,8 @@ per [`security.md`](security.md).
 The package is MIT; each mark carries its own upstream licence, exposed as
 `license` on the data package's entry. Most of Rally's are `CC0-1.0`. **Granola's
 is `brand-use`** — the company's mark shown under its own brand guidelines rather
-than a public-domain asset. Identifying a connector by its logo is the ordinary
-use; reusing one as decoration, in marketing, or anywhere it could imply
-endorsement is not, and is not covered by the package's MIT licence.
+than a public-domain asset. Ashby's and Fireflies' marks are not in the package;
+they are the companies' own art, used the same way. Identifying a connector by
+its logo is the ordinary use; reusing one as decoration, in marketing, or
+anywhere it could imply endorsement is not, and is not covered by the package's
+MIT licence.

@@ -4,11 +4,13 @@ import { mintProviderToken } from "../src/services/push/apns-transport";
 const data = { v: 1 as const, kind: 'mention' as const, region: 'global' as const, workspaceId: 'workspace', url: 'https://rallywith.ai/app/workstreams/example' };
 describe('push payload', () => {
   it('fits multibyte previews into the complete APNs payload', () => {
-    const payload = renderPushPayload({ title: 'Long title'.repeat(30), body: '😀'.repeat(2000), threadKey: 'thread', data });
+    const payload = renderPushPayload({ title: 'Long title'.repeat(30), body: '😀'.repeat(2000), threadKey: 'thread', badge: 4, data });
     expect(new TextEncoder().encode(payload).length).toBeLessThanOrEqual(APNS_PAYLOAD_BYTES);
     expect(JSON.parse(payload).aps.alert.body).toMatch(/…$/);
-    const longTitle = renderPushPayload({ title: '😀'.repeat(2000), body: 'Hello', threadKey: 'thread', data });
+    expect(JSON.parse(payload).aps.badge).toBe(4);
+    const longTitle = renderPushPayload({ title: '😀'.repeat(2000), body: 'Hello', threadKey: 'thread', badge: 0, data });
     expect(new TextEncoder().encode(longTitle).length).toBeLessThanOrEqual(APNS_PAYLOAD_BYTES);
+    expect(JSON.parse(longTitle).aps.badge).toBe(0);
   });
   it('gives existing non-UUID intent IDs stable, distinct collapse IDs', async () => {
     expect(await pushCollapseId('workspace', 'mention:message:person')).toMatch(/^[a-f0-9]{64}$/);

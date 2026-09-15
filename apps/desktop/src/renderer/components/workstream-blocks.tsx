@@ -2610,7 +2610,8 @@ export function MessageBlock({
           messages the one thing on screen with no time against it. */}
       <MessageByline
         align={human ? 'end' : 'start'}
-        author={human ? humanAuthorName : automation ? automationAuthor : 'Rally'}
+        author={human ? humanAuthorName : message.importProvenance ? (message.importProvenance.source.provider === 'chatgpt' ? 'ChatGPT' : 'Claude') : automation ? automationAuthor : 'Rally'}
+        importedBy={message.importProvenance?.importedByName}
         contextLabel={message.contextLabel}
         createdAt={message.createdAt}
         dot={human}

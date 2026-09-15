@@ -1,3 +1,5 @@
+import { useSearchParams } from "react-router-dom";
+import { SessionImportDialog } from "../components/session-import-dialog";
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -184,6 +186,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   const routeProjectId = useParams<{ projectId: string }>().projectId;
   const owningProjectId = projectId === 'route' ? routeProjectId : projectId;
   const { api } = useAppSession();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -707,6 +710,9 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
         <h2 className="sr-only" id="new-workstream-heading">Start a new work stream</h2>
+        {!launching && owningProjectId === undefined && searchParams.get('import') === 'session' && <SessionImportDialog open onOpenChange={(open) => {
+          if (!open) setSearchParams((params) => { params.delete('import'); return params; }, { replace: true, state: location.state });
+        }} />}
         {owningProjectId !== undefined && <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Work-stream participants">
             {owningProject?.scope === 'personal' ? (

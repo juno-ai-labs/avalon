@@ -4,9 +4,8 @@ import { logStructuredEvent } from "../observability/logger";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /**
- * Whether scheduled digests are allowed to fire at all — the fourth reader of
- * `env.FLAGS`, and its own module for the same reason `control-tower-flags.ts`
- * is: it is neither of the other two kinds. `agent-model-flags.ts` decides
+ * Whether scheduled digests are allowed to fire at all. This reader of
+ * `env.FLAGS` has its own module because its failure policy differs. `agent-model-flags.ts` decides
  * which model an agent runs on and never leaves the Worker; `client-feature-flags.ts`
  * decides what the desktop may *offer* and fails closed, because a feature
  * nobody has been given yet is what an outage has to reproduce. A digest is

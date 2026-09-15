@@ -9,7 +9,7 @@ import {
   captureStreamingInferenceRequest,
 } from "./inference-lakehouse";
 
-type AgentInferenceSource = "workstream" | "inline_child" | "meeting_notes";
+type AgentInferenceSource = "workstream" | "inline_child";
 
 export interface AgentInferenceLogContext {
   workspaceId: string;

@@ -718,7 +718,7 @@ Shipped in #725.
 `renderer/lib/window-escape.ts` — `escapeClosesWindow` and the
 `useEscapeClosesWindow` hook that installs it — and the Sidekicks window is its
 second caller. The gesture is opt-in per window rather than a property of being
-a window: the meeting and deep-link-error windows do not install the hook and
+a window: the deep-link-error window does not install the hook and
 still do not answer Escape. `WorkspaceApp` installs it for the Settings and
 Sidekicks surfaces while `workspace.data` is absent, so `Opening workspace…` and
 the service-setup error answer Escape rather than being the dead end the

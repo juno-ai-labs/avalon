@@ -1,15 +1,14 @@
-import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
-import type { DesktopApplicationSettings } from '../../common/desktop';
-import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
+import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
-import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 import { installWindowActivationTracking } from '../lib/window-activation';
+import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
@@ -31,13 +30,6 @@ const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
 }));
-
-function announceApplicationSettings(settings: DesktopApplicationSettings): void {
-  applicationSettings.current = settings;
-  act(() => {
-    for (const listener of applicationSettings.listeners) listener(settings);
-  });
-}
 
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
@@ -79,14 +71,11 @@ const workspace: Workspace = {
 };
 
 const defaultActions = {
-  onArchiveNote: async (): Promise<void> => undefined,
   onArchiveWorkstream: async (): Promise<void> => undefined,
   onApplyWorkstreamBatch: async (): Promise<{ enqueuedCount: number; archivedNoteCount: number }> =>
     ({ enqueuedCount: 0, archivedNoteCount: 0 }),
-  onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
-  onOpenMeetingNotes: async (): Promise<void> => undefined,
   onPreviewWorkstreamBatch: async (): Promise<{ matchedCount: number; matchedNoteCount: number }> =>
     ({ matchedCount: 0, matchedNoteCount: 0 }),
   onPinWorkstream: async (): Promise<boolean> => true,
@@ -138,26 +127,6 @@ function pinned(workstream: WorkstreamSummary, position: number): WorkstreamSumm
   return { ...workstream, pinPosition: position };
 }
 
-function note(id: string, title: string, lastActivityAt: string): NoteSummary {
-  return {
-    id,
-    workspaceId: '00000000-0000-4000-8000-000000000010',
-    resourceId: '00000000-0000-4000-8000-000000000011',
-    ownerUserId: workspace.currentUser.id,
-    scope: 'personal',
-    title,
-    recordingStatus: 'complete',
-    recordedMs: 60_000,
-    startedAt: '2026-07-31T19:00:00.000Z',
-    endedAt: '2026-07-31T19:01:00.000Z',
-    generatedAt: null,
-    lastActivityAt,
-    createdAt: lastActivityAt,
-    updatedAt: lastActivityAt,
-    archivedAt: null,
-  };
-}
-
 function dropTargetProject(...workstreamIds: string[]) {
   return ProjectSummarySchema.parse({
     id: '00000000-0000-7000-8000-0000000000f2',
@@ -203,7 +172,7 @@ describe('Sidebar work-stream markers', () => {
     const noisy = { ...workstream('noisy', 'New shared activity', 'completed', '2099-01-01T00:00:00.000Z'),
       createdAt: '2026-07-20T00:00:00.000Z', lastAccessedAt: null };
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
-      automations={[]} notes={[]} onSignOut={vi.fn()} workspace={workspace}
+      automations={[]} onSignOut={vi.fn()} workspace={workspace}
       workstreams={[noisy, visited]} /></Tooltip.Provider></MemoryRouter>);
     const links = screen.getAllByRole('link').map((link) => link.textContent);
     expect(links.findIndex((text) => text?.includes('Last visited')))
@@ -217,7 +186,7 @@ describe('Sidebar work-stream markers', () => {
     </Tooltip.Provider></MemoryRouter>);
 
     expect(screen.queryByLabelText('New work stream draft')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'New work stream' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
   it('reduces the GrokBot shell navigation to work streams', () => {
@@ -228,7 +197,6 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[automation]}
             conversationOnly
-            notes={[note('note-hidden', 'Meeting notes', '2026-07-31T19:00:00.000Z')]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[workstream('stream-visible', 'Customer launch', 'completed')]}
@@ -246,7 +214,7 @@ describe('Sidebar work-stream markers', () => {
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(titlebar).not.toBeNull();
     expect(commandbar).not.toBeNull();
-    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New work stream' }));
+    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New work stream' }));
     expect(commandbar).toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
     expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
@@ -259,13 +227,13 @@ describe('Sidebar work-stream markers', () => {
   // work stream.
   it('names the plus New work stream in the titlebar, the rail, and the GrokBot shell', () => {
     function Navigation(props: { compact?: boolean; conversationOnly?: boolean }) {
-      return <Sidebar {...defaultActions} automations={[]} notes={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} {...props} />;
+      return <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} {...props} />;
     }
     const { rerender } = render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
 
     const titlebar = document.querySelector('.sidebar-titlebar');
     expect(titlebar).not.toBeNull();
-    const create = within(titlebar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    const create = within(titlebar as HTMLElement).getByRole('button', { name: 'New work stream' });
     // Both links are tooltip triggers, and Radix's Slot string-merges the
     // child's `className`: hand it `NavLink`'s callback form and the class
     // arrives at the DOM as that callback's source text, leaving the control
@@ -278,13 +246,13 @@ describe('Sidebar work-stream markers', () => {
     rerender(<MemoryRouter><Tooltip.Provider><Navigation compact /></Tooltip.Provider></MemoryRouter>);
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(commandbar).not.toBeNull();
-    const rail = within(commandbar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    const rail = within(commandbar as HTMLElement).getByRole('button', { name: 'New work stream' });
     expect(rail).toHaveClass('sidebar-new-button', 'sidebar-rail-new-button');
     fireEvent.focus(rail);
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
 
     rerender(<MemoryRouter><Tooltip.Provider><Navigation conversationOnly /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.focus(screen.getByRole('link', { name: 'New work stream' }));
+    fireEvent.focus(screen.getByRole('button', { name: 'New work stream' }));
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
   });
 
@@ -759,7 +727,6 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[]}
             loading
-            notes={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[]}
@@ -774,10 +741,10 @@ describe('Sidebar work-stream markers', () => {
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects, work streams and notes')).toBeInTheDocument();
+    expect(screen.getByText('Loading your projects and work streams')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
-    expect(screen.queryByText('No work streams or notes yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('No work streams yet')).not.toBeInTheDocument();
 
     rerender(
       <MemoryRouter>
@@ -786,7 +753,6 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[]}
             loading={false}
-            notes={[note('00000000-0000-4000-8000-000000000031', 'Standup', '2026-07-31T19:00:00.000Z')]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[workstream('00000000-0000-4000-8000-000000000030', 'Launch brief', 'running')]}
@@ -797,37 +763,6 @@ describe('Sidebar work-stream markers', () => {
 
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(0);
     expect(screen.getByText('Launch brief')).toBeInTheDocument();
-    expect(screen.getByText('Standup')).toBeInTheDocument();
-  });
-
-  // The three lists finish at different moments. A person who already has a
-  // note but no work streams sees this section's own list while the projects
-  // and automations above are still placeholders, and an announcement nested in
-  // the work-stream skeleton's branch would have gone with it.
-  it('keeps the one loading announcement while a section that has arrived shows its list', () => {
-    const { container } = render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            loading
-            notes={[note('00000000-0000-4000-8000-000000000032', 'Standup', '2026-07-31T19:00:00.000Z')]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    // The note is listed, so this section shows no placeholder of its own —
-    // while the projects above still do.
-    expect(screen.getByText('Standup')).toBeInTheDocument();
-    expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(0);
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(3);
-    expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects, work streams and notes')).toBeInTheDocument();
   });
 
   it('does not render the disabled onboarding checklist', () => {
@@ -1199,109 +1134,6 @@ describe('Sidebar work-stream markers', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
   });
 
-  it('names the notes a grouping archive will take, and seeds the count from the rows it can see', async () => {
-    // The defect: **Archive all** under a heading emptied the work streams and
-    // left the notes, so the group came back half full. The dialog has to say
-    // both halves are going, or agreeing to it means something else.
-    // Held open, so the seed the menu computed is still on screen to assert on:
-    // the server's count replaces it the moment the preview lands.
-    let landPreview!: (counts: { matchedCount: number; matchedNoteCount: number }) => void;
-    const onPreviewWorkstreamBatch = vi.fn(() => new Promise<{
-      matchedCount: number;
-      matchedNoteCount: number;
-    }>((resolve) => {
-      landPreview = resolve;
-    }));
-    const onApplyWorkstreamBatch = vi.fn(async () => ({ enqueuedCount: 4, archivedNoteCount: 2 }));
-    const at = new Date().toISOString();
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[
-              note('00000000-0000-4000-8000-0000000000a1', 'Kickoff', at),
-              note('00000000-0000-4000-8000-0000000000a2', 'Retro', at),
-              // Neither of these is this reader's to archive, so neither may be
-              // counted: the server will not take them either.
-              {
-                ...note('00000000-0000-4000-8000-0000000000a3', 'Somebody else\'s', at),
-                ownerUserId: '00000000-0000-4000-8000-0000000000ff',
-                scope: 'workspace',
-              },
-              {
-                ...note('00000000-0000-4000-8000-0000000000a4', 'Still recording', at),
-                recordingStatus: 'recording',
-              },
-            ]}
-            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
-            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', at)]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive all' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Archive all' });
-    // Two of the four notes on screen, before the server has answered.
-    expect(dialog).toHaveTextContent('1 work stream and 2 notes');
-
-    act(() => landPreview({ matchedCount: 4, matchedNoteCount: 2 }));
-    await waitFor(() => expect(dialog).toHaveTextContent(
-      /4 work streams and 2 notes.*will be archived/u,
-    ));
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
-    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ pinned: false, includeSystem: false }),
-      { kind: 'archive' },
-    ));
-  });
-
-  it('offers no notes when a grouping is only being marked as read', async () => {
-    // A note has no read state to clear, so naming one here would promise
-    // something that cannot happen.
-    const onPreviewWorkstreamBatch = vi.fn(async () => ({ matchedCount: 4, matchedNoteCount: 2 }));
-    const at = new Date().toISOString();
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[note('00000000-0000-4000-8000-0000000000b1', 'Kickoff', at)]}
-            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[workstream('recent', 'Recent planning', 'completed', at)]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Mark all as read' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Mark all as read' });
-    await waitFor(() => expect(dialog).toHaveTextContent(
-      /4 work streams in.*will be marked as read/u,
-    ));
-    expect(dialog).not.toHaveTextContent('note');
-  });
-
   it('keeps one operation id when a failed Queue dispatch is retried', async () => {
     const onApplyWorkstreamBatch = vi.fn()
       .mockRejectedValueOnce(new Error('One Queue chunk was not published.'))
@@ -1396,7 +1228,7 @@ describe('Sidebar work-stream markers', () => {
     );
     const { rerender } = render(view(true));
     const search = screen.getByRole('button', { name: 'Search workspace' });
-    const create = screen.getByRole('link', { name: 'New work stream' });
+    const create = screen.getByRole('button', { name: 'New work stream' });
     expect(screen.getByRole('navigation')).not.toContainElement(search);
     const bar = search.closest('.sidebar-commandbar');
     expect(bar).not.toBeNull();
@@ -1406,11 +1238,11 @@ describe('Sidebar work-stream markers', () => {
     expect(create).toHaveAttribute('data-motion-insert');
     fireEvent.click(search);
     expect(onOpenSearch).toHaveBeenCalledOnce();
-    expect(create).toHaveAttribute('href', '/workstreams/new');
+    expect(create).toHaveAttribute('aria-haspopup', 'menu');
 
     rerender(view(false));
     expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
-    const [titlebarCreate, ...others] = screen.getAllByRole('link', { name: 'New work stream' });
+    const [titlebarCreate, ...others] = screen.getAllByRole('button', { name: 'New work stream' });
     expect(others).toEqual([]);
     expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
     expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
@@ -1641,402 +1473,7 @@ describe('Sidebar work-stream markers', () => {
     // same place and now carries the same name.
     const actions = document.querySelector('.sidebar-primary-actions');
     expect(actions).not.toBeNull();
-    expect(within(actions as HTMLElement).getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
-  });
-
-  it('opens meeting notes from the primary actions', async () => {
-    const onOpenMeetingNotes = vi.fn(async () => undefined);
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            meetingRecordingAvailable
-            onOpenMeetingNotes={onOpenMeetingNotes}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'New meeting/notes' }));
-    await waitFor(() => expect(onOpenMeetingNotes).toHaveBeenCalledTimes(1));
-  });
-
-  it('removes the meeting action when Meeting Recording Enabled is false', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            meetingRecordingAvailable={false}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect(screen.queryByRole('button', { name: 'New meeting/notes' })).not.toBeInTheDocument();
-  });
-
-  it('sorts notes inline with work streams and opens them with a gray note marker', async () => {
-    const onOpenMeetingNotes = vi.fn(async () => undefined);
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[
-              note('00000000-0000-4000-8000-000000000021', 'Customer interview', '2026-07-31T19:55:00.000Z'),
-              {
-                ...note('00000000-0000-4000-8000-000000000022', 'Shared research', '2026-07-31T19:45:00.000Z'),
-                scope: 'workspace',
-              },
-            ]}
-            onOpenMeetingNotes={onOpenMeetingNotes}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[workstream('older', 'Older work stream', 'completed', '2026-07-31T19:40:00.000Z')]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.querySelector('.sidebar-row-title-copy')?.textContent ?? row.textContent)).toEqual([
-      'Customer interview',
-      'Shared research',
-      'Older work stream',
-    ]);
-    const noteLink = screen.getByRole('link', { name: /Customer interview/u });
-    expect(noteLink).toHaveAttribute('href', '/notes/00000000-0000-4000-8000-000000000021');
-    expect(within(noteLink).getByRole('img', { name: 'Note' })).toHaveClass('sidebar-note-marker');
-    expect(within(noteLink).getByRole('img', { name: 'Private note' })).toHaveClass('sidebar-note-privacy');
-    expect(within(screen.getByRole('link', { name: /Shared research/u })).queryByRole('img', { name: 'Private note' }))
-      .not.toBeInTheDocument();
-    fireEvent.click(noteLink);
-    expect(onOpenMeetingNotes).not.toHaveBeenCalled();
-  });
-
-  it('archives a private note from its right-click menu and offers to publish it', async () => {
-    const onArchiveNote = vi.fn(async () => undefined);
-    const onChangeNoteScope = vi.fn(async () => undefined);
-    const target = note('00000000-0000-4000-8000-000000000031', 'Customer interview', '2026-07-31T19:55:00.000Z');
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[target]}
-            onArchiveNote={onArchiveNote}
-            onChangeNoteScope={onChangeNoteScope}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
-
-    // A private note offers the state it would move to, never the one it is in.
-    expect(await screen.findByRole('menuitem', { name: 'Make public to workspace' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
-    const archive = screen.getByRole('menuitem', { name: 'Archive note' });
-    expect(archive).toHaveClass('menu-item-danger');
-    expect(archive).not.toHaveAttribute('data-disabled');
-    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
-
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Make public to workspace' }));
-    await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledWith(target, 'workspace'));
-    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
-      kind: 'note_action_completed', noteId: target.id, action: 'make_public',
-      visibility: 'public', recordingState: 'complete',
-    }));
-
-    // Archiving is not reversible from any surface, so it confirms first and
-    // names the note it would take away.
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive note' }));
-    expect(onArchiveNote).not.toHaveBeenCalled();
-
-    const confirm = await screen.findByRole('dialog', { name: 'Archive note' });
-    expect(within(confirm).getByText('Customer interview')).toBeVisible();
-    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive note' })).not.toBeInTheDocument());
-    expect(onArchiveNote).not.toHaveBeenCalled();
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive note' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive note' })).getByRole('button', { name: 'Archive' }));
-    await waitFor(() => expect(onArchiveNote).toHaveBeenCalledWith(target));
-    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
-      kind: 'note_action_completed', noteId: target.id, action: 'archive',
-      visibility: 'private', recordingState: 'complete',
-    }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive note' })).not.toBeInTheDocument());
-  });
-
-  it('waits for a recording to end before it will archive the note', async () => {
-    const onArchiveNote = vi.fn(async () => undefined);
-    const onChangeNoteScope = vi.fn(async () => undefined);
-    const target: NoteSummary = {
-      ...note('00000000-0000-4000-8000-000000000036', 'Live standup', '2026-07-31T19:58:00.000Z'),
-      recordingStatus: 'recording',
-    };
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[target]}
-            onArchiveNote={onArchiveNote}
-            onChangeNoteScope={onChangeNoteScope}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Live standup/u }), { clientX: 120, clientY: 90 });
-
-    // Archiving mid-recording would 404 the meeting window's next segment save
-    // and quietly drop the rest of the transcript.
-    const archive = await screen.findByRole('menuitem', { name: 'Archive note' });
-    expect(archive).toHaveAttribute('data-disabled');
-    fireEvent.click(archive);
-    expect(onArchiveNote).not.toHaveBeenCalled();
-
-    // The visibility of a note being recorded is still the owner's to change.
-    const visibility = screen.getByRole('menuitem', { name: 'Make public to workspace' });
-    expect(visibility).not.toHaveAttribute('data-disabled');
-    fireEvent.click(visibility);
-    await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledWith(target, 'workspace'));
-  });
-
-  it('offers a public note the way back to private', async () => {
-    const onChangeNoteScope = vi.fn(async () => undefined);
-    const target: NoteSummary = {
-      ...note('00000000-0000-4000-8000-000000000034', 'Launch retro', '2026-07-31T19:35:00.000Z'),
-      scope: 'workspace',
-    };
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[target]}
-            onChangeNoteScope={onChangeNoteScope}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch retro/u }), { clientX: 120, clientY: 90 });
-
-    expect(await screen.findByRole('menuitem', { name: 'Make private' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Make public to workspace' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Make private' }));
-    await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledWith(target, 'personal'));
-  });
-
-  it('leaves both note actions disabled on a workspace note owned by someone else', async () => {
-    const onArchiveNote = vi.fn(async () => undefined);
-    const onChangeNoteScope = vi.fn(async () => undefined);
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[{
-              ...note('00000000-0000-4000-8000-000000000032', 'Shared research', '2026-07-31T19:45:00.000Z'),
-              ownerUserId: 'user-2',
-              scope: 'workspace',
-            }]}
-            onArchiveNote={onArchiveNote}
-            onChangeNoteScope={onChangeNoteScope}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Shared research/u }), { clientX: 120, clientY: 90 });
-
-    const item = await screen.findByRole('menuitem', { name: 'Archive note' });
-    expect(item).toHaveAttribute('data-disabled');
-    expect(screen.getByRole('menuitem', { name: 'Make private' })).toHaveAttribute('data-disabled');
-    fireEvent.click(item);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Make private' }));
-    expect(onArchiveNote).not.toHaveBeenCalled();
-    expect(onChangeNoteScope).not.toHaveBeenCalled();
-  });
-
-  it('reports a visibility change that the server rejected', async () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[note('00000000-0000-4000-8000-000000000035', 'Customer interview', '2026-07-31T19:55:00.000Z')]}
-            onChangeNoteScope={vi.fn(async () => {
-              throw new Error('The note could not be reached.');
-            })}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to workspace' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Note visibility could not be changed' });
-    expect(within(dialog).getByText('The note is still private. Try again in a moment.')).toBeVisible();
-    expect(within(dialog).getByText('The note could not be reached.')).toBeVisible();
-  });
-
-  it('reports a note archive that the server rejected instead of failing silently', async () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[note('00000000-0000-4000-8000-000000000033', 'Customer interview', '2026-07-31T19:55:00.000Z')]}
-            onArchiveNote={vi.fn(async () => {
-              throw new Error('The note could not be reached.');
-            })}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive note' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive note' })).getByRole('button', { name: 'Archive' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Note could not be archived' });
-    expect(within(dialog).getByText('The note could not be reached.')).toBeVisible();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Note could not be archived' })).not.toBeInTheDocument());
-    expect(screen.getByRole('link', { name: /Customer interview/u })).toBeVisible();
-  });
-
-  it('copies a work-stream link and the other resource identifiers only while debugging is enabled', async () => {
-    // A real work-stream id, because the row copies a canonical link and
-    // `workstreamCanonicalUrl` refuses anything that is not a UUID.
-    const target = workstream('00000000-0000-4000-8000-000000000042', 'Quarterly planning', 'completed');
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[automation]}
-            notes={[note('00000000-0000-4000-8000-000000000037', 'Customer interview', '2026-07-31T19:55:00.000Z')]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[target]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    const workstreamRow = screen.getByRole('link', { name: /Quarterly planning/u });
-    fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
-    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Copy work stream link' })).not.toBeInTheDocument();
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-
-    const noteRow = screen.getByRole('link', { name: /Customer interview/u });
-    fireEvent.contextMenu(noteRow, { clientX: 120, clientY: 90 });
-    expect(await screen.findByRole('menuitem', { name: 'Archive note' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Copy note id' })).not.toBeInTheDocument();
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-
-    // The Settings window owns the preference; the sidebar learns about a
-    // change through the application-settings broadcast.
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
-
-    fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream link' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith(
-      'https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/workstreams/00000000-0000-4000-8000-000000000042',
-    ));
-
-    fireEvent.contextMenu(noteRow, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy note id' }));
-    await waitFor(() => expect(copyText).toHaveBeenLastCalledWith('00000000-0000-4000-8000-000000000037'));
-  });
-
-  it('holds the visibility item while its own change is in flight', async () => {
-    let release = (): void => undefined;
-    const onChangeNoteScope = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
-    const target = note('00000000-0000-4000-8000-000000000038', 'Customer interview', '2026-07-31T19:55:00.000Z');
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            notes={[target]}
-            onChangeNoteScope={onChangeNoteScope}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    // An open Radix menu hides the rest of the page from the accessibility
-    // tree, so the row is held by reference rather than re-queried by role.
-    const row = screen.getByRole('link', { name: /Customer interview/u });
-    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to workspace' }));
-    await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledTimes(1));
-
-    // Reopening the menu before the first PATCH lands must not fire a second
-    // one: on a public→private change each one re-runs the privacy notices.
-    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    const item = await screen.findByRole('menuitem', { name: 'Make public to workspace' });
-    expect(item).toHaveAttribute('data-disabled');
-    fireEvent.click(item);
-    expect(onChangeNoteScope).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      release();
-      await Promise.resolve();
-    });
-    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Make public to workspace' }))
-      .not.toHaveAttribute('data-disabled'));
+    expect(within(actions as HTMLElement).getByRole('button', { name: 'New work stream' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
   it('archives a work stream from the menu once the confirmation is accepted', async () => {
@@ -3568,56 +3005,6 @@ describe('Sidebar work-stream paging', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search workspace' }));
     expect(onOpenSearch).toHaveBeenCalledOnce();
     expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
-  });
-
-  it('asks both lists for their next page, since one set of headings holds both', () => {
-    // Notes and work streams interleave by recency under the same headings, so
-    // the row at the bottom belongs to one of them and the *other* is what the
-    // next heading down needs. Asking only for the kind at the end would stall
-    // the list wherever one of the two runs out — and for notes that used to be
-    // permanent, because the list did not page at all.
-    const onLoadMoreWorkstreams = vi.fn();
-    const onLoadMoreNotes = vi.fn();
-    const nav = renderWithPaging({
-      hasMoreWorkstreams: true,
-      hasMoreNotes: true,
-      onLoadMoreWorkstreams,
-      onLoadMoreNotes,
-    });
-
-    scrollTo(nav, 900);
-
-    expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
-    expect(onLoadMoreNotes).toHaveBeenCalledTimes(1);
-  });
-
-  it('asks only the list that still has pages', () => {
-    const onLoadMoreWorkstreams = vi.fn();
-    const onLoadMoreNotes = vi.fn();
-    const nav = renderWithPaging({
-      hasMoreWorkstreams: false,
-      hasMoreNotes: true,
-      onLoadMoreWorkstreams,
-      onLoadMoreNotes,
-    });
-
-    scrollTo(nav, 900);
-
-    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
-    expect(onLoadMoreNotes).toHaveBeenCalledTimes(1);
-  });
-
-  it('asks notes once while their page is in flight', () => {
-    const onLoadMoreNotes = vi.fn();
-    const nav = renderWithPaging({
-      hasMoreNotes: true,
-      loadingMoreNotes: true,
-      onLoadMoreNotes,
-    });
-
-    scrollTo(nav, 1_100);
-
-    expect(onLoadMoreNotes).not.toHaveBeenCalled();
   });
 
   it('asks once while a page is in flight', () => {

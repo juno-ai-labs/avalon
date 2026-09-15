@@ -1,6 +1,7 @@
 import type { Region } from "@rally/contracts/regions";
 import {
   TelemetryEnvelopeSchema,
+  isRetiredMeetingTelemetry,
   type TelemetryEnvelope,
 } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
@@ -58,6 +59,7 @@ export class TelemetryCollector {
   ): Promise<TelemetryAcceptanceResult> {
     const parsed = TelemetryEnvelopeSchema.parse(candidate);
     const event = parsed as TelemetryEnvelope;
+    if (isRetiredMeetingTelemetry(event)) return { result: "suppressed", eventId: event.eventId };
     if (context.route !== this.env.AVALON_REGION) {
       return { result: "route_mismatch", eventId: event.eventId };
     }

@@ -1827,3 +1827,10 @@ survive in the same regional analysis surface.
 
 Shipped in the pull request for this change. Design: [regional telemetry
 PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
+
+
+## Changelog
+
+### 2026-09-14 — Fence retired meeting data before erasure
+
+Built-in meeting event producers are removed. The collector, destination delivery paths, and desktop spool discard their historical typed events, including recording lifecycle and note-summary events. Dictation capture and its microphone permissions remain independent. Keeping the historical registry shapes allows old queued envelopes to be identified and suppressed rather than replayed into analytics. See [meeting retirement](meeting-notes.md).

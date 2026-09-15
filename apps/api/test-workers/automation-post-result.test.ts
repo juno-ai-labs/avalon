@@ -1,3 +1,4 @@
+import { AgentCommunicationService } from "../src/services/agent-communication-service";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -21,9 +22,13 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  agentIdForAddress,
+  agentAddressForId,
+  WorkstreamWorkflowInputSchema,
+  type WorkstreamWorkflowInput,
   asAutomationId,
   asSubstreamId,
   asUserId,
@@ -40,7 +45,9 @@ import {
   workstreamDOName,
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
+import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createAutomation } from "../src/services/automation-service";
+import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
@@ -51,7 +58,7 @@ import {
   deliverParentEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -99,7 +106,60 @@ const DEFINITION: AutomationDraft = {
  * A run that holds the tool calls it once with the result and then ends; the
  * room's own loop, which does not hold it, acknowledges what it was woken with.
  */
-const provider = useOpenRouterDouble((call) => {
+const LARGE_RESULT_TEXT = "Detailed finding. ".repeat(7_000).trim();
+let heldBackgroundModel: Promise<void> | null = null;
+function explicitReply(call: ProviderCall, text: string): ProviderReply {
+  const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
+  const current = call.messages.slice(call.messages.lastIndexOf(latestInput!));
+  if (current.some((message) => message.role === "tool"
+    && /"data"\s*:\s*\{\s*"messageId"\s*:/u.test(String(message.content)))) {
+    return { say: "My local work is complete." };
+  }
+  const reply = call.toolNames.find((name) => name.endsWith("reply"));
+  if (reply) {
+    const messageId = /Message ID: ([0-9a-f-]{36})/u.exec(String(latestInput?.content))?.[1];
+    if (!messageId) throw new Error("test_reply_reference_missing");
+    return { callTool: { name: reply, arguments: { messageId, message: text } } };
+  }
+  const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
+  if (!load) throw new Error("agent_plugin_loader_missing");
+  return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
+}
+const provider = useOpenRouterDouble(async (call) => {
+  const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
+  if (heldBackgroundModel && JSON.stringify(latestInput?.content ?? "").includes("HOLD_BACKGROUND")) await heldBackgroundModel;
+  if (JSON.stringify(latestInput?.content ?? "").includes("LARGE_BACKGROUND_RESULT")) return { say: LARGE_RESULT_TEXT };
+  if (JSON.stringify(latestInput?.content ?? "").includes("DELEGATE_FROM_MODEL")) {
+    if (call.messages.some((message) => message.role === "tool" && /"data"\s*:\s*\{\s*"agentId"\s*:/u.test(String(message.content)))) {
+      return { say: "Research is running; I am available here." };
+    }
+    const start = call.toolNames.find((name) => name.endsWith("start_agent"));
+    if (start) return { callTool: { name: start, arguments: { name: "Model-created researcher",
+      description: "Compare the options independently", message: "HOLD_BACKGROUND EXPLICIT_REPLY: compare these options" } } };
+    const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
+    if (!load) throw new Error("agent_plugin_loader_missing");
+    return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
+  }
+  if (JSON.stringify(latestInput?.content ?? "").includes("CONFIGURE_SIDEKICK")) {
+    const current = call.messages.slice(call.messages.lastIndexOf(latestInput!));
+    const results = current.filter((message) => message.role === "tool")
+      .map((message) => typeof message.content === "string" ? message.content : JSON.stringify(message.content)).join("\n");
+    if (/"accepted"\s*:\s*true/u.test(results)) return explicitReply(call, "The Sidekick configuration is saved.");
+    if (!results.includes("currentDefinition")) {
+      const list = call.toolNames.find((name) => name === "sidekick_sidekicks_list");
+      if (!list) throw new Error("sidekick_directory_tool_missing");
+      return { callTool: { name: list, arguments: {} } };
+    }
+    const submit = call.toolNames.find((name) => name.endsWith("submit_draft"));
+    if (!submit) throw new Error("sidekick_authoring_tool_missing");
+    const revised = JSON.stringify(latestInput?.content ?? "").includes("REVISE");
+    return { callTool: { name: submit, arguments: { ...DEFINITION, sidekickId: null,
+      name: revised ? "Revised research guide" : "Research guide", triggers: [],
+      instructions: revised ? "Compare the options and include their costs." : "Compare the available options." } } };
+  }
+  if (String(latestInput?.content).includes("EXPLICIT_REPLY")) {
+    return explicitReply(call, "Here are the requested findings.");
+  }
   const tool = call.toolNames.find((name) => name.endsWith("sidekick_post_result"));
   const toolAnswered = call.messages.some((message) => message.role === "tool");
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { text: RESULT_TEXT } } };
@@ -278,6 +338,7 @@ async function activationTurns(): Promise<{ client_message_id: string }[]> {
 }
 
 beforeEach(async () => {
+  heldBackgroundModel = null;
   ordinal += 1;
   const suffix = String(ordinal).padStart(4, "0");
   ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}0000ad11`);
@@ -290,6 +351,826 @@ beforeEach(async () => {
 });
 
 describe("sidekick_post_result", () => {
+  it("delegates through a real Bind tool receipt and answers another message before the worker finishes", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const response = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "DELEGATE_FROM_MODEL: research this, and stay available. PRIVATE_PARENT_DETAIL",
+          clientMessageId: crypto.randomUUID(), mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(response.status).toBe(200);
+      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed", error_json: null });
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+      const { agents } = await new AgentCommunicationService(TEST_ENV, input).list();
+      expect(agents).toMatchObject([{ name: "Model-created researcher", description: "Compare the options independently", status: "executing" }]);
+      const address = agentAddressForId(agents[0]!.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      const workerRequest = () => provider.calls.find((call) => JSON.stringify(
+        call.messages.filter((message) => message.role === "user").at(-1)?.content ?? "",
+      ).includes("HOLD_BACKGROUND"));
+      // Executing begins before the independent provider request. Observe the
+      // boundary we are asserting on instead of racing that scheduled work.
+      await expect.poll(workerRequest, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeDefined();
+      expect(JSON.stringify(workerRequest()!.messages)).not.toContain("PRIVATE_PARENT_DETAIL");
+      const followUp = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "While that runs, acknowledge this unrelated request.", clientMessageId: crypto.randomUUID(),
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(followUp.status).toBe(200);
+      expect((await settledRun(roomConversation(), 2))[1]).toMatchObject({ status: "completed" });
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      release();
+      expect((await settledRun(child))[0]).toMatchObject({ status: "completed" });
+      expect((await settledRun(roomConversation(), 3))[2]).toMatchObject({ status: "completed" });
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
+  });
+
+  it("configures and revises a workstream Sidekick through its own Bind tools and replies", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const created = await service.createSidekick("workstream", context);
+    const sidekickId = asAutomationId(created.sidekickId);
+    const sidekick = env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
+      automationDOName("global", WORKSPACE_ID, sidekickId),
+    ));
+    const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, sidekickId),
+    ));
+    await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK: save this research guide.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledRun(authoring))[0]).toMatchObject({ status: "completed", error_json: null });
+    const detail = () => sidekick.readDetail({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: manager() });
+    expect(await detail()).toMatchObject({ name: "Research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    await deliverParentEffects(TEST_ENV, sidekick);
+    const discovered = await service.sidekicks();
+    expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId)).toMatchObject({ agentId: created.agentId, scope: "workstream" });
+    await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
+    expect(await detail()).toMatchObject({ name: "Revised research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
+    await deliverParentEffects(TEST_ENV, sidekick);
+    expect((await service.sidekicks()).sidekicks.map((item) => item.sidekickId).sort())
+      .toEqual(discovered.sidekicks.map((item) => item.sidekickId).sort());
+    const setupCall = provider.calls.find((call) => call.toolNames.some((name) => name.endsWith("submit_draft")));
+    expect(JSON.stringify(setupCall?.messages.filter((message) => message.role === "system")))
+      .toContain(`This conversation configures Sidekick ${sidekickId}`);
+  });
+
+  it("keeps a large final response local without creating a parent message", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Detailed researcher", description: "Return the complete result",
+      message: "LARGE_BACKGROUND_RESULT: return all findings.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
+      "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
+    ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
+    ).one().n)).toBe(0);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(0);
+  });
+
+  it("replays an explicit reply after lost admission confirmation and a cold restart", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await new AgentCommunicationService(TEST_ENV, input).start({ name: "Researcher",
+      description: "Prepare findings", message: "Prepare findings locally.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const replyService = new AgentCommunicationService(TEST_ENV, childInput);
+    const replyContext = { ...context, effectIntentId: crypto.randomUUID() };
+    const reply = { messageId: childInput.agentExchange!.messageId, message: "Explicit findings.", attachmentIds: [] };
+    await runInDurableObject(roomConversation(), (instance) => {
+      const target = instance as unknown as {
+        product: { admitSystemActivation: (...args: unknown[]) => Promise<unknown> };
+      };
+      const admit = target.product.admitSystemActivation.bind(target.product);
+      target.product.admitSystemActivation = async (...args) => {
+        await admit(...args);
+        target.product.admitSystemActivation = admit;
+        throw new Error("injected_reply_confirmation_loss");
+      };
+    });
+    await expect(replyService.send(reply, replyContext)).rejects.toThrow("injected_reply_confirmation_loss");
+    await settledRun(roomConversation());
+    // Crash only the recipient. Graceful eviction waits for live requests;
+    // aborting every object also resets Miniflare's D1 and breaks isolation.
+    let beforeCrash: unknown;
+    await expect(runInDurableObject(roomConversation(), (instance, state) => {
+      beforeCrash = instance;
+      state.abort("injected_recipient_restart");
+    })).rejects.toThrow("injected_recipient_restart");
+    expect(await runInDurableObject(roomConversation(), (instance) => instance === beforeCrash)).toBe(false);
+    await replyService.send(reply, replyContext);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n)).toBe(1);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(1);
+  });
+
+  it.each(["needs_input", "failed"] as const)("settles %s with only failed runs notifying their owner once", async (status) => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    await runInDurableObject(child, async (instance) => {
+      const target = instance as unknown as {
+        deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" | "failed"; error: { code: string; message: string } }) => Promise<string | null>;
+      };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await target.deliverAgentRunResult(childInput, { status, error: {
+          code: "ambiguous_external_write", message: "An external action's outcome could not be confirmed; do not repeat it.",
+        } });
+      }
+    });
+    if (status === "failed") {
+      await settledRun(roomConversation());
+      expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+        `Agent failed due to ambiguous_external_write. Id: ${started.agentId}`,
+      ))).toBe(true);
+    }
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n)).toBe(status === "failed" ? 1 : 0);
+  });
+
+  it("keeps a recursively stopped owner stopped when its child reports failure", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const owner = await service.start({ name: "Owner", description: "Coordinate work", message: "Finish locally.", attachmentIds: [] }, context);
+    const conversation = (agentId: typeof owner.agentId) => {
+      const address = agentAddressForId(agentId);
+      return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, address.parentId, address.substreamId)));
+    };
+    const ownerConversation = conversation(owner.agentId);
+    await settledRun(ownerConversation);
+    const readInput = (stub: ReturnType<typeof conversation>) => runInDurableObject(stub, (_instance, state) =>
+      WorkstreamWorkflowInputSchema.parse(JSON.parse(state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs ORDER BY created_at DESC LIMIT 1",
+      ).one().execution_context_json)));
+    const ownerService = new AgentCommunicationService(TEST_ENV, await readInput(ownerConversation));
+    const child = await ownerService.start({ name: "Child", description: "Do the work", message: "Finish locally.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    const childConversation = conversation(child.agentId);
+    await settledRun(childConversation);
+    await service.stop(owner.agentId);
+    await new AgentCommunicationService(TEST_ENV, await readInput(childConversation)).notifyFailure("provider_unavailable");
+    expect(await ownerConversation.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(1);
+    expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
+    ).one().n)).toBe(1);
+    await service.send({ agentId: owner.agentId, message: "Continue your work.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    await settledRun(ownerConversation, 2);
+    expect(await ownerConversation.agentRuntimeInfo()).not.toMatchObject({ status: "stopped" });
+  });
+
+  it("reauthorizes Sidekick listing and replies after workstream access is revoked", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const created = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID,
+      authorUserId: "00000000-0000-7000-8000-00000000ad99", scope: "workstream", owningWorkstreamId: ROOM_ID });
+    const agentId = agentIdForAddress({ parentKind: "automation", parentId: created.automationId, substreamId: asSubstreamId("0") });
+    await service.send({ agentId, message: "EXPLICIT_REPLY: send back a question.", attachmentIds: [] }, context);
+    await settledRun(roomConversation());
+    expect((await service.list()).agents.map(agent => agent.agentId)).toContain(agentId);
+    const received = await runInDurableObject(roomConversation(), (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs LIMIT 1").one().execution_context_json,
+    )));
+    // Sidekick contact authority reads this current membership projection, not team membership.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE workspace_workstream_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
+    });
+    expect(await workspaceStub().workstreamParticipant({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID })).toEqual({ participant: false });
+    expect((await service.list()).agents.map(agent => agent.agentId)).not.toContain(agentId);
+    await expect(service.send({ messageId: received.agentExchange!.messageId, message: "Try another edit.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("Choose a Sidekick you can access");
+  });
+
+  it("fences an owner before reading descendants during recursive stop", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const attempted = { reached: false, created: false };
+    const target = service as unknown as {
+      workspace: () => Promise<{ ownedAgentDescendants: (request: { workspaceId: string; agentId: typeof started.agentId }) => Promise<{ agentIds: typeof started.agentId[] }> }>;
+    };
+    const workspace = target.workspace.bind(target);
+    target.workspace = async () => {
+      const actual = await workspace();
+      return { ownedAgentDescendants: async (request) => {
+        // Read real WorkspaceDO state, then allow a start at precisely the
+        // snapshot/stop boundary. No storage or RPC result is fabricated.
+        const snapshot = await actual.ownedAgentDescendants(request);
+        if (request.agentId === started.agentId && !attempted.reached) {
+          attempted.reached = true;
+          try {
+            await new AgentCommunicationService(TEST_ENV, childInput).start({
+              name: "Late child", description: "Register during a stop", message: "Finish your local work.", attachmentIds: [],
+            }, { ...context, effectIntentId: crypto.randomUUID() });
+            attempted.created = true;
+          } catch (error) {
+            if (!(error instanceof Error) || !("code" in error) || error.code !== "agent_origin_stopped") throw error;
+          }
+        }
+        return snapshot;
+      } };
+    };
+    await service.stop(started.agentId);
+    expect(attempted).toEqual({ reached: true, created: false });
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+  });
+
+  it.each([false, true])("keeps a child stopped when its opening admission races an owner stop (lost confirmation: %s)", async (loseConfirmation) => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const nestedService = new AgentCommunicationService(TEST_ENV, childInput);
+    const send = nestedService.send.bind(nestedService);
+    nestedService.send = async (args, deliveryContext) => {
+      await service.stop(started.agentId);
+      const result = await send(args, deliveryContext);
+      if (loseConfirmation) throw new Error("opening_confirmation_lost");
+      return result;
+    };
+    await expect(nestedService.start({ name: "Racing child", description: "Opening admission after stop",
+      message: "Finish your local work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() }))
+      .rejects.toThrow(loseConfirmation ? "opening_confirmation_lost" : "stopped");
+    const descendants = await workspaceStub().ownedAgentDescendants({ workspaceId: WORKSPACE_ID, agentId: started.agentId });
+    expect(descendants.agentIds).toHaveLength(1);
+    const nestedAddress = agentAddressForId(descendants.agentIds[0]!);
+    const nested = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, nestedAddress.substreamId),
+    ));
+    expect(await nested.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+  });
+
+  it.each(["worker", "sidekick"] as const)("keeps a %s final response local and sends only explicit replies", async (kind) => {
+    const deliveries = vi.spyOn(SlackAgentService.prototype, "deliverWorkstreamOutcome");
+    try {
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+      const service = new AgentCommunicationService(TEST_ENV, input);
+      const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+      const started = kind === "worker"
+        ? await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+          message: "Finish your local work.", attachmentIds: [] }, context)
+        : await service.createSidekick("workstream", context);
+      if (kind === "sidekick") await service.send({ agentId: started.agentId,
+        message: "Finish your local work.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, address.parentId, address.substreamId),
+      ));
+      const [run] = await settledRun(child);
+      expect(run).toMatchObject({ status: "completed", error_json: null });
+      await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
+        "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
+      ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM runs",
+      ).one().n)).toBe(0);
+      expect(deliveries.mock.calls.filter((args) => args[3].startsWith(`${run!.run_id}:`))).toEqual([]);
+      expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM (
+          SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+          UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+        )`,
+      ).one().n)).toBe(0);
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
+      await service.send({ agentId: started.agentId, message: "EXPLICIT_REPLY: send a useful result.", attachmentIds: [] },
+        { ...context, effectIntentId: crypto.randomUUID() });
+      expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
+      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    } finally {
+      deliveries.mockRestore();
+    }
+  });
+
+  it("forwards an existing attachment into the worker's canonical message and reply", async () => {
+    const resourceId = crypto.randomUUID();
+    const imageId = crypto.randomUUID();
+    const extraIds = Array.from({ length: 8 }, () => crypto.randomUUID());
+    const attachmentIds = [resourceId, imageId, ...extraIds];
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const imageRef = `global/${WORKSPACE_ID}/agent-test/${imageId}.png`;
+    await env.PAYLOADS.put(imageRef, Uint8Array.from(atob(png), (character) => character.charCodeAt(0)));
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'avalon_upload', 'research.txt', 'text/plain',
+          NULL, '{"size":12}', ?, 'attached', ?, ?)`,
+        resourceId, WORKSPACE_ID, AUTHOR_ID, NOW, NOW);
+      for (const extraId of extraIds) {
+        state.storage.sql.exec(`INSERT INTO resources
+          (id, workspace_id, resource_type, provider, title, mime_type, metadata_json,
+           uploaded_by_user_id, attachment_status, created_at, updated_at)
+          VALUES (?, ?, 'document', 'avalon_upload', 'finding.txt', 'text/plain',
+            '{"size":12}', ?, 'attached', ?, ?)`, extraId, WORKSPACE_ID, AUTHOR_ID, NOW, NOW);
+      }
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at,
+         model_content_ref, model_mime_type, model_content_status)
+        VALUES (?, ?, 'document', 'avalon_upload', 'diagram.png', 'image/png', ?,
+          '{"size":68}', ?, 'attached', ?, ?, ?, 'image/png', 'ready')`,
+        imageId, WORKSPACE_ID, imageRef, AUTHOR_ID, NOW, NOW, imageRef);
+    });
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: imageId, attachedByUserId: AUTHOR_ID });
+    for (const extraId of extraIds) {
+      await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+        resourceId: extraId, attachedByUserId: AUTHOR_ID });
+    }
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const beforeInvalidOpening = await service.list();
+    await expect(service.start({ name: "Invalid researcher", description: "Unavailable context",
+      message: "Read this", attachmentIds: [crypto.randomUUID()] }, { ...context, effectIntentId: crypto.randomUUID() }))
+      .rejects.toThrow("Attach the resource");
+    expect(await service.list()).toEqual(beforeInvalidOpening);
+    const started = await service.start({ name: "Attachment researcher", description: "Read the supplied resource",
+      message: "Read the attached research.", attachmentIds: [resourceId, ...attachmentIds] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec<{ resource_id: string }>(
+        "SELECT resource_id FROM participant_transcript_attachments ORDER BY position",
+      ).toArray()).toEqual(attachmentIds.map((resource_id) => ({ resource_id })));
+      return WorkstreamWorkflowInputSchema.parse(JSON.parse(state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id,
+      ).one().execution_context_json));
+    });
+    const reply = await new AgentCommunicationService(TEST_ENV, childInput).send({
+      messageId: childInput.agentExchange!.messageId, message: "Here is the research.", attachmentIds: [...attachmentIds, imageId],
+    }, { ...context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => runInDurableObject(roomConversation(), (_instance, state) =>
+      state.storage.sql.exec<{ resource_id: string }>(
+        "SELECT resource_id FROM participant_transcript_attachments WHERE turn_id = ? ORDER BY position", reply.messageId,
+      ).toArray()), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual(attachmentIds.map((resource_id) => ({ resource_id })));
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(resourceId))).toBe(true);
+    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
+      && JSON.stringify(message.content).includes("Read the attached research.")
+      && JSON.stringify(message.content).includes("ATTACHMENT MANIFEST")
+      && JSON.stringify(message.content).includes("research.txt")))).toBe(true);
+    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
+      && JSON.stringify(message.content).includes(`data:image/png;base64,${png}`)))).toBe(true);
+    const empty = await service.start({ name: "Empty researcher", description: "Wait for context",
+      message: "Wait for the research.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+    const emptyAddress = agentAddressForId(empty.agentId);
+    const emptyChild = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, emptyAddress.substreamId),
+    ));
+    await settledRun(emptyChild);
+    await expect(service.send({ agentId: empty.agentId, message: "Read this too", attachmentIds: [resourceId, crypto.randomUUID()] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("Attach the resource");
+    await runInDurableObject(emptyChild, (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM workstream_resource_links").one().n).toBe(0);
+    });
+    // Archive after the sender's authority check but before recipient admission.
+    // The real recipient refuses the input and must retain no attachment link.
+    const boundary = service as unknown as { validateAttachments(ids: string[]): Promise<string[]> };
+    const validate = boundary.validateAttachments.bind(service);
+    boundary.validateAttachments = async (ids) => {
+      const validated = await validate(ids);
+      const archived = await post(roomConversation(), "/internal/product", {
+        operation: "update", auth: AUTH, input: { archived: true },
+      });
+      expect(archived.status).toBe(200);
+      await deliverEffectsToWorkspace(TEST_ENV, roomConversation());
+      return validated;
+    };
+    await expect(service.send({ agentId: empty.agentId, message: "Read after archive", attachmentIds: [resourceId] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("archived");
+    await runInDurableObject(emptyChild, (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM workstream_resource_links").one().n).toBe(0);
+    });
+  });
+
+  it("lets Bind settle an owned stop after the in-flight model step returns", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    try {
+      const started = await service.start({ name: "Researcher", description: "Finish one model step",
+        message: "HOLD_BACKGROUND: compare the alternatives", attachmentIds: [] }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+      });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")),
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      await service.stop(started.agentId);
+      const active = await runInDurableObject(child, (_instance, state) => state.storage.sql.exec<RunRow>(
+        "SELECT run_id, status, error_json, terminalized_at FROM runs ORDER BY created_at, run_id",
+      ).toArray());
+      expect(active).toMatchObject([{ status: "running", terminalized_at: null }]);
+      release();
+      expect(await settledRun(child)).toMatchObject([{ status: "cancelled" }]);
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+      expect(provider.calls.filter((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND"))).toHaveLength(1);
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
+  });
+
+  it("archives active owned workers through Bind while leaving an independent Sidekick running", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    try {
+      const independent = await service.createSidekick("workspace", context);
+      await service.send({ agentId: independent.agentId, message: "HOLD_BACKGROUND: independent setup", attachmentIds: [] },
+        { ...context, effectIntentId: crypto.randomUUID() });
+      const sidekick = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, independent.sidekickId),
+      ));
+      const started = await service.start({ name: "Owned researcher", description: "Research until archived",
+        message: "HOLD_BACKGROUND: owned research", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      await expect.poll(() => provider.calls.filter((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")).length,
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
+      const archived = await post(roomConversation(), "/internal/product", { operation: "update", auth: AUTH, input: { archived: true } });
+      expect(archived.status).toBe(200);
+      await deliverEffectsToWorkspace(TEST_ENV, roomConversation());
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+      expect(await sidekick.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      expect(await runInDurableObject(child, (_instance, state) => state.storage.sql.exec<RunRow>(
+        "SELECT run_id, status, error_json, terminalized_at FROM runs",
+      ).toArray())).toMatchObject([{ status: "running", terminalized_at: null }]);
+      release();
+      const [archivedRun] = await settledRun(child);
+      expect(archivedRun?.status, JSON.stringify(archivedRun)).toBe("cancelled");
+      const [sidekickRun] = await settledRun(sidekick);
+      expect(sidekickRun).toMatchObject({ status: "completed" });
+      await expect.poll(() => runInDurableObject(sidekick, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
+        "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", sidekickRun!.run_id,
+      ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      await expect(service.send({ agentId: started.agentId, message: "Continue", attachmentIds: [] },
+        { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("archived");
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
+  });
+
+  it("answers a participant while a worker is blocked and publishes only its running count", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    let socket: WebSocket | undefined;
+    try {
+      const started = await service.start({ name: "Slow researcher", description: "Research in the background",
+        message: "HOLD_BACKGROUND: research the alternatives", attachmentIds: [] }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+      });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")),
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      const foreground = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "Rally, are you still available?", clientMessageId: crypto.randomUUID(),
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(foreground.status).toBe(200);
+      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      await deliverChildEffects(TEST_ENV, roomConversation());
+      await deliverChildEffects(TEST_ENV, child);
+      const response = await roomParent().fetch("https://workstream.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": ROOM_ID,
+        "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      } });
+      expect(response.status).toBe(101);
+      socket = response.webSocket!;
+      socket.accept();
+      const metadata = new Promise<MessageEvent>((resolve) => socket!.addEventListener("message", resolve, { once: true }));
+      socket.send(JSON.stringify({ type: "subscribe" }));
+      const frame = JSON.parse(String((await metadata).data));
+      expect(frame.metadata.backgroundAgentCount).toBe(1);
+      expect(frame.metadata.privateChildren).toEqual([]);
+      const heldForeground = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "HOLD_BACKGROUND: foreground work to stop", clientMessageId: crypto.randomUUID(),
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(heldForeground.status).toBe(200);
+      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("foreground work to stop")),
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      await runInDurableObject(roomConversation(), async (instance) => {
+        const target = instance as unknown as {
+          product: { stopForAdmittedSocket: (auth: AuthContext, operationId: string) => Promise<void> };
+        };
+        await target.product.stopForAdmittedSocket(AUTH, crypto.randomUUID());
+      });
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      release();
+      expect((await settledRun(roomConversation(), 2))[1]).toMatchObject({ status: "cancelled" });
+      expect((await settledRun(child))[0]).toMatchObject({ status: "completed" });
+      let latestCount = 1;
+      socket.addEventListener("message", (event) => {
+        const update = JSON.parse(String(event.data));
+        if (update.type === "workstream_metadata") latestCount = update.metadata.backgroundAgentCount;
+      });
+      await deliverChildEffects(TEST_ENV, child);
+      await expect.poll(() => latestCount, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
+    } finally {
+      release();
+      heldBackgroundModel = null;
+      socket?.close();
+    }
+  });
+
+  it("starts a hidden independent agent idempotently and lists its name and description", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: ROOM_ID,
+      substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`, harnessRunId: crypto.randomUUID(),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
+    });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = {
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal,
+    };
+    const args = { name: "Researcher", description: "Compare the deployment approaches", message: "Compare static and dynamic deployment.", attachmentIds: [] };
+    const started = await service.start(args, context);
+    expect(await service.start(args, context)).toEqual(started);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(args.message))).toBe(true);
+    expect(await service.list()).toMatchObject({ agents: [{ agentId: started.agentId, name: args.name, description: args.description }] });
+    expect(await child.agentRuntimeInfo()).toMatchObject({ background: true, executionPrincipal: input.executionPrincipal });
+    expect(await roomParent().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: address.substreamId, userId: AUTHOR_ID })).toMatchObject({ authorized: false });
+    await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'").one().n).toBe(1);
+    });
+    await service.stop(started.agentId);
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    expect(await service.start(args, context)).toEqual(started);
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    // Lose the confirmation after durable admission, before its caller can
+    // perform another write. A retry must still resume the stopped worker.
+    await runInDurableObject(child, (instance) => {
+      const target = instance as unknown as {
+        product: { admitSystemActivation: (...args: unknown[]) => Promise<unknown> };
+      };
+      const admit = target.product.admitSystemActivation.bind(target.product);
+      target.product.admitSystemActivation = async (...args) => {
+        const result = await admit(...args);
+        target.product.admitSystemActivation = admit;
+        throw new Error(`injected_admission_confirmation_loss:${Boolean(result)}`);
+      };
+    });
+    const continuation = { agentId: started.agentId, message: "Now compare their pricing.", attachmentIds: [] };
+    const continuationContext = { ...context, toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID() };
+    await expect(service.send(continuation, continuationContext)).rejects.toThrow("injected_admission_confirmation_loss");
+    await service.send(continuation, continuationContext);
+    await settledRun(child, 2);
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const answer = "Static deployments cost less at this workload.";
+    await new AgentCommunicationService(TEST_ENV, childInput).send({ messageId: childInput.agentExchange!.messageId,
+      message: answer, attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes(answer)),
+      { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+    const sidekicks = await service.sidekicks();
+    expect(sidekicks.sidekicks[0]).toMatchObject({ sidekickId: AUTOMATION_ID, scope: "workstream", owningWorkstreamId: ROOM_ID });
+    await service.send({ agentId: sidekicks.sidekicks[0]!.agentId, message: "Explain your current configuration.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID)));
+    await settledRun(authoring);
+    expect((await service.list()).agents.some((agent) => agent.agentId === sidekicks.sidekicks[0]!.agentId)).toBe(true);
+    expect((await workspaceStub().ownedAgentDescendants({ workspaceId: WORKSPACE_ID, agentId: service.senderId })).agentIds).not.toContain(sidekicks.sidekicks[0]!.agentId);
+    const nested = await new AgentCommunicationService(TEST_ENV, childInput).start({ name: "Nested researcher",
+      description: "Check one detail", message: "Check the cost assumption.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    const nestedAddress = agentAddressForId(nested.agentId);
+    const grandchild = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, nestedAddress.substreamId),
+    ));
+    await settledRun(grandchild);
+    await service.stop(started.agentId);
+    expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    await service.send({ agentId: started.agentId, message: "Continue only your own summary.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Continue only your own summary.")),
+      { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+    expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    expect(await authoring.agentRuntimeInfo()).toMatchObject({ background: false });
+    const archived = await post(roomConversation(), "/internal/product", { operation: "update", auth: AUTH, input: { archived: true } });
+    expect(archived.status).toBe(200);
+    await deliverEffectsToWorkspace(TEST_ENV, roomConversation());
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    await expect(service.send({ agentId: started.agentId, message: "Continue", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("archived");
+
+
+  });
+
+  it("admits an ordinary agent exchange once and wakes a model with its sender and reply reference", async () => {
+    const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+    const messageId = crypto.randomUUID();
+    const request = {
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, messageId,
+      clientMessageId: `agent-message:${messageId}`, recipientAgentId,
+      text: "Research is ready; compare the two approaches.",
+      agentExchange: { teamId: recipientAgentId, senderAgentId, messageId },
+      attachmentIds: [], executionPrincipal: { type: "user" as const, userId: AUTHOR_ID },
+      origin: "agent_message" as const, now: Date.now(),
+    };
+    expect(await roomConversation().admitAgentMessage(request)).toEqual({ accepted: true, messageId });
+    expect(await roomConversation().admitAgentMessage(request)).toEqual({ accepted: true, messageId });
+    const [run] = await settledRun(roomConversation());
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    const asked = provider.calls.find((call) => JSON.stringify(call.messages).includes(request.text));
+    expect(asked).toBeDefined();
+    expect(JSON.stringify(asked!.messages)).toContain(senderAgentId);
+    expect(JSON.stringify(asked!.messages)).toContain(messageId);
+    await runInDurableObject(roomConversation(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id = ?", request.clientMessageId,
+      ).one().n).toBe(1);
+      const context = state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id,
+      ).one();
+      expect(JSON.parse(context.execution_context_json).agentExchange).toEqual(request.agentExchange);
+    });
+  });
+
+  it("refuses an agent message when the parent is archived even before the child's projection catches up", async () => {
+    const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+    await runInDurableObject(roomParent(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream_metadata SET archived_at = ?", Date.now());
+    });
+    const messageId = crypto.randomUUID();
+    expect(await roomConversation().admitAgentMessage({
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, messageId, clientMessageId: `agent-message:${messageId}`,
+      recipientAgentId, text: "Continue the work", agentExchange: { teamId: recipientAgentId, senderAgentId, messageId },
+      attachmentIds: [], executionPrincipal: { type: "user", userId: AUTHOR_ID }, origin: "agent_message", now: Date.now(),
+    })).toEqual({ accepted: false, code: "workstream_archived" });
+    await runInDurableObject(roomConversation(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM pending_loop_input_mailbox").one().n).toBe(0);
+    });
+  });
+
   it("posts the run's result into the owning room's main conversation, once, and the room runs on it", async () => {
     const started = await automationStub().runNow({ ...addressed(), actor: manager(), idempotencyKey: "post-result-0001" });
 

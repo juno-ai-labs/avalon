@@ -584,6 +584,23 @@ describe('canonical transcript and transient overlay composition', () => {
 });
 
 describe('ordered turn rendering', () => {
+  it('carries imported-by provenance from canonical text into the message identity', () => {
+    const provenance = { kind: 'imported_session', source: { provider: 'claude', url: null }, importedByUserId: '00000000-0000-4000-8000-000000000001', importedByName: 'Adam' };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'imported', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-09-15T00:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{ purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{ transcriptSequence: 1, turnId: 'imported-answer', entryKind: 'conversation', actor: 'assistant',
+          authorUserId: null, authorSnapshot: null, attentionOrdinal: 1, createdAtUtc: '2026-09-15T00:00:00.000Z', revision: 1,
+          blocks: [{ type: 'text', blockId: 'imported-answer:text:0', blockIndex: 0, text: 'Original answer', streaming: false, structuredContent: provenance }], activityId: null }],
+        activities: [], pluginRuns: [],
+      }], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    };
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one', [])[0]).toMatchObject({
+      authorType: 'agent', text: 'Original answer', importProvenance: provenance,
+    });
+  });
+
   it('keeps an optimistic opening turn until its canonical ordered turn exists', () => {
     const routed = createTextMessage({
       ...base,

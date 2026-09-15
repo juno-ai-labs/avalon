@@ -188,6 +188,12 @@ importers:
       '@types/upng-js':
         specifier: 2.1.5
         version: 2.1.5
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -423,8 +429,8 @@ importers:
   packages/agent-harness:
     dependencies:
       '@juno-ai/bind':
-        specifier: 15.0.0
-        version: 15.0.0(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)
+        specifier: 16.0.0
+        version: 16.0.0(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)
       '@openrouter/sdk':
         specifier: 1.2.54
         version: 1.2.54
@@ -1576,8 +1582,8 @@ packages:
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
 
-  '@juno-ai/bind@15.0.0':
-    resolution: {integrity: sha512-06fnjyOYH/KjXDtHK4T517FnPd/gmnGiwmxeBvIi3uAowX+pvl4RUIFI0iOGMum9ispKDyQrsJyVx6JC8WEwZA==}
+  '@juno-ai/bind@16.0.0':
+    resolution: {integrity: sha512-aDpZGGr/09pWrtmAn4Sw8n5ViMuKkjjMU6N3kbvhgewUoDonCyIjUa4BTB52NJHkCQovsfrustpVjt8YEeeSmg==}
     peerDependencies:
       openai: ^6.0.0
       zod: ^4.0.0
@@ -7368,7 +7374,7 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@juno-ai/bind@15.0.0(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)':
+  '@juno-ai/bind@16.0.0(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.21.0)(zod@4.5.4))(zod@4.5.4)':
     dependencies:
       zod: 4.5.4
     optionalDependencies:

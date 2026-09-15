@@ -20,6 +20,14 @@ acknowledges the save, and conversational completion requires a persisted final
 assistant turn. The generic `completedByTool` harness outcome does not exempt a
 SubstreamAgent run from that terminalization requirement.
 
+
+`runRallyEvaluation` uses the production `runHarnessWithBind` assembly from an
+initial prepared scenario or a settled checkpoint. Bind owns checkpoint advancement
+and forks; Rally captures its flat projection and plugin/skill activation hints.
+The eval host restores configuration and isolated tool state, and allocates a fresh
+loop identity per fork. Production without checkpoint capture keeps the existing
+ledger path. See [prepared conversations and session import](session-import.md).
+
 ## Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction
@@ -277,6 +285,14 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 
 ### Connection plugins and authority narrowing
 
+Tool definitions may carry optional `longRunning` metadata. Bind registration
+renders a light advisory sentence in the tool description, preserving it in
+`load_plugin` results and provider tool definitions. False or omission adds
+nothing. This does not change execution policy or require delegation; image
+generation and editing are the first producers. The parameterized harness
+test in `index.test.ts` covers deferred activation and direct execution for
+true, false, and omitted hints.
+
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
@@ -309,8 +325,8 @@ code-authored tool array. It still appears through the same static trusted
 catalog entry. After `load_plugin` reauthorizes the connection, the harness
 single-flights that callback, replaces the empty deferred Bind plugin with the
 returned live surface, and only then persists and exposes the activation. The
-result is cached for that run in both Bind's registry and the host plugin object
-used to narrow inline-child authority; a later run discovers again. Restored or
+result is cached for that run in both Bind's registry and the host plugin object;
+a later run discovers again. Restored or
 preloaded dynamic hints materialize and hash this surface before their initial
 activation receipt is written. A discovery failure
 returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
@@ -735,14 +751,21 @@ later either names its tools with a recognized verb or declares its own prose.
 
 ### Child agents
 
-Inline child Bind execution inside a parent `SubstreamAgent` is disabled. It
-would create a second logical loop inside the parent's authority while hiding it
-behind the parent's identity, which breaks the one-loop-per-substream invariant.
-A future child must receive its own stable child substream and `SubstreamAgent`;
-the parent loop ID plus tool-call ID may address that distinct child, but may
-never identify a loop executing inside the parent object. Until that durable
-routing exists, `workstream_run_subagent` is absent from production tool
-surfaces.
+Background agents have their own stable child substream and `SubstreamAgent`.
+The `rally_agents` plugin starts them through durable admission and returns
+without waiting for their execution. Each uses the same Bind harness, inherited
+model and execution principal, explicit opening context, and independent tool
+discovery. Normal authorized writes and recursive delegation are available.
+The obsolete inline child integration, runtime/storage entry points, and
+`workstream_run_subagent` surface are removed. Historical schema fields remain
+for existing data; new background work uses normal independent run recovery. [Agent communication](agent-communication.md) owns the tools,
+teams, reply references, Sidekick discovery and separate stop ownership.
+
+Bind remains the core owner of each feed's loop. Independent substreams provide
+responsiveness while preserving Bind's ordered input acceptance, tool receipts,
+suspension, checkpoint and completion protections. Rally routes and persists
+messages through existing harness ports. Missing loop capabilities belong in
+the Bind runtime library, not a parallel loop or a runtime patch in Rally.
 
 ### Scoped durable memory
 
@@ -1052,7 +1075,7 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to complete durable transcript replay. The first request must fit the selected model because automatic compaction depends on usage from a completed turn. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
@@ -1211,6 +1234,39 @@ release pending notification delivery without inventing another timeout. The
 conversation settlement tombstone rejects an activation that arrives after its clear.
 
 ## Changelog
+
+### 2026-09-15 — Evaluate the production runtime at settled Bind boundaries
+
+Prepared scenarios and checkpoint forks now run through the same Rally runtime
+assembly as production. Bind's boundary/advance primitives capture settled state;
+Rally stores the associated projection and activation hints. Forks rebase the Rally
+loop identity so subsequent turn IDs cannot collide. A host restores executable
+configuration and isolated resource/tool state. Reexporting checkpoint functions
+alone left evals to reconstruct a different agent; a second loop was rejected.
+Canonical bootstrap no longer rejects complete history by an unrelated message/byte
+ceiling before Bind can apply its context preparation policy.
+### 2026-09-14 — Independent background conversations keep Rally available
+
+Tool definitions can flag long-running work without making that flag a dispatch
+rule. Image generation and editing supply the initial hints. The common Bind
+registration path carries the hint into loading results and provider-visible
+descriptions, so plugins do not each invent delegation prompts. This supports
+the uninterrupted-workstreams design while leaving execution, authorization,
+and model judgment unchanged; a worker must not be forced to delegate again.
+
+Background agents now use ordinary independent substreams, with team messaging
+and separate ownership for stops. The obsolete inline child integration is
+removed because it tied delegation to the parent's execution and imposed a
+different read-only, non-recursive harness. Sidekick drafting is restricted to
+its own authoring conversation; other agents contact it through messages.
+Responsiveness must preserve Bind's ownership of every feed's loop and its
+protocol, tool and completion protections; missing capabilities belong in Bind.
+Agent-to-agent delivery is explicit through messaging tools; ordinary assistant
+responses remain local, so background work needs no special completion tool.
+Lease renewal continues during settlement of an already-started step after
+archive. New model calls and tool calls retain their authority preflights.
+Reauthorizing in the stream liveness callback had instead classified a durable
+archive stop as a persistence failure before Bind could settle it.
 
 ### 2026-09-14 — Explain a slow first response before timing it out
 

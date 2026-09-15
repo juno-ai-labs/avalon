@@ -138,7 +138,7 @@ describe("the automations plugin", () => {
 
     await expect(toolNamed(plugin.tools, "sidekicks_list").execute({}, toolContext))
       .resolves.toMatchObject({ output: listed });
-    expect(plugin.systemMessage).toContain("call sidekicks_list");
+    expect(plugin.systemMessage).toContain("start from its current definition");
     expect(plugin.systemMessage).toContain("with its sidekickId");
   });
 
@@ -185,18 +185,20 @@ describe("the automations plugin", () => {
     expect(drafts.every((draft) => !("sidekickId" in (draft as object)))).toBe(true);
   });
 
-  it("tells the agent to ask for a scope it cannot change afterwards", () => {
+  it("preserves the existing Sidekick scope while explaining its authority", () => {
     const { systemMessage } = createAutomationsPlugin(host());
 
     // The three scopes, and what each one means for who can manage the result.
     expect(systemMessage).toContain("personal");
     expect(systemMessage).toContain("workspace");
     expect(systemMessage).toContain("workstream");
-    expect(systemMessage).toContain("cannot be changed afterwards");
+    expect(systemMessage).toContain("Published scope cannot change");
+    expect(systemMessage).toContain("Use the scope already selected");
+    expect(systemMessage).toContain("Do not ask participants to choose it again");
     // The room an automation belongs to is the one it was written in, so an
     // agent offering to deliver somewhere else is offering something that does
     // not exist.
-    expect(systemMessage).toContain("never deliver into a different work stream");
+    expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
   });
 
   it("publishes ready submissions without a separate activation tool", () => {
