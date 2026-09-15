@@ -291,13 +291,19 @@ export interface GranolaWebhookEndpoint {
  * The note events Granola's public API defines — and the whole list.
  *
  * A regenerated summary is delivered as `note.edited`; there is no
- * `note.regenerated`. Rally sent that fourth name for five weeks. The request
- * schema does not admit it, and the one workspace that registered in that time
- * ended with no endpoint, no signing secret, and nothing naming why. The
- * registration request, the installation facet's declared events, and the
- * delivery schema all read this one list so they cannot disagree again.
+ * `note.regenerated`. Rally sent that fourth name from the day the connector
+ * was added, 2026-08-07, until this change. The request schema does not admit
+ * it, and the one workspace that registered in that time ended with no
+ * endpoint, no signing secret, and nothing naming why. The registration
+ * request, the installation facet's declared events, and the delivery's
+ * admission in `normalize` all read this one list so they cannot disagree
+ * again.
  */
 const GRANOLA_WEBHOOK_EVENTS = ["note.access_granted", "note.edited", "note.generated"] as const;
+type GranolaWebhookEvent = (typeof GRANOLA_WEBHOOK_EVENTS)[number];
+function isGranolaWebhookEvent(value: string): value is GranolaWebhookEvent {
+  return (GRANOLA_WEBHOOK_EVENTS as readonly string[]).includes(value);
+}
 
 const GranolaWebhookEndpointSchema = z.looseObject({
   id: z.string().regex(/^whe_[A-Za-z0-9]{14}$/u),
@@ -305,7 +311,12 @@ const GranolaWebhookEndpointSchema = z.looseObject({
 });
 const GranolaWebhookEventSchema = z.looseObject({
   event_id: z.string().uuid(),
-  event_type: z.enum(GRANOLA_WEBHOOK_EVENTS),
+  // Any name, deliberately: the signature check is a signature check, and a
+  // name outside `GRANOLA_WEBHOOK_EVENTS` is refused in `normalize`, where the
+  // host can answer 400 naming it. As an enum here it was a `ZodError` the
+  // ingress did not catch — a 500, which Standard Webhooks retries for four
+  // days before Granola disables the endpoint.
+  event_type: z.string().min(1).max(100),
   note_id: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
   occurred_at: z.string().datetime({ offset: true }),
   data: z.looseObject({ changed_fields: z.array(z.string()).max(20).optional() }).optional(),
@@ -598,6 +609,11 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           throw new ConnectorError("unauthorized", "Granola activity webhooks require a workspace connection");
         }
         const verified = event.event as VerifiedGranolaWebhook;
+        // Verified, and still refused: an event this connector does not model.
+        // `null` becomes the host's `unsupported_webhook_event`, naming the
+        // event in the response and the log, as Fireflies' ingress answers.
+        // Rally's list of Granola's events has been wrong once already.
+        if (!isGranolaWebhookEvent(verified.event_type)) return null;
         const receivedAt = new Date().toISOString();
         const title = {
           "note.access_granted": "Granola note access granted",

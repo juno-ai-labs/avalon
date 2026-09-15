@@ -5,7 +5,7 @@ import { previewConnectorMaintenance, applyConnectorMaintenance, runConnectorMai
 import AshbyIngressWorker from '../src/ashby-ingress-worker';
 import { AshbyRoutingBridge } from '../src/ashby-routing-bridge';
 import { AshbyRegionalBridge } from '../src/ashby-regional-bridge';
-import { seedOpenWorkstreamAuthority } from './helpers/substream-fixture';
+import { seedOpenWorkstreamAuthority, seedWorkspaceControlPlane } from './helpers/substream-fixture';
 import { ConnectionService } from '../src/services/connection-service';
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
 import { WorkspaceConnectorEventQueueMessageSchema } from '../src/durable-objects/workspace-connector-event-protocol';
@@ -277,6 +277,63 @@ describe('connector installation authority', () => {
     expect(creates).toBe(2);
     expect(retried?.state).toBe('current');
     expect(retried?.registrations[0]).toMatchObject({ providerId: remote.id, state: 'current', error: null });
+  });
+
+  it('keeps the inspection diagnosis when the key is refused before any create is dispatched', async () => {
+    const { stub, input, workspaceId, connectionId } = await fixture();
+    const key = 'installation-test-envelope-key';
+    const events = ['note.access_granted', 'note.edited', 'note.generated'];
+    input.installation.provider = 'granola'; input.installation.selectedEvents = events;
+    input.installation.registrations[0]!.events = events;
+    input.installation.registrations[0]!.destination = `https://api.example.test/ingest/granola/${connectionId}`;
+    input.capability = 'granola.workspace.read';
+    input.credentials = { ...await encryptString(JSON.stringify({ apiKey: `grn_${'a'.repeat(32)}` }), key, connectionId), keyVersion: 1 };
+    await stub.createConnectorInstallation(input);
+    const provider = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      // The validation read that precedes the create, refused: a key without
+      // access. That is a failed inspection, not a refused registration.
+      if (init?.method === 'POST') throw new Error('No create may be dispatched with a refused key');
+      return Response.json({ error: { message: 'Invalid API key' } }, { status: 401 });
+    });
+    vi.stubGlobal('fetch', provider);
+    const testEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: key, CONNECTOR_CREDENTIALS_KEY_VERSION: '1' };
+    const refused = await runConnectorInstallation(testEnv, workspaceId, connectionId, new AbortController().signal);
+    expect(refused?.state).toBe('failed');
+    expect(refused?.registrations[0]).toMatchObject({ state: 'failed', providerId: null, error: 'Provider inspection failed. Check credentials and test again.' });
+    expect(provider.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')).toBe(false);
+  });
+
+  it('reports a Granola registration Test just retried against the refreshed envelope, not the one read before the repair', async () => {
+    const { stub, input, workspaceId, connectionId } = await fixture();
+    const key = 'installation-test-envelope-key';
+    const events = ['note.access_granted', 'note.edited', 'note.generated'];
+    input.installation.provider = 'granola'; input.installation.selectedEvents = events; input.installation.state = 'failed';
+    input.installation.registrations[0] = { ...input.installation.registrations[0]!, events, state: 'failed',
+      destination: `https://api.example.test/ingest/granola/${connectionId}`,
+      error: 'The provider refused the webhook registration (HTTP 400: events must only contain note.access_granted, note.edited, note.generated). Fix the cause, then test again.' };
+    input.capability = 'granola.workspace.read';
+    input.credentials = { ...await encryptString(JSON.stringify({ apiKey: `grn_${'a'.repeat(32)}` }), key, connectionId), keyVersion: 1 };
+    await stub.createConnectorInstallation(input);
+    const admin = asUserId(crypto.randomUUID()); const sessionId = crypto.randomUUID();
+    await seedWorkspaceControlPlane(env.DB, { workspaceId, userId: admin, sessionId });
+    await env.DB.prepare("UPDATE workspace_members SET role = 'admin' WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, admin).run();
+    const remote = { id: 'whe_1234567890abcd', url: input.installation.registrations[0]!.destination, events, enabled: true };
+    let created = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(url instanceof Request ? url.url : url).pathname;
+      if (init?.method === 'POST') { created = true; return Response.json({ ...remote, signing_secret: 'whsec_dGVzdA==' }, { status: 201 }); }
+      if (path === '/v1/notes') return Response.json({ notes: [] });
+      return Response.json({ webhook_endpoints: created ? [remote] : [] });
+    }));
+    const testEnv = { ...env, CONNECTOR_CREDENTIALS_KEY: key, CONNECTOR_CREDENTIALS_KEY_VERSION: '1' };
+    const service = new ConnectionService(testEnv, { workspaceId, userId: admin, role: 'admin', sessionId, region: env.AVALON_REGION });
+    const result = await service.test(connectionId);
+    // The retried create settled the endpoint id and secret into the envelope
+    // during the repair. The health check has to read that envelope; against
+    // the one read before the repair it reported the endpoint missing beside
+    // a repair that had just registered it.
+    expect(result).toMatchObject({ ok: true, message: 'Granola authorization is healthy. Approved webhook configuration is verified' });
+    expect((await stub.connectorInstallation({ workspaceId, connectionId }))?.state).toBe('current');
   });
 
   it('creates Granola through the shared runner and stores its returned secret only in the encrypted envelope', async () => {

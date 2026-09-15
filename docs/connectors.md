@@ -628,7 +628,7 @@ catalog and creation is refused, while existing rows are retained and inert.
 
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Rally owner.
 
-A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events — the three events Granola's API defines; a regenerated summary arrives as `note.edited`. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting immediately disables local access and queues removal of the exact recorded remote endpoint. Pending cleanup retains separate encrypted removal authority; repeated disconnect does not erase it. Test and disconnect adopt an existing connection without changing its subscription, destination or signing secret. A workspace connection whose webhook endpoint was never registered, no longer exists, or is disabled reports healthy with a warning naming the condition, because its read tools work; delivery is restored only through Test and the installation lifecycle, never by the health check.
+A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events — the three events Granola's API defines; a regenerated summary arrives as `note.edited`, and a verified delivery naming any other event is refused with 400 `unsupported_webhook_event`. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting immediately disables local access and queues removal of the exact recorded remote endpoint. Pending cleanup retains separate encrypted removal authority; repeated disconnect does not erase it. Test and disconnect adopt an existing connection without changing its subscription, destination or signing secret. A workspace connection whose webhook endpoint was never registered, no longer exists, or is disabled reports healthy with a warning naming the condition, because its read tools work; delivery is restored only through Test and the installation lifecycle, never by the health check.
 
 The workspace key and webhook signing secret are encrypted in the owning
 WorkspaceDO connector row with AES-GCM and connection-ID additional
@@ -1118,13 +1118,18 @@ fixture table instead, where it is reviewable.
 ### 2026-09-15 — Granola registers the three events its API defines
 
 **What changed:** The webhook registration request, the installation facet's
-declared events, and the delivery schema read one list —
+declared events, and the delivery's admission read one list —
 `note.access_granted`, `note.edited`, `note.generated` — and `note.regenerated`
 is gone from all of them, from the setup and adoption paths, and from the
-desktop labels. A workspace connection whose webhook endpoint was never
-registered or no longer exists now reports healthy with a warning and a reason
-code, the way a disabled endpoint already did, instead of failing the health
-check. Test reports the lifecycle repair's reason when it could not repair.
+desktop labels. A verified delivery naming any other event is refused with 400
+`unsupported_webhook_event`, as Fireflies' is, rather than failing schema
+validation with a 500 that Standard Webhooks retries for four days. A workspace
+connection whose webhook endpoint was never registered or no longer exists now
+reports healthy with a warning and a reason code, the way a disabled endpoint
+already did, instead of failing the health check. Test runs a managed repair
+before the credential door and reloads the envelope after it, so a retried
+create is checked against the endpoint it just registered, and it reports the
+repair's reason when it could not repair.
 
 **Why:** Granola's API defines three note events; a regenerated summary is
 delivered as `note.edited`. Rally sent a fourth name, and the first workspace to
@@ -1135,8 +1140,8 @@ on the connection was told to retry after the authorization service recovered �
 for a connection whose key worked and whose read tools worked.
 
 **Considered and rejected:** Keeping the fourth event in the delivery schema in
-case Granola adds one: a delivery Rally has never seen should fail validation
-where it arrives, not be normalized under a title nobody reviewed. Also
+case Granola adds one: a delivery Rally has never seen is refused by name where
+it arrives, not normalized under a title nobody reviewed. Also
 rejected: leaving the missing endpoint a health failure and teaching the host a
 fourth verdict for it. The disabled-endpoint branch had already settled the
 question — delivery state is a warning, not a verdict about authority.

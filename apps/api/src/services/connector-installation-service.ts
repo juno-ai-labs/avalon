@@ -146,10 +146,13 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
       // registered, so there is nothing to inspect and Test may retry it. Only
       // an outcome the provider did not answer — a timeout, a 5xx, a response
       // that could not be read — is unknown, because a registration may exist
-      // that a blind retry would duplicate.
-      const refusal = registration.action === "create" ? providerRefusal(error) : null;
+      // that a blind retry would duplicate. `writeDispatched` is set on the
+      // line before `management.create`, so requiring it keeps the validation
+      // read that precedes the create out of this: a key refused there is a
+      // failed inspection, not a refused registration, and says so.
+      const refusal = registration.action === "create" && writeDispatched ? providerRefusal(error) : null;
       result = { ...result, ...(registration.action === "rotate" && writeDispatched ? { rotation: "unknown" as const } : {}),
-        state: writeDispatched && !refusal ? "unknown" : "failed",
+        state: refusal || !writeDispatched ? "failed" : "unknown",
         error: refusal ?? (!writeDispatched ? "Provider inspection failed. Check credentials and test again." : "The provider operation may have completed. Inspect the exact recorded webhook before retrying.") };
     }
     installation = await object.settleConnectorInstallationStep({ ...request, registration: result, ...(replacement ? { credentials: replacement } : {}) });
