@@ -45,6 +45,7 @@ import {
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
 } from './transcript';
+import { requestSocketTicket } from './socket-ticket-request';
 
 function overlayMessages(queryClient: QueryClient, workstreamId: string): Message[] {
   return (queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId)) ?? [])
@@ -563,6 +564,56 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(750));
     expect(getSocketTicket).toHaveBeenCalledTimes(2);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('times out a stranded reconnect ticket after the feed already opened', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000074a';
+    const ticket = {
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    };
+    let requestCount = 0;
+    const getSocketTicket = vi.fn(() => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        return requestSocketTicket(() => new Promise<typeof ticket>(() => undefined));
+      }
+      return Promise.resolve(ticket);
+    });
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, workstreamId, true),
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    act(() => {
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(snapshotFrame({
+        sequence: 1,
+        workstream: { id: workstreamId, title: 'Opened feed' },
+      }));
+    });
+    expect(result.current.state).toBe('connected');
+    act(() => FakeWebSocket.instances[0]!.close(1012));
+
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(WORKSTREAM_OPEN_TIMEOUT_BASE_MS));
+    expect(result.current.state).toBe('reconnecting');
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'one',
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('ignores future feed events and added fields before applying the next snapshot', async () => {
