@@ -1,6 +1,6 @@
 import { asSubstreamId, asUserId, type WorkstreamControlMetadata } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -163,6 +163,50 @@ afterEach(() => {
 });
 
 describe('useWorkstreamControlSocket', () => {
+  it('keeps a pushed child roster while its screen is away and releases it with the socket owner', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const api = { getWorkstreamControlSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`, ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    })) };
+    const owner = renderHook(() => useWorkstreamControlSocket(api, workstreamId, true),
+      { wrapper: wrapper(queryClient) });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    // Only the transport is doubled; actual cache observers, timers and the
+    // production metadata receiver decide whether navigation loses the roster.
+    socket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
+    });
+    const child = {
+      substreamId: asSubstreamId('00000000-0000-7000-8000-000000000021'),
+      title: 'Created child', createdByUserId: asUserId('00000000-0000-7000-8000-000000000013'),
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const queryKey = ['workstream-children', workstreamId];
+    const screen = new QueryObserver<WorkstreamChildDirectory>(queryClient, { queryKey, enabled: false });
+    const leave = screen.subscribe(() => undefined);
+    act(() => { socket.open(); socket.message(metadata(4, { privateChildren: [child], privateChildrenWaterline: 2 })); });
+    expect(screen.getCurrentResult().data?.privateChildren).toEqual([child]);
+    leave();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    const returned = new QueryObserver<WorkstreamChildDirectory>(queryClient, { queryKey, enabled: false });
+    const leaveAgain = returned.subscribe(() => undefined);
+    expect(returned.getCurrentResult().data?.privateChildren).toEqual([child]);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(socket.send.mock.calls.filter(([frame]) => frame !== 'ping')).toEqual([[JSON.stringify({ type: 'subscribe' })]]);
+    // The version fence must survive with the roster too.
+    act(() => socket.message(metadata(5, { privateChildren: [], privateChildrenWaterline: 1 })));
+    expect(returned.getCurrentResult().data?.privateChildren).toEqual([child]);
+    leaveAgain();
+    owner.unmount();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(queryClient.getQueryData(queryKey)).toBeUndefined();
+    queryClient.clear();
+  });
+
   it('retains child discovery before a feed exists, across list refresh, and rejects stale rosters', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
