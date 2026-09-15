@@ -1,4 +1,4 @@
-import { personMentionMarkdownPattern, rewriteCitationsAsPlainText } from "@rally/contracts/citations";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
 import { nowIso } from "@rally/db";
@@ -537,10 +537,7 @@ async function workspaceBotToken(
  * was added to close, rather than none.
  */
 function humanReadableMessage(value: string): string {
-  return rewriteCitationsAsPlainText(value, { sources: "plain" }).replace(
-    personMentionMarkdownPattern(),
-    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
-  );
+  return rewriteMessageAsPlainText(value, { sources: "plain" });
 }
 
 function slackParticipantAddedChunks(

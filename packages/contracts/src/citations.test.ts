@@ -13,6 +13,7 @@ import {
   personMentionMarkdownPattern,
   personMentionMarkdownRanges,
   rewriteCitationsAsPlainText,
+  rewriteMessageAsPlainText,
 } from "./citations";
 
 describe("parseCitationHref", () => {
@@ -163,6 +164,31 @@ describe("person mention hrefs", () => {
     const markdown = `[@${"\\".repeat(42)}[x]](person://${id})`;
 
     expect(personMentionMarkdownRanges(markdown)).toEqual([]);
+  it("reduces person mentions with citations at the shared outbound boundary", () => {
+    expect(rewriteMessageAsPlainText(
+      `## Request\n\nAsk [@Ada Lovelace](person://${id}) to **read** [the plan](resource://plan).`,
+      { sources: "none" },
+    )).toBe("Request\n\nAsk @Ada Lovelace to read the plan.");
+  });
+
+  it("reduces general Markdown while preserving readable structure", () => {
+    expect(rewriteMessageAsPlainText([
+      "> A *small* update with ~~old~~ `code` and [docs](https://example.com). Show `[link](resource://id)` literally.",
+      "",
+      "- [x] **Shipped**",
+      "  - [ ] Follow up",
+      "",
+      "```ts",
+      "const answer = 42;",
+      "```",
+    ].join("\n"), { sources: "none" })).toBe([
+      "A small update with old code and docs. Show [link](resource://id) literally.",
+      "",
+      "  - ☑ Shipped",
+      "    - ☐ Follow up",
+      "",
+      "    const answer = 42;",
+    ].join("\n"));
   });
 });
 
