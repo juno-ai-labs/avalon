@@ -3407,8 +3407,14 @@ export async function runWorkstreamHarness(
     },
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
-      if (stage === "before_model") await assertSidekickAuthority();
-      await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+      // Renewal must remain available while Bind settles an in-flight step
+      // after archive or stop. New model work is authorized here; new tool
+      // work is independently authorized by beforeToolCall above. Treating
+      // archive as a renewal failure masks Bind's durable stop transition.
+      if (stage === "before_model") {
+        await assertSidekickAuthority();
+        await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+      }
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
       const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);

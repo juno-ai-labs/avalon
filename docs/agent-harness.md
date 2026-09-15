@@ -1265,6 +1265,10 @@ protocol, tool and completion protections; missing capabilities belong in Bind.
 Explicit silent completion uses Bind's existing tool-ended outcome and persists
 that fact in the existing host receipt. Enabling empty completions would hide
 defects and cannot substitute for that outcome.
+Lease renewal continues during settlement of an already-started step after
+archive. New model calls and tool calls retain their authority preflights.
+Reauthorizing in the stream liveness callback had instead classified a durable
+archive stop as a persistence failure before Bind could settle it.
 
 ### 2026-09-14 — Explain a slow first response before timing it out
 

@@ -438,6 +438,56 @@ describe("sidekick_post_result", () => {
     }
   });
 
+  it("archives active owned workers through Bind while leaving an independent Sidekick running", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    try {
+      const independent = await service.createSidekick("workspace", context);
+      await service.send({ agentId: independent.agentId, message: "HOLD_BACKGROUND: independent setup", attachmentIds: [] },
+        { ...context, effectIntentId: crypto.randomUUID() });
+      const sidekick = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, independent.sidekickId),
+      ));
+      const started = await service.start({ name: "Owned researcher", description: "Research until archived",
+        message: "HOLD_BACKGROUND: owned research", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      await expect.poll(() => provider.calls.filter((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")).length,
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
+      const archived = await post(roomConversation(), "/internal/product", { operation: "update", auth: AUTH, input: { archived: true } });
+      expect(archived.status).toBe(200);
+      await deliverEffectsToWorkspace(TEST_ENV, roomConversation());
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+      expect(await sidekick.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      expect(await runInDurableObject(child, (_instance, state) => state.storage.sql.exec<RunRow>(
+        "SELECT run_id, status, error_json, terminalized_at FROM runs",
+      ).toArray())).toMatchObject([{ status: "running", terminalized_at: null }]);
+      release();
+      const [archivedRun] = await settledRun(child);
+      expect(archivedRun?.status, JSON.stringify(archivedRun)).toBe("cancelled");
+      const [sidekickRun] = await settledRun(sidekick);
+      expect(sidekickRun).toMatchObject({ status: "completed" });
+      await expect.poll(() => runInDurableObject(sidekick, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
+        "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", sidekickRun!.run_id,
+      ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      await expect(service.send({ agentId: started.agentId, message: "Continue", attachmentIds: [] },
+        { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("archived");
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
+  });
+
   it("answers a participant while a worker is blocked and publishes only its running count", async () => {
     let release = () => {};
     heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
