@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { AvatarStack, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { AvatarStack, ConnectorMark, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -30,6 +30,20 @@ describe('RallyMark', () => {
     const { container } = render(<RallyMark className="test-mark" />);
     expect(container.querySelector('.rally-mark.test-mark')).not.toBeNull();
     expect(container.querySelector('svg')).toBeNull();
+  });
+});
+
+describe('ConnectorMark', () => {
+  it('draws Ashby and Fireflies as their own marks, not Lucide stand-ins', () => {
+    // `@thesvg/react` has neither slug. A Lucide briefcase or audio-lines
+    // glyph would carry `.lucide` and would not title itself with the company.
+    // Reverting those two rows to Lucide is the production break this pins.
+    const ashby = render(<ConnectorMark mark="ashby" />);
+    const fireflies = render(<ConnectorMark mark="fireflies" />);
+    expect(ashby.container.querySelector('.lucide')).toBeNull();
+    expect(fireflies.container.querySelector('.lucide')).toBeNull();
+    expect(ashby.container.querySelector('svg title')?.textContent).toBe('Ashby');
+    expect(fireflies.container.querySelector('svg title')?.textContent).toBe('Fireflies');
   });
 });
 
