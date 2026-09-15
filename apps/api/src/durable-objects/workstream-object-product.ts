@@ -1125,7 +1125,7 @@ export class WorkstreamObjectProductService {
   }
 
   /** Internal coordinator operation, valid only for a freshly provisioned conversation. */
-  async installPreparedConversation(auth: AuthContext, operationId: string, rawConversation: PreparedConversation): Promise<{ turnId: string }> {
+  async installPreparedConversation(auth: AuthContext, operationId: string, rawConversation: PreparedConversation, replayOnly = false): Promise<{ turnId: string }> {
     const conversation = PreparedConversationSchema.parse(rawConversation);
     const root = this.root();
     const identity = this.objectStore.identity();
@@ -1141,6 +1141,7 @@ export class WorkstreamObjectProductService {
     };
     const existing = replay();
     if (existing) { await this.enqueueDirectorySnapshot(); return { turnId: existing.first_turn_id }; }
+    if (replayOnly) throw new ApiError(409, "conversation_initialization_missing", "A published conversation cannot receive initial history");
     if (this.transcript.transcriptThrough() > 0) throw new ApiError(409, "conversation_already_started", "Prepared history requires an empty conversation");
     const now = Date.now();
     const firstTurnId = await stableUuid(["prepared-conversation", identity, operationId]);

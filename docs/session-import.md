@@ -100,8 +100,12 @@ conversation installation is an internal coordinator operation; the private-chil
 receipt and conversation creator authorize it. Existing active conversations are
 not bulk-import targets.
 
+The preview title and file controls freeze during submission so an uncertain
+response can retry the same request identity and content.
+
 Source files are inline UTF-8/base64, recognized HTTPS downloads, or explicitly
-unavailable references. Known Claude image/document blocks, artifact documents and
+unavailable references. Known Claude image/document blocks (including plain-text
+document sources), artifact documents and
 full-content Write/artifacts tool payloads preserve file content without importing
 the tool invocation. ChatGPT exports preserve attachment descriptors and image
 references. Source sandbox links without bytes remain unavailable.
