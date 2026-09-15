@@ -226,7 +226,7 @@ would see it dropped, not logged. `responseIssues` is the one new key the
 OAuth stage helpers attach; an adapter adding a stage helper of its own
 should attach the same key or its rejection stays unnamed at the log.
 
-Shipped in the pull request for this change.
+Shipped in #769.
 
 ### 2026-09-15 — The reporters read what the primitive writes
 
