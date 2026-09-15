@@ -363,6 +363,41 @@ actor RallyClient {
         try await get(path: "/digest", as: RallyDigest.self)
     }
 
+    /// Identity-scoped Flagship answer. The route is identity-auth so a device
+    /// that has not picked a workspace still gets a Boolean rather than a 403.
+    func clientFeatureFlags(accessToken: String) async throws -> RallyClientFeatureFlags {
+        try await request(
+            method: "GET",
+            path: "/feature-flags",
+            bodyData: nil,
+            contentType: nil,
+            as: RallyClientFeatureFlags.self,
+            authorized: true,
+            extraHeaders: [:],
+            baseURL: APIConfiguration.globalURL(),
+            bearerToken: accessToken
+        )
+    }
+
+    /// Workspace-session registry. Same PUT/DELETE desktop uses per credential.
+    func registerPushDevice(installationId: String, body: RallyPushDeviceRegistration) async throws {
+        struct Response: Decodable { var status: String }
+        _ = try await request(
+            method: "PUT",
+            path: "/push-devices/\(installationId)",
+            body: body,
+            as: Response.self
+        )
+    }
+
+    func deletePushDevice(installationId: String) async throws {
+        try await requestVoid(
+            method: "DELETE",
+            path: "/push-devices/\(installationId)",
+            body: Optional<Empty>.none
+        )
+    }
+
     func updateDigest(_ digest: RallyDigest) async throws -> RallyDigest {
         struct Target: Encodable {
             var type: String

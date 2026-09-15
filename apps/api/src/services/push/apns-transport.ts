@@ -38,7 +38,8 @@ export async function sendApns(env: Env, device: PushDevice, payload: string, co
     const cached = CachedTokenSchema.safeParse(await env.INFERENCE_PRICING_CACHE.get(cacheKey, "json")).data;
     const token = cached && now - cached.iat < 50 * 60 ? cached.token : await mintProviderToken(env.APNS_AUTH_KEY!, env.APNS_KEY_ID!, now);
     if (token !== cached?.token) await env.INFERENCE_PRICING_CACHE.put(cacheKey, JSON.stringify({ token, iat: now }), { expirationTtl: 60 * 60 });
-    const response = await fetch(`https://api.push.apple.com/3/device/${device.token}`, {
+    const host = device.apns_environment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
+    const response = await fetch(`https://${host}/3/device/${device.token}`, {
       method: "POST", headers: { authorization: `bearer ${token}`, "apns-topic": device.topic,
         "apns-push-type": "alert", "apns-priority": "10", "apns-id": crypto.randomUUID(),
         "apns-collapse-id": collapseId, "apns-expiration": String(now + APNS_EXPIRATION_SECONDS),

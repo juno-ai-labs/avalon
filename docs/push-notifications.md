@@ -1,6 +1,6 @@
 # Apple push notifications
 
-Rally sends mentions and additions to signed-in Macs through APNs, using the
+Rally sends mentions and additions to signed-in Macs and iPhones through APNs, using the
 existing workspace notification intent. Push is enabled for everyone from launch through
 `push-notifications-enabled`; Slack also sends when available, and email is the
 fallback when neither Slack nor push accepted the notification.
@@ -10,14 +10,17 @@ fallback when neither Slack nor push accepted the notification.
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
 - `apps/api/src/services/push/`: provider authentication and payload rendering.
 - `apps/api/src/queues/push-delivery-consumer.ts`: intent read, existing access check, send, receipt.
-- `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: registration and native response/permission callbacks.
+- `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
+- `apps/ios/Rally/App/RallyPush.swift`, `RallyAppDelegate.swift`, and `AppModel` reconcile: iPhone registration, permission, and tap routing.
 
 ## How it works
 
 Every stored workspace credential registers the installation with its own region.
-Delivery requires a live session bound to that device; another installation's
+The Mac loops every credential it holds; the iPhone holds one workspace session
+and registers that one. Delivery requires a live session bound to that device; another installation's
 session cannot keep it alive. The device switch and a separate push installation
-ID persist in the existing application settings file.
+ID persist in the existing application settings file on the Mac, and in the
+Keychain on iPhone.
 
 The producer enqueues only region, workspace, recipient and intent identifiers.
 Settlement retains the payload only when push was enqueued, until the existing
@@ -63,6 +66,11 @@ APNs groups notifications by the main workstream ID, including notifications
 from its substreams. Clicks still target the originating substream.
 Clicks pass the HTTPS link through the existing work-stream parser and scheme
 navigation, including pending navigation before sign-in or window readiness.
+iOS parses the same `rally` object and opens `url` as a universal link. Debug
+iPhone builds sign the development APNs entitlement, so their tokens are
+`apnsEnvironment: sandbox` and the consumer posts to
+`api.sandbox.push.apple.com`; Release and TestFlight stay on production, like
+the Mac.
 
 ## Operations and release
 
@@ -109,10 +117,12 @@ signed-Mac delivery.
 ## Testing
 
 `push-device-service.test.ts` uses real migrated SQLite. `push-payload.test.ts` and
-`apns-transport.test.ts` cover encoding/signing and Apple responses. The real
+`apns-transport.test.ts` cover encoding/signing, Apple responses, and the
+sandbox versus production host. The real
 workerd `push-delivery.test.ts` covers read RPC, receipts, revocation and retry.
 Desktop push/link tests cover registration and routing; existing settings and
-release suites cover the integration. The provider itself and macOS alert
+release suites cover the integration. iOS XCTest covers payload parse and the
+PUT body. The provider itself and macOS/iOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -124,6 +134,29 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-09-14 — iOS registers the same Apple push registry
+
+**What changed:** `APNS_TOPICS.ios` is `ai.rallywith.ios`. The register schema
+accepts `platform: "ios"` with sandbox or production, while the Mac stays
+production-only. Live devices carry `apns_environment` so the consumer posts
+sandbox tokens to `api.sandbox.push.apple.com`. The native iOS client PUTs and
+DELETEs `/push-devices/:installationId` like desktop, gated on the same
+feature flag, and opens `rally.url` from a notification tap.
+
+**Why:** The desktop ship left iOS holding a device token it could not send.
+A second iOS-only route would have been two registries for one intent. Debug
+iPhone builds are Apple sandbox; posting those tokens at production APNs
+fails as `BadDeviceToken`, so the host has to follow the environment the
+client registered.
+
+**Considered and rejected:** Keeping the Mac schema macos-only and inventing
+an iOS path later. Also rejected: sending every iOS token at production APNs.
+The Debug entitlement is sandbox; that is Apple's split, not a defensive
+guess.
+
+**Consequences:** A signed TestFlight/Release iPhone uses production, like the
+Mac. Simulator and unsigned Debug builds still have no token. Shipped in #725.
 
 ### 2026-09-14 — Add Apple push as a transport of existing notification intents
 

@@ -984,7 +984,8 @@ shipping refresh tokens in `UserDefaults` behind a debug flag.
 **Consequences:** A security change that tightens renderer isolation does not
 automatically cover iOS. iOS review is Keychain accessibility, URL scheme
 admission, associated domains, and the ticket-as-subprotocol rule. APNs tokens
-are stored locally until the Worker grows an iOS topic; they are not a session.
+register through `PUT /push-devices/:installationId` with topic `ai.rallywith.ios`;
+they are not a session.
 
 Shipped in #725.
 
