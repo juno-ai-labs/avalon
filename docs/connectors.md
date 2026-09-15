@@ -1152,7 +1152,7 @@ observed here. Narrowing to whichever shape the next live read happens to show
 would reintroduce this bug pointing the other way, and would be the same error as
 the two above: treating one account's response as the contract.
 
-Shipped in the pull request for this change.
+Shipped in #778.
 
 ### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
 
