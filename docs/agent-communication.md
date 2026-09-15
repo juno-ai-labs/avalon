@@ -59,7 +59,10 @@ IDs when context is rebuilt. Admission puts messages at safe execution boundarie
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
 Attachments must already be attached to the sender and are linked to the recipient
-through existing runtime resource attachment operations.
+through existing runtime resource attachment operations. Admission retains their
+ordered canonical attachment descriptors, and context rebuilding uses normal
+attachment manifests and current-turn image projection. Resource IDs alone are
+not a substitute for those durable message attachments.
 
 Conversation migration 57 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
