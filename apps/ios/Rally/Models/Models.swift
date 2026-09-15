@@ -260,6 +260,8 @@ struct RallyChatMessage: Identifiable, Equatable, Sendable {
     /// The transcript turn this row was projected from. Message actions that
     /// branch a substream address this id, not the per-block row id.
     var turnId: String? = nil
+    /// Transient model-run identity from `stream_*` frames; used to stop the cursor.
+    var streamId: String? = nil
 }
 
 enum SubstreamAddress {
@@ -549,11 +551,17 @@ struct RallyMember: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+struct RallyDigestDeliveryTarget: Codable, Sendable, Equatable {
+    var type: String
+    var connectionId: String?
+}
+
 struct RallyDigest: Codable, Sendable, Equatable {
     var enabled: Bool
     var days: [Int]
     var times: [Int]
     var timezone: String?
+    var deliveryTargets: [RallyDigestDeliveryTarget]?
 }
 
 struct RallyOpportunity: Codable, Sendable, Identifiable, Equatable {

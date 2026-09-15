@@ -28,6 +28,8 @@
 		00000000000000000000000A /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		00000000000000000000000C /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		00000000000000000000000D /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		00000000000000000000002A /* Tests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Tests.xcconfig; sourceTree = "<group>"; };
+		00000000000000000000002B /* TestsRelease.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = TestsRelease.xcconfig; sourceTree = "<group>"; };
 		000000000000000000000019 /* RallyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RallyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000024 /* RallyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RallyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -94,6 +96,8 @@
 				00000000000000000000000A /* Debug.xcconfig */,
 				00000000000000000000000C /* Release.xcconfig */,
 				00000000000000000000000D /* Shared.xcconfig */,
+				00000000000000000000002A /* Tests.xcconfig */,
+				00000000000000000000002B /* TestsRelease.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -345,7 +349,7 @@
 		};
 		000000000000000000000015 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 00000000000000000000000A /* Debug.xcconfig */;
+			baseConfigurationReference = 00000000000000000000002A /* Tests.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -361,7 +365,7 @@
 		};
 		00000000000000000000001B /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 00000000000000000000000C /* Release.xcconfig */;
+			baseConfigurationReference = 00000000000000000000002B /* TestsRelease.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -377,7 +381,7 @@
 		};
 		000000000000000000000020 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 00000000000000000000000A /* Debug.xcconfig */;
+			baseConfigurationReference = 00000000000000000000002A /* Tests.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -392,7 +396,7 @@
 		};
 		000000000000000000000025 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 00000000000000000000000C /* Release.xcconfig */;
+			baseConfigurationReference = 00000000000000000000002B /* TestsRelease.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;

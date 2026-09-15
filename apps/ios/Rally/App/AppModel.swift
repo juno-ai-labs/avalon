@@ -138,18 +138,21 @@ final class AppModel {
     }
 
     func bootstrap() async {
+        await client.setSessionListener { [weak self] session in
+            await self?.adoptRefreshed(session)
+        }
         appearance = (try? keychain.load(account: SessionAccounts.appearance)).flatMap {
             try? JSONDecoder().decode(AppearancePreference.self, from: $0)
         } ?? .system
         if let identityData = try? keychain.load(account: SessionAccounts.identity),
            let identity = try? JSONDecoder().decode(RallySession.self, from: identityData) {
             identitySession = identity
-            await client.update(baseURL: APIConfiguration.globalURL(), accessToken: identity.accessToken)
+            await bindIdentity(identity)
             if let workspaceData = try? keychain.load(account: SessionAccounts.workspace),
                let workspace = try? JSONDecoder().decode(RallySession.self, from: workspaceData),
                let url = URL(string: workspace.apiBaseUrl) {
                 workspaceSession = workspace
-                await client.update(baseURL: url, accessToken: workspace.accessToken)
+                await bindWorkspace(workspace, url: url)
                 await refreshIfNeeded(session: workspace)
                 phase = .ready
                 await loadWorkspaceContent()
@@ -159,6 +162,16 @@ final class AppModel {
                 onboarding = try await client.onboardingState()
                 phase = .pickingWorkspace
             } catch {
+                if let refreshed = try? await client.refresh(refreshToken: identity.refreshToken) {
+                    identitySession = refreshed
+                    try? persist(refreshed, account: SessionAccounts.identity)
+                    await bindIdentity(refreshed)
+                    if let onboarding = try? await client.onboardingState() {
+                        self.onboarding = onboarding
+                        phase = .pickingWorkspace
+                        return
+                    }
+                }
                 phase = .signedOut
             }
             return
@@ -180,7 +193,7 @@ final class AppModel {
         let challenge = PKCEChallenge.generate()
         pkce = challenge
         do {
-            await client.update(baseURL: APIConfiguration.globalURL(), accessToken: nil)
+            await client.update(baseURL: APIConfiguration.globalURL(), accessToken: nil, refreshToken: nil)
             let url = try await client.beginGoogleLogin(challenge: challenge)
             let callback = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
                 let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "rallywithai") { callbackURL, error in
@@ -199,7 +212,11 @@ final class AppModel {
             }
             try await completeSignIn(callback: callback)
         } catch {
-            if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue { return }
+            let nsError = error as NSError
+            if nsError.domain == ASWebAuthenticationSessionError.errorDomain,
+               nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                return
+            }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t sign in with Google."
         }
     }
@@ -209,7 +226,7 @@ final class AppModel {
         errorMessage = nil
         do {
             let global = APIConfiguration.globalURL()
-            await client.update(baseURL: global, accessToken: nil)
+            await client.update(baseURL: global, accessToken: nil, refreshToken: nil)
             let workspace = try await client.createDevelopmentWorkspaceSession(workspaceName: workspaceName)
             let identity = try await client.createDevelopmentIdentitySession()
             try Self.validateDevelopmentSessions(workspace: workspace, identity: identity, expectedGlobalURL: global)
@@ -220,7 +237,7 @@ final class AppModel {
             }
             workspaceSession = workspace
             try persist(workspace, account: SessionAccounts.workspace)
-            await client.update(baseURL: url, accessToken: workspace.accessToken)
+            await bindWorkspace(workspace, url: url)
             phase = .ready
             await loadWorkspaceContent()
         } catch {
@@ -271,14 +288,10 @@ final class AppModel {
 
     private func completeSignIn(callback: URL) async throws {
         guard let challenge = pkce else { return }
-        let components = URLComponents(url: callback, resolvingAgainstBaseURL: false)
-        let items = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).compactMap { item in
-            item.value.map { (item.name, $0) }
-        })
-        if let error = items["error"] {
+        if let error = RallyDeepLink.authError(from: callback) {
             throw RallyAPIError(status: 401, code: error, message: "Google sign-in didn’t finish.")
         }
-        guard let ticket = items["ticket"] else {
+        guard let ticket = RallyDeepLink.authTicket(from: callback) else {
             throw RallyAPIError(status: 401, code: "missing_ticket", message: "Google sign-in didn’t return a ticket.")
         }
         let timezone = TimeZone.current.identifier
@@ -290,7 +303,7 @@ final class AppModel {
         )
         identitySession = session
         try persist(session, account: SessionAccounts.identity)
-        await client.update(baseURL: APIConfiguration.globalURL(), accessToken: session.accessToken)
+        await bindIdentity(session)
         pkce = nil
         onboarding = try await client.onboardingState()
         if onboarding.workspaces.count == 1, let only = onboarding.workspaces.first {
@@ -307,7 +320,7 @@ final class AppModel {
         }
         workspaceSession = session
         try persist(session, account: SessionAccounts.workspace)
-        await client.update(baseURL: url, accessToken: session.accessToken)
+        await bindWorkspace(session, url: url)
         phase = .ready
         await loadWorkspaceContent()
     }
@@ -319,7 +332,7 @@ final class AppModel {
             guard let url = URL(string: session.apiBaseUrl) else { return }
             workspaceSession = session
             try persist(session, account: SessionAccounts.workspace)
-            await client.update(baseURL: url, accessToken: session.accessToken)
+            await bindWorkspace(session, url: url)
             phase = .ready
             await loadWorkspaceContent()
         } catch {
@@ -332,7 +345,16 @@ final class AppModel {
         await deletePushRegistration()
         await pool.disconnectAll()
         pool.clearSnapshots()
-        await client.logout(refreshToken: workspaceSession?.refreshToken ?? identitySession?.refreshToken)
+        if let workspace = workspaceSession, let url = URL(string: workspace.apiBaseUrl) {
+            await client.logout(refreshToken: workspace.refreshToken, baseURL: url, accessToken: workspace.accessToken)
+        }
+        if let identity = identitySession {
+            await client.logout(
+                refreshToken: identity.refreshToken,
+                baseURL: APIConfiguration.globalURL(),
+                accessToken: identity.accessToken
+            )
+        }
         try? keychain.delete(account: SessionAccounts.identity)
         try? keychain.delete(account: SessionAccounts.workspace)
         identitySession = nil
@@ -363,9 +385,9 @@ final class AppModel {
             await pool.disconnectAll()
             pool.clearSnapshots()
             tearDownConversation()
-            await client.update(baseURL: APIConfiguration.globalURL(), accessToken: identitySession?.accessToken)
-            onboarding = try await client.onboardingState()
+            await bindIdentity(identitySession)
             phase = .pickingWorkspace
+            onboarding = try await client.onboardingState()
         } catch {
             await reconcilePushRegistration()
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t leave this workspace."
@@ -719,6 +741,11 @@ final class AppModel {
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "That message didn’t send."
             isStreaming = false
+            composerText = text
+            pendingAttachments = attachments
+            if let index = messages.firstIndex(where: { $0.clientMessageId == clientMessageId }) {
+                messages[index].deliveryState = "failed"
+            }
         }
         isSending = false
     }
@@ -893,6 +920,12 @@ final class AppModel {
             } else {
                 upsert(turn, into: key)
             }
+        case .streamStarted(let turnId, let streamId, let reset):
+            applyStream(key: key, turnId: turnId, streamId: streamId, delta: nil, reset: reset)
+        case .streamDelta(let turnId, let streamId, let delta, let reset):
+            applyStream(key: key, turnId: turnId, streamId: streamId, delta: delta, reset: reset)
+        case .streamCompleted(let streamId):
+            completeStream(key: key, streamId: streamId)
         case .olderTurns(let turns, let coveredStart):
             isLoadingOlder = false
             if key == visible {
@@ -1144,7 +1177,7 @@ final class AppModel {
     private func upsert(_ turn: TranscriptTurn) {
         let mapped = FeedProjection.rows(from: turn)
         for row in mapped {
-            if let index = messages.firstIndex(where: { $0.id == row.id || ($0.clientMessageId != nil && $0.clientMessageId == row.clientMessageId) }) {
+            if let index = messages.firstIndex(where: { $0.id == row.id || ($0.clientMessageId != nil && $0.clientMessageId == row.clientMessageId) || ($0.turnId != nil && $0.turnId == row.turnId && $0.kind == row.kind) }) {
                 messages[index] = row
             } else {
                 messages.append(row)
@@ -1152,6 +1185,56 @@ final class AppModel {
         }
         messages = FeedProjection.collapseSettledWork(messages)
         isStreaming = messages.contains { $0.isStreaming }
+    }
+
+    private func applyStream(key: RallyFeedKey, turnId: String, streamId: String, delta: String?, reset: Bool) {
+        let visible = visibleFeedKey()
+        if key == visible {
+            mutateStream(into: &messages, turnId: turnId, streamId: streamId, delta: delta, reset: reset)
+            isStreaming = true
+            rememberVisibleFeed(key)
+        } else {
+            var snapshot = pool.snapshot(for: key) ?? RallyFeedSnapshot(messages: [], title: nil, hasOlderTranscript: false)
+            mutateStream(into: &snapshot.messages, turnId: turnId, streamId: streamId, delta: delta, reset: reset)
+            pool.storeSnapshot(snapshot, for: key)
+        }
+    }
+
+    private func mutateStream(into messages: inout [RallyChatMessage], turnId: String, streamId: String, delta: String?, reset: Bool) {
+        let id = "\(turnId):0"
+        if let index = messages.firstIndex(where: { $0.turnId == turnId && $0.kind == .text })
+            ?? messages.firstIndex(where: { $0.id == id || $0.id == turnId }) {
+            if reset { messages[index].text = "" }
+            if let delta { messages[index].text += delta }
+            messages[index].isStreaming = true
+            messages[index].streamId = streamId
+            messages[index].turnId = turnId
+            return
+        }
+        messages.append(RallyChatMessage(
+            id: id,
+            role: .assistant,
+            text: delta ?? "",
+            createdAt: Date(),
+            isStreaming: true,
+            turnId: turnId,
+            streamId: streamId
+        ))
+    }
+
+    private func completeStream(key: RallyFeedKey, streamId: String) {
+        if key == visibleFeedKey() {
+            for index in messages.indices where messages[index].streamId == streamId {
+                messages[index].isStreaming = false
+            }
+            isStreaming = messages.contains { $0.isStreaming }
+            rememberVisibleFeed(key)
+        } else if var snapshot = pool.snapshot(for: key) {
+            for index in snapshot.messages.indices where snapshot.messages[index].streamId == streamId {
+                snapshot.messages[index].isStreaming = false
+            }
+            pool.storeSnapshot(snapshot, for: key)
+        }
     }
 
     private func prepend(_ turns: [TranscriptTurn], coveredStartInclusive: Int) {
@@ -1180,32 +1263,38 @@ final class AppModel {
             workspaceSession = refreshed
             try persist(refreshed, account: SessionAccounts.workspace)
             if let url = URL(string: refreshed.apiBaseUrl) {
-                await client.update(baseURL: url, accessToken: refreshed.accessToken)
+                await bindWorkspace(refreshed, url: url)
             }
         } catch {
             // Keep the stored session; the next authenticated call will retry.
         }
     }
 
-    private func recoverSession() async {
-        if let refresh = workspaceSession?.refreshToken {
-            do {
-                let refreshed = try await client.refresh(refreshToken: refresh)
-                workspaceSession = refreshed
-                try persist(refreshed, account: SessionAccounts.workspace)
-                if let url = URL(string: refreshed.apiBaseUrl) {
-                    await client.update(baseURL: url, accessToken: refreshed.accessToken)
-                }
-                await loadWorkspaceContent()
-                return
-            } catch { }
-        }
-        await signOut()
-    }
-
     private func persist(_ session: RallySession, account: String) throws {
         let data = try JSONEncoder().encode(session)
         try keychain.save(data, account: account)
+    }
+
+    private func bindIdentity(_ session: RallySession?) async {
+        await client.update(
+            baseURL: APIConfiguration.globalURL(),
+            accessToken: session?.accessToken,
+            refreshToken: session?.refreshToken
+        )
+    }
+
+    private func bindWorkspace(_ session: RallySession, url: URL) async {
+        await client.update(baseURL: url, accessToken: session.accessToken, refreshToken: session.refreshToken)
+    }
+
+    private func adoptRefreshed(_ session: RallySession) {
+        if session.workspace != nil {
+            workspaceSession = session
+            try? persist(session, account: SessionAccounts.workspace)
+        } else {
+            identitySession = session
+            try? persist(session, account: SessionAccounts.identity)
+        }
     }
 
     func acceptInvitation(_ invitation: RallyInvitation) async {
@@ -1218,7 +1307,7 @@ final class AppModel {
             guard let url = URL(string: session.apiBaseUrl) else { return }
             workspaceSession = session
             try persist(session, account: SessionAccounts.workspace)
-            await client.update(baseURL: url, accessToken: session.accessToken)
+            await bindWorkspace(session, url: url)
             phase = .ready
             await loadWorkspaceContent()
         } catch {
@@ -1303,7 +1392,7 @@ final class AppModel {
         }
     }
 
-    func answerElicitation(_ elicitation: RallyElicitation, answer: String?, skipped: Bool) async {
+    func answerElicitation(_ elicitation: RallyElicitation, answer: RallyElicitation.RallyElicitationAnswer?, skipped: Bool) async {
         guard let current = currentWorkstream,
               let socket = pool.feedSocket(for: RallyFeedKey(parentId: current.id, substreamId: currentSubstreamId)) else { return }
         do {
@@ -1433,8 +1522,43 @@ final class AppModel {
         }
     }
 
+    func retryFailedSend(_ message: RallyChatMessage) async {
+        guard message.deliveryState == "failed" else { return }
+        messages.removeAll { $0.id == message.id }
+        composerText = message.text
+        await send()
+    }
+
     private func openUniversalLink(_ url: URL) async {
         if let target = RallyDeepLink.workstreamTarget(from: url) {
+            if let workspaceId = target.workspaceId,
+               workspaceSession?.workspace?.id != workspaceId {
+                let listed = onboarding.workspaces.isEmpty
+                    ? ((try? await client.onboardingState())?.workspaces ?? [])
+                    : onboarding.workspaces
+                if let match = listed.first(where: { $0.id == workspaceId }) {
+                    do {
+                        try await activate(match)
+                    } catch {
+                        errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t open that workspace."
+                        return
+                    }
+                } else if let region = target.region {
+                    do {
+                        try await activate(RallyWorkspace(
+                            id: workspaceId,
+                            name: "Workspace",
+                            slug: nil,
+                            region: region,
+                            role: "member",
+                            timezone: TimeZone.current.identifier
+                        ))
+                    } catch {
+                        errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t open that workspace."
+                        return
+                    }
+                }
+            }
             if let match = workstreams.first(where: { $0.id == target.workstreamId }) {
                 open(workstream: match, substreamId: target.substreamId)
             } else {
