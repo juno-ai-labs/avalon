@@ -6584,6 +6584,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ? this.objectStore.activeStreamCheckpoints()
         : [],
       activeCompaction: this.objectStore.activeCompaction(),
+      activeInferenceDelays: this.objectStore.activeInferenceDelays(),
     });
   }
 
@@ -6746,6 +6747,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       initialContextChunkCount: initialContextChunks.length,
       activeStreams,
       activeCompaction,
+      activeInferenceDelays: workstream.harnessStatus === "running"
+        ? this.objectStore.activeInferenceDelays().filter((delay) => delay.harnessRunId === workstream.latestHarnessRunId)
+        : [],
     }) as SocketSnapshotEvent;
     let event = snapshotEvent();
     let encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
