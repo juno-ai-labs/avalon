@@ -1,6 +1,7 @@
 import { stableUuid } from "../lib/stable-uuid";
 import { ConversationInitializationSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
+import { renderAgentMessage } from "../services/agent-message-content";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -112,7 +113,8 @@ import {
   AdmitExternalMessageInputSchema,
   AnswerExternalElicitationInputSchema,
   type AdmitAutomationActivationInput,
-  AdmitAutomationActivationInputSchema,
+  AdmitSystemActivationInputSchema,
+  type AdmitSystemActivationInput,
   type AdmitExternalMessageInput,
   type AnswerExternalElicitationInput,
   type ExternalMessageAdmissionResult,
@@ -923,7 +925,7 @@ export class WorkstreamObjectProductService {
       } else if (preparation.preparation_kind === "external_message") {
         await this.admitExternalMessage(envelope.input as AdmitExternalMessageInput);
       } else if (preparation.preparation_kind === "automation_activation") {
-        await this.admitAutomationActivation(envelope.input as AdmitAutomationActivationInput);
+        await this.admitSystemActivation(envelope.input as AdmitSystemActivationInput);
       } else if (preparation.preparation_kind === "external_elicitation") {
         await this.answerExternalElicitation(envelope.input as AnswerExternalElicitationInput);
       } else {
@@ -3604,8 +3606,16 @@ export class WorkstreamObjectProductService {
   async admitAutomationActivation(
     rawInput: AdmitAutomationActivationInput,
   ): Promise<WorkstreamObjectExternalMessageResult> {
-    const input = AdmitAutomationActivationInputSchema.parse(rawInput);
+    return this.admitSystemActivation(rawInput);
+  }
+
+  /** Shared durable admission for non-human conversation inputs. */
+  async admitSystemActivation(
+    rawInput: AdmitSystemActivationInput,
+  ): Promise<WorkstreamObjectExternalMessageResult> {
+    const input = AdmitSystemActivationInputSchema.parse(rawInput);
     const root = this.assertExternalMessageIdentity(input);
+    if (root.archived_at !== null) throw new Error("workstream_archived");
     const existing = first(this.storage.sql.exec<{ id: string; created_at: number }>(
       `SELECT id, created_at FROM canonical_conversation_turn_details
         WHERE client_message_id = ?`,
@@ -3625,12 +3635,13 @@ export class WorkstreamObjectProductService {
       now: input.now,
     });
     return this.runInputPreparation(preparation, async () => {
-      const prepared = await this.prepareAutomationActivation({
+      const prepared = await this.prepareSystemActivation({
         ...input,
         messageId: preparation.input_id,
         now: preparation.created_at,
       });
       const admitted = this.storage.transactionSync(() => {
+        if (this.root().archived_at !== null) throw new Error("workstream_archived");
         const concurrentCanonical = first(this.storage.sql.exec<{ id: string; created_at: number }>(
           `SELECT id, created_at FROM canonical_conversation_turn_details
             WHERE client_message_id = ?`,
@@ -3644,7 +3655,7 @@ export class WorkstreamObjectProductService {
         if (concurrentPending) {
           return { kind: "pending" as const, input: concurrentPending, inserted: false };
         }
-        const completed = this.completePreparedAutomationActivation(
+        const completed = this.completePreparedSystemActivation(
           { ...input, messageId: preparation.input_id, now: preparation.created_at },
           prepared,
           preparation.loop_id,
@@ -3666,15 +3677,18 @@ export class WorkstreamObjectProductService {
     });
   }
 
-  private async prepareAutomationActivation(input: AdmitAutomationActivationInput) {
-    const structuredContentJson = JSON.stringify(input.activation);
+  private async prepareSystemActivation(input: AdmitSystemActivationInput) {
+    const agentExchange = "agentExchange" in input ? input.agentExchange : null;
+    const agentContent = "agentExchange" in input
+      ? { kind: "agent_message" as const, ...input.agentExchange, attachmentIds: input.attachmentIds } : null;
+    const structuredContentJson = JSON.stringify(agentContent ?? ("activation" in input ? input.activation : null));
     const participant = await this.transcript.prepareParticipantMessage({
       turnId: input.messageId,
       actor: "system",
       authorUserId: null,
       authorSnapshot: null,
       clientMessageId: input.clientMessageId,
-      messageType: "automation_activation",
+      messageType: agentExchange ? "system" : "automation_activation",
       text: input.text,
       structuredContentJson,
       externalActorJson: null,
@@ -3683,21 +3697,22 @@ export class WorkstreamObjectProductService {
       createdAtUtc: new Date(input.now).toISOString(),
       attentionOrdinal: null,
     });
-    // Not projectParticipantModelMessage: that renders a person's message, and
-    // this text is a result an automation produced. The attribution line is the
-    // difference, and it is what the classifier reads the result behind.
+    // Agent messages are ordinary instructions with explicit sender/reply
+    // identity. They never impersonate a workspace participant.
     const bindMessage: PromptMessage = {
       role: "user",
-      content: [
-        `"${input.activation.automationName}", delivered ${new Date(input.activation.occurredAt).toISOString()}.`,
-        input.text,
-      ].join("\n"),
+      content: agentContent
+        ? renderAgentMessage(agentContent, input.text)
+        : [
+            `"${"activation" in input ? input.activation.automationName : ""}", delivered ${new Date(input.now).toISOString()}.`,
+            input.text,
+          ].join("\n"),
     };
     return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
   }
 
-  private completePreparedAutomationActivation(
-    input: AdmitAutomationActivationInput,
+  private completePreparedSystemActivation(
+    input: AdmitSystemActivationInput,
     prepared: { participant: PreparedParticipantMessage; bindPayloadJson: string },
     expectedLoopId: string,
   ) {
@@ -3708,16 +3723,16 @@ export class WorkstreamObjectProductService {
     return this.loops.completeInputPreparation({
       inputId: input.messageId,
       preparedTurnId: input.messageId,
-      // An activation never interrupts: a room mid-run is doing something a
-      // person is watching, and a scheduled result is not more urgent than that.
-      mode: "queue",
+      // Agent messages enter at a safe tool boundary; scheduled activations
+      // wait for the current execution. Neither interrupts in-flight work.
+      mode: "agentExchange" in input ? "steer" : "queue",
       actor: "system",
       authorUserId: null,
       authorNameSnapshot: null,
       authorAvatarUrlSnapshot: null,
       clientMessageId: input.clientMessageId,
       externalActorJson: null,
-      messageType: "automation_activation",
+      messageType: "agentExchange" in input ? "system" : "automation_activation",
       preparedPayloadId: prepared.participant.fact.payloadId,
       preparedFactId: prepared.participant.fact.factId,
       preparedPayloadAudience: prepared.participant.fact.audience,
@@ -3742,6 +3757,7 @@ export class WorkstreamObjectProductService {
         executionPrincipal: input.executionPrincipal,
         confirmedParticipantUserIds: [],
         reason: input.origin,
+        ...("agentExchange" in input ? { agentExchange: input.agentExchange } : {}),
         parentHarnessRunId: null,
         slackOrigin: null,
         slackSearchAuthorization: null,

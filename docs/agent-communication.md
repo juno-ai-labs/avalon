@@ -12,7 +12,12 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | `packages/contracts/src/agent-communication.ts` | Conversation addresses and strict message schemas with attachments. |
 | `apps/api/src/durable-objects/agent-team-storage.ts` | Teams, additive membership, ownership, and immutable message routes. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 57 and internal host RPCs. |
+| `apps/api/src/services/agent-communication-service.ts` | Creation, contact authorization, attachment forwarding, delivery, discovery and owned stops. |
+| `apps/api/src/services/agent-communication-plugin.ts` | Model tools and coordination guidance. |
+| `apps/api/src/services/agent-message-content.ts` | Durable sender/reply content, rendered consistently on admission and context rebuild. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Independent execution, durable message admission and background stop gate. |
 | `apps/api/test-workers/agent-teams.test.ts` | Real workerd migration and RPC coverage. |
+| `apps/api/test-workers/automation-post-result.test.ts` | Real creation, admission, continuation, reply and Sidekick contact coverage. |
 
 ## How it works
 
@@ -36,6 +41,35 @@ Recording a route does not prove a recipient accepted a message: recipient
 input admission owns delivery. Replays cannot change the original route.
 Recursive ownership queries return descendants, not teammates; reparenting and
 cycles are refused.
+
+The host derives a stable UUID from the durable tool effect identity for creation
+and delivery replay. Start reserves an ordinary child under the same conversation
+parent, bootstraps the existing harness, and provisions its name, description and
+inherited model override. It grants no private-child viewer memberships. The
+child retains its inherited execution principal; messages do not replace it with
+a teammate's credentials.
+
+Agent messages reuse the durable non-human input preparation path (whose stored
+preparation kind remains `automation_activation`). Their own structured content
+is tagged `agent_message`, preserving sender, reply reference and explicit resource
+IDs when context is rebuilt. Admission puts messages at safe execution boundaries
+and wakes an idle loop without waiting for completion. The live conversation
+parent refuses archived destinations even before the child projection catches up.
+Attachments must already be attached to the sender and are linked to the recipient
+through existing runtime resource attachment operations.
+
+Conversation migration 57 stores the background principal and a stop timestamp.
+Stopping also requests the existing active-execution stop. The timestamp holds
+pending work when the loop is idle; a newly accepted continuation clears it.
+Replaying an old message does not clear a later stop. Recursive stops traverse
+ownership, while foreground stop remains local.
+
+Sidekick discovery uses the existing authorized directory and ranks the current
+workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
+setup travels through messages. First authorized contact joins the authoring
+conversation to the team. Drafting tools are available only on a Sidekick's main
+authoring conversation, not ordinary workstreams, workers or scheduled runs.
+
 
 ## Invariants
 
@@ -74,8 +108,9 @@ checks address round trips, explicit context, attachments, and distinct send/rep
 parameters. `pnpm --filter @rally/api test:workers test-workers/agent-teams.test.ts`
 exercises real WorkspaceDO migrations and RPCs for multi-team Sidekicks, scoped
 rosters, reply routes, replay, and descendant ownership. The latter clears only
-its own dedicated workspace's new tables between tests. These checks establish
-the primitive, not complete background execution or desktop behavior.
+its own dedicated workspace's new tables between tests. The execution suite also covers hidden idempotent creation, inherited principal,
+stop/replay/continuation, a worker reply to the foreground, and independently
+owned Sidekick contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
 
@@ -86,3 +121,6 @@ system. Teams provide one communication scope for parents, workers, and Sidekick
 separate ownership supports descendant stops. Conversation IDs and message
 references replace new agent identities, friendship records, and return-routing
 machinery. Multi-team membership stays additive, with models managing context.
+The same substream harness and durable non-human mailbox now carry execution
+and messages; a second scheduler or task lifecycle would duplicate their recovery.
+Sender/reply content must survive both admission and context rebuilding.

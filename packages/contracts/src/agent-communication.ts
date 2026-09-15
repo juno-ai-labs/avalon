@@ -23,6 +23,14 @@ export const AgentIdSchema = z.string().refine((value) => parseAddress(value) !=
 }).brand<"AgentId">();
 export type AgentId = z.infer<typeof AgentIdSchema>;
 
+/** Host routing context for the message that activated an execution. */
+export const AgentExchangeSchema = z.strictObject({
+  teamId: AgentIdSchema,
+  messageId: IdSchema,
+  senderAgentId: AgentIdSchema,
+});
+export type AgentExchange = z.infer<typeof AgentExchangeSchema>;
+
 export function agentIdForAddress(address: AgentAddress): AgentId {
   const parsed = AgentAddressSchema.parse(address);
   return AgentIdSchema.parse(`${parsed.parentKind}/${parsed.parentId}/${parsed.substreamId}`);
