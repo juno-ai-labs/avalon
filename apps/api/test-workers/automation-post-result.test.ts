@@ -139,7 +139,12 @@ const provider = useOpenRouterDouble(async (call) => {
       name: revised ? "Revised research guide" : "Research guide", triggers: [],
       instructions: revised ? "Compare the options and include their costs." : "Compare the available options." } } };
   }
-  if (JSON.stringify(latestInput?.content ?? "").includes("NO_REPLY_REQUIRED")) {
+  // Model acknowledgment is intentionally terminal. Echoing every agent reply
+  // creates a fresh continuation and makes the stop test race an endless loop.
+  const isAgentAcknowledgment = typeof latestInput?.content === "string"
+    && latestInput.content.startsWith("Message from agent ")
+    && latestInput.content.endsWith("\nAcknowledged.");
+  if (isAgentAcknowledgment || JSON.stringify(latestInput?.content ?? "").includes("NO_REPLY_REQUIRED")) {
     const endTurn = call.toolNames.find((name) => name.endsWith("end_turn"));
     if (endTurn) return { callTool: { name: endTurn, arguments: {}, text: "No further response is needed." } };
     const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
