@@ -15,6 +15,7 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
+import { BackgroundAgentActivity } from './background-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput, type ComposerModelControl } from './composer-input';
@@ -431,11 +432,7 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      {backgroundAgentCount != null && backgroundAgentCount > 0 && (
-        <div className="background-agent-count" role="status">
-          {backgroundAgentCount} background {backgroundAgentCount === 1 ? 'agent' : 'agents'} running
-        </div>
-      )}
+      <BackgroundAgentActivity count={backgroundAgentCount} />
       <ComposerInput
         api={api}
         ariaLabel={placeholder.replace(/…$/u, '')}
