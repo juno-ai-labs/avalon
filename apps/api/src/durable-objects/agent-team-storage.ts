@@ -133,6 +133,13 @@ export class AgentTeamStorage {
     return { teamId: received.teamId, senderAgentId: sender, recipientAgentId: received.senderAgentId };
   }
 
+  owner(agent: AgentId): AgentId | null {
+    const row = this.storage.sql.exec<{ owner_agent_id: string }>(
+      "SELECT owner_agent_id FROM agent_delegations WHERE agent_id = ?", agent,
+    ).toArray()[0];
+    return row ? AgentIdSchema.parse(row.owner_agent_id) : null;
+  }
+
   ownedDescendants(owner: AgentId): AgentId[] {
     return this.storage.sql.exec<{ agent_id: string }>(
       `WITH RECURSIVE owned(agent_id) AS (

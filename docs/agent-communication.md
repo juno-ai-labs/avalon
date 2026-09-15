@@ -58,7 +58,8 @@ is tagged `agent_message`, preserving sender, reply reference and explicit resou
 IDs when context is rebuilt. Admission puts messages at safe execution boundaries
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
-Attachments must already be attached to the sender. The host normalizes repeated
+Explicit forwarding to an authorized Sidekick may broaden the attachment audience;
+this was approved on 2026-09-15. Attachments must already be attached to the sender. The host normalizes repeated
 IDs and validates the whole list before creating a worker. The recipient prepares
 canonical descriptors without linking resources, then stores them with the admitted
 pending input. Ordinary transcript promotion commits the links with the message,
@@ -80,10 +81,14 @@ stop request to owned conversations; independently owned Sidekicks continue.
 Liveness renewals allow Bind to finish the in-flight step and settle its stop,
 while authority checks still precede every new model and tool call.
 
-All agent-to-agent communication is explicit through `send_message` or `reply`,
+Model-authored agent-to-agent communication is explicit through `send_message` or `reply`,
 including final results, questions, and updates. Standard assistant messages stay
-in the sender's own transcript. Completion, failure, and needs-input settlement
-never synthesize or forward a message to the parent, a sibling, or a Sidekick.
+in the sender's own transcript. Completion and needs-input settlement never synthesize or forward a message.
+A failed background run emits one host notice to its owning parent:
+`Agent failed due to <reason>. Id: <id>`. The reason is the terminal diagnostic
+code (or `unknown reason` when unavailable), and the ID identifies the agent.
+The run supplies stable delivery identity, so settlement retries cannot duplicate
+the notice. An archived parent refuses admission without blocking settlement.
 The model sends any needed reply before finishing through Bind's ordinary final
 response. No `end_turn` tool or separate silent-completion receipt is required.
 Explicit sends use durable tool effect identities and ordinary admission replay;
@@ -175,4 +180,5 @@ Communication is explicitly model-directed through send/reply tools. Automatical
 forwarding final assistant responses introduced a second delivery path and an
 acknowledgment loop, then required a completion-suppression tool. Removing that
 path keeps ordinary completion in Bind and makes every inter-agent message an
-intentional tool call.
+intentional tool call. The sole host-generated exception is a concise parent
+failure notice, because a failed agent may be unable to report its own failure.

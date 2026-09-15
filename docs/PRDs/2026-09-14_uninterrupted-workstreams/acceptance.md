@@ -17,10 +17,12 @@ This is an implementation acceptance record, not a declaration that the feature 
 
 ## Current contract and validation
 
-On 2026-09-15 the user removed automatic forwarding. Results, questions, and updates travel only through explicit send_message/reply calls. Standard assistant responses stay local; terminal failures and needs-input states do not generate messages to another agent. The end_turn proposal and staged Bind dependency are withdrawn. Rally uses its pinned Bind 15 package and ordinary completion protections.
+On 2026-09-15 the user removed automatic forwarding. Results, questions, and updates travel only through explicit send_message/reply calls. Standard assistant responses stay local; needs-input states do not generate messages to another agent. The user subsequently approved a single host-generated failure notice to the owning parent, using the terminal diagnostic code and agent ID. The end_turn proposal and staged Bind dependency are withdrawn. Rally uses its pinned Bind 15 package and ordinary completion protections.
 
 The previous full-suite run passed 2,942 desktop tests, 2,916 API Node tests, 925 workerd tests, and the other package suites. That run covered the superseded forwarding design, so it does not prove the new explicit-only contract. Updated scoped validation and mutation evidence are pending below.
 
 The remaining material decisions are in [plan.md](plan.md). Live inference requires a configured development provider; scripted-provider tests prove runtime integration, not model judgment or responsiveness with three real participants.
 
 The explicit reply recovery fixture passes 20 fresh cases after replacing graceful eviction with a targeted recipient crash. Graceful eviction could wait for in-flight requests past the test deadline; aborting all objects also reset Miniflare’s D1 and broke fixture isolation. The final test crashes only the recipient, verifies a new instance, and checks that replay creates one message and one run. Breaking stable delivery identity creates two messages and fails the test. Reinstating automatic forwarding fails the worker and Sidekick local-response regressions.
+
+The approved failure notice is covered by real-workerd settlement and repeated-delivery assertions. Removing the production notification makes the parent-activation test fail. The focused communication and migration suites pass 30 tests. Local lint and typecheck pass. The full rebased suite found stale meeting-retirement migration expectations (corrected) and an unresolved search-authorization test failure (`records retry intent before an initial authority lookup can fail`); full-suite acceptance remains incomplete. Attachment forwarding to authorized Sidekicks with broader audiences is approved.
