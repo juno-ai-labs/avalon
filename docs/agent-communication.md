@@ -68,7 +68,10 @@ Conversation migration 57 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it.
 Replaying an old message does not clear a later stop. Recursive stops traverse
-ownership, while foreground stop remains local.
+ownership, while foreground stop remains local. Archive delivers the same
+stop request to owned conversations; independently owned Sidekicks continue.
+Liveness renewals allow Bind to finish the in-flight step and settle its stop,
+while authority checks still precede every new model and tool call.
 
 Completed responses use existing external settlement to send an ordinary reply
 to the originating exchange. The reply identity is stable for that execution,
