@@ -1143,11 +1143,14 @@ what was believed.
   and `extended_sections` is `[SummarySection]` on that page, so `String` is not
   shorthand for a list.
 
-**What a future change has to respect:** the union is not justified by the
-observation alone. It is justified by the observation *plus* the page's note that
-summary fields come from customizable "AI apps" — so another workspace may
-genuinely return the documented string. Narrowing to whichever shape the next
-live read shows would reintroduce this bug pointing the other way.
+**What a future change has to respect:** the union's two halves rest on
+different things, and neither is the other. Rejecting the array breaks the
+account this was read against — observed. Rejecting the documented string would
+refuse the provider's published contract, which the same page says an account can
+vary through customizable "AI apps" — reasoned, with no string-returning account
+observed here. Narrowing to whichever shape the next live read happens to show
+would reintroduce this bug pointing the other way, and would be the same error as
+the two above: treating one account's response as the contract.
 
 Shipped in the pull request for this change.
 
