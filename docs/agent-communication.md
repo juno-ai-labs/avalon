@@ -58,7 +58,8 @@ is tagged `agent_message`, preserving sender, reply reference and explicit resou
 IDs when context is rebuilt. Admission puts messages at safe execution boundaries
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
-Attachments must already be attached to the sender and are linked to the recipient
+Attachments must already be attached to the sender. The host normalizes repeated
+IDs and validates the whole list before linking any resource to the recipient
 through existing runtime resource attachment operations. Admission retains their
 ordered canonical attachment descriptors, and context rebuilding uses normal
 attachment manifests and current-turn image projection. Resource IDs alone are
@@ -66,7 +67,8 @@ not a substitute for those durable message attachments.
 
 Conversation migration 57 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
-pending work when the loop is idle; a newly accepted continuation clears it.
+pending work when the loop is idle; a newly accepted continuation clears it in
+the same transaction that admits the message.
 Replaying an old message does not clear a later stop. Recursive stops traverse
 ownership, while foreground stop remains local. Archive delivers the same
 stop request to owned conversations; independently owned Sidekicks continue.

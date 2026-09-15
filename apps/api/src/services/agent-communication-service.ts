@@ -109,15 +109,18 @@ export class AgentCommunicationService {
     if (!runtime) throw new AgentCommunicationError("agent_destination_unavailable");
     const sourceResources = createResourceObjectPort(this.env, this.input.workspaceId, this.input.parentId,
       undefined, this.input.substreamId ?? "0");
-    for (const resourceId of args.attachmentIds) {
+    const attachmentIds = [...new Set(args.attachmentIds)];
+    for (const resourceId of attachmentIds) {
       if (!await sourceResources.isAttached({ resourceId })) throw new AgentCommunicationError("agent_attachment_unavailable");
+    }
+    for (const resourceId of attachmentIds) {
       await attachWorkstreamRuntimeResource(this.env, { workspaceId: this.input.workspaceId,
         workstreamId: address.parentId, substreamId: address.substreamId, resourceId,
         attachedByUserId: this.input.executionPrincipal.type === "user" ? this.input.executionPrincipal.userId : null });
     }
     const result = await recipient.admitAgentMessage({ workspaceId: this.input.workspaceId,
       workstreamId: asWorkstreamId(address.parentId), messageId, clientMessageId: `agent-message:${messageId}`,
-      recipientAgentId: target.recipientAgentId, text: args.message, attachmentIds: args.attachmentIds,
+      recipientAgentId: target.recipientAgentId, text: args.message, attachmentIds,
       agentExchange: { teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId },
       executionPrincipal: runtime.executionPrincipal ?? this.input.executionPrincipal,
       origin: "agent_message", now: Date.now() });

@@ -2055,7 +2055,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     try {
       const result = await this.product.admitSystemActivation(request);
-      if (result.inserted) this.state.storage.sql.exec("UPDATE background_agent SET stopped_at = NULL WHERE id = 1");
       if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
       if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
       return { accepted: true, messageId: result.turn.turnId };
