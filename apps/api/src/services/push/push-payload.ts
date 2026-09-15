@@ -2,13 +2,15 @@ import { PUSH_BODY_PREVIEW_CHARACTERS, type PushNotificationData } from "@rally/
 
 // APNs regular alert payload ceiling, Apple Sending notification requests.
 export const APNS_PAYLOAD_BYTES = 4096;
-export function renderPushPayload(input: { title: string; body: string; threadKey: string; data: PushNotificationData }): string {
+export function renderPushPayload(input: {
+  title: string; body: string; threadKey: string; data: PushNotificationData; badge: number;
+}): string {
   const characters = Array.from(input.body);
   const title = Array.from(input.title);
   let titleLength = title.length;
   const encode = (length: number) => JSON.stringify({
     aps: { alert: { title: title.slice(0, titleLength).join("") + (titleLength < title.length ? "…" : ""), body: characters.slice(0, length).join("") + (length < characters.length ? "…" : "") },
-      "thread-id": input.threadKey, sound: "default" },
+      badge: input.badge, "thread-id": input.threadKey, sound: "default" },
     rally: input.data,
   });
   let length = Math.min(characters.length, PUSH_BODY_PREVIEW_CHARACTERS);
