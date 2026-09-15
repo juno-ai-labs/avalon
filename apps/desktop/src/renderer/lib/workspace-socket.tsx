@@ -34,6 +34,9 @@ import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
 import {
+  PROJECTS_QUERY_KEY,
+  INACTIVE_PROJECTS_QUERY_KEY,
+  SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedProjectSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
@@ -46,8 +49,11 @@ import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
   workstreamSummaryState,
+  WORKSTREAM_STATE_WATERLINES_KEY,
+  WORKSPACE_DIRECTORY_WATERLINES_KEY,
 } from './workstream-state-store';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { retainQueryData } from './retain-query-data';
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
@@ -215,6 +221,13 @@ export function WorkspaceSocketProvider({
   );
 
   useEffect(() => {
+    const releaseData = retainQueryData(queryClient, [
+      WORKSTREAMS_QUERY_KEY,
+      SIDEBAR_LIST_QUERY_KEYS.automations,
+      SIDEBAR_LIST_QUERY_KEYS.notes,
+      PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY, CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
+    ]);
     let stopped = false;
     let permanentlyClosed = false;
     let socket: WebSocket | null = null;
@@ -671,6 +684,7 @@ export function WorkspaceSocketProvider({
     return () => {
       stopped = true;
       localCacheMirror?.stop();
+      releaseData();
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
         'The workspace is no longer connected.',
         409,

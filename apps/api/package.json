@@ -20,6 +20,7 @@
     "test:crash-symbolicator-container": "node scripts/test-crash-symbolicator-container.mjs",
     "test:watch": "vitest",
     "test:workers": "vitest run --config vitest.workers.config.ts",
+    "terminal:ensure-webhook": "tsx scripts/ensure-daytona-webhook.ts",
     "terminal:build-snapshot": "tsx scripts/build-terminal-snapshot.ts",
     "terminal:verify-provider-interface": "tsx scripts/verify-terminal-provider-interface.ts",
     "terminal:verify-provider": "tsx scripts/verify-terminal-provider.ts",

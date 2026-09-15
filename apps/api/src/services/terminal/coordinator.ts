@@ -1,3 +1,4 @@
+import { refreshTerminalProviderObservation } from "./observation";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { newId } from "@rally/db";
 
@@ -30,6 +31,10 @@ import {
 import type { TerminalPortFactory } from "./object-port";
 import {
   isTerminalProviderNotFound,
+  deleteTerminalSandbox,
+  stopTerminalSandbox,
+  isTerminalSandboxLost,
+  assertTerminalSandboxReady,
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
@@ -107,25 +112,9 @@ function requireStableName(row: TerminalSandboxRecord): string {
 function providerStateError(state: TerminalSandboxState): TerminalToolError {
   return new TerminalToolError(
     "sandbox_unavailable",
-    `The Terminal sandbox could not be made ready (provider state: ${state}). Retry the tool; Rally replaces the workspace itself once Daytona reports it lost.`,
+    `The Terminal sandbox could not be made ready (provider state: ${state}). Retry the tool; Rally preserves this workspace while Daytona restores or recovers it.`,
     { retryAfterMs: 5_000, reason: `Retry once after Daytona leaves its ${state} state.` },
   );
-}
-
-/**
- * A provider state Rally cannot use and cannot wait out.
- *
- * `expired` is Daytona's destroyed sandbox, and `failed` is `error` or
- * `build_failed` — including an archived sandbox whose restore found no
- * completed backup. Neither becomes usable by retrying, and the row would
- * otherwise name it until the thirty-day expiry.
- *
- * Only those two. Replacement discards the sandbox's files, so every other
- * state — in transit, or one this Daytona SDK maps to `unknown` — is waited
- * out instead. A mid-transition read must never be mistaken for a verdict.
- */
-function isLostProviderSandbox(state: TerminalSandboxState): boolean {
-  return state === "expired" || state === "failed";
 }
 
 function parseEffectiveDomains(policy: WorkspaceTerminalNetworkPolicy): string[] {
@@ -251,8 +240,9 @@ export class TerminalSandboxCoordinator {
     // lost *and* whose authority or policy revision had moved threw a raw
     // provider error one branch earlier than the recovery below, and repeated
     // it on every later run. One read answers for all three.
-    let observed = row.sandboxId ? await this.observeProviderSandbox(row.sandboxId) : null;
-    if (row.sandboxId && (!observed || isLostProviderSandbox(observed.state))) {
+    let observed = row.sandboxId ? await this.observeProviderSandbox(context, row) : null;
+    if (row.sandboxId && !observed) throw providerStateError("unknown");
+    if (row.sandboxId && isTerminalSandboxLost(observed)) {
       // A replacement carries this run's authority and policy revision, and
       // bumps the generation — which is everything the two steps below would
       // have done, without asking the provider about a sandbox it has lost.
@@ -466,20 +456,8 @@ export class TerminalSandboxCoordinator {
           // excludes a stale mutation from the successor generation. This also
           // keeps the schema-admitted `planned` state fail-safe if task
           // admission ever moves before provider submission.
-          try {
-            await renewClaim();
-            await this.provider.deleteSandbox(sandboxId);
-          } catch (error) {
-            if (!isTerminalProviderNotFound(error)) {
-              try {
-                await this.provider.getSandbox(sandboxId);
-              } catch (observationError) {
-                if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
-                else throw error;
-              }
-              if (!sandboxRetired) throw error;
-            }
-          }
+          await renewClaim();
+          await deleteTerminalSandbox(this.provider, sandboxId);
           sandboxRetired = true;
           sandboxStopped = false;
         } else if (!sandboxRetired && !sandboxStopped && task.state === "running") {
@@ -487,27 +465,9 @@ export class TerminalSandboxCoordinator {
           // observation while its accepted command keeps running. Stop the
           // whole sandbox before cancelling the durable task or handing its
           // lease to a linked run; start preserves the sandbox filesystem.
-          try {
-            await renewClaim();
-            await this.provider.stopSandbox(sandboxId);
-            sandboxStopped = true;
-          } catch (error) {
-            if (isTerminalProviderNotFound(error)) {
-              sandboxRetired = true;
-            } else {
-              let observed: Awaited<ReturnType<TerminalSandboxProvider["getSandbox"]>> | null = null;
-              try {
-                observed = await this.provider.getSandbox(sandboxId);
-              } catch (observationError) {
-                if (isTerminalProviderNotFound(observationError)) sandboxRetired = true;
-                else throw error;
-              }
-              if (!sandboxRetired && observed?.state !== "stopped" && observed?.state !== "archived") {
-                throw error;
-              }
-              sandboxStopped = !sandboxRetired;
-            }
-          }
+          await renewClaim();
+          sandboxRetired = await stopTerminalSandbox(this.provider, sandboxId) === "absent";
+          sandboxStopped = !sandboxRetired;
         }
 
         const settled = await terminal.cancelTaskAfterProviderCleanup({
@@ -697,29 +657,21 @@ export class TerminalSandboxCoordinator {
     return { ...row, sandboxId: created.id, lifecycleState: "running", version: row.version + 1 };
   }
 
-  /**
-   * Make the provider sandbox this row names actually running, driven by what
-   * Daytona reports rather than by what the row last recorded.
-   *
-   * The row carries Rally's intent; only the provider knows the state, and the
-   * two drift. Daytona auto-stops a sandbox after fifteen idle minutes and
-   * auto-archives it an hour later on its own schedule, so a transition Rally's
-   * alarm never ran — deferred behind a live run, lost with a run that died
-   * mid-operation — leaves the row claiming `running` over a sandbox that has
-   * been archived. Archiving releases the runner, so the first file or command
-   * call answers `404 … does not have a runner`, and because nothing moves the
-   * row, every later run repeats it. Reading the state back costs one provider
-   * GET per acquisition — once per harness run, not once per tool — and it is
-   * what turns that silent divergence into a start.
-   *
-   * A sandbox the provider has lost is replaced here rather than reported,
-   * because reporting it is what made this permanent: an `archived` row has no
-   * pending deadline, so the lifecycle pass has nothing to reconcile and the
-   * dead id survives to the thirty-day expiry. Nothing durable lives only
-   * inside a sandbox — published resources, the repository branch, and the
-   * final diff are all outside it — so a replacement costs the run its scratch
-   * files and gives back a workspace that works.
-   */
+  private async assertRestoredSandboxReady(sandboxId: string): Promise<void> {
+    try {
+      await assertTerminalSandboxReady(this.provider, sandboxId);
+    } catch {
+      // Only restore/recovery needs a preflight. Ordinary operations establish
+      // their own availability without treating an endpoint error as deletion.
+      throw new TerminalToolError(
+        "sandbox_unavailable",
+        "The Terminal sandbox is retained, but its command or file service is not ready. Retry the tool.",
+        { reason: "Retry when Daytona can serve both commands and files." },
+      );
+    }
+  }
+
+  /** Resume the same identity, or recover its backup, before considering replacement. */
   private async resumeProviderSandbox(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
@@ -748,40 +700,37 @@ export class TerminalSandboxCoordinator {
       ),
       action: "start_fresh",
     });
-    const observed = observation ?? await this.observeProviderSandbox(sandboxId);
-    if (!observed || isLostProviderSandbox(observed.state)) return replaceLost();
+    const observed = observation ?? await this.observeProviderSandbox(context, row);
+    if (!observed) throw providerStateError("unknown");
+    if (isTerminalSandboxLost(observed)) return replaceLost();
     if (observed.state === "running") {
       if (row.lifecycleState === "running") {
         await this.refreshDeadlines(context, row, now);
         return { row, action: null };
       }
+      await this.assertRestoredSandboxReady(sandboxId);
       await this.setRunning(context, row, now);
       return {
         row: { ...row, lifecycleState: "running", version: row.version + 1 },
         action: "restore",
       };
     }
-    // Only these two are startable. Everything left is Daytona mid-transition —
-    // including the restore of an archive that outlasts one start call — or a
-    // state this SDK does not name, and both are waited out rather than acted
-    // on: starting a sandbox whose actual state is unknown is how a caller ends
-    // up reasoning about a workspace nobody has observed. Waiting inside the
-    // tool would instead hold the run against a provider deadline Rally does
-    // not set, so the model retries.
-    if (observed.state !== "stopped" && observed.state !== "archived") {
+    const recover = observed.state === "failed" && observed.recoverable === true;
+    if (!recover && observed.state !== "stopped" && observed.state !== "archived") {
       throw providerStateError(observed.state);
     }
     try {
-      await this.provider.startSandbox(sandboxId);
+      if (recover) await this.provider.recoverSandbox(sandboxId);
+      else await this.provider.startSandbox(sandboxId);
     } catch (error) {
       // A start that throws has not said what became of the sandbox. Ask,
       // rather than treating every failure as a lost workspace: a restore that
       // ran past the start call's own deadline is still on its way, and
       // discarding the files for that would make this method cause the loss it
       // exists to recover from.
-      const settled = await this.observeProviderSandbox(sandboxId);
-      if (!settled || isLostProviderSandbox(settled.state)) return replaceLost();
-      if (settled.state !== "running") throw providerStateError(settled.state);
+      const settled = await this.observeProviderSandbox(context, row);
+      if (isTerminalSandboxLost(settled)) return replaceLost();
+      if (!settled || settled.state !== "running") throw providerStateError(settled?.state ?? "unknown");
       logStructuredEvent(this.env, "info", "terminal_sandbox_start_settled_after_error", {
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
@@ -790,6 +739,7 @@ export class TerminalSandboxCoordinator {
         reason: error instanceof Error ? error.name : "unknown",
       });
     }
+    await this.assertRestoredSandboxReady(sandboxId);
     await this.setRunning(context, row, now);
     return {
       row: { ...row, lifecycleState: "running", version: row.version + 1 },
@@ -798,18 +748,20 @@ export class TerminalSandboxCoordinator {
   }
 
   /**
-   * What the provider says this sandbox is, or `null` when it no longer has one.
+   * What the provider reports, or `null` when its metadata lookup returns 404.
    *
    * A provider that cannot be reached is not a lost sandbox and must not be
-   * treated as one: the caller replaces what this reports absent.
+   * treated as one. Unexpected absence preserves the binding for reconciliation.
    */
   private async observeProviderSandbox(
-    sandboxId: string,
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
   ): Promise<TerminalSandboxSnapshot | null> {
     try {
-      return await this.provider.getSandbox(sandboxId);
-    } catch (error) {
-      if (isTerminalProviderNotFound(error)) return null;
+      return await refreshTerminalProviderObservation(this.terminal(context), this.provider, {
+        sandboxId: row.sandboxId!, generation: row.generation,
+      });
+    } catch {
       throw new TerminalToolError(
         "sandbox_unavailable",
         "Rally could not reach Daytona to check this Terminal workspace. Retry the tool.",
@@ -825,9 +777,8 @@ export class TerminalSandboxCoordinator {
    * `replaceGeneration` is the authority path repository replacement already
    * uses: it bumps the generation, clears the sandbox id, and drops the
    * imported-resource rows that named files in the sandbox that is gone. The
-   * delete is best effort — the sandbox is already absent or unusable, and a
-   * provider that will not answer a delete must not keep the work stream
-   * pinned to a workspace it cannot start.
+   * delete must succeed or metadata must confirm absence before Rally releases
+   * the identity. An errored sandbox still exists and must not be orphaned.
    */
   private async replaceLostSandbox(
     context: HarnessToolContext,
@@ -844,7 +795,7 @@ export class TerminalSandboxCoordinator {
       sandbox_generation: row.generation,
       lifecycle_state: row.lifecycleState,
     });
-    if (row.sandboxId) await this.provider.deleteSandbox(row.sandboxId).catch(() => undefined);
+    if (row.sandboxId) await deleteTerminalSandbox(this.provider, row.sandboxId);
     const replaced = await this.terminal(context).replaceGeneration({
       generation: row.generation,
       authorityFingerprint,
@@ -864,15 +815,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    if (row.sandboxId) {
-      // Not-found only: the sandbox is about to be discarded, so its absence is
-      // the outcome this wanted. Any other provider failure still stops the
-      // replacement, because an authority change must not proceed while a
-      // sandbox holding the old authority may still be running.
-      await this.provider.deleteSandbox(row.sandboxId).catch((error: unknown) => {
-        if (!isTerminalProviderNotFound(error)) throw error;
-      });
-    }
+    if (row.sandboxId) await deleteTerminalSandbox(this.provider, row.sandboxId);
     return this.terminal(context).replaceGeneration({
       generation: row.generation,
       authorityFingerprint,

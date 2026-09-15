@@ -132,7 +132,8 @@ function fixture(message = "Please publish these changes and open a pull request
     updatePullRequest: vi.fn(),
   };
   const provider: TerminalSandboxProvider = {
-    createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
+    createSandbox: vi.fn(), getSandbox: vi.fn(), recoverSandbox: vi.fn(async () => undefined),
+    startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
     configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
     readFile: vi.fn(async () => new Uint8Array([1, 2, 3])), writeFile: vi.fn(),
     runUtilityCommand: vi.fn(),

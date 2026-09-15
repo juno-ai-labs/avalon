@@ -222,6 +222,19 @@ describe('Fireflies workspace tools', () => {
     expect(row?.participantsTruncated).toBe(true);
   });
 
+  it('accepts either keywords shape, because the summary app on an account decides which it gets', async () => {
+    // Live returns a list; https://docs.fireflies.ai/schema/summary declares
+    // `String`. Both are real — the page says summary fields come from "AI apps"
+    // an account can customize — so rejecting either fails a real workspace.
+    for (const keywords of [['renewal', 'pricing'], 'renewal, pricing']) {
+      const { adapter } = adapterWith(() => ({
+        data: { transcript: meetingFixture({ summary: { keywords } }) },
+      }));
+      const result = await adapter.executeTool('get_meeting_summary', { meetingId: 'meeting-1' }, { connection: connection(), principal, signal: neverAborts() });
+      expect((result.output as { summary: { keywords: string } }).summary.keywords).toBe('renewal, pricing');
+    }
+  });
+
   it('reads a summary with bounded fields, named attendees, and whether a transcript exists', async () => {
     const { adapter } = adapterWith(() => ({
       data: {
@@ -231,7 +244,10 @@ describe('Fireflies workspace tools', () => {
           summary: {
             overview: 'o'.repeat(5_000),
             action_items: 'Bob to send pricing',
-            keywords: 'renewal, pricing',
+            // The shape a real workspace key returns, read live on 2026-09-15.
+            // Fireflies' published schema says `String`; this fixture said the
+            // same, so the suite was green while every live call was rejected.
+            keywords: ['renewal', 'pricing'],
             outline: 'Intro, pricing, next steps',
             topics_discussed: ['renewal', 'pricing'],
           },

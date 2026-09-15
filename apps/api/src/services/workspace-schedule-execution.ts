@@ -1,3 +1,4 @@
+import { refreshTerminalProviderObservation } from "./terminal/observation";
 /**
  * What a workspace's alarm actually runs.
  *
@@ -533,6 +534,15 @@ async function reconcileTerminalSandbox(
   const provider = createTerminalProviderRpcClient(ctx.env.TERMINAL_PROVIDER, configuration);
   const executionEnv = ctx.workspaceEnv;
   const port = createTerminalPortFactory(executionEnv);
+  const terminal = port(ctx.workspaceId, workstreamId);
+  const sandbox = await terminal.sandbox();
+  const observation = await terminal.providerObservation();
+  const observationDue = Boolean(sandbox?.sandboxId && (!observation || observation.nextObserveAt <= now.getTime()));
+  if (observationDue && sandbox?.sandboxId) {
+    await refreshTerminalProviderObservation(terminal, provider, {
+      sandboxId: sandbox.sandboxId, generation: sandbox.generation,
+    });
+  }
   const result = await reconcileDueTerminalSandbox(
     createHarnessRunPortFactory(executionEnv),
     port,
@@ -549,7 +559,10 @@ async function reconcileTerminalSandbox(
       transition: result.transition,
     });
   }
-  if (result.transition !== "expired") return terminalReconcileOutcome(result.transition);
+  if (result.transition !== "expired") {
+    if (observationDue && result.transition === "none") return { waitMs: TERMINAL_DIRECTORY_CATCHUP_MS };
+    return terminalReconcileOutcome(result.transition);
+  }
   const repository = await port(ctx.workspaceId, workstreamId).selectedRepository();
   await emitProductUsageTelemetry(ctx.env, {
     workspaceId: asWorkspaceId(ctx.workspaceId),

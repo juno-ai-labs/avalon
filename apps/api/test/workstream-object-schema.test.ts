@@ -123,6 +123,7 @@ const EXPECTED_TABLES = [
   "substream_loops",
   "substreams",
   "terminal_imported_resources",
+  "terminal_provider_observation",
   "terminal_publication_grants",
   "terminal_repository",
   "terminal_tasks",

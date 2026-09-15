@@ -71,9 +71,10 @@ export class TerminalWorkstreamService {
 
   private async readState(workstreamId: string) {
     const terminal = createTerminalPortFactory(this.env)(this.auth.workspaceId, workstreamId);
-    const [sandbox, repository] = await Promise.all([
+    const [sandbox, repository, observation] = await Promise.all([
       terminal.sandbox(),
       terminal.repository(),
+      terminal.providerObservation(),
     ]);
     const configuration = parseTerminalRegionConfiguration(this.env);
     const state = sandbox ? publicState(sandbox.lifecycleState) : "absent";
@@ -84,6 +85,14 @@ export class TerminalWorkstreamService {
       ? sandbox.expireDueAt - Date.now()
       : Number.POSITIVE_INFINITY;
     return {
+      providerObservation: observation && observation.generation === sandbox?.generation
+        && observation.sandboxId === sandbox.sandboxId ? {
+        state: observation.state,
+        observedAt: observation.observedAt === null ? null : new Date(observation.observedAt).toISOString(),
+        nextObserveAt: new Date(observation.nextObserveAt).toISOString(),
+        recoverable: observation.recoverable,
+        errorCode: observation.errorCode,
+      } : null,
       availability: configuration.capability === "unsupported"
         ? "unsupported" as const
         : configuration.emergencyDisabled ? "emergency_disabled" as const : "supported" as const,

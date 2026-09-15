@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 56;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 58;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3023,6 +3023,24 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   {
     version: 57,
+    description: "separate provider observations from terminal retention intent",
+    statements: [
+      `CREATE TABLE terminal_provider_observation (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        sandbox_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        request_id TEXT NOT NULL,
+        requested_at INTEGER NOT NULL,
+        next_observe_at INTEGER NOT NULL,
+        observed_at INTEGER,
+        state TEXT,
+        recoverable INTEGER CHECK (recoverable IN (0, 1)),
+        error_code TEXT
+      ) STRICT`,
+    ],
+  },
+  {
+    version: 58,
     description: "remove built-in meeting resource snapshots and attachments",
     statements: [
       `CREATE TABLE retired_meeting_attachment_ids (resource_id TEXT PRIMARY KEY) STRICT`,

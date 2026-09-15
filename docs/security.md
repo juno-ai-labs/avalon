@@ -629,6 +629,13 @@ merely because the From address resembles a workspace member. Friendly addresses
 are immutable and permanently reserved so a stale sender can never reach a
 different work stream.
 
+Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
+check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current
+metadata, regional routing, and the owner object's sandbox-ID/generation fence
+must all agree before an observation is stored. These events cannot launch a
+run or mutate retention intent. The endpoint signing secret is installed as a
+Worker secret through the [Terminal setup command](runbook.md#daytona-state-synchronization).
+
 Automation email may start a run, and the sender match against active
 membership is the only control on it: since 2026-09-03 such a run holds the same
 connector and web tools as every other automation run, for the reasons the

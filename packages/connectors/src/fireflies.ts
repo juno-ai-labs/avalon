@@ -259,7 +259,20 @@ const SummaryRowSchema = TranscriptRowSchema.extend({
   summary: z.looseObject({
     overview: z.string().nullish(),
     action_items: z.string().nullish(),
-    keywords: z.string().nullish(),
+    /**
+     * A list live, a `String` in Fireflies' published schema.
+     *
+     * Read against a real workspace key on 2026-09-15: `keywords` came back as
+     * six strings, while https://docs.fireflies.ai/schema/summary declares it
+     * `String` and `topics_discussed` `[String]`. The same page says a summary's
+     * fields are produced by "AI apps" that an account can customize, so both
+     * shapes are real and neither is a mistake to reject.
+     *
+     * Declaring only the documented one is what made every workspace
+     * `get_meeting_summary` fail: the provider answered HTTP 200, this rejected
+     * it, and the run had no summary to write a recap from.
+     */
+    keywords: z.union([z.string(), z.array(z.string())]).nullish(),
     outline: z.string().nullish(),
     topics_discussed: z.array(z.string()).nullish(),
   }).nullish(),
@@ -1036,6 +1049,18 @@ function requireTranscript(data: Record<string, unknown>): Record<string, unknow
   return data.transcript;
 }
 
+/**
+ * One `keywords` string, whichever shape the account's summary app produced.
+ *
+ * The output contract stays a bounded string rather than becoming a list: the
+ * shape a caller sees should not change with the provider's configuration, and
+ * `topicsDiscussed` is already the field that carries a list.
+ */
+function joinedKeywords(value: string | readonly string[] | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === "string" ? value : value.join(", ");
+}
+
 function meetingSummaryOutput(row: z.infer<typeof SummaryRowSchema>) {
   const fields = boundedFields();
   const attendeeRows = row.meeting_attendees ?? [];
@@ -1063,7 +1088,7 @@ function meetingSummaryOutput(row: z.infer<typeof SummaryRowSchema>) {
     summary: {
       overview: fields.take(row.summary?.overview, FIREFLIES_SUMMARY_TEXT_CHARS),
       actionItems: fields.take(row.summary?.action_items, FIREFLIES_SUMMARY_TEXT_CHARS),
-      keywords: fields.take(row.summary?.keywords, FIREFLIES_KEYWORDS_CHARS),
+      keywords: fields.take(joinedKeywords(row.summary?.keywords), FIREFLIES_KEYWORDS_CHARS),
       topicsDiscussed: topics,
       outline: fields.take(row.summary?.outline, FIREFLIES_SUMMARY_TEXT_CHARS),
     },

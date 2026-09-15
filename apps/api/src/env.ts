@@ -162,6 +162,8 @@ export interface Env {
   TERMINAL_REGION_CAPABILITY?: "supported" | "unsupported";
   TERMINAL_EMERGENCY_DISABLED?: "true" | "false";
   DAYTONA_API_KEY?: string;
+  DAYTONA_ORGANIZATION_ID?: string;
+  DAYTONA_WEBHOOK_SECRET?: string;
   DAYTONA_API_URL?: string;
   DAYTONA_TARGET?: string;
   DAYTONA_TERMINAL_SNAPSHOT?: string;
