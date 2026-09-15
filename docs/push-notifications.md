@@ -134,7 +134,8 @@ a blank window: Electron was ready before Rally's async initialization installed
 its renderer protocol and IPC. Main-window creation now waits for that setup,
 preserving the existing pending-link queue. This also covers early URL callbacks
 without a separate notification window or retry timer. Concurrent open requests
-share the in-flight renderer load so they cannot show the window prematurely.
+share the in-flight renderer load and respect `ready-to-show` before revealing
+the window, including the interval between load completion and first paint.
 
 ### 2026-09-14 — Add Apple push as a transport of existing notification intents
 

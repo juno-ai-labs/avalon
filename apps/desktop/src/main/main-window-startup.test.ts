@@ -16,6 +16,7 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   const loaded = vi.fn(() => loading);
   const created = vi.fn();
   const shown = vi.fn();
+  let readyToShow!: () => void;
   class Window {
     webContents = { id: 1, on: vi.fn() };
     isDestroyed = () => false;
@@ -23,11 +24,11 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
     show = shown;
     focus = vi.fn();
     on = vi.fn();
-    once = vi.fn();
+    once = (_event: string, callback: () => void) => { readyToShow = callback; };
     constructor() { created(); }
   }
   const create = runInNewContext(`${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
-    mainWindowStartup: startup, mainWindowLoading: null, mainWindow: null, rendererReady: false,
+    mainWindowStartup: startup, mainWindowLoading: null, mainWindowReadyToShow: false, mainWindow: null, rendererReady: false,
     BrowserWindow: Window, process: { platform: 'darwin' }, app: { isPackaged: true },
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
     installWindowDiagnostics: vi.fn(), rendererUrl: () => 'app://rallywithai/index.html',
@@ -49,6 +50,12 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   await Promise.all([opening, secondOpening]);
   expect(created).toHaveBeenCalledTimes(1);
   expect(loaded).toHaveBeenCalledTimes(1);
+  await create();
+  expect(shown).not.toHaveBeenCalled();
+  readyToShow();
+  expect(shown).toHaveBeenCalledTimes(1);
+  await create();
+  expect(shown).toHaveBeenCalledTimes(2);
   const release = source.indexOf('resolveMainWindowStartup();');
   const protocolInstall = source.indexOf('await installRendererProtocol();');
   const ipcInstall = source.indexOf('    registerIpc();');
