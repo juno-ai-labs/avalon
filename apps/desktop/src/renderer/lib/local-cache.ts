@@ -20,7 +20,7 @@ import { createIndexedDbStore } from './indexeddb-store';
  * `docs/local-cache.md` owns the design.
  */
 const DATABASE_NAME = 'rally-local-cache';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const ENTRY_STORE = 'entries';
 /** Every row of one kind about one subject, whatever scope it sits in. */
 const KIND_SUBJECT_INDEX = 'kindSubject';
@@ -102,12 +102,41 @@ export function localCacheScope(userId: string, region: RallyRegion, workspaceId
   return `${userId}:${desktopWorkspaceIdentityKey(region, workspaceId)}`;
 }
 
+/** Remove structured meeting snapshots; never inspect or rewrite conversation prose. */
+function removeRetiredMeetingSnapshots(value: unknown): unknown {
+  if (Array.isArray(value)) return value
+    .filter(item => !(item && typeof item === 'object' && item.provider === 'avalon_note'))
+    .map(removeRetiredMeetingSnapshots);
+  if (!value || typeof value !== 'object') return value;
+  const object = value as Record<string, unknown>;
+  if (object['provider'] === 'avalon_note') return null;
+  return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, removeRetiredMeetingSnapshots(item)]));
+}
+
 const store = createIndexedDbStore({
   name: DATABASE_NAME,
   version: DATABASE_VERSION,
   label: 'local cache',
-  upgrade(database) {
-    if (database.objectStoreNames.contains(ENTRY_STORE)) return;
+  upgrade(database, transaction) {
+    if (database.objectStoreNames.contains(ENTRY_STORE)) {
+      // Visit inactive scopes too: waiting for a workspace to be opened would
+      // leave its retired Notes directory on this device indefinitely.
+      const entries = transaction.objectStore(ENTRY_STORE);
+      const request = entries.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const row = cursor.value as LocalCacheRow;
+        const value = removeRetiredMeetingSnapshots(row.value);
+        if (row.kind === 'directory' && value && typeof value === 'object') {
+          delete (value as Record<string, unknown>)['notes'];
+          row.version = 2;
+        }
+        cursor.update({ ...row, value });
+        cursor.continue();
+      };
+      return;
+    }
     const entries = database.createObjectStore(ENTRY_STORE, { keyPath: ['scope', 'kind', 'key'] });
     entries.createIndex(KIND_SUBJECT_INDEX, ['kind', 'subject']);
     entries.createIndex(KIND_KEY_INDEX, ['kind', 'key']);

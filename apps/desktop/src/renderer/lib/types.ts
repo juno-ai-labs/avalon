@@ -5,9 +5,6 @@ import type {
   AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
   AutomationRunStatus as ContractAutomationRunStatus,
-  NoteDetail as ContractNoteDetail,
-  NoteSummary as ContractNoteSummary,
-  NoteTranscriptSegment as ContractNoteTranscriptSegment,
   Scope as ContractScope,
   GitHubRepositoryAccessSettings as ContractGitHubRepositoryAccessSettings,
   TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
@@ -33,7 +30,7 @@ import type { Region } from "@rally/contracts/regions";
 export type Scope = 'you' | 'workspace';
 /**
  * Who may read an object — `personal` is the people in it, `workspace` is
- * everyone. Notes and work streams share this one vocabulary, which is the
+ * everyone. Work streams use this vocabulary, which is the
  * server's, so "private" means the same thing on both.
  */
 export type VisibilityScope = ContractScope;
@@ -43,9 +40,6 @@ export type AutomationLifecycleState = ContractAutomationLifecycleState;
 export type AutomationRunStatus = ContractAutomationRunStatus;
 /** The definition an automation's conversation has submitted, as the wire carries it. */
 export type AutomationDefinition = ContractAutomationDraft;
-export type NoteSummary = ContractNoteSummary;
-export type NoteDetail = ContractNoteDetail;
-export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
 
 export interface WorkspaceMember {
   presentation?: PersonalPresentation | null;

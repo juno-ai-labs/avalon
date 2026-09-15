@@ -16,7 +16,6 @@ describe('useClientFeatureFlags', () => {
   it('renders off defaults while immediately fetching the REST fallback', async () => {
     const clientFeatureFlags = vi.fn(async () => ({
       developerSettings: false,
-      meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
       multipleWorkspacesEnabled: true,
       liveArtifactsEnabled: true,
@@ -33,7 +32,7 @@ describe('useClientFeatureFlags', () => {
 
     expect(result.current.data).toEqual(DEFAULT_CLIENT_FEATURE_FLAGS);
     await waitFor(() => expect(clientFeatureFlags).toHaveBeenCalledOnce());
-    await waitFor(() => expect(result.current.data?.meetingRecordingEnabled).toBe(true));
+    await waitFor(() => expect(result.current.data?.suggestedWorkEnabled).toBe(true));
   });
 
   it('keeps defaults off without issuing a request before an API exists', () => {

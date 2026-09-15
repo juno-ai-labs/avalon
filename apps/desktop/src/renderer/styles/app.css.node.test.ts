@@ -754,8 +754,6 @@ describe('scrollbar gutter reservation on the always-tall scrollers', () => {
     ['.settings-content-scroll'],
     ['.automation-overview-scroll'],
     ['.new-automation-screen'],
-    ['.note-detail-scroll'],
-    ['.note-transcript-scroll'],
   ])('reserves a stable gutter on %s', (selector) => {
     const declarations = rule(selector);
 
@@ -1340,8 +1338,6 @@ describe('markdown list markers', () => {
   ];
 
   it.each([
-    ['.note-detail-article'],
-    ['.meeting-notes-body'],
     ['.inspector-detail-document'],
   ])(
     'leaves markdown element styling to the shared container in %s',
@@ -1353,28 +1349,6 @@ describe('markdown list markers', () => {
         .filter((prelude) => elementsIn(prelude).some((element) => MARKDOWN_ELEMENTS.includes(element)));
 
       expect(offenders).toEqual([]);
-    },
-  );
-
-  // The heading scales are the deliberate exception, and how they win matters as
-  // much as that they win. Written as `.note-detail-article :is(h1, …)` they tie
-  // `.markdown-body h1` at (0,1,1) and are decided by which sits lower in the
-  // file — so splitting this stylesheet, or moving either block, would return
-  // both surfaces to the shared scale with nothing going red. That is the same
-  // silent visual regression as the missing markers, arriving the same way.
-  // Naming `.markdown-body` in the selector settles it on specificity instead,
-  // and this is what stops the class being tidied back out.
-  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
-    'wins its heading scale on specificity rather than source order in %s',
-    (host) => {
-      const headingRules = preludes()
-        .filter((prelude) => prelude.includes(host))
-        .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
-
-      expect(headingRules.length).toBeGreaterThan(0);
-      for (const prelude of headingRules) {
-        expect(prelude).toContain('.markdown-body');
-      }
     },
   );
 
@@ -1405,12 +1379,6 @@ describe('markdown list markers', () => {
     expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
     expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
     expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
-    expect(rule('.note-detail-article .markdown-body h1')).toContain(
-      'var(--av-cmp-markdown-article-heading-1)',
-    );
-    expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
-      'font-size: 15px',
-    );
     expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
   });

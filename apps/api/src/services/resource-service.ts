@@ -1,6 +1,3 @@
-import { createAccessContext, requireAuthorizedRead } from './authorization-service';
-import { listedResourceVisibilitySql } from './resource-listing';
-import type { AccessContext } from './authorization-policy';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
@@ -11,30 +8,35 @@ import {
   type ResourceVersionAuthor,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
+import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
-import { createResourceObjectPort } from "../runtime/resource-port";
-import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import {
   connectorRegistryForEnv,
   connectorSupportsResourceHydration,
 } from "../lib/connector-registry";
-import { truncateUtf16Safe } from "../lib/text";
-import { withAuthorizedConnection } from "./connector-connection-access";
-import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workspaceDOName } from "../durable-objects/names";
-import { verifyAttachmentMimeType } from "./attachment-mime-verification";
+import { truncateUtf16Safe } from "../lib/text";
+import { createResourceObjectPort } from "../runtime/resource-port";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import {
   materializeAttachmentDerivative,
   ocrPdfWithWorkersAi,
   type AuthorizedDerivativeResource,
 } from "./attachment-derivative-service";
-import { emitProductUsageTelemetry } from "../telemetry/product-usage";
-import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
+import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import { loadBrowserCompatibleImage } from "./attachment-model-content";
+import type { AccessContext } from './authorization-policy';
+import { createAccessContext, requireAuthorizedRead } from './authorization-service';
+import { withAuthorizedConnection } from "./connector-connection-access";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { listedResourceVisibilitySql } from './resource-listing';
+import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
+import { allocateResourceSlugBesideCreation } from "./resource-slug";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 function resourceTelemetryConnector(value: unknown):
   'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
@@ -42,8 +44,6 @@ function resourceTelemetryConnector(value: unknown):
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }
-import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -87,13 +87,7 @@ const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
 
-const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note' OR EXISTS (
-  SELECT 1 FROM notes note_visibility
-  WHERE note_visibility.resource_id = r.id
-    AND note_visibility.workspace_id = r.workspace_id
-    AND note_visibility.archived_at IS NULL
-    AND (note_visibility.scope = 'workspace' OR note_visibility.owner_user_id = ?)
-))`;
+const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note')`;
 
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     c.connector_type AS connector_type,
@@ -147,7 +141,6 @@ export class ResourceService {
       listedResourceVisibilitySql('r'),
     ];
     const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
-    bindings.push(this.auth.userId);
 
     if (query) {
       const pattern = `%${escapeLikePattern(query)}%`;
@@ -698,7 +691,6 @@ export class ResourceService {
     ).bind(
       id,
       this.auth.workspaceId,
-      this.auth.userId,
       this.auth.userId,
       this.auth.userId,
     ).first<Record<string, unknown>>();
