@@ -3050,7 +3050,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "sidekicks_list",
-    description: "List editable Sidekick definitions (canEdit) and, in workstreams, workspace Sidekick summaries available to recommend (canAttach, attached). Edit only canEdit definitions with submit_draft; use attach or detach for workspace recommendations. Recommendations affect future executions; load_skill is still required to use one now.",
+    description: "List editable Sidekick definitions (canEdit) and, in workstreams, workspace Sidekick summaries available to recommend (canAttach, attached). Edit definitions in the Sidekick's authoring conversation; use attach or detach for workspace recommendations. Recommendations affect future executions; load_skill is still required to use one now.",
     capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",

@@ -52,6 +52,8 @@ and sibling attachments stay independent. Removing an attachment affects future 
 Workstream-owned Sidekicks are inherently Recommended. Participants and agents
 can also attach non-archived workspace Sidekicks through the rail picker or the
 Sidekicks plugin's attach/detach tools. WorkstreamDO owns those explicit links.
+Workstream main and child agents receive only list/attach/detach from this
+plugin; drafting stays in the Sidekick's own authoring conversation.
 Each new execution snapshots eligible recommendations and marks their catalog
 lines `[Recommended]`, encouraging use when relevant without activating bodies.
 Detaching an explicit recommendation also removes the current substream's local
