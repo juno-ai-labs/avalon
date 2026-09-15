@@ -82,6 +82,23 @@ is disabled. Durable Object point-in-time recovery can retain pre-deletion data
 for 30 days. These retention copies are not a completed physical erasure. Offline
 desktop caches are cleared by the client cache upgrade when the updated app runs.
 
+macOS release 1.363.0 is published with verified public artifacts and update feed.
+The app and DMG passed signing, notarization, stapling, and a clean-profile launch.
+Ace version `c203de00-3e39-481d-a395-626eab8e1c69` removed the administrative
+meeting controls, and telemetry delivery version
+`a3bd4e0d-aed9-476c-a3d6-7d9d01b5e5b8` fences old events at the destination.
+
+Validation includes lint and typecheck, real workerd fresh/populated/adopted
+schema upgrades, interrupted and repeated cleanup, stale writers, and mutation
+proofs for deletion and fencing. The full workerd run passed 890 tests and found
+two obsolete table expectations; the corrected affected run passed all 88 tests.
+The final dictation/permission suite passed 44 tests, and Granola/Fireflies passed
+55 connector tests. A real Electron window switched between two local workspaces
+and transcribed synthetic speech through the live provider into the composer
+both before and after switching. Actual physical microphone hardware and fresh
+external-provider OAuth consent were not exercised. Temporary cleanup account
+tokens were revoked and the remote operator session was closed.
+
 Deployment and current-storage deletion therefore have separate evidence from
 provider-retained copies. Do not describe this checkpoint as erasure from every
 historical storage layer.
