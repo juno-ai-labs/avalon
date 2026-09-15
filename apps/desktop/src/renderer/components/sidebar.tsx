@@ -2003,15 +2003,6 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
-          {conversationOnly && location.pathname === '/workstreams/new' && (
-            <div aria-current="page" aria-label={`${NEW_STREAM_LABEL} draft`} className="sidebar-new-chat-draft">
-              <span aria-hidden="true" className="sidebar-new-chat-draft-icon">
-                <Plus size={16} strokeWidth={1.7} />
-              </span>
-              <span>{NEW_STREAM_LABEL}</span>
-            </div>
-          )}
-
           {!conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
             <NavLink
               className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
