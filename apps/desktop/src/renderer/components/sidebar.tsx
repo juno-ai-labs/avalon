@@ -1173,10 +1173,12 @@ export function Sidebar({
   // makes, so the two cannot disagree about which route this is.
   const onNewStreamRoute = location.pathname === '/workstreams/new';
   const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
-  // Never had a Sidekick, rather than none running right now. A draft, a paused
-  // one, and a work-stream's own all mean this person has met the concept, and
-  // all three are reached from the library rather than from here.
-  const workspaceHasNoSidekicks = automations?.length === 0;
+  // The strip has one useful empty state once its answer has arrived: offer a
+  // new Sidekick until an active standalone Sidekick can occupy the slot.
+  // Drafts, paused Sidekicks, and work-stream-owned Sidekicks are available in
+  // the library, but none of them paints a shortcut here and none should leave
+  // this part of the sidebar blank.
+  const sidekickShortcutsLoaded = automations !== undefined;
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1662,19 +1664,10 @@ export function Sidebar({
   useListMotion(scrollRef, compact, layoutSettling);
   useListMotion(commandRef, compact, layoutSettling);
 
-  // Shortcuts when there are any, the offer to make the first Sidekick when this
-  // workspace has never had one, and nothing at all otherwise — which is what a
-  // workspace whose Sidekicks are all paused or still drafts sees, exactly as it
-  // did before the tile existed.
-  //
-  // The offer is keyed on having no Sidekick rather than no *active* one for two
-  // reasons. It would otherwise tell somebody with three paused Sidekicks that
-  // they have none, and invite a fourth instead of pointing at the three they
-  // paused on purpose. And because `/sidekicks/new` creates a draft on arrival,
-  // a tile that stayed up while that draft was not yet active would create
-  // another on every press: the strip would sit there in exactly the state that
-  // makes re-firing it cheap, and each press abandons the draft before it.
-  const sidekickShortcuts = (standaloneSidekicks.length > 0 || workspaceHasNoSidekicks) && (
+  // Active standalone Sidekicks occupy the strip. Until one exists, its empty
+  // slot remains the dashed New Sidekick action; the whole section stays absent
+  // only while the workspace answer is still loading.
+  const sidekickShortcuts = sidekickShortcutsLoaded && (
     <section
       aria-label={standaloneSidekicks.length > 0 ? 'Sidekick shortcuts' : 'Sidekicks'}
       className="sidebar-automation-strip"
