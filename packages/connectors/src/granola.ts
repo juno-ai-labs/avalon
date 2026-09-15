@@ -1,3 +1,4 @@
+import { describeZodIssues } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import type { ConnectorInstallationManagement } from "./installation";
@@ -854,10 +855,12 @@ async function granolaOAuthCallbackStage<T>(
       throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
     }
     if (error instanceof z.ZodError) {
+      // The paths say which field the response was missing; the values, which
+      // on this surface are tokens and account identity, stay behind.
       throw new ConnectorError(
         "provider_error",
         "Granola returned an unexpected OAuth or MCP response",
-        { oauthStage, responseInvalid: true },
+        { oauthStage, responseInvalid: true, responseIssues: describeZodIssues(error) },
       );
     }
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {

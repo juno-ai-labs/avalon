@@ -409,7 +409,8 @@ describe("Granola connector", () => {
     });
     await expect(schemaFailure.handleAuthorizationCallback!(callback)).rejects.toMatchObject({
       code: "provider_error",
-      details: { oauthStage: "token_exchange", responseInvalid: true },
+      // Which field: the token came back as a number. The value does not travel.
+      details: { oauthStage: "token_exchange", responseInvalid: true, responseIssues: "access_token:invalid_type" },
     });
 
     const mcpFailure = createGranolaConnector({

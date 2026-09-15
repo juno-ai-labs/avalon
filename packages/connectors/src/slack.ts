@@ -1,3 +1,4 @@
+import { describeZodIssues } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
@@ -1560,7 +1561,15 @@ function parseSlackSuccess<T extends z.ZodType>(
     );
   }
   const result = schema.safeParse(payload);
-  if (!result.success) throw new ConnectorError("provider_error", fallbackMessage, result.error.flatten());
+  // The flatten's shape is what tells a schema mismatch from a provider
+  // refusal downstream; the paths say which field the body was missing. The
+  // values, which on this surface are tokens and identity, are in neither.
+  if (!result.success) {
+    throw new ConnectorError("provider_error", fallbackMessage, {
+      ...result.error.flatten(),
+      responseIssues: describeZodIssues(result.error),
+    });
+  }
   return result.data;
 }
 
@@ -1589,10 +1598,12 @@ async function slackOAuthCallbackStage<T>(
       throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
     }
     if (error instanceof z.ZodError) {
+      // The paths say which field the response was missing; the values, which
+      // on this surface are tokens and account identity, stay behind.
       throw new ConnectorError(
         "provider_error",
         "Slack returned an unexpected OAuth response",
-        { oauthStage, responseInvalid: true },
+        { oauthStage, responseInvalid: true, responseIssues: describeZodIssues(error) },
       );
     }
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
