@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   diagnosticErrorCode,
   logError,
@@ -38,6 +39,29 @@ describe("structured logging", () => {
       new Error("Provider included customer@example.com in its response"),
       "connector_event_failed",
     )).toBe("connector_event_failed");
+  });
+
+  it("names the field a schema rejection rejected, behind the caller's own code", () => {
+    // The consumer delivering an external event to a Sidekick reduced a
+    // rejection to the constant `external_event_delivery_failed` and retried
+    // until the Queue gave up; the failing path is the whole diagnosis, and
+    // the rejected value is member content that stays behind.
+    const rejection = z.strictObject({ event: z.strictObject({ eventSequence: z.number() }) })
+      .safeParse({ event: { eventSequence: "customer@example.com" } });
+    if (rejection.success) throw new Error("expected a rejection");
+    const code = diagnosticErrorCode(rejection.error, "external_event_delivery_failed");
+    expect(code).toBe("external_event_delivery_failed:event.eventSequence:invalid_type");
+    expect(code).not.toContain("customer");
+  });
+
+  it("carries a code a Durable Object named across the RPC hop, separators included", () => {
+    // `parseRpcInput` composes `<method>_invalid:<path>:<issue>`. The earlier
+    // character class refused the `:` and `.` and answered the fallback — one
+    // hop after the field had been named.
+    expect(diagnosticErrorCode(
+      new Error("admit_external_event_invalid:event.eventSequence:invalid_type"),
+      "external_event_delivery_failed",
+    )).toBe("admit_external_event_invalid:event.eventSequence:invalid_type");
   });
 
   it("keeps the request context authoritative over caller-supplied correlation", () => {

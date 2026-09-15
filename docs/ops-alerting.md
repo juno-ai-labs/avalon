@@ -135,8 +135,12 @@ Cloudflare administration credentials never become Worker variables
   `APP_ENV` guard does. A local Worker answers `"skipped"` with both set.
 - **A handler's error is not a code.** The failure report carries the thrown
   message on the log row, but the notice carries it only when it has the shape
-  of a code; a Zod issue list or a parse error quoting a row becomes
-  `handler_error:<ErrorClass>`.
+  of a code — `isCodeShaped` from `@rally/contracts`, the one class every such
+  field shares; a parse error quoting a row becomes `handler_error:<ErrorClass>`.
+  A Zod issue list is the exception with structure worth keeping: the notice
+  names its failing paths and issue codes, `handler_error:ZodError:<path>:<code>`,
+  and never the rejected values
+  ([`naming-a-schema-failure.md`](naming-a-schema-failure.md)).
 - **A stall resolves and recurs.** The alarm gate resets when the entry's
   instant moves, so a new episode notifies again at its own third attempt.
   That is the intended reading: each message is one continuous stall.
@@ -150,8 +154,10 @@ Cloudflare administration credentials never become Worker variables
   request, the deadline, field truncation and `mrkdwn` escaping.
 - `apps/api/test/workspace-alarm-stall-alert.test.ts` — `WorkspaceDO`'s
   failure and stall hooks: warn on attempts one and two, error from three, post
-  exactly once, an episode that mixes throws and stalls posts once, and a
-  thrown message that is not a code reaches the channel as the error's class.
+  exactly once, an episode that mixes throws and stalls posts once, a
+  thrown message that is not a code reaches the channel as the error's class,
+  and a handler's own schema rejection reaches it naming the field and not
+  the value.
 - `apps/api/test/slack-workspace-assignment.test.ts` ("Slack ingress jobs given
   up on") — the exhausted-job notice is posted once at the ceiling, a Queue
   redelivery of the dead job posts nothing, and a failure the queue will retry
