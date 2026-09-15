@@ -24,14 +24,25 @@ const PRODUCT_NAMES: readonly string[] = Object.freeze(["Rally", "Avalon"]);
  */
 const CANONICAL_DMG_POINTERS = new Set(PRODUCT_NAMES.map((name) => `${RELEASE_PREFIX}${name}.dmg`));
 const LEGACY_MANIFEST = `${RELEASE_PREFIX}latest-mac.yml`;
+const STABLE_MANIFEST = `${RELEASE_PREFIX}stable-mac.yml`;
 const CHANNEL_MANIFESTS = new Set([
-  `${RELEASE_PREFIX}stable-mac.yml`,
+  STABLE_MANIFEST,
   `${RELEASE_PREFIX}faster-mac.yml`,
 ]);
 const CHANNEL_RECEIPT = `${RELEASE_PREFIX}stable-channel.json`;
+const RELEASE_PUBLICATION_RECEIPT = `${RELEASE_PREFIX}release-publication.json`;
+const RELEASE_LOCK = `${RELEASE_PREFIX}release-publish.lock`;
 const REQUIRED_POINTERS = new Set([LEGACY_MANIFEST]);
-const CHANNEL_POINTERS = new Set([...CHANNEL_MANIFESTS, CHANNEL_RECEIPT]);
+const CHANNEL_POINTERS = new Set([
+  ...CHANNEL_MANIFESTS,
+  CHANNEL_RECEIPT,
+  RELEASE_PUBLICATION_RECEIPT,
+]);
 const MUTABLE_POINTERS = new Set([...CANONICAL_DMG_POINTERS, ...REQUIRED_POINTERS, ...CHANNEL_POINTERS]);
+// The lock is a persistent coordination object rather than a release pointer.
+// Retention must preserve it whether it is active or released, but its absence
+// remains valid before the first channel-aware publisher acquires the lock.
+const OPERATIONAL_OBJECTS = new Set([RELEASE_LOCK]);
 const SEMANTIC_VERSION = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
 const VERSIONED_ARTIFACT = new RegExp(
   `^${RELEASE_PREFIX}(${PRODUCT_NAMES.join("|")})-(${SEMANTIC_VERSION})-mac-arm64\\.(?:dmg|zip)(?:\\.blockmap)?$`,
@@ -120,7 +131,7 @@ function analyzeInventory(
   for (const object of objects) {
     if (seenKeys.has(object.key)) throw new Error(`Duplicate active R2 key: ${object.key}`);
     seenKeys.add(object.key);
-    if (MUTABLE_POINTERS.has(object.key)) continue;
+    if (MUTABLE_POINTERS.has(object.key) || OPERATIONAL_OBJECTS.has(object.key)) continue;
     const release = releaseForKey(object.key);
     if (release === null) throw new Error(`Unexpected active R2 key: ${object.key}`);
     if (release.productName !== null) {
@@ -204,7 +215,7 @@ async function pointerVersions(bucket: R2Bucket, objects: R2Object[]): Promise<S
   // Faster and the legacy manifest move with every release, so the ordinary
   // highest-version keep set already covers them. Stable may deliberately lag
   // behind more than five fast releases and therefore protects its version.
-  for (const key of [`${RELEASE_PREFIX}stable-mac.yml`]) {
+  for (const key of [STABLE_MANIFEST]) {
     if (!present.has(key)) continue;
     const object = await bucket.get(key);
     if (object === null) throw new Error(`Mutable release manifest disappeared: ${key}`);
@@ -369,11 +380,13 @@ export async function runRetention(
   // Count the pointers actually present rather than the names this build knows
   // about: `Rally.dmg` and `Avalon.dmg` are both recognized, and which of them
   // the bucket holds depends on when the last release shipped.
-  const finalPointerCount = finalObjects.filter((object) => MUTABLE_POINTERS.has(object.key)).length;
+  const finalPreservedObjectCount = finalObjects.filter(
+    (object) => MUTABLE_POINTERS.has(object.key) || OPERATIONAL_OBJECTS.has(object.key),
+  ).length;
   if (
     completed.archiveVersions.length !== 0 ||
     !sameStrings(completed.retainedVersions, initial.plan.retainedVersions) ||
-    finalObjects.length !== initial.plan.retainedVersions.length * 5 + finalPointerCount
+    finalObjects.length !== initial.plan.retainedVersions.length * 5 + finalPreservedObjectCount
   ) {
     throw new Error("Final active release inventory failed retention verification");
   }

@@ -231,6 +231,22 @@ test('a cleanup failure reports the shipped release and lets tag and record step
   assert.equal(client.lockState, 'active');
 });
 
+test('a strict cleanup failure fails scheduled work visibly', async () => {
+  const client = new FakeR2Client();
+  client.failRelease = true;
+  await assert.rejects(
+    withR2ReleaseLock({
+      bucket: 'releases',
+      client,
+      key: 'stable/release-publish.lock',
+      operation: async () => 'promoted',
+      strictCleanup: true,
+    }),
+    /remote lock could not be marked released/u,
+  );
+  assert.equal(client.lockState, 'active');
+});
+
 test('account token verification derives an R2 S3 client without exposing the token', async () => {
   let request;
   const client = await createR2ReleaseLockClient({

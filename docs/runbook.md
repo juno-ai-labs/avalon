@@ -496,9 +496,10 @@ objects:
 - The DMG and ZIP blockmaps
 - `<version>/SHA256SUMS`
 
-`stable/darwin/arm64/Rally.dmg`, the three `*-mac.yml` manifests, and
-`stable/darwin/arm64/stable-channel.json` are mutable pointers, not releases.
-They must remain in the public bucket. `latest-mac.yml` is the compatibility
+`stable/darwin/arm64/Rally.dmg`, the three `*-mac.yml` manifests,
+`stable-channel.json`, and `release-publication.json` are mutable state, not
+releases. The persistent `release-publish.lock` is operational state. Retention
+must preserve all of them in the public bucket. `latest-mac.yml` is the compatibility
 feed for builds released before channel selection, `faster-mac.yml` advances on
 every desktop release, and `stable-mac.yml` advances no more than once in a
 rolling 24-hour window. The JSON receipt records when Stable last moved.
@@ -529,7 +530,9 @@ Each admitted invocation performs this fail-closed transaction:
    semantic versions, require all five immutable objects for every release, and
    require the mutable pointers. A bucket that predates channel selection may
    temporarily carry only the compatibility manifest; once any new channel
-   pointer exists, all three new pointers are required. An unexpected,
+   pointer exists, both channel manifests and both receipts are required. The
+   release lock is accepted when present but is not required before the first
+   channel-aware publication. An unexpected,
    duplicate, or incomplete key aborts the run before any copy or deletion.
 2. Select all versions older than the highest five, except the version still
    named by `stable-mac.yml`. For each exact candidate
@@ -1022,23 +1025,50 @@ The cron has its own `desktop-stable-promotion` concurrency group. Sharing the
 release workflow's `queue: single` group would let an hourly tick cancel a
 pending desktop release. Both paths instead serialize the authoritative R2
 read, decision, and writes through the same `release-publish.lock`. A cron that
-finds an active publisher defers successfully; the next hourly run reconciles
-the still-durable Faster pointer.
+finds an active lock fails visibly and the next hourly run retries. This may be
+ordinary contention with a live publisher, but it also ensures an abandoned
+lock cannot freeze Stable behind indefinitely green scheduled runs. Likewise,
+the promoter treats a failure to mark its lock released as a failed run.
 
 The setting is a device preference, not an account or workspace preference.
 Electron Updater selects `stable-mac.yml` or `faster-mac.yml` from the embedded,
 signature-checked generic feed. Changing channels never enables downgrade: a
 Mac moving from Faster to Stable stays on its installed version until Stable
-advances past it. The site and `Rally.dmg` continue to advertise the newest
+advances past it. Changing the selection also invalidates any check, download,
+or restart prompt from the previous feed. Rally disables install-on-quit for a
+staged previous-channel build, waits for active updater work to settle, and then
+checks the newly selected feed; only a download from that feed re-enables
+install-on-quit. The site and `Rally.dmg` continue to advertise the newest
 published desktop release; the channel choice governs automatic updates.
 
 The release and the site deployment deliberately keep separate groups. Sharing one would order them, but `single` cancels the pending member when another queues, so a site deployment could discard a pending release. The residual overlap runs in both directions. A standalone site deployment of an older commit landing immediately after a release could restore the superseded version; the guard is `check-site-release-config.mjs`, which runs against the live channel in the step immediately before the publish, leaving only a seconds-wide window. In the other direction the release itself redeploys the site as its final step, and until 2026-08-27 it built that site from its own checkout — the release commit, by then up to a build's length behind — so a site fix that merged and deployed during the 1.182.0 build was reverted in production for twenty-five minutes. The release now builds the site from the tip of `main`, fetched inside that final step. Every push-triggered `deploy-site.yml` run deploys a commit on `main`, so the fetched tip is never older than one of those; a manual dispatch of that workflow against another branch sits outside the guarantee, and the next release will overwrite whatever it deployed. The race that remains is bounded by work rather than by any timing measurement: for the release to regress the site, an entire `deploy-site.yml` run — runner acquisition, checkout, install, full lint and typecheck, the site tests, and its deploy — would have to finish inside the span of the release's site step, which performs a strict subset of that work. That group is declared at **workflow** level, so the planning job runs inside the queue rather than ahead of it. When the plan is made matters: a plan made while another release is in flight reads a release record that run has not finished writing, so it picks a version that release is about to take, and the bump step can no longer tell a genuine resume of a failed release from a version that has just shipped — that merge's run then dies at the tag or at publish, and its desktop work ships in no release until an unrelated later push happens to match `paths:`. Planning inside the queue settles the record before it is read. The cost is that a plan now waits behind a running release before it can even skip. The admission filter still excludes unrelated packages; an admitted contract change outside the desktop closure consumes only this cheap planner job. Ubuntu release verification has a team-selected 60-minute ceiling after the full repository suite exceeded the previous 30-minute budget. It runs only the Electron desktop tests and release invariants; the broader test suites remain in repository CI. This keeps unrelated backend tests out of the desktop release queue while bounding how long a wedged verification can hold it.
 
 The tag is created locally so the existing guards can verify it against HEAD, and is pushed immediately after the payloads are published and the channel is promoted — before the release config is recorded and before the site is deployed. A release that fails before publication leaves no tag, so the same version can be retried by re-running the workflow or by merging a fix. After publication the release is live to updaters and cannot be retried, because a rebuild is not byte-identical and the immutable-object guard rejects it; the tag therefore has to exist by then, so that the remaining steps can be re-run or dispatched on their own. Pushing the tag with `GITHUB_TOKEN` deliberately does not start another run.
 
-`latest-mac.yml` is also the boundary for orphan recovery. A failed attempt can upload one or more versioned objects before it reaches that final commit point, and a freshly notarized retry will not reproduce their bytes. While the live manifest is absent or still names the preceding version, the publisher replaces a mismatched object under the pending version only when the live manifest does not reference that object, verifies the replacement in R2, purges the exact public URL, and streams the ordinary query-free response through SHA-512 before promotion. Once the live manifest names that version, both a mismatch and a missing object are hard failures: published release bytes are never rewritten or regenerated from a fresh build. A missing manifest also fails closed when the checked-in site record says that version already shipped.
+`release-publication.json` is the recovery boundary for a publication that has
+begun changing mutable objects. After every immutable artifact is verified but
+before `Rally.dmg` or any manifest moves, the publisher durably records the exact
+manifest bytes and validated site-record inputs. A retry of that same version
+uses this receipt rather than the newly rebuilt signing output, restores the
+canonical DMG from the receipt-named immutable object, and idempotently finishes
+Stable, its cadence receipt, Faster, the compatibility manifest, and the site
+record. The publisher validates the legacy manifest, both channel manifests,
+both receipts, and the future site record before its first write, so an orphan
+or ahead Stable receipt cannot leave another manifest partially advanced.
 
-Every live publisher first atomically creates `${prefix}/release-publish.lock` in the release bucket with R2's conditional `If-None-Match: *` write. This remote mutex covers GitHub Actions and the documented local command, so a second publisher exits before it reads or changes release state. R2 does not provide conditional deletion, so the key persists: the owner conditionally changes its acquired ETag from `active` to `released`, and the next publisher conditionally changes that released ETag back to `active`. Every ownership transition is atomic, and a paused old process has no unconditional cleanup that could change a newer publisher's lock after manual recovery. If publication succeeds but marking the lock released fails, it reports that the release shipped and continues so the workflow can push the tag and release record; the surviving active lock fails the next publisher until it is repaired. If the process or runner is terminated without cleanup, confirm no publisher is active, inspect that exact lock, and delete only that object before retrying; the lock deliberately has no guessed lease that could expire underneath a slow notarized release.
+Before this recovery boundary, a failed attempt can upload one or more
+versioned objects and a freshly notarized retry will not reproduce their bytes.
+While no prepared receipt or live manifest names that version, the publisher
+may replace a mismatched orphan under the pending version, then repeats every
+hash and public-domain verification. Once the prepared receipt or a live
+manifest names that version, recovery uses the recorded exact bytes; published
+release bytes are never regenerated from a fresh build. If publication stops
+after `release-publication.json` appears, rerun the same release workflow or tag
+instead of rebuilding a different version or manually copying channel
+manifests. A missing compatibility manifest still fails closed when the
+checked-in site record says that version already shipped.
+
+Every live publisher first atomically creates `${prefix}/release-publish.lock` in the release bucket with R2's conditional `If-None-Match: *` write. This remote mutex covers GitHub Actions and the documented local command, so a second publisher exits before it reads or changes release state. R2 does not provide conditional deletion, so the key persists: the owner conditionally changes its acquired ETag from `active` to `released`, and the next publisher conditionally changes that released ETag back to `active`. Every ownership transition is atomic, and a paused old process has no unconditional cleanup capable of changing a newer publisher's lock after manual recovery. If publication succeeds but marking the lock released fails, the release publisher reports that the release shipped and continues so the workflow can push the tag and release record; the scheduled Stable promoter instead fails because it has no post-publication record to finish. Either way the surviving active lock makes subsequent runs red until it is repaired. If a process or runner is terminated without cleanup, first confirm in GitHub Actions and the local release environment that no publisher or promoter is active. Inspect that exact R2 key's `state` and `owner` metadata, then delete only `${prefix}/release-publish.lock` and rerun the failed workflow. Never delete a lock merely because it is old: the lock deliberately has no guessed lease that could expire underneath a slow notarized release.
 
 ##### When a release does not happen
 
