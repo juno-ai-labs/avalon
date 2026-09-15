@@ -206,11 +206,12 @@ Two things about how a mark is drawn are load-bearing:
   light. It also means no appearance-specific artwork and no component that
   knows which appearance is on.
 
-Monochrome is asked for rather than imposed. Six of the eight brands ship a
+Monochrome is asked for rather than imposed. Eight of the ten brands ship a
 `mono` variant already drawn in `currentColor`, and `PLUGIN_BRAND_MARKS` records
 which ones — so a brand that gains or loses `mono` upstream fails that table
 rather than the render. Slack and Granola ship none, and `.connector-mark`
-recolours their palette in CSS instead.
+recolours their palette in CSS instead. Ashby and Fireflies are not in
+`@thesvg/react`; their local components only ship the monochrome art.
 
 ### Where a run ends
 
