@@ -333,7 +333,10 @@ async function attemptConnectorRepair(
   if (!adapter.repair) return null;
   try {
     const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
-    return repair.repaired ? repair.message ?? "Repaired the connection" : null;
+    // Not repaired is still an outcome. The managed lifecycle's repair says
+    // why it could not — "needs attention; inspect installation details" —
+    // and dropping that left Test showing only the health check's sentence.
+    return repair.repaired ? repair.message ?? "Repaired the connection" : repair.message ?? null;
   } catch (error) {
     logWarn(env, "connector_repair_failed", {
       connection_id: identity.connectionId,
@@ -2337,8 +2340,11 @@ export class ConnectionService {
 
   async createGranolaWorkspace(input: { apiKey: string; capabilities: string[]; idempotencyKey?: string | undefined }) {
     if (input.capabilities.length !== 1 || input.capabilities[0] !== GranolaCapabilities.workspaceRead) throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace capability");
-    return this.createWorkspaceInstallation({ provider: "granola", apiKey: input.apiKey, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
-      events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"] });
+    // No event list: the facet's `installationManagement.events` is what the
+    // runner registers and inspection compares against, and setup reads it
+    // from there. A second copy here is how the request once carried a name
+    // Granola's API does not define.
+    return this.createWorkspaceInstallation({ provider: "granola", apiKey: input.apiKey, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID() });
   }
 
   private async adoptGranolaInstallation(connection: StoredConnection) {
@@ -2347,7 +2353,7 @@ export class ConnectionService {
     const current = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: connection.id });
     if (current) return current;
     const context = await this.context(connection);
-    const at = nowIso(); const events = ["note.access_granted", "note.edited", "note.generated", "note.regenerated"];
+    const at = nowIso(); const events = [...this.registry().get("granola").installationManagement!.events];
     const providerId = stringField(context.credentials, "webhookEndpointId");
     const installation = ConnectorInstallationSchema.parse({ connectionId: connection.id, workspaceId: connection.workspace_id, provider: "granola",
       attemptId: crypto.randomUUID(), generation: 1, desiredVersion: 1, appliedVersion: null, state: "setting_up", selectedEvents: events,

@@ -571,9 +571,9 @@ export function instrumentConnectorAdapter(
             // `x.ts` returns the provider body's own `message` field verbatim.
             // `redact` keys on field names, so nothing would catch that. Only
             // `reasonCode`, which an adapter writes as a literal, crosses here.
-            ...(result.ok || result.reasonCode === undefined
-              ? {}
-              : { reason_code: result.reasonCode }),
+            // A degraded result carries one for the same reason: its `warning`
+            // is prose too.
+            ...(result.reasonCode === undefined ? {} : { reason_code: result.reasonCode }),
             duration_ms: Date.now() - startedAt,
             ...fields,
           },

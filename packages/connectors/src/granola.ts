@@ -287,13 +287,25 @@ export interface GranolaWebhookEndpoint {
   signingSecret: string;
 }
 
+/**
+ * The note events Granola's public API defines — and the whole list.
+ *
+ * A regenerated summary is delivered as `note.edited`; there is no
+ * `note.regenerated`. Rally sent that fourth name for five weeks. The request
+ * schema does not admit it, and the one workspace that registered in that time
+ * ended with no endpoint, no signing secret, and nothing naming why. The
+ * registration request, the installation facet's declared events, and the
+ * delivery schema all read this one list so they cannot disagree again.
+ */
+const GRANOLA_WEBHOOK_EVENTS = ["note.access_granted", "note.edited", "note.generated"] as const;
+
 const GranolaWebhookEndpointSchema = z.looseObject({
   id: z.string().regex(/^whe_[A-Za-z0-9]{14}$/u),
   signing_secret: z.string().regex(/^whsec_[A-Za-z0-9+/=_-]+$/u),
 });
 const GranolaWebhookEventSchema = z.looseObject({
   event_id: z.string().uuid(),
-  event_type: z.enum(["note.access_granted", "note.edited", "note.generated", "note.regenerated"]),
+  event_type: z.enum(GRANOLA_WEBHOOK_EVENTS),
   note_id: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
   occurred_at: z.string().datetime({ offset: true }),
   data: z.looseObject({ changed_fields: z.array(z.string()).max(20).optional() }).optional(),
@@ -319,7 +331,7 @@ export async function createGranolaWebhookEndpoint(
       body: JSON.stringify({
         url: normalizeHttpsUrl(webhookUrl),
         scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        events: [...GRANOLA_WEBHOOK_EVENTS],
       }),
       signal,
     },
@@ -522,10 +534,10 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
 
   const installationManagement: ConnectorInstallationManagement = {
     version: 1, capability: GranolaCapabilities.workspaceRead, grouping: "grouped",
-    events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+    events: [...GRANOLA_WEBHOOK_EVENTS],
     signingSecretSource: "provider", canUpdateDestination: false,
     support: { create: "automatic", inspect: "automatic", update: "automatic", remove: "automatic", rotate: "manual", reconcileCreate: "manual" },
-    manualInstructions: "Inspect the exact Rally endpoint in Granola's webhook settings. Preserve its destination, signing secret, and four note events. Supply its recorded ID to reconcile; remove that endpoint manually if API removal is unavailable. Automatic secret rotation is not verified.",
+    manualInstructions: "Inspect the exact Rally endpoint in Granola's webhook settings. Preserve its destination, signing secret, and three note events. Supply its recorded ID to reconcile; remove that endpoint manually if API removal is unavailable. Automatic secret rotation is not verified.",
     async validate(connection, signal) {
       await granolaApi(fetcher, apiBaseUrl, requireWorkspaceApiKey(connection), "/v1/webhook-endpoints", {}, signal);
     },
@@ -591,7 +603,6 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           "note.access_granted": "Granola note access granted",
           "note.edited": "Granola note edited",
           "note.generated": "Granola note generated",
-          "note.regenerated": "Granola note regenerated",
         }[verified.event_type];
         return {
           workspaceId: connection.workspaceId,
@@ -631,14 +642,15 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         { id: GranolaCapabilities.personalRead, kind: "tool" },
       ],
       // A meeting note being written for the first time is the meeting; every
-      // later pass over the same note is Granola improving its own output, and
-      // being granted access to an existing note is a permission change rather
-      // than something that happened.
+      // later pass over the same note is Granola improving its own output —
+      // Granola reports a regenerated summary as `note.edited` — and being
+      // granted access to an existing note is a permission change rather than
+      // something that happened.
       activityTriggers: defineConnectorActivityTriggers(
         "Granola",
         {
           digestible: ["note.generated"],
-          operational: ["note.access_granted", "note.edited", "note.regenerated"],
+          operational: ["note.access_granted", "note.edited"],
         },
         {
           "note.generated": {
@@ -775,11 +787,20 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         if (connection.scope === "workspace") {
           const apiKey = requireWorkspaceApiKey(connection);
           await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, signal);
+          // Everything from here is about delivery, not authority. The key has
+          // just read notes, so every read tool works and a run may load the
+          // plugin; what may be missing is the endpoint that carries events in.
+          // Each condition is reported, not repaired and not failed: repair is
+          // a write and the installation runner owns it, and a failure here
+          // reaches the host as an authorization it could not verify — which is
+          // how a webhook that was never registered became a Sidekick told to
+          // retry after the authorization service recovered.
           const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
           if (!webhookEndpointId) {
-            throw new ConnectorError("invalid_configuration", "Granola webhook endpoint identity is missing", {
-              reasonCode: "webhook_endpoint_identity_missing",
-            });
+            return degradedGranolaDelivery(
+              "no webhook endpoint is registered, so no notes will arrive until workspace events are connected again",
+              "webhook_endpoint_identity_missing",
+            );
           }
           const endpoints = await granolaApi(
             fetcher,
@@ -791,20 +812,17 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           );
           const endpoint = recordArray(endpoints, "webhook_endpoints")
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
-          if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists", {
-            reasonCode: "webhook_endpoint_absent",
-          });
+          if (!endpoint) {
+            return degradedGranolaDelivery(
+              "its webhook endpoint no longer exists at Granola, so no notes will arrive until workspace events are connected again",
+              "webhook_endpoint_absent",
+            );
+          }
           if (endpoint.enabled !== true) {
-            // Reported, not repaired: re-enabling is a write, and the installation runner
-            // owns it. Still `ok` — the authorization is sound and every read
-            // tool works; it is delivery that has stopped, so failing the
-            // check here would take a usable connection out of every run to
-            // report a problem the connection test can fix.
-            return {
-              ok: true,
-              message: "Granola authorization is healthy, but its webhook endpoint is disabled and no notes will arrive until it is re-enabled",
-              warning: "Granola webhook endpoint is disabled; no notes will be delivered until it is re-enabled",
-            };
+            return degradedGranolaDelivery(
+              "its webhook endpoint is disabled and no notes will arrive until it is re-enabled",
+              "webhook_endpoint_disabled",
+            );
           }
         } else {
           const accountResult = await reauthorizingMcpCall(
@@ -994,6 +1012,26 @@ function boundGranolaValue(value: unknown, depth = 0): unknown {
   if (Array.isArray(value)) return value.slice(0, GRANOLA_ARRAY_ITEMS).map((item) => boundGranolaValue(item, depth + 1));
   if (isRecord(value)) return Object.fromEntries(Object.entries(value).slice(0, 200).map(([key, item]) => [key, boundGranolaValue(item, depth + 1)]));
   return value;
+}
+
+/**
+ * A workspace connection whose authorization is sound but whose delivery is
+ * not. `ok`, so the connection stays loadable; `warning`, so the host logs it
+ * on the healthy path; `reasonCode`, so the log names the condition rather
+ * than the sentence written for a person.
+ */
+function degradedGranolaDelivery(condition: string, reasonCode: string): {
+  ok: true;
+  message: string;
+  warning: string;
+  reasonCode: string;
+} {
+  return {
+    ok: true,
+    message: `Granola authorization is healthy, but ${condition}`,
+    warning: `Granola webhook delivery is degraded: ${condition}`,
+    reasonCode,
+  };
 }
 
 function requireApiKey(value: string): string {

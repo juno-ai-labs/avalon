@@ -286,7 +286,7 @@ describe('public connector installation boundaries', () => {
     const { connection } = z.object({ connection: ConnectionSchema }).parse(result.body);
     const installation = await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: connection.id });
     expect(installation).toMatchObject({ provider: 'granola', state: 'setting_up', selectedEvents: [
-      'note.access_granted', 'note.edited', 'note.generated', 'note.regenerated',
+      'note.access_granted', 'note.edited', 'note.generated',
     ] });
     expect(f.provider).not.toHaveBeenCalled();
   });
