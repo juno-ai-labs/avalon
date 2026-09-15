@@ -58,6 +58,7 @@ import {
   applyRetirementGate,
   retiredObjectResponse,
 } from "./object-retirement";
+import { parseRpcInput } from "../lib/rpc-input";
 import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
 import { ApiError } from "../lib/api-error";
 import { externalEventOpening } from "../lib/external-event-opening";
@@ -491,7 +492,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   /** Bring the automation into existence, in draft, with its conversation reserved. */
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     await this.initialized;
-    const request = AutomationCreateRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     const existing = this.row();
     if (existing) {
       this.assertAutomation(request.workspaceId, request.automationId);
@@ -551,7 +552,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     ready: boolean;
   }> {
     await this.initialized;
-    const request = AutomationSubmitDefinitionRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, input, "submit_definition");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     const definitionJson = JSON.stringify(request.draft);
@@ -614,7 +615,7 @@ export class SidekickDO extends ConversationParentDurableObject {
    */
   async apply(input: AutomationActorRequest): Promise<AutomationDetail> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "apply");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     this.assertManager(row, request.actor);
@@ -740,7 +741,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   /** Explicit object-owned reconciliation when the loading policy changes. */
   async reconcileLoadable(input: AutomationActorRequest): Promise<{ loadable: boolean }> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "reconcile_loadable");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
@@ -772,7 +773,7 @@ export class SidekickDO extends ConversationParentDurableObject {
    */
   async setAppearance(input: AutomationSetAppearanceRequest): Promise<AutomationDetail> {
     await this.initialized;
-    const request = AutomationSetAppearanceRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationSetAppearanceRequestSchema, input, "set_appearance");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
@@ -796,7 +797,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async pause(input: AutomationActorRequest): Promise<void> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "pause");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle === "paused") return;
@@ -806,7 +807,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async resume(input: AutomationActorRequest): Promise<void> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "resume");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle === "active") return;
@@ -819,7 +820,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async remove(input: AutomationActorRequest): Promise<void> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "remove");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     const now = Date.now();
@@ -859,7 +860,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     outcomeCode: string;
   }> {
     await this.initialized;
-    const request = AutomationOwningRoomArchivedRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationOwningRoomArchivedRequestSchema, input, "set_owning_room_archived");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.owning_workstream_id !== request.workstreamId) {
       return { changed: false, outcomeCode: "sidekick_not_owned_by_workstream" };
@@ -892,7 +893,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
     await this.initialized;
-    const request = AutomationRunNowRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationRunNowRequestSchema, input, "run_now");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
@@ -930,7 +931,7 @@ export class SidekickDO extends ConversationParentDurableObject {
    */
   async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
     await this.initialized;
-    const request = AutomationRunSeededRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationRunSeededRequestSchema, input, "run_seeded");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
@@ -952,7 +953,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     outcomeCode: string;
   }> {
     await this.initialized;
-    const request = AutomationExternalEventAdmissionSchema.parse(input);
+    const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") return { admitted: false, outcomeCode: `sidekick_${row.lifecycle}` };
     const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
@@ -992,7 +993,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     runId: string | null;
   }> {
     await this.initialized;
-    const request = AutomationInboundEmailAdmissionSchema.parse(input);
+    const request = parseRpcInput(AutomationInboundEmailAdmissionSchema, input, "admit_inbound_email");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const existing = first(this.state.storage.sql.exec<{ run_id: string | null; outcome_code: string }>(
       `SELECT run_id, outcome_code FROM inbound_email_receipts WHERE resend_email_id = ?`,
@@ -1052,7 +1053,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   /** What a run reads at start: its definition by revision, and how it was triggered. */
   async readSkillSource(input: SidekickSkillReadRequest): Promise<SidekickSkillSource | null> {
     await this.initialized;
-    const request = SidekickSkillReadRequestSchema.parse(input);
+    const request = parseRpcInput(SidekickSkillReadRequestSchema, input, "read_skill_source");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted" || row.accepted_definition_revision === null || row.owning_room_archived_at !== null) return null;
     if (!request.existingExecution && (row.lifecycle !== "active" || row.loadable !== 1)) return null;
@@ -1075,7 +1076,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async readRunDefinition(input: AutomationRunRequest): Promise<AutomationRunDefinitionV1> {
     await this.initialized;
-    const request = AutomationRunRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_definition");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
     if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
@@ -1114,7 +1115,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   /** Whether a run may still act: its own state, and the automation's. */
   async readRunState(input: AutomationRunRequest): Promise<{ state: RunState; lifecycle: Lifecycle } | null> {
     await this.initialized;
-    const request = AutomationRunRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     const run = this.run(request.runId);
     return run ? { state: run.state, lifecycle: row.lifecycle } : null;
@@ -1122,7 +1123,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async readDetail(input: AutomationActorRequest): Promise<AutomationDetail> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "read_detail");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertViewer(row, request.actor);
     return this.detail();
@@ -1130,7 +1131,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async listRuns(input: AutomationActorRequest): Promise<{ items: AutomationRun[] }> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "list_runs");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertViewer(row, request.actor);
     return { items: this.runSummaries(50) };
@@ -1144,7 +1145,7 @@ export class SidekickDO extends ConversationParentDurableObject {
    */
   async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
     await this.initialized;
-    const request = AutomationActorRequestSchema.parse(input);
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     this.assertManager(row, request.actor);
     const bindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
@@ -1203,7 +1204,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     input: ConversationParentAuthorizeViewerRequest,
   ): Promise<ConversationParentAuthorizeViewerResult> {
     await this.initialized;
-    const request = ConversationParentAuthorizeViewerRequestSchema.parse(input);
+    const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
     const row = this.row();
     if (!row || row.lifecycle === "deleted") {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
@@ -1233,7 +1234,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest) {
     await this.initialized;
-    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authorization_discovery_children");
     const row = this.row();
     if (!row || row.lifecycle === 'deleted') return { substreamIds: [] as string[] };
     this.assertAutomation(request.workspaceId, request.parentId);
@@ -1245,7 +1246,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   /** No participant admission and no projection-dependent permission decision. */
   async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     await this.initialized;
-    const request = ConversationAuthorizationRequestSchema.parse(input);
+    const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
     const row = this.row();
     if (!row || row.lifecycle === 'deleted') return { exists: false as const, validatedAt: Date.now() };
     this.assertAutomation(request.workspaceId, request.parentId);
@@ -1257,7 +1258,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async authority(input: ConversationParentAuthorityRequest): Promise<ConversationParentAuthorityResult> {
     await this.initialized;
-    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authority");
     const row = this.row();
     if (!row) {
       return ConversationParentAuthorityResultSchema.parse({ exists: false, authorityGeneration: 0, archived: false });
@@ -1272,7 +1273,7 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
     await this.initialized;
-    const request = ConversationParentReserveChildRequestSchema.parse(input);
+    const request = parseRpcInput(ConversationParentReserveChildRequestSchema, input, "reserve_child");
     const row = this.assertAutomation(request.workspaceId, request.parentId);
     this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
     return ConversationParentReserveChildResultSchema.parse({

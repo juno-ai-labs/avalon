@@ -91,19 +91,24 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       latestVersion: 27,
     }, () => Promise.reject(failure))).rejects.toBe(failure);
 
+    // The mismatch is thrown as a code with the version appended, and that is
+    // what the span and the row carry. The `:` used to put it outside the
+    // logger's code class, so both degraded to the phase's own fallback and an
+    // operator had to open the object to learn which version refused.
     expect(recordedSpans()[0]).toMatchObject({
       name: "durable_object.schema_migrate",
       ended: true,
       callbackFailed: true,
       attributes: {
         "otel.status_code": "ERROR",
-        "error.type": "durable_object_schema_migrate_failed",
+        "error.type": "workstream_do_schema_hash_mismatch:27",
       },
     });
     expect(rows(error)[0]).toMatchObject({
       event: "durable_object_schema_migration",
       component: "workstream_do",
       status: "failed",
+      code: "workstream_do_schema_hash_mismatch:27",
       duration_ms: 80,
     });
   });

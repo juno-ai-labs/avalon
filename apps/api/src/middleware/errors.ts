@@ -1,6 +1,7 @@
 import type { ErrorHandler, NotFoundHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { RepositoryError } from "@rally/db";
 import { ConnectorError } from "@rally/connectors";
 import type { HonoAppEnv } from "../env";
@@ -73,6 +74,15 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     status,
     error_name: error.name,
     detail_keys: details ? Object.keys(details).slice(0, 25) : [],
+    // A plain `Error` keeps its message off the row, because it may be
+    // anything. One whose message has the shape of a code cannot be prose,
+    // and it is how a Durable Object's refusal reaches a route across the RPC
+    // hop — `sidekick_missing`, or a `parseRpcInput` rejection naming its
+    // field — where the row otherwise said `internal_error` and `Error` and
+    // nothing else.
+    ...(code === "internal_error" && error instanceof Error && isCodeShaped(error.message)
+      ? { error_code: error.message }
+      : {}),
     // A raw ZodError reaching here is a response that failed its own contract.
     // Without the issue paths the log says only "internal_error", which names
     // neither the field nor the route; the paths and codes are schema shape, not

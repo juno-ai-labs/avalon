@@ -1109,6 +1109,26 @@ describe("AutomationDO", () => {
     expect(parsed?.resourceId).toBeNull();
   });
 
+  it("names the offending field when an admission is refused across the RPC boundary", async () => {
+    // What the queue consumer is left holding. A `ZodError` thrown here was
+    // reduced by the RPC serializer to a bare `Error` — no `issues`, no
+    // message, not even the name — so the delivery consumer logged the
+    // constant `external_event_delivery_failed` and retried until the Queue
+    // gave up, and a rule-shape change was indistinguishable from an outage.
+    // Only the message text crosses, so the path has to be in it.
+    const rejection = await automationStub().admitExternalEvent({
+      ...addressed(),
+      registrationId: "00000000-0000-7000-8000-00000000ad51",
+      payloadHash: `sha256:${"a".repeat(64)}`,
+      event: { id: "00000000-0000-7000-8000-00000000ad52", eventSequence: "2" },
+    } as never).then(() => null, (error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(Error);
+    const message = (rejection as Error).message;
+    expect(message).toContain("admit_external_event_invalid");
+    expect(message).toContain("event.eventSequence");
+  });
+
   it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {
     await activeAutomation();
     const email = {
