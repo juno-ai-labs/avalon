@@ -3011,8 +3011,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // fail for cosmetic reasons: a refused broadcast used to abort this
         // handler after the run was committed, leaving a run with no executor,
         // no alarm, and a member-facing 500 over a work stream that exists.
-        await span.step("workstream.room.loop.activate", () =>
-          this.requestExecutionReceiptActivation(result.harnessRunId, result.workflowInput));
+        if (result.harnessRunId && result.workflowInput) {
+          const { harnessRunId, workflowInput } = result;
+          await span.step("workstream.room.loop.activate", () =>
+            this.requestExecutionReceiptActivation(harnessRunId, workflowInput));
+        }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({
           workstream: result.workstream,

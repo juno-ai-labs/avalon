@@ -20,6 +20,9 @@ acknowledges the save, and conversational completion requires a persisted final
 assistant turn. The generic `completedByTool` harness outcome does not exempt a
 SubstreamAgent run from that terminalization requirement.
 
+
+Bind 16 session primitives are exposed through `prepared-content.ts` for text fixtures and checkpoint-based evaluation. Durable production execution retains its existing Bind ledger. See [prepared content and session import](session-import.md).
+
 ## Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction

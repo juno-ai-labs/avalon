@@ -1,3 +1,4 @@
+import { Import } from "lucide-react";
 import type { ReactNode } from 'react';
 
 import { RelativeTime } from './relative-time';
@@ -19,6 +20,7 @@ export function MessageByline({
   author,
   children,
   contextLabel,
+  importedBy,
   createdAt,
   dot = false,
   workSummary,
@@ -30,6 +32,7 @@ export function MessageByline({
   children?: ReactNode;
   /** Why the turn reads the way it does, beside the name it is attributed to. */
   contextLabel?: string | undefined;
+  importedBy?: string | undefined;
   /** An ISO-8601 instant. */
   createdAt: string;
   /** Draw the person-accent dot before the name. A person's turn carries it; Rally's does not. */
@@ -41,6 +44,7 @@ export function MessageByline({
     <span className="message-author" key="author">
       {dot && <span aria-hidden="true" className="message-author-dot" />}
       {author}
+      {importedBy && <span title={`Imported by ${importedBy}`} aria-label={`Imported by ${importedBy}`}><Import size={12} aria-hidden="true" /></span>}
     </span>,
     contextLabel ? <span className="message-context-label" key="context">{contextLabel}</span> : null,
     <RelativeTime key="time" value={createdAt} />,

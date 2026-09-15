@@ -3795,3 +3795,5 @@ export const __testing = {
   normalizeAutomationDraft,
   automationResearchToolPresentation: AUTOMATION_RESEARCH_TOOL_PRESENTATION,
 };
+
+export * from "./prepared-content";

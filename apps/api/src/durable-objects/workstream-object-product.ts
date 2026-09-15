@@ -1,3 +1,4 @@
+import { SubstreamContentSchema, SessionSourceSchema } from "@rally/contracts";
 import {
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
@@ -180,6 +181,7 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   emailAddress: z.string().email().max(254).nullable(),
   creatorUserId: z.string().uuid(),
+  initialContent: SubstreamContentSchema.extend({ source: SessionSourceSchema.optional() }).optional(),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
   mentions: z.array(MentionSchema).default([]),
   openingStructuredContent: z.unknown().nullable().default(null),
@@ -1044,10 +1046,13 @@ export class WorkstreamObjectProductService {
   ): Promise<{
     workstream: Workstream;
     turnId: string;
-    harnessRunId: string;
-    workflowInput: WorkstreamWorkflowInput;
+    harnessRunId: string | null;
+    workflowInput: WorkstreamWorkflowInput | null;
   }> {
     const input = InitializeWorkstreamObjectInputSchema.parse(rawInput);
+    if (input.initialContent && (input.seed || input.mentions.length || input.attachmentIds.length || input.openingStructuredContent !== null)) {
+      throw new ApiError(422, "invalid_initial_content", "Prepared history cannot also execute a scripted opening or attach opening-message metadata");
+    }
     if (input.seed && input.seed.assistant === null) {
       throw new ApiError(
         422,
@@ -1118,6 +1123,11 @@ export class WorkstreamObjectProductService {
         `SELECT run_id, execution_context_json FROM runs
           WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
       ));
+      if (part && !run && input.initialContent) {
+        await this.enqueueDirectorySnapshot();
+        return { workstream: await this.summary(existingRoot, auth.userId), turnId: part.id,
+          harnessRunId: null, workflowInput: null };
+      }
       if (!part || !run || run.execution_context_json === null) {
         throw new ApiError(409, "workstream_create_replay_incomplete", "The work stream is incomplete");
       }
@@ -1177,38 +1187,52 @@ export class WorkstreamObjectProductService {
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
-    const model = input.modelOverride
+    const model = input.initialContent ? null : input.modelOverride
       ? pinnedModelRouting(input.modelOverride).model
       : (await resolveNewWorkstreamModelRouting(this.env, {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
         })).model;
-    const transcriptMessage = await this.transcript.prepareParticipantMessage({
-      turnId: messageId,
-      actor: "human",
-      authorUserId: input.creatorUserId,
-      authorSnapshot: {
-        displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
-        avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
-      },
-      clientMessageId: input.clientMessageId,
-      messageType: "text",
-      text: prepared.text,
-      structuredContentJson: input.openingStructuredContent === null
-        ? null
-        : JSON.stringify(input.openingStructuredContent),
-      externalActorJson: null,
-      producedByRunId: null,
-      messageSequenceNumber: 1,
-      createdAtUtc: new Date(now).toISOString(),
-      attentionOrdinal: 1,
-    });
-    const openingWorkflowInput = this.workflowInput(input, runId, messageId);
+    const authorSnapshot = {
+      displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
+      avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
+    };
+    const initialMessages = input.initialContent?.messages ?? [{ role: "user" as const, text: prepared.text }];
+    const provenance = input.initialContent?.source ? {
+      kind: "imported_session",
+      source: input.initialContent.source,
+      importedByUserId: input.creatorUserId,
+      importedByName: authorSnapshot.displayName,
+    } : input.openingStructuredContent;
+    const transcriptMessages = await Promise.all(initialMessages.map((message, index) =>
+      this.transcript.prepareParticipantMessage({
+        turnId: index === 0 ? messageId : uuidV7(now),
+        actor: message.role === "user" ? "human" : "assistant",
+        authorUserId: message.role === "user" ? input.creatorUserId : null,
+        authorSnapshot: message.role === "user" ? authorSnapshot : null,
+        ...(index === 0 ? { clientMessageId: input.clientMessageId } : {}),
+        messageType: "text",
+        text: message.text,
+        structuredContentJson: provenance === null ? null : JSON.stringify(provenance),
+        externalActorJson: null,
+        producedByRunId: null,
+        messageSequenceNumber: index + 1,
+        createdAtUtc: new Date(now).toISOString(),
+        attentionOrdinal: index + 1,
+      })));
+    const openingWorkflowInput = input.initialContent ? null : this.workflowInput(input, runId, messageId);
+    let initializedElsewhere = false;
     this.storage.transactionSync(() => {
+      // Hashing and directory reads yield. Another delivery can initialize
+      // the room while those awaits are in flight; decide against current SQL.
+      if (first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`))?.authority_mode === "authoritative") {
+        initializedElsewhere = true;
+        return;
+      }
       this.storage.sql.exec(
         `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
-             title = ?, description = ?, scope = ?, exact_state = 'scheduled',
-             state_reason_code = ?, next_sequence_number = 2, next_attention_ordinal = 2,
+             title = ?, description = ?, scope = ?, exact_state = ?,
+             state_reason_code = ?, next_sequence_number = ?, next_attention_ordinal = ?,
              authority_epoch = 1, scope_epoch = 0, listing_epoch = 1, run_revision = 1,
              created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
              created_by_user_id = ?, email_address = ?, email_route_status = 'active',
@@ -1216,7 +1240,8 @@ export class WorkstreamObjectProductService {
              opportunity_display_prompt_hash = ?, opportunity_execution_prompt_hash = ?,
              description_source = ?, system_kind = ?, title_status = ?, model_override = ?, updated_at = ?
          WHERE id = 1 AND authority_mode = 'preparing'`,
-        input.generation, input.title, input.objective, input.scope, input.reason, now, now, now,
+        input.generation, input.title, input.objective, input.scope, input.initialContent ? "idle" : "scheduled",
+        input.reason, initialMessages.length + 1, initialMessages.length + 1, now, now, now,
         input.creatorUserId, input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
         input.opportunityDisplayPromptHash, input.opportunityExecutionPromptHash,
         input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride, now,
@@ -1244,10 +1269,10 @@ export class WorkstreamObjectProductService {
            (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
             manual_unread_from_ordinal, latest_mention_attention_ordinal,
             last_seen_at, version, updated_at)
-         VALUES (?, 0, 1, NULL, 0, ?, 0, ?)`,
-        input.creatorUserId, now, now,
+         VALUES (?, 0, ?, NULL, 0, ?, 0, ?)`,
+        input.creatorUserId, initialMessages.length, now, now,
       );
-      this.transcript.appendPreparedParticipantMessage(transcriptMessage);
+      for (const message of transcriptMessages) this.transcript.appendPreparedParticipantMessage(message);
       prepared.mentions.forEach((mention, index) => {
         this.storage.sql.exec(
           `INSERT INTO participant_transcript_mentions
@@ -1322,8 +1347,9 @@ export class WorkstreamObjectProductService {
           resourceId, input.creatorUserId, JSON.stringify(descriptor), now, now,
         );
       }
-      this.storage.sql.exec(
-        `INSERT INTO runs
+      if (openingWorkflowInput) {
+        this.storage.sql.exec(
+          `INSERT INTO runs
            (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
             model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
             active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
@@ -1332,9 +1358,10 @@ export class WorkstreamObjectProductService {
             trigger_part_id, execution_context_json, created_at, updated_at)
          VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', 1, 0, ?,
                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, 0, ?, ?, ?, ?, ?)`,
-        runId, now, input.reason, JSON.stringify(input.executionPrincipal), model,
-        messageId, JSON.stringify(openingWorkflowInput), now, now,
-      );
+          runId, now, input.reason, JSON.stringify(input.executionPrincipal), model,
+          messageId, JSON.stringify(openingWorkflowInput), now, now,
+        );
+      }
       // Product identity, never an activation receipt, owns the singleton.
       // Every later message, retry, and recovery therefore derives this exact
       // same loop instead of minting a new logical conversation.
@@ -1344,6 +1371,7 @@ export class WorkstreamObjectProductService {
         now,
       });
     });
+    if (initializedElsewhere) return this.initialize(auth, rawInput);
     await this.objectStore.commitWithRegionalEffects(
       () => undefined,
       () => {
@@ -1420,7 +1448,7 @@ export class WorkstreamObjectProductService {
     return {
       workstream: await this.summary(this.root(), auth.userId),
       turnId: messageId,
-      harnessRunId: runId,
+      harnessRunId: openingWorkflowInput ? runId : null,
       workflowInput: openingWorkflowInput,
     };
   }
