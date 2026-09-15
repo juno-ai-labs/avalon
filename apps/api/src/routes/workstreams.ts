@@ -1,3 +1,5 @@
+import { SessionImportPreviewSchema, SessionImportPreviewRequestSchema, SessionImportRequestSchema } from "@rally/contracts";
+import { previewSessionImport, sessionShareUrl } from "../services/session-import";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
@@ -144,6 +146,24 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   return c.json(WorkstreamPageSchema.parse(await service.list(
     query.limit, query.before, query.includeSystem === "true",
   )));
+});
+workstreamRoutes.post("/import/preview", zValidator("json", SessionImportPreviewRequestSchema), async (c) => {
+  return c.json(SessionImportPreviewSchema.parse(await previewSessionImport(c.req.valid("json"))));
+});
+workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  if (body.source.url && sessionShareUrl(body.source.url).provider !== body.source.provider) {
+    throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
+  }
+  const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).create({
+    title: body.title,
+    openingMessage: "",
+    clientMessageId: body.clientMessageId,
+    participantUserIds: [],
+    attachmentIds: [],
+    scope: "personal",
+  }, { initialContent: { ...body.content, source: body.source }, reason: "session_import" });
+  return c.json(CreatedWorkstreamSchema.parse(result), 201);
 });
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {

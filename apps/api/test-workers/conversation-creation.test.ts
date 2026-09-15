@@ -19,7 +19,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import { workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -94,6 +95,42 @@ function creationEnv(): Env {
 }
 
 describe("creating a work stream", () => {
+  it("stores prepared history atomically without admitting a run and replays the receipt", async () => {
+    const service = new WorkstreamObjectCreationService(creationEnv(), AUTH);
+    const request = { title: "Imported conversation", openingMessage: "", clientMessageId: "import-1", participantUserIds: [], attachmentIds: [] };
+    const initialContent = {
+      source: { provider: "claude" as const, url: "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2" },
+      messages: [{ role: "user" as const, text: "Original question" }, { role: "assistant" as const, text: "Original answer" }],
+    };
+    const created = await service.create(request, { initialContent });
+    expect(created.harnessRunId).toBeNull();
+    const client = new WorkstreamObjectClient(creationEnv(), AUTH, created.workstream.id);
+    const boot = await client.boot();
+    expect(boot.transcript.ranges.flatMap((range) => range.turns).map((turn) => ({ actor: turn.actor, blocks: turn.blocks.map((block) => block.type === "text" ? block.text : block.type) })))
+      .toEqual([{ actor: "human", blocks: ["Original question"] }, { actor: "assistant", blocks: ["Original answer"] }]);
+    const firstBlock = boot.transcript.ranges.flatMap((range) => range.turns)[0]?.blocks[0];
+    expect(firstBlock?.type === "text" ? firstBlock.structuredContent : null).toMatchObject({ kind: "imported_session", importedByUserId: USER_ID });
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, created.workstream.id)));
+    const state = await runInDurableObject(stub, (_instance, ctx) => ({
+      runs: ctx.storage.sql.exec(`SELECT run_id FROM runs`).toArray(),
+      root: ctx.storage.sql.exec(`SELECT exact_state, next_attention_ordinal FROM workstream`).one(),
+    }));
+    expect(state.runs).toEqual([]);
+    expect(state.root).toMatchObject({ exact_state: "idle", next_attention_ordinal: 3 });
+    expect(await service.create(request, { initialContent })).toMatchObject({ turnId: created.turnId, harnessRunId: null, workstream: { id: created.workstream.id } });
+    await expect(service.create(request, { initialContent: { ...initialContent, messages: [{ role: "user", text: "Changed" }] } })).rejects.toThrow("already used");
+    expect((await client.boot()).transcript.ranges.flatMap((range) => range.turns)).toHaveLength(2);
+    const continuation = await client.createMessage({
+      text: "Continue from the original answer", clientMessageId: "import-followup-1",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+      seed: { packVersion: "import-test", actionId: "continue", assistant: { kind: "say", text: "Continuing" } },
+    });
+    const admittedRuns = await runInDurableObject(stub, (_instance, ctx) =>
+      ctx.storage.sql.exec(`SELECT run_id FROM runs WHERE trigger_part_id = ?`, continuation.turn.turnId).toArray());
+    expect(admittedRuns).toHaveLength(1);
+
+  });
+
   it("puts a provisional row in the workspace directory before the child has said anything", async () => {
     const service = new WorkstreamObjectCreationService(creationEnv(), AUTH);
     const created = await service.create({
