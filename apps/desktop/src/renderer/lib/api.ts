@@ -908,12 +908,22 @@ export class RallyApi {
     await this.requestVoid(`/onboarding/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal): Promise<SidekickAttachment[]> {
-    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
   }
 
-  async removeAttachedSidekick(workstreamId: string, sidekickId: string): Promise<SidekickAttachment[]> {
-    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
+  async removeAttachedSidekick(workstreamId: string, sidekickId: string, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
+  }
+
+  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal): Promise<SidekickAttachment[]> {
+    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  }
+
+  async setRecommendedSidekick(workstreamId: string, sidekickId: string, attached: boolean, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}?substreamId=${encodeURIComponent(substreamId)}`, {
+      method: attached ? 'PUT' : 'DELETE', schema: SidekickAttachmentsSchema,
+    })).items;
   }
 
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {

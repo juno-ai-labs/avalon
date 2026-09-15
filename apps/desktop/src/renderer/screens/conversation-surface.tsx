@@ -1627,8 +1627,8 @@ export function ConversationSurface({
   // Sidekicks the room owns, and the ones its main conversation has loaded.
   // Both are the room's, so both are fetched here and folded into one list.
   const attachedSidekicks = useQuery({
-    queryKey: ['attached-sidekicks', id],
-    queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal),
+    queryKey: ['attached-sidekicks', id, substreamId],
+    queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
   const ownedSidekicks = useQuery({
@@ -1643,9 +1643,21 @@ export function ConversationSurface({
     }),
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
+  const recommendedSidekicks = useQuery({
+    queryKey: ['recommended-sidekicks', id],
+    queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal),
+    enabled: Boolean(api && id && parentKind === 'workstream'),
+  });
   const removeSidekick = useMutation({
-    mutationFn: (sidekickId: string) => api!.removeAttachedSidekick(id!, sidekickId),
-    onSuccess: (items) => queryClient.setQueryData(['attached-sidekicks', id], items),
+    mutationFn: async ({ sidekickId, recommendation }: { sidekickId: string; recommendation: boolean }) => {
+      if (recommendation) {
+        await api!.setRecommendedSidekick(id!, sidekickId, false, substreamId);
+      } else await api!.removeAttachedSidekick(id!, sidekickId, substreamId);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
+      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', id] });
+    },
   });
   const sidekickRefreshSequence = orderedTranscript.data?.eventSequence;
   useEffect(() => {
@@ -1654,6 +1666,7 @@ export function ConversationSurface({
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
     } else {
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
+      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', id] });
       // A room's Sidekick is created from its conversation, by the run that is
       // writing the turns this sequence counts, so the list that would show it
       // is stale exactly when the transcript moves.
@@ -2065,12 +2078,17 @@ export function ConversationSurface({
     // The error still travels beside the rows that did arrive.
     owned: ownedSidekicks.isError ? [] : ownedSidekicks.data,
     attached: attachedSidekicks.data,
+    recommended: recommendedSidekicks.data,
+    ...(detail.participants.some((person) => person.id === session?.user.id)
+      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false }) }
+      : {}),
     ...(sidebarDetail.participants.some((person) => person.id === session?.user.id)
-      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate(sidekickId) }
+      ? { onRemoveRecommendation: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: true }) }
       : {}),
   });
   const sidekicksError = ownedSidekicks.error?.message
     ?? attachedSidekicks.error?.message
+    ?? recommendedSidekicks.error?.message
     ?? removeSidekick.error?.message;
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),

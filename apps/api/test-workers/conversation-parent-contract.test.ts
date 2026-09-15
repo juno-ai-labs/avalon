@@ -32,7 +32,7 @@ import { searchDocumentId } from '../src/services/text-search';
 
 import { env } from "cloudflare:workers";
 import { holdLoopExecuting } from "./helpers/substream-fixture";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
@@ -50,6 +50,7 @@ import { searchContentHash } from '../src/services/text-search';
 import { searchWorkspacePage, searchWorkspace } from '../src/services/workspace-search-service';
 import { seedParticipantMessage } from './helpers/substream-fixture';
 import { ConversationService } from "../src/services/conversation-service";
+import { WorkstreamService } from "../src/services/workstream-service";
 import { SubstreamCreationService } from "../src/services/substream-creation-service";
 import { SocketService, verifySocketTicket } from "../src/services/socket-service";
 import {
@@ -317,6 +318,29 @@ beforeEach(async () => {
 });
 
 describe("conversation parent contract", () => {
+  it('persists workspace Sidekick recommendations idempotently and rejects other scopes', async () => {
+    await seedRoom(WORKSPACE_ROOM_ID, 'workspace', [AUTHOR_ID]);
+    // Upgrade a populated v12 parent, retaining its roster and identity.
+    await runInDurableObject(roomParent(WORKSPACE_ROOM_ID), (_instance, state) => {
+      state.storage.sql.exec('DROP TABLE workstream_sidekick_attachments');
+      state.storage.sql.exec('DELETE FROM _sql_schema_migrations WHERE version = 13');
+    });
+    await evictDurableObject(roomParent(WORKSPACE_ROOM_ID));
+    const shared = await seedAutomation('workspace', null);
+    const personal = await seedAutomation('personal', null);
+    const service = new WorkstreamService(TEST_ENV, AUTH);
+    await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, true);
+    await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, true);
+    expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items.map((item) => item.id)).toEqual([shared]);
+    await expect(service.setSidekickRecommendation(WORKSPACE_ROOM_ID, personal, true)).rejects.toMatchObject({ code: 'sidekick_attachment_scope_invalid' });
+    await runInDurableObject(roomParent(WORKSPACE_ROOM_ID), async (instance) => {
+      await expect(instance.setSidekickRecommendation({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_ROOM_ID,
+        userId: MEMBER_ID, sidekickId: shared, attached: true })).rejects.toThrow('sidekick_attachment_participant_required');
+    });
+    await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false);
+    await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false);
+    expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items).toEqual([]);
+  });
   it('checks workspace membership when refreshing authority from a previously authenticated context', async () => {
     await seedRoom(WORKSPACE_ROOM_ID, 'workspace', [AUTHOR_ID]);
     await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")

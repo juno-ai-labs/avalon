@@ -1,8 +1,9 @@
 import { AutomationService } from "./automation-service";
+import { ConversationService } from "./conversation-service";
 import type { SidekickAttachment } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -18,7 +19,7 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/substream-agent";
-import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
+import { substreamLoopId, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError, asApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
@@ -638,13 +639,16 @@ export class WorkstreamService {
     });
   }
 
-  async sidekickAttachments(id: string, removeId?: string): Promise<{ items: SidekickAttachment[] }> {
-    const detail = await this.get(id);
-    if (removeId && !detail.participants.some((person) => person.user.id === this.auth.userId)) {
+  async sidekickAttachments(id: string, removeId?: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
+    const conversation = new ConversationService(this.env, this.auth);
+    if (removeId) await conversation.writableClient(id, substreamId);
+    else await conversation.client(id, false, substreamId);
+    const participants = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).participants();
+    if (removeId && !participants.some((person) => person.user_id === this.auth.userId)) {
       throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can remove a Sidekick");
     }
     const agent = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
-      asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id));
+      asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id, asSubstreamId(substreamId)));
     const ids = await agent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, ...(removeId ? { removeId } : {}) });
     const items: SidekickAttachment[] = [];
     const service = new AutomationService(this.env, this.auth);
@@ -660,6 +664,31 @@ export class WorkstreamService {
       }
     }
     return { items };
+  }
+
+  async recommendedSidekicks(id: string): Promise<{ items: SidekickAttachment[] }> {
+    await new ConversationService(this.env, this.auth).client(id);
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    const ids = new Set(await room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }));
+    const directory = await new AutomationService(this.env, this.auth).listSidekicks();
+    return { items: directory.items.filter((item) => item.scope === "workspace" && ids.has(item.id)).map((item) => ({
+      id: item.id, name: item.name, description: item.description, available: item.loadable === true && item.status === "active",
+    })) };
+  }
+
+  async setSidekickRecommendation(id: string, sidekickId: string, attached: boolean, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
+    await new ConversationService(this.env, this.auth).writableClient(id, substreamId);
+    if (attached) {
+      const sidekick = await new AutomationService(this.env, this.auth).detail(sidekickId);
+      if (sidekick.scope !== "workspace") throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
+      if (sidekick.lifecycle === "deleted") throw new ApiError(422, "sidekick_attachment_archived", "Choose a non-archived Sidekick");
+    }
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
+    if (!attached) await this.sidekickAttachments(id, sidekickId, substreamId);
+    return this.recommendedSidekicks(id);
   }
 
   async get(id: string): Promise<WorkstreamDetail> {

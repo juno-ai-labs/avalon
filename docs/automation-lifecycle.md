@@ -46,15 +46,31 @@ A substream persists its skill snapshots by execution id and records loaded refs
 Loading a Sidekick in a workstream's main substream also persists a deduplicated
 attachment. Future executions load eligible attachments using their latest
 accepted revision; retries retain the admitted bodies while rechecking access.
-Loads in other substreams stay execution-local. Removing an attachment affects
-future executions.
+Loads in child substreams persist in that child's attachment table too; main
+and sibling attachments stay independent. Removing an attachment affects future executions.
+
+Workstream-owned Sidekicks are inherently Recommended. Participants and agents
+can also attach non-archived workspace Sidekicks through the rail picker or the
+Sidekicks plugin's attach/detach tools. WorkstreamDO owns those explicit links.
+Each new execution snapshots eligible recommendations and marks their catalog
+lines `[Recommended]`, encouraging use when relevant without activating bodies.
+Detaching an explicit recommendation also removes the current substream's local
+attachment; sibling attachments survive. Workstream ownership itself cannot be
+detached. Workspace Sidekicks remain ordinarily discoverable after detachment.
 
 A work stream's own rails list **Sidekicks**: the Sidekicks the room owns —
 `listWorkstreamAutomations`, read through `GET /sidekicks/workstream/:id`, which
-refuses a caller who is not a participant — together with the attachments its
-main conversation has loaded, folded into one list keyed by Sidekick id. A row
-opens that Sidekick in the library window; the removal on a row is the
-attachment's, and a room's own Sidekick that has never been loaded carries none.
+refuses a caller who is not a participant — together with explicit workspace
+recommendations and the current substream's loaded attachments, folded into one
+list keyed by Sidekick id. The plus-marked Add Sidekick rail row opens a menu:
+Attach existing Sidekick selects a non-archived workspace Sidekick, while Create
+new Sidekick opens the existing Sidekick composer.
+A row opens that Sidekick in the library window; Remove lives in its right-click
+menu when the viewer may remove it. Removing a workspace recommendation
+also clears its current local attachment. An owned Sidekick that has never been
+loaded carries no removal action; its recommendation follows ownership.
+The rail marks recommendations with a right-aligned circled carambola icon whose
+tooltip explains shared discovery without automatic loading.
 A merged row takes its lifecycle from the owned summary and its availability
 from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
@@ -618,6 +634,14 @@ or the memory store the automation scope lives in.
 
 ## Testing
 
+Workstream recommendation coverage lives in `test-workers/automation-do.test.ts`
+(child agent tool attachment, fresh main/sibling catalogs, local loading, combined
+removal) and `test-workers/conversation-parent-contract.test.ts` (v12 migration,
+idempotency, scope, participation). Run them with `pnpm --filter @rally/api
+test:workers`. Desktop `sidekick-picker.test.tsx`, `sidekick-section.test.tsx`, and
+`workstream-sidekicks.test.tsx` cover selection, merged badges/removal, and switching
+substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
+
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
@@ -772,6 +796,19 @@ with only workspace drafts, paused, or workstream-owned Sidekicks the tile still
 opens `/sidekicks/new`. This reverses the stricter record-existence rule
 documented by the 2026-09-10 **The empty strip makes the first Sidekick** entry
 below.
+
+### 2026-09-15 — Recommend Sidekicks across a workstream
+
+**What changed:** Workspace Sidekicks can be attached through the rail or agent
+tools. Those links and Workstream ownership add a Recommended catalog badge in
+every substream. Each substream independently persists its loaded Sidekicks.
+
+**Why:** People and agents need a shared way to nominate relevant knowledge
+while each conversation chooses when to load the instructions. The existing
+ownership relation and one small attachment table compose those behaviors.
+
+**Consequences:** Recommendations affect future executions. Removing a workspace
+recommendation also clears its loaded attachment in the current substream.
 
 ### 2026-09-15 — A rule can name Fireflies
 

@@ -1,5 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow } from './sidekick-section';
+import { SidekickPicker } from './sidekick-picker';
 import { Archive, Copy, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
 import { IconCornerDownRight, IconPlus } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
@@ -304,6 +305,7 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = null, presen
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
         <SidekickSection items={sidekicks} error={sidekicksError} />
+        <SidekickPicker workstreamId={workstream.id} participantIds={workstream.participants.map((person) => person.id)} />
       </div>
       <div className="sidebar-collapse-footer">
         <IconButton

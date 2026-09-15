@@ -7,7 +7,7 @@ import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
-import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
+import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef, recommendedSidekickRefs } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import {
@@ -121,6 +121,7 @@ import {
 import { z } from "zod";
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { AutomationService, createAutomation } from "./automation-service";
+import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
 import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
@@ -1674,6 +1675,14 @@ function createAvalonAutomationsPlugin(
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
+  const attachmentAuth = async () => {
+    if (!authorUserId) throw new Error("sidekick_attachment_principal_required");
+    const membership = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`)
+      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
+    if (!membership) throw new Error("sidekick_attachment_membership_required");
+    return { sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId), workspaceId: input.workspaceId,
+      region: input.region, role: membership.role, analyticsWorkspaceId: null };
+  };
   /**
    * Person ids a submitted rule is allowed to name.
    *
@@ -1776,6 +1785,10 @@ function createAvalonAutomationsPlugin(
     }
   };
   const plugin = createAutomationsPlugin({
+    ...(input.parentKind === "workstream" ? { attachmentPort: {
+      setAttached: async (sidekickId: string, attached: boolean) => new WorkstreamService(env, await attachmentAuth())
+        .setSidekickRecommendation(input.parentId, sidekickId, attached, input.substreamId ?? "0"),
+    } } : {}),
     catalog,
     inspectedPluginIds,
     resolvedResources,
@@ -1927,6 +1940,7 @@ function createAvalonAutomationsPlugin(
           )).readDetail({ workspaceId, automationId: asAutomationId(automationId), actor }));
           return {
             sidekickId: detail.id,
+            canEdit: true,
             name: detail.name,
             description: detail.description,
             lifecycle: detail.lifecycle,
@@ -1938,7 +1952,17 @@ function createAvalonAutomationsPlugin(
               : detail.currentDefinition,
           };
         }));
-        return { sidekicks };
+        if (input.parentKind !== "workstream") return { sidekicks };
+        const auth = await attachmentAuth();
+        const [directory, recommendations] = await Promise.all([
+          new AutomationService(env, auth).listSidekicks(),
+          new WorkstreamService(env, auth).recommendedSidekicks(input.parentId),
+        ]);
+        const attached = new Set(recommendations.items.map((item) => item.id));
+        return { sidekicks, workspaceSidekicks: directory.items.filter((item) => item.scope === "workspace").map((item) => ({
+          sidekickId: item.id, name: item.name, description: item.description, lifecycle: item.status,
+          canEdit: false, canAttach: true, attached: attached.has(item.id),
+        })) };
       },
     },
     draftMutationPort: {
@@ -2528,9 +2552,11 @@ export async function runWorkstreamHarness(
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
   }
   const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
+  const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? [] : await recommendedSidekickRefs(env, input);
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
+    recommendedRefs: recommendations.filter((ref) => currentSidekickSources.some((source) => sidekickSkillRef(source.id) === ref)),
   };
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
   const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources,
@@ -3136,7 +3162,9 @@ export async function runWorkstreamHarness(
       // nothing else. What a surface may *do* is settled by the tool loop, so
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
-      skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)],
+      skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({ ...entry.skill,
+        recommended: sidekickSnapshot.recommendedRefs?.includes(entry.durableRef) ?? false,
+      }))],
       // Built-in refs share this snapshot and pass through unchanged on retry.
       skillActivationHints: sidekickSnapshot.activeRefs.map((ref) =>
         sidekickCatalog.find((entry) => entry.durableRef === ref)?.ref ?? ref),

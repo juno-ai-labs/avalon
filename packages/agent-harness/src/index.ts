@@ -2700,6 +2700,8 @@ export interface HarnessToolResult {
  * from `@juno-ai/bind/skills`.
  */
 export interface HarnessSkill {
+  /** Host-selected routing preference; does not activate instructions. */
+  recommended?: boolean;
   /** Lower-kebab identifier, unique within a run. What `load_skill` takes. */
   name: string;
   /** Tier-1 catalog line: what the skill does. */
@@ -3048,7 +3050,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "sidekicks_list",
-    description: "Read this Sidekick’s current definition before editing it. Use the returned sidekickId and submit the full revised draft.",
+    description: "List editable Sidekick definitions (canEdit) and, in workstreams, workspace Sidekick summaries available to recommend (canAttach, attached). Edit only canEdit definitions with submit_draft; use attach or detach for workspace recommendations. Recommendations affect future executions; load_skill is still required to use one now.",
     capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",
