@@ -232,7 +232,7 @@ catalog from an unreachable server. The two `plugin_*_unavailable` codes and
 their retry guidance are unchanged; the fabricated-blocker finding stands
 against them until their owners decide on a third verdict.
 
-Shipped in the pull request for this change.
+Shipped in #771.
 
 ### 2026-09-15 — The services and the admin Worker name what they already knew
 
