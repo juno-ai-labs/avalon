@@ -5584,9 +5584,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 .workstream-row .workstream-row-status .status-dot {
   /* `.sidebar-row .status-dot` restyles the same element into the
-     navigation tick — 2px radius, a glow, a stretched height. Keep the
-     tick's square; drop the glow (the hole is the gap) and the stretch
-     (this badge is a compact mark, not a row-height line). */
+     navigation tick — 2px radius, a glow, a stretched height. This badge
+     is a sharp square in a square hole; drop the radius, the glow, and
+     the stretch. */
+  border-radius: 0;
   box-shadow: none;
   height: 6px;
   inset: auto;
@@ -5604,8 +5605,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    follows the marker and takes the row's real background — the same
    reason HexagonGlyph knocks its play out of the fill rather than laying
    a badge on it. The hole is the overlay's own box (12×12, 14×14 in the
-   app shell), not a circle inscribed in it; the compact tick is already
-   the navigation square. Two mask layers, the second the badge's box at
+   app shell), not a circle inscribed in it; the compact tick is a sharp
+   square in that box. Two mask layers, the second the badge's box at
    the badge's own `right`/`bottom`, xor'd so they cannot drift. */
 .workstream-row .sidebar-row-icon:has(.workstream-row-status) .workstream-glyph {
   -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);

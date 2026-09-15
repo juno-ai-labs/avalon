@@ -961,12 +961,11 @@ describe('workstream glyph status knockout', () => {
       .toContain('--workstream-status-hole: 14px;');
   });
 
-  it('keeps the compact badge the navigation square, not a circle', () => {
+  it('keeps the compact badge a sharp square, not the navigation tick', () => {
     const dot = rule('.workstream-row .workstream-row-status .status-dot');
+    expect(dot).toContain('border-radius: 0;');
     expect(dot).not.toContain('radius-pill');
     expect(dot).toContain('box-shadow: none;');
-    expect(rule('.sidebar-row .status-dot'))
-      .toContain('border-radius: var(--av-cmp-marker-radius);');
   });
 });
 
