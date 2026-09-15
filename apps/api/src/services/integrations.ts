@@ -1,5 +1,6 @@
 import { buildAttachmentManifestPart } from "./attachment-model-content";
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
@@ -4542,7 +4543,7 @@ async function loadRunPromptContext(
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.agentExchange && (input.backgroundAgent || input.parentKind === "automation")
       ? "\nExplicitly send results, questions, and updates to the intended agent. Your standard assistant responses remain only in this conversation and are not forwarded. Finish normally when done; no special completion tool is needed. Ask the coordinating agent for missing information; this conversation has no participant-facing question form."
-      : "") + "\nStay available to participants. Delegate substantial or blocking work when useful; continue prior agents through messages. Coordinate through messages and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
+      : "") + `\n${agentCoordinationRoleGuidance(input)}` + "\nContinue prior agents through messages. Coordinate through messages and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
   };
@@ -4943,7 +4944,7 @@ async function loadHarnessTools(
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
-    createAgentCommunicationPlugin(new AgentCommunicationService(env, input)),
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input)),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
