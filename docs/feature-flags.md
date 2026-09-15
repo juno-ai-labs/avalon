@@ -613,11 +613,9 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **Nothing calls `env.FLAGS` outside the three resolvers.** They exist as
   separate modules because they fail in opposite directions; a shared resolver
   with a parameter is one place for that direction to be chosen wrongly.
-- **Model flags fail open, client feature flags fail closed, the cadence falls
-  back to the checked-in default, and the digest kill switch fails open too.**
+- **Model flags fail open, client feature flags fail closed, and the digest kill switch fails open too.**
   A client feature that failed open would ship an unreleased feature on the
-  first Flagship outage; a cadence that failed closed would leave a recording
-  meeting with no briefing at all; a digest kill switch that failed closed
+  first Flagship outage; a digest kill switch that failed closed
   would stop every digest on the first Flagship hiccup.
 - **A route plan is one flag value, never two flags.** A variation change is
   atomic, so an agent can never serve a new default model against the previous
@@ -671,8 +669,8 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
   deploy.
-- **Product Boolean flag names explain true.** `meeting-recording-enabled` maps
-  to `meetingRecordingEnabled`; a bare or negatively named Boolean invites one
+- **Product Boolean flag names explain true.** `suggested-work-enabled` maps
+  to `suggestedWorkEnabled`; a bare or negatively named Boolean invites one
   layer to invert another.
 - **A product-flag notification carries a key, never a value.** Two people in
   one workspace may match different rules, so WorkspaceDO evaluates each user
@@ -680,17 +678,12 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **Ace is the managed product-flag write path.** Flagship has no documented
   webhook or Queue notification surface; a dashboard edit changes evaluation
   but cannot wake connected Avalon clients.
-- **The cadence has one definition** — `CONTROL_TOWER_REFRESH_SECONDS` in
-  `@rally/contracts` — read by the resolver, the service default, and the desktop
-  fallback, and the resolver clamps what Flagship serves to that range before
-  serving it. Every refresh is an inference; a flag typed in milliseconds would
-  otherwise turn one meeting into thousands of runs.
 - **Evaluation is per run, not per model turn.** A flag change reaches an
   in-flight run only at its next admission.
 
 ## Boundary
 
-This document owns the `FLAGS` binding, the four resolvers, the attribute loader,
+This document owns the `FLAGS` binding, the three resolvers, the attribute loader,
 and the one thing that overrides a flag. It does not own the agents themselves or
 what they do with the model they are handed:
 

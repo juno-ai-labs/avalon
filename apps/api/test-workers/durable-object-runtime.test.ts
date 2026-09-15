@@ -1138,7 +1138,7 @@ describe("Durable Objects in the Workers runtime", () => {
         // Retired in schema version 3. Version 1 still creates them and always
         // will — its statements are hashed into the migration receipt — so a
         // fresh object proves the drop only by not having them at the end.
-        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist"],
+        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets"],
       },
     ] as const;
 
