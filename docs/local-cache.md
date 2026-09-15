@@ -497,6 +497,8 @@ transport. Releasing the owner restores ordinary collection; access revocation,
 sign-out and snapshot-context removal still remove entries immediately. Adding
 a socket-owned entry requires adding it to that owner's retained family.
 
+PR: [#775](https://github.com/juno-ai-labs/avalon/pull/775).
+
 ### 2026-09-10 — A space, a stream, and a substream open from what the device last saw
 
 **What changed:** The desktop keeps a local cache. The workspace directory and
