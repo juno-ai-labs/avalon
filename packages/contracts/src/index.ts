@@ -1540,7 +1540,7 @@ export const UpdateDigestScheduleRequestSchema = z.object({
   "An enabled digest needs at least one day, one time, and one destination",
 );
 
-export const CreateWorkstreamRequestSchema = z.object({
+export const WorkstreamCreationFieldsSchema = z.object({
   /** Optional organizer chosen by the caller; the API reauthorizes it. */
   projectId: ProjectIdSchema.optional(),
   title: z.string().min(1).max(180).optional(),
@@ -1571,7 +1571,10 @@ export const CreateWorkstreamRequestSchema = z.object({
    * path does.
    */
   modelOverride: AgentModelOverrideSchema.optional(),
-}).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
+});
+
+/** Interactive creation starts a run; prepared history uses the same creation fields. */
+export const CreateWorkstreamRequestSchema = WorkstreamCreationFieldsSchema.refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "An opening message must include text or an attachment",
 });
 
@@ -3708,3 +3711,5 @@ export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClien
 export { ConnectorInstallationProviderSchema,ConnectorInstallationProviders,ConnectorInstallationSchema,ConnectorRegistrationSchema,type ConnectorInstallation,type InstallationRegistration } from "./connector-installation";
 
 export { AshbyEventLabels,AshbyEventTypes } from "./ashby-events";
+
+export * from "./substream-content";

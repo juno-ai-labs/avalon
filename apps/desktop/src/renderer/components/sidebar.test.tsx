@@ -186,7 +186,7 @@ describe('Sidebar work-stream markers', () => {
     </Tooltip.Provider></MemoryRouter>);
 
     expect(screen.queryByLabelText('New work stream draft')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'New work stream' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
   it('reduces the GrokBot shell navigation to work streams', () => {
@@ -214,7 +214,7 @@ describe('Sidebar work-stream markers', () => {
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(titlebar).not.toBeNull();
     expect(commandbar).not.toBeNull();
-    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New work stream' }));
+    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New work stream' }));
     expect(commandbar).toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
     expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
@@ -233,7 +233,7 @@ describe('Sidebar work-stream markers', () => {
 
     const titlebar = document.querySelector('.sidebar-titlebar');
     expect(titlebar).not.toBeNull();
-    const create = within(titlebar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    const create = within(titlebar as HTMLElement).getByRole('button', { name: 'New work stream' });
     // Both links are tooltip triggers, and Radix's Slot string-merges the
     // child's `className`: hand it `NavLink`'s callback form and the class
     // arrives at the DOM as that callback's source text, leaving the control
@@ -246,13 +246,13 @@ describe('Sidebar work-stream markers', () => {
     rerender(<MemoryRouter><Tooltip.Provider><Navigation compact /></Tooltip.Provider></MemoryRouter>);
     const commandbar = document.querySelector('.sidebar-commandbar');
     expect(commandbar).not.toBeNull();
-    const rail = within(commandbar as HTMLElement).getByRole('link', { name: 'New work stream' });
+    const rail = within(commandbar as HTMLElement).getByRole('button', { name: 'New work stream' });
     expect(rail).toHaveClass('sidebar-new-button', 'sidebar-rail-new-button');
     fireEvent.focus(rail);
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
 
     rerender(<MemoryRouter><Tooltip.Provider><Navigation conversationOnly /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.focus(screen.getByRole('link', { name: 'New work stream' }));
+    fireEvent.focus(screen.getByRole('button', { name: 'New work stream' }));
     expect(screen.getByRole('tooltip')).toHaveTextContent('New work stream');
   });
 
@@ -1228,7 +1228,7 @@ describe('Sidebar work-stream markers', () => {
     );
     const { rerender } = render(view(true));
     const search = screen.getByRole('button', { name: 'Search workspace' });
-    const create = screen.getByRole('link', { name: 'New work stream' });
+    const create = screen.getByRole('button', { name: 'New work stream' });
     expect(screen.getByRole('navigation')).not.toContainElement(search);
     const bar = search.closest('.sidebar-commandbar');
     expect(bar).not.toBeNull();
@@ -1238,11 +1238,11 @@ describe('Sidebar work-stream markers', () => {
     expect(create).toHaveAttribute('data-motion-insert');
     fireEvent.click(search);
     expect(onOpenSearch).toHaveBeenCalledOnce();
-    expect(create).toHaveAttribute('href', '/workstreams/new');
+    expect(create).toHaveAttribute('aria-haspopup', 'menu');
 
     rerender(view(false));
     expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search workspace' }));
-    const [titlebarCreate, ...others] = screen.getAllByRole('link', { name: 'New work stream' });
+    const [titlebarCreate, ...others] = screen.getAllByRole('button', { name: 'New work stream' });
     expect(others).toEqual([]);
     expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
     expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
@@ -1473,7 +1473,7 @@ describe('Sidebar work-stream markers', () => {
     // same place and now carries the same name.
     const actions = document.querySelector('.sidebar-primary-actions');
     expect(actions).not.toBeNull();
-    expect(within(actions as HTMLElement).getByRole('link', { name: 'New work stream' })).toHaveAttribute('href', '/workstreams/new');
+    expect(within(actions as HTMLElement).getByRole('button', { name: 'New work stream' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
   it('archives a work stream from the menu once the confirmation is accepted', async () => {

@@ -23,6 +23,9 @@ readiness barrier that decides when a seeded demo is Ready, the durable
 preparation operation that drives them, and the operator API the Ace Demos
 page calls. **Open questions** below says what remains.
 
+
+Scripted text responses share the prepared-content projection with imports and eval fixtures. Execution still uses ordinary runs; see [prepared content and session import](session-import.md).
+
 ## Where the code lives
 
 | Path | Role |

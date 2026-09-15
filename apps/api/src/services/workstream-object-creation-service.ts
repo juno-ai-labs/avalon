@@ -1,3 +1,5 @@
+import { WorkstreamCreationFieldsSchema } from "@rally/contracts";
+import type { SubstreamContent, SessionImportPreview } from "@rally/contracts";
 import { CreateWorkstreamRequestSchema, asSubstreamId, asWorkstreamId } from "@rally/contracts";
 import type {
   DemoSeed,
@@ -61,6 +63,7 @@ interface ReceiptRow {
 }
 
 interface CreateOptions {
+  initialContent?: SubstreamContent & { source?: SessionImportPreview["source"] };
   /** Authority snapshot already resolved by the owning HTTP route in this request. */
   authorityControl?: WorkstreamAuthorityControl;
   openingStructuredContent?: unknown;
@@ -220,10 +223,10 @@ export class WorkstreamObjectCreationService {
   async create(input: CreateInput, options: CreateOptions = {}): Promise<{
     workstream: Workstream;
     turnId: string;
-    harnessRunId: string;
+    harnessRunId: string | null;
   }> {
     const span = options.span ?? noFlowSpan;
-    const body = CreateWorkstreamRequestSchema.parse(input);
+    const body = (options.initialContent ? WorkstreamCreationFieldsSchema : CreateWorkstreamRequestSchema).parse(input);
     // Named for the second read it is: `POST /workstreams` already resolved the
     // authority control row before choosing this service, and a span of its own
     // is where that duplicated round trip becomes visible instead of hiding
@@ -248,6 +251,7 @@ export class WorkstreamObjectCreationService {
     const { mentions: requestMentions, ...hashBody } = body;
     const requestHash = workstreamImportHash({
       ...hashBody,
+      ...(options.initialContent ? { initialContent: options.initialContent } : {}),
       // Keep empty mentions compatible with receipts reserved by the previous
       // Worker during a rolling deploy. Non-empty spans change the durable
       // message and therefore remain part of the idempotency identity.
@@ -299,7 +303,7 @@ export class WorkstreamObjectCreationService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    if (receipt.state === "completed" && receipt.message_id && receipt.harness_run_id) {
+    if (receipt.state === "completed" && receipt.message_id && (receipt.harness_run_id || options.initialContent)) {
       // A replayed create is a different latency question from a first one, so
       // it is labelled rather than folded into the same distribution.
       span.setAttributes({ "rally.create.path": "replayed_receipt" });
@@ -435,6 +439,7 @@ export class WorkstreamObjectCreationService {
       emailAddress: email.emailAddress,
       creatorUserId: this.auth.userId,
       openingMessage: body.openingMessage,
+      ...(options.initialContent ? { initialContent: options.initialContent } : {}),
       mentions: body.mentions,
       openingStructuredContent: options.openingStructuredContent ?? null,
       clientMessageId: body.clientMessageId,

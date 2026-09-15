@@ -1,3 +1,4 @@
+import { NewWorkstreamMenu } from "./new-workstream-menu";
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -1707,24 +1708,22 @@ export function Sidebar({
           {/* Hidden rather than unmounted in the rail, so it can fade out with
               the layout instead of vanishing a frame ahead of it; the row that
               takes its place is the one under the search row below. The
-              fade holds `display` for its length, so the link leaves the
+              fade holds `display` for its length, so the button leaves the
               accessibility tree and the tab order by attribute at once
               rather than when the fade ends, or the rail would offer two New
-              work stream links for a quarter of a second. */}
-          <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="bottom">
-            <NavLink
+              work stream buttons for a quarter of a second. */}
+          <NewWorkstreamMenu returnTo={onNewStreamRoute ? undefined : location.pathname} onStart={() => markSurfaceEntrypoint('sidebar_new')}>
+            <button type="button"
               aria-hidden={compact}
               aria-label={NEW_STREAM_LABEL}
               className={clsx('sidebar-new-button window-no-drag', onNewStreamRoute && 'is-active')}
               hidden={compact}
               tabIndex={compact ? -1 : undefined}
-              onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              state={onNewStreamRoute ? undefined : { returnTo: location.pathname }}
-              to="/workstreams/new"
+              onClick={(event) => event.stopPropagation()}
             >
               <Plus aria-hidden="true" size={16} />
-            </NavLink>
-          </Tip>
+            </button>
+          </NewWorkstreamMenu>
         </div>
 
         {/* Above the scroll box in both layouts, so search stays at the top
@@ -1744,19 +1743,17 @@ export function Sidebar({
             // reason — it finds a keyed row at any depth. The tip hangs off the
             // rail's right rather than below, where the row under it would be
             // covered.
-            <Tip describesTrigger={false} label={NEW_STREAM_LABEL} side="right">
-              <NavLink
+            <NewWorkstreamMenu tooltipSide="right" returnTo={onNewStreamRoute ? undefined : location.pathname} onStart={() => markSurfaceEntrypoint('sidebar_new')}>
+              <button type="button"
                 aria-label={NEW_STREAM_LABEL}
                 className={clsx('sidebar-new-button sidebar-rail-new-button window-no-drag', onNewStreamRoute && 'is-active')}
                 data-motion-insert=""
                 data-motion-key="action:new"
-                onClick={() => markSurfaceEntrypoint('sidebar_new')}
-                state={onNewStreamRoute ? undefined : { returnTo: location.pathname }}
-                to="/workstreams/new"
+                onClick={(event) => event.stopPropagation()}
               >
                 <Plus aria-hidden="true" size={19} strokeWidth={1.6} />
-              </NavLink>
-            </Tip>
+              </button>
+            </NewWorkstreamMenu>
           )}
         </div>
 
@@ -1767,15 +1764,15 @@ export function Sidebar({
           ref={scrollRef}
         >
           {!conversationOnly && <div className="sidebar-primary-actions sidebar-secondary-actions">
-            <NavLink
-              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
-              onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              to="/workstreams/new"
-            >
-              <Plus aria-hidden="true" size={15} />
-              <span>{NEW_STREAM_LABEL}</span>
-            </NavLink>
-
+            <NewWorkstreamMenu returnTo={onNewStreamRoute ? undefined : location.pathname} onStart={() => markSurfaceEntrypoint('sidebar_new')}>
+              <button type="button"
+                className={clsx('sidebar-action', onNewStreamRoute && 'is-active')}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Plus aria-hidden="true" size={15} />
+                <span>{NEW_STREAM_LABEL}</span>
+              </button>
+            </NewWorkstreamMenu>
           </div>}
 
           {!conversationOnly && (

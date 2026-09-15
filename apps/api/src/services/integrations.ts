@@ -1,3 +1,4 @@
+import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
@@ -1452,6 +1453,16 @@ async function projectModelProtocolTranscript(
     // Suggestion and system rows are UI state. Their relevant durable content
     // is represented separately.
     if (message.messageType !== "text" && message.messageType !== "elicitation") continue;
+    const imported = ImportedMessageProvenanceSchema.safeParse(message.structuredContent);
+    if (imported.success && (message.author.type === "human" || message.author.type === "agent")) {
+      // Historical roles remain intact. The importer is a custodian, not the
+      // author of the source prompt; do not apply the live-member author wrapper.
+      projected.push(modelDerivative(
+        { role: message.author.type === "human" ? "user" : "assistant", content: message.textContent },
+        "participant_turn", message.id, message.sequenceNumber,
+      ));
+      continue;
+    }
     const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
       id: attachment.id,
       fileName: attachment.fileName,
