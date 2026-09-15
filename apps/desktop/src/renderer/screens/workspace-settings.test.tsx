@@ -55,6 +55,7 @@ const setDebugEnabled = vi.hoisted(() => vi.fn());
 const setMenuBarEnabled = vi.hoisted(() => vi.fn());
 const setLaunchAtLogin = vi.hoisted(() => vi.fn());
 const setProductAnalyticsEnabled = vi.hoisted(() => vi.fn());
+const setReleaseChannel = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const leaveWorkspace = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
@@ -92,6 +93,7 @@ vi.mock('../lib/platform', () => ({
     setMenuBarEnabled,
     setLaunchAtLogin,
     setProductAnalyticsEnabled,
+    setReleaseChannel,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -219,6 +221,8 @@ function applicationSettings(
   overrides: Partial<DesktopApplicationSettings> = {},
 ): DesktopApplicationSettings {
   return {
+    releaseChannel: 'stable',
+    releaseChannelAvailable: true,
     lockdownMode: false,
     lockdownAvailable: true,
     debugEnabled: false,
@@ -390,6 +394,7 @@ describe('Workspace settings', () => {
       productAnalyticsEffective: productAnalyticsEnabled,
       nativeCrashRestartRequired: !productAnalyticsEnabled,
     }));
+    setReleaseChannel.mockImplementation(async (releaseChannel: 'stable' | 'faster') => applicationSettings({ releaseChannel }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
       isAutomatic: false,
@@ -2073,6 +2078,19 @@ describe('Workspace settings', () => {
     expect(toggle).toBeChecked();
   });
 
+  it('defaults to Stable and switches this Mac to the Faster update channel', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const channel = await screen.findByRole('combobox', { name: 'Update channel' });
+    expect(channel).toHaveTextContent('Stable');
+    fireEvent.click(channel);
+    fireEvent.click(screen.getByRole('option', { name: /Faster/u }));
+
+    await waitFor(() => expect(setReleaseChannel).toHaveBeenCalledWith('faster'));
+    expect(channel).toHaveTextContent('Faster');
+  });
+
   it('controls product analytics and explains regional crash behavior', async () => {
     renderSettings();
     openSettingsSection('Application');
@@ -2345,6 +2363,8 @@ describe('Workspace settings', () => {
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
 
     announceApplicationSettings({
+      releaseChannel: 'stable',
+      releaseChannelAvailable: true,
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: true,
@@ -2364,6 +2384,8 @@ describe('Workspace settings', () => {
     // The flag going off takes the section with it, without a reload, and takes
     // the effective preference to off on the way past.
     announceApplicationSettings({
+      releaseChannel: 'stable',
+      releaseChannelAvailable: true,
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: false,

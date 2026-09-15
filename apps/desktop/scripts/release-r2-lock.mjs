@@ -75,10 +75,12 @@ function activeLockInput({ bucket, key, owner, condition }) {
   };
 }
 
+export class R2ReleaseLockHeldError extends Error {}
+
 function lockHeldError({ bucket, error, key, owner }) {
   const status = error?.$metadata?.httpStatusCode ?? 'unknown';
   const ownerContext = typeof owner === 'string' ? `, owner=${JSON.stringify(owner)}` : '';
-  return new Error(
+  return new R2ReleaseLockHeldError(
     `Another desktop release publisher holds r2://${bucket}/${key} (${error?.name ?? 'unknown'}, HTTP ${status}${ownerContext})`,
     { cause: error },
   );
@@ -135,6 +137,7 @@ export async function withR2ReleaseLock({
   operation,
   owner = randomUUID(),
   reportCleanupFailure = console.error,
+  strictCleanup = false,
 }) {
   const acquired = await acquireR2ReleaseLock({ bucket, client, key, owner });
   if (typeof acquired.ETag !== 'string' || acquired.ETag.length === 0) {
@@ -183,6 +186,7 @@ export async function withR2ReleaseLock({
   }
   if (operationFailed) throw operationError;
   if (releaseError) {
+    if (strictCleanup) throw releaseError;
     try {
       reportCleanupFailure(releaseError.message);
     } catch {

@@ -29,7 +29,7 @@ function stored(
     customMetadata: { release: key },
     etag: etag(content),
     httpMetadata: {
-      cacheControl: key.includes("latest-mac.yml") ? "public, max-age=14400" : "immutable",
+      cacheControl: key.endsWith("-mac.yml") ? "public, max-age=0, must-revalidate" : "immutable",
       contentType: key.endsWith(".dmg") ? "application/x-apple-diskimage" : "application/octet-stream",
     },
     key,
@@ -135,6 +135,29 @@ describe("release retention", () => {
     expect(plan.retainedVersions).toEqual(["1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
   });
 
+  it("retains an older release while the Stable channel still references it", async () => {
+    const objects = inventory(["1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
+    objects.push(
+      stored(`${prefix}stable-mac.yml`, new TextEncoder().encode("version: 1.8.0\n")),
+      stored(`${prefix}faster-mac.yml`, new TextEncoder().encode("version: 1.13.0\n")),
+      stored(`${prefix}stable-channel.json`, new TextEncoder().encode('{"version":"1.8.0"}\n')),
+      stored(`${prefix}release-publication.json`, new TextEncoder().encode('{"version":"1.13.0"}\n')),
+    );
+
+    const plan = await planRetention(createTestR2Bucket(new MockBucket(objects)), 5);
+
+    expect(plan.archiveVersions).toEqual([]);
+    expect(plan.retainedVersions).toEqual(["1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
+  });
+
+  it("fails closed during a partial channel-pointer publication", async () => {
+    const objects = inventory(["1.8.0"]);
+    objects.push(stored(`${prefix}faster-mac.yml`, new TextEncoder().encode("version: 1.8.0\n")));
+
+    await expect(planRetention(createTestR2Bucket(new MockBucket(objects)), 5))
+      .rejects.toThrow("Missing mutable release pointers");
+  });
+
   it("does nothing when exactly five complete releases are active", async () => {
     const active = new MockBucket(inventory(["1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]));
     const archive = new MockBucket();
@@ -143,6 +166,17 @@ describe("release retention", () => {
     expect(report.activeObjectCount).toBe(27);
     expect(active.deleteCalls).toEqual([]);
     expect(archive.objects.size).toBe(0);
+  });
+
+  it("preserves the persistent release lock while archiving old releases", async () => {
+    const objects = inventory(["1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]);
+    objects.push(stored(`${prefix}release-publish.lock`, new TextEncoder().encode("released:publisher")));
+    const active = new MockBucket(objects);
+
+    const report = await runRetention(bindings(active), { dryRun: false, keepCount: 5 });
+
+    expect(report.archivedObjectCount).toBe(5);
+    expect(active.objects.has(`${prefix}release-publish.lock`)).toBe(true);
   });
 
   it("reports the exact plan without writing in dry-run mode", async () => {
