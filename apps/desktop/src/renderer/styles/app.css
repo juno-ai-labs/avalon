@@ -3371,6 +3371,16 @@ pre {
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
+.markdown-body img.markdown-link-favicon {
+  border-radius: 3px;
+  display: inline-block;
+  height: 1em;
+  margin: 0 0.3em 0 0;
+  max-width: none;
+  object-fit: contain;
+  vertical-align: -0.12em;
+  width: 1em;
+}
 /* Grok Bot keeps mentions inside the message rather than making them read like
    links: one flat rectangular chip, the identity mark, and the name. These are
    the packaged renderer's inserted-chip metrics: the negative block margins

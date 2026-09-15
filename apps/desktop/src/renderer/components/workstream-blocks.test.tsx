@@ -14,6 +14,8 @@ import {
 } from './workstream-blocks';
 import { SpeechPlaybackProvider, type SpeechApi, type SpeechPlayer } from './speech-playback';
 
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 const copyText = vi.hoisted(() => vi.fn());
 const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
   async () => ({ saved: true }),
@@ -36,6 +38,7 @@ const readMermaidThemeConfig = vi.hoisted(() => vi.fn(
     themeVariables: { primaryColor: 'token' },
   }),
 ));
+const optionalAppSession = vi.hoisted(() => vi.fn<() => { api: { getFavicon: ReturnType<typeof vi.fn> } } | null>(() => null));
 
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
@@ -50,6 +53,7 @@ vi.mock('../lib/platform', () => ({
   desktopRuntimeConfig: getRuntimeConfig,
   desktopServicesAvailable,
 }));
+vi.mock('../lib/favicon-api', () => ({ useFaviconApi: () => optionalAppSession()?.api ?? null }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
     <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
@@ -66,7 +70,10 @@ vi.mock('./markdown-mermaid-theme', () => ({
   readMermaidThemeConfig,
 }));
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  optionalAppSession.mockReturnValue(null);
+});
 
 const baseMessage: Message = {
   id: 'message-human',
@@ -857,6 +864,31 @@ describe('MessageBlock markdown', () => {
     expect(container.querySelectorAll('br')).toHaveLength(3);
     expect(screen.getByRole('link', { name: 'site' })).toHaveAttribute('href', 'https://example.com');
     expect(container.querySelector('.mention-text-fallback')).toHaveTextContent('@Ada Lovelace');
+  });
+
+  it('linkifies a naked HTTP URL and decorates it and a named HTTP link with their favicons', async () => {
+    const getFavicon = vi.fn(async () => new Blob([png], { type: 'image/png' }));
+    optionalAppSession.mockReturnValue({ api: { getFavicon } });
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:favicon');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+    const { unmount } = render(
+      <MarkdownBody>{'Read https://docs.svix.com and [Svix documentation](http://www.svix.com/docs).'}</MarkdownBody>,
+    );
+
+    expect(screen.getByRole('link', { name: 'https://docs.svix.com' }))
+      .toHaveAttribute('href', 'https://docs.svix.com');
+    expect(screen.getByRole('link', { name: 'Svix documentation' }))
+      .toHaveAttribute('href', 'http://www.svix.com/docs');
+    await waitFor(() => expect(document.querySelectorAll('.markdown-link-favicon')).toHaveLength(2));
+    expect(getFavicon).toHaveBeenCalledWith('docs.svix.com', expect.any(AbortSignal));
+    expect(getFavicon).toHaveBeenCalledWith('www.svix.com', expect.any(AbortSignal));
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
   });
 
   it('keeps a multiline connector mention as a chip', () => {

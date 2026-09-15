@@ -21,6 +21,8 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
+| `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
+| `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
@@ -233,6 +235,32 @@ navigable link. Every other link renders as an external one, with
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
 model's text cannot impersonate one.
+
+### Web links and favicons
+
+`remark-gfm` owns autolinking as well as tables and footnotes. A naked
+`https://…` or `http://…` URL therefore reaches the same anchor renderer as a
+named Markdown link; `www.…` is GFM's other literal form and receives an HTTP
+target. Rally does not rewrite domain-shaped prose such as `docs.example.com`
+without a scheme or `www.` because that is not a GFM autolink and guessing at
+prose would create navigable destinations the author did not write.
+
+Every HTTP(S) anchor asks the authenticated regional API for the hostname's
+favicon. The renderer never contacts that hostname itself. It displays the
+returned bytes through a short-lived object URL, marks the image presentational,
+and revokes the URL when the link unmounts. A missing or failed favicon changes
+nothing about the link. Glances remain inert text and synchronous still exports
+do not start asynchronous decoration.
+
+The API resolves a deep hostname and each parent down to its registrable domain
+in parallel. Results retain specificity order: the deepest host's icon wins,
+then its parent, through the primary domain. Each candidate asks the shared
+Firecrawl client for uncached `branding.images.favicon` metadata, accepts only a
+public HTTPS image URL, validates the downloaded bytes as an image, and stores
+either the icon or a miss in the dedicated platform-wide `FAVICON_CACHE`.
+Same-host HTTPS redirects on that image URL are loop-checked; cross-host and
+plaintext redirects are rejected. Each KV entry expires after 30 days; the next
+read fetches and overwrites it, so no stale generation is retained.
 
 ### Citations
 
@@ -769,6 +797,34 @@ renderer's supported `<br>` spellings become line breaks rather than literal
 tags, and ATX headings accept CommonMark's three-space indent. Citation and
 person-mention syntax inside code remains literal; prose references reduce to
 their visible labels.
+### 2026-09-15 — Web links carry the site's current mark
+
+**What changed:** GFM literal HTTP(S) URLs and named HTTP(S) Markdown links now
+share one favicon decoration. The authenticated API asks the existing Firecrawl
+client for each hostname's branding metadata, resolves the full domain chain
+concurrently, prefers the most specific result, validates the returned image,
+and caches icons and misses in a dedicated Cloudflare KV namespace for 30 days
+before replacement.
+
+**Why:** A naked URL and a named link are the same navigation affordance after
+parsing, but only the text distinguished one site from another. Fetching in the
+renderer would disclose every painted link to its destination and repeat the
+same work on every device; one server-owned cache gives the platform a reusable
+mark without widening renderer egress.
+
+**Considered and rejected:** A client-side favicon request, direct page scraping
+alongside the existing web provider, and caching by full URL. The first turns
+rendering into third-party tracking, the second creates a parallel scraping
+boundary, and the third stores duplicates even though favicons belong to hosts.
+Parent fallback is concurrent rather than serial so a missing deep-host icon
+adds no extra Firecrawl round trip before the primary-domain result can be used.
+
+**Consequences:** Favicon discovery requires the regional `FIRECRAWL_API_KEY`.
+Only public HTTPS image URLs returned by Firecrawl are fetched; cross-host,
+plaintext, and looping image redirects are rejected. A missing mark is silent,
+and synchronous saved-message rendering intentionally omits this live
+decoration. The existing GFM autolinker remains the syntax authority and now has
+an explicit regression test for a naked URL.
 
 ### 2026-09-10 — A published site gets its own mark
 

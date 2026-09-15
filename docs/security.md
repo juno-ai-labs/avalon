@@ -121,6 +121,13 @@ same as desktop.
   frontmatter before its sanitised SVG is inserted. The application never calls
   Mermaid's binding callback, so a diagram cannot install click handlers. A
   rejected parse leaves the original source visible.
+  HTTP(S) link favicons are fetched only by the authenticated regional API,
+  never by the renderer from the model-chosen destination. The service accepts
+  public domain names only, uses the existing Firecrawl client to discover a
+  public HTTPS favicon URL, follows only loop-free image redirects that stay on
+  that hostname, validates image bytes, and keeps only a 30-day platform-wide KV
+  entry. The renderer receives the cached bytes and exposes them through a
+  revocable local object URL.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
@@ -934,6 +941,28 @@ Associated Domains entitlements; helpers retain their existing entitlement set.
 [Apple push](push-notifications.md) owns provisioning and release verification.
 
 ## Changelog
+
+### 2026-09-15 — Link decoration does not widen renderer egress
+
+**What changed:** Markdown HTTP(S) links may display a favicon, but the
+sandboxed renderer obtains its bytes through the authenticated Rally API. The
+server accepts public domains only, asks the existing Firecrawl client for
+branding metadata, follows only same-host HTTPS image redirects, verifies image
+bytes, and caches the result or miss for 30 days in dedicated KV.
+
+**Why:** Letting an `<img>` point at a model-authored site would notify that site
+when a message merely painted and would move arbitrary network access into the
+renderer. Repeating lookup on every client would also discard the platform-wide
+reuse the mark is meant to provide.
+
+**Considered and rejected:** Direct renderer fetches and direct page scraping in
+the API. The former discloses browsing context from each client; the latter
+duplicates the server's existing public-web acquisition boundary.
+
+**Consequences:** Favicon failure is silent and never changes navigation.
+Cross-host, plaintext, and looping redirects are treated as absent for that
+host, the separately resolved parent may still supply its own mark, and detached
+still exports do not fetch live decoration.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 
