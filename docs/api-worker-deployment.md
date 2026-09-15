@@ -192,6 +192,12 @@ Global is the only configured deployment. Additional deployments need configurat
 
 ## Operations
 
+Coding agents follow the [production operations boundary](runbook.md#agent-production-boundary):
+release reviewed code already merged into `main` through CI only when the user
+has authorized the release action. The direct mode below describes CI's
+deployment mechanism; it does not authorize an agent to deploy from its checkout
+or proceed past an unknown production source or incompatible schema.
+
 - **Direct:** for first creation, Wrangler or Container state changes, or an
   unknown/divergent baseline, deploy each regional service before its API and
   retain the same health barriers.
