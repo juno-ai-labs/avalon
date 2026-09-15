@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
-import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
+import {
+  R2ReleaseLockHeldError,
+  createR2ReleaseLockClient,
+  withR2ReleaseLock,
+} from './release-r2-lock.mjs';
 
 class FakeR2Client {
   etagCounter = 0;
@@ -106,7 +110,11 @@ test('a second publisher cannot enter while the first holds the remote lock', as
       owner: 'second',
       operation: async () => { secondEntered = true; },
     }),
-    /Another desktop release publisher holds .* owner="first"/u,
+    (error) => {
+      assert.ok(error instanceof R2ReleaseLockHeldError);
+      assert.match(error.message, /Another desktop release publisher holds .* owner="first"/u);
+      return true;
+    },
   );
   assert.equal(secondEntered, false);
 

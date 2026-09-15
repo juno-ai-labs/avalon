@@ -75,10 +75,12 @@ function activeLockInput({ bucket, key, owner, condition }) {
   };
 }
 
+export class R2ReleaseLockHeldError extends Error {}
+
 function lockHeldError({ bucket, error, key, owner }) {
   const status = error?.$metadata?.httpStatusCode ?? 'unknown';
   const ownerContext = typeof owner === 'string' ? `, owner=${JSON.stringify(owner)}` : '';
-  return new Error(
+  return new R2ReleaseLockHeldError(
     `Another desktop release publisher holds r2://${bucket}/${key} (${error?.name ?? 'unknown'}, HTTP ${status}${ownerContext})`,
     { cause: error },
   );

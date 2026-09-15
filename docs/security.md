@@ -274,7 +274,7 @@ promotion, Gatekeeper, stapler, bundle ID/version, updater URL, final blockmaps,
 nested signatures, and a LaunchServices smoke all have to pass. The update
 transport is still treated as untrusted: electron-updater's macOS signature
 validation remains the execution trust boundary, while R2 publication uses
-immutable versioned objects and promotes the mutable feed last.
+immutable versioned objects and promotes only validated mutable channel feeds.
 
 ### Authentication and authorization
 

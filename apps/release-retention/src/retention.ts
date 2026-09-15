@@ -23,8 +23,15 @@ const PRODUCT_NAMES: readonly string[] = Object.freeze(["Rally", "Avalon"]);
  * shipping and the first Rally release.
  */
 const CANONICAL_DMG_POINTERS = new Set(PRODUCT_NAMES.map((name) => `${RELEASE_PREFIX}${name}.dmg`));
-const REQUIRED_POINTERS = new Set([`${RELEASE_PREFIX}latest-mac.yml`]);
-const MUTABLE_POINTERS = new Set([...CANONICAL_DMG_POINTERS, ...REQUIRED_POINTERS]);
+const LEGACY_MANIFEST = `${RELEASE_PREFIX}latest-mac.yml`;
+const CHANNEL_MANIFESTS = new Set([
+  `${RELEASE_PREFIX}stable-mac.yml`,
+  `${RELEASE_PREFIX}faster-mac.yml`,
+]);
+const CHANNEL_RECEIPT = `${RELEASE_PREFIX}stable-channel.json`;
+const REQUIRED_POINTERS = new Set([LEGACY_MANIFEST]);
+const CHANNEL_POINTERS = new Set([...CHANNEL_MANIFESTS, CHANNEL_RECEIPT]);
+const MUTABLE_POINTERS = new Set([...CANONICAL_DMG_POINTERS, ...REQUIRED_POINTERS, ...CHANNEL_POINTERS]);
 const SEMANTIC_VERSION = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)";
 const VERSIONED_ARTIFACT = new RegExp(
   `^${RELEASE_PREFIX}(${PRODUCT_NAMES.join("|")})-(${SEMANTIC_VERSION})-mac-arm64\\.(?:dmg|zip)(?:\\.blockmap)?$`,
@@ -98,7 +105,11 @@ function sameStrings(left: string[], right: string[]): boolean {
   return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
 }
 
-function analyzeInventory(objects: R2Object[], keepCount: number): ReleaseInventory {
+function analyzeInventory(
+  objects: R2Object[],
+  keepCount: number,
+  pointerVersions: ReadonlySet<string>,
+): ReleaseInventory {
   if (!Number.isInteger(keepCount) || keepCount < 1) {
     throw new Error(`Retention keep count must be a positive integer; received ${keepCount}`);
   }
@@ -130,6 +141,11 @@ function analyzeInventory(objects: R2Object[], keepCount: number): ReleaseInvent
   if (missingPointers.length > 0) {
     throw new Error(`Missing mutable release pointers: ${missingPointers.join(", ")}`);
   }
+  const presentChannelPointers = [...CHANNEL_POINTERS].filter((key) => seenKeys.has(key));
+  if (presentChannelPointers.length > 0 && presentChannelPointers.length !== CHANNEL_POINTERS.size) {
+    const missing = [...CHANNEL_POINTERS].filter((key) => !seenKeys.has(key));
+    throw new Error(`Missing mutable release pointers: ${missing.join(", ")}`);
+  }
   // Whichever product name it carries, exactly one recovery installer has to be
   // reachable; which one is a fact about when the last release shipped.
   if (![...CANONICAL_DMG_POINTERS].some((key) => seenKeys.has(key))) {
@@ -153,9 +169,15 @@ function analyzeInventory(objects: R2Object[], keepCount: number): ReleaseInvent
   }
 
   const versions = [...releases.keys()].sort(compareVersions);
+  for (const version of pointerVersions) {
+    if (!releases.has(version)) {
+      throw new Error(`Mutable release manifest references missing release ${version}`);
+    }
+  }
   const splitIndex = Math.max(0, versions.length - keepCount);
-  const archiveVersions = versions.slice(0, splitIndex);
-  const retainedVersions = versions.slice(splitIndex);
+  const archiveVersions = versions.slice(0, splitIndex)
+    .filter((version) => !pointerVersions.has(version));
+  const retainedVersions = versions.filter((version) => !archiveVersions.includes(version));
   const candidateKeys = archiveVersions
     .flatMap((version) => releaseKeys(version, productNames.get(version)!))
     .sort();
@@ -167,6 +189,38 @@ function analyzeInventory(objects: R2Object[], keepCount: number): ReleaseInvent
       candidateKeys,
       retainedVersions,
     },
+  };
+}
+
+function manifestVersion(text: string, key: string): string {
+  const match = /^version:\s*["']?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))["']?\s*$/mu.exec(text);
+  if (!match?.[1]) throw new Error(`Mutable release manifest has no valid version: ${key}`);
+  return match[1];
+}
+
+async function pointerVersions(bucket: R2Bucket, objects: R2Object[]): Promise<Set<string>> {
+  const present = new Set(objects.map((object) => object.key));
+  const versions = new Set<string>();
+  // Faster and the legacy manifest move with every release, so the ordinary
+  // highest-version keep set already covers them. Stable may deliberately lag
+  // behind more than five fast releases and therefore protects its version.
+  for (const key of [`${RELEASE_PREFIX}stable-mac.yml`]) {
+    if (!present.has(key)) continue;
+    const object = await bucket.get(key);
+    if (object === null) throw new Error(`Mutable release manifest disappeared: ${key}`);
+    versions.add(manifestVersion(await new Response(object.body).text(), key));
+  }
+  return versions;
+}
+
+async function inventory(bucket: R2Bucket, keepCount: number): Promise<{
+  analysis: ReleaseInventory;
+  objects: R2Object[];
+}> {
+  const objects = await listAll(bucket);
+  return {
+    analysis: analyzeInventory(objects, keepCount, await pointerVersions(bucket, objects)),
+    objects,
   };
 }
 
@@ -249,15 +303,16 @@ export async function planRetention(
   activeReleases: R2Bucket,
   keepCount: number,
 ): Promise<RetentionPlan> {
-  return analyzeInventory(await listAll(activeReleases), keepCount).plan;
+  return (await inventory(activeReleases, keepCount)).analysis.plan;
 }
 
 export async function runRetention(
   bindings: RetentionBindings,
   options: RetentionOptions,
 ): Promise<RetentionReport> {
-  const initialObjects = await listAll(bindings.ACTIVE_RELEASES);
-  const initial = analyzeInventory(initialObjects, options.keepCount);
+  const initialInventory = await inventory(bindings.ACTIVE_RELEASES, options.keepCount);
+  const initialObjects = initialInventory.objects;
+  const initial = initialInventory.analysis;
   const report = baseReport(initial.plan, options.dryRun);
   if (initial.plan.candidateKeys.length === 0 || options.dryRun) return report;
 
@@ -289,7 +344,11 @@ export async function runRetention(
   if (inventoryFingerprint(initialObjects) !== inventoryFingerprint(immediatelyBeforeDelete)) {
     throw new Error("Active release inventory changed during retention; refusing deletion");
   }
-  const finalPlan = analyzeInventory(immediatelyBeforeDelete, options.keepCount).plan;
+  const finalPlan = analyzeInventory(
+    immediatelyBeforeDelete,
+    options.keepCount,
+    await pointerVersions(bindings.ACTIVE_RELEASES, immediatelyBeforeDelete),
+  ).plan;
   if (
     !sameStrings(finalPlan.archiveVersions, initial.plan.archiveVersions) ||
     !sameStrings(finalPlan.retainedVersions, initial.plan.retainedVersions) ||
@@ -302,7 +361,11 @@ export async function runRetention(
   report.deletedObjectCount = initial.plan.candidateKeys.length;
 
   const finalObjects = await listAll(bindings.ACTIVE_RELEASES);
-  const completed = analyzeInventory(finalObjects, options.keepCount).plan;
+  const completed = analyzeInventory(
+    finalObjects,
+    options.keepCount,
+    await pointerVersions(bindings.ACTIVE_RELEASES, finalObjects),
+  ).plan;
   // Count the pointers actually present rather than the names this build knows
   // about: `Rally.dmg` and `Avalon.dmg` are both recognized, and which of them
   // the bucket holds depends on when the last release shipped.

@@ -14,12 +14,15 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../../common/desktop';
+import { defaultDesktopReleaseChannel } from '../../common/release-channels';
 
 export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
 
 let browserSession: DesktopSession | null = null;
 let browserRefreshToken: string | null = null;
 const browserApplicationSettings: DesktopApplicationSettings = {
+  releaseChannel: defaultDesktopReleaseChannel,
+  releaseChannelAvailable: false,
   lockdownMode: false,
   lockdownAvailable: false,
   debugEnabled: false,
@@ -245,6 +248,9 @@ const browserBridge: RallyDesktopBridge = {
   },
   async setProductAnalyticsEnabled() {
     throw new Error('Product analytics is managed in the Rally desktop app.');
+  },
+  async setReleaseChannel() {
+    throw new Error('Update channels are available only in the Rally desktop app.');
   },
   async reportTelemetryScreen() {
     // Public-site/browser telemetry is outside this feature's V1 scope.

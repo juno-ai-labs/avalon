@@ -7,6 +7,7 @@ import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from
 // a real Electron `app` instance.
 import electronUpdater from 'electron-updater';
 import { updatePolicy } from './update-policy';
+import type { DesktopReleaseChannel } from '../common/release-channels';
 
 const UPDATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
@@ -51,6 +52,8 @@ export type AutoUpdaterPort = Omit<Pick<
   AppUpdater,
   | 'autoDownload'
   | 'autoInstallOnAppQuit'
+  | 'allowDowngrade'
+  | 'channel'
   | 'disableDifferentialDownload'
   | 'logger'
   | 'checkForUpdates'
@@ -70,6 +73,7 @@ export interface AutoUpdateDependencies {
   readonly arch: string;
   readonly env: NodeJS.ProcessEnv;
   readonly currentVersion: string;
+  readonly releaseChannel: DesktopReleaseChannel;
   readonly showMessageBox: (options: MessageBoxOptions) => Promise<MessageBoxReturnValue>;
   readonly openExternal: (url: string) => Promise<unknown>;
   /** Flush protected local state before Squirrel terminates the process. */
@@ -93,6 +97,7 @@ export interface AutoUpdateController {
   readonly enabled: boolean;
   checkForUpdates(): void;
   installDownloadedUpdate(): void;
+  setReleaseChannel(channel: DesktopReleaseChannel): void;
 }
 
 function sameStatus(left: UpdateStatus, right: UpdateStatus): boolean {
@@ -135,6 +140,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
         });
       },
       installDownloadedUpdate: () => undefined,
+      setReleaseChannel: () => undefined,
     };
   }
 
@@ -260,6 +266,11 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
 
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
+  updater.channel = deps.releaseChannel;
+  // electron-updater enables downgrades as a side effect of setting a channel.
+  // Rally's two channels differ only in when their monotonic manifest moves;
+  // switching back to Stable must never install an older build.
+  updater.allowDowngrade = false;
   // Keep electron-updater's differential download default enabled. The
   // Cloudflare feed supports HTTP range requests and blockmap downloads.
   updater.logger = log;
@@ -353,7 +364,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
 
   log.info(
     `[rally] auto-update initialized (current=${deps.currentVersion}, platform=${deps.platform}, `
-      + `arch=${deps.arch}, differentialDownload=enabled)`,
+      + `arch=${deps.arch}, channel=${deps.releaseChannel}, differentialDownload=enabled)`,
   );
   runCheck(false);
   const scheduleInterval = deps.scheduleInterval
@@ -368,5 +379,11 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     enabled: true,
     checkForUpdates: () => runCheck(true),
     installDownloadedUpdate: installUpdate,
+    setReleaseChannel: (channel) => {
+      updater.channel = channel;
+      updater.allowDowngrade = false;
+      log.info(`[rally] update channel changed to ${channel}`);
+      runCheck(false);
+    },
   };
 }

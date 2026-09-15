@@ -32,6 +32,15 @@ import {
   writeSiteReleaseConfigAtomically,
 } from './site-release-config.mjs';
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
+import {
+  FASTER_RELEASE_MANIFEST,
+  LEGACY_RELEASE_MANIFEST,
+  STABLE_CHANNEL_RECEIPT,
+  STABLE_RELEASE_MANIFEST,
+  decideStableChannelPromotion,
+  encodeStableChannelReceipt,
+  parseStableChannelReceipt,
+} from './release-channels.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
@@ -39,7 +48,6 @@ const defaultReleaseDirectory = join(desktopDirectory, 'release/release');
 const defaultSiteConfigPath = join(repositoryDirectory, 'apps/site/release.config.json');
 const canonicalDmgName = 'Rally.dmg';
 const checksumsName = 'SHA256SUMS';
-const latestManifestName = 'latest-mac.yml';
 const releaseLockName = 'release-publish.lock';
 
 function parseArguments(argv) {
@@ -386,8 +394,8 @@ async function publishCanonicalDmg(versionedDmg, scratchDirectory) {
   console.log(`Promoted recovery installer ${publicUrl(canonicalDmgName)}`);
 }
 
-async function verifyPublicManifest(expectedBytes) {
-  const url = publicUrl(latestManifestName);
+async function verifyPublicManifest(name, expectedBytes) {
+  const url = publicUrl(name);
   let failure = 'no response';
   for (let attempt = 0; attempt < 7; attempt += 1) {
     try {
@@ -404,6 +412,33 @@ async function verifyPublicManifest(expectedBytes) {
     await sleep(500 * 2 ** attempt);
   }
   throw new Error(`Public manifest verification failed for ${url}: ${failure}`);
+}
+
+async function publishManifest(name, bytes, scratchDirectory) {
+  const manifestKey = `${prefix}/${name}`;
+  const localManifestPath = join(scratchDirectory, name);
+  await writeFile(localManifestPath, bytes);
+  await putR2Object(manifestKey, localManifestPath, {
+    contentType: releaseContentType(name),
+    cacheControl: 'public, max-age=0, must-revalidate',
+  });
+  await purgePublicUrl(publicUrl(name));
+  await verifyPublicManifest(name, bytes);
+}
+
+async function publishStableReceipt(receipt, scratchDirectory) {
+  const bytes = encodeStableChannelReceipt(receipt);
+  const receiptPath = join(scratchDirectory, STABLE_CHANNEL_RECEIPT);
+  await writeFile(receiptPath, bytes);
+  await putR2Object(`${prefix}/${STABLE_CHANNEL_RECEIPT}`, receiptPath, {
+    contentType: 'application/json; charset=utf-8',
+    cacheControl: 'no-store',
+  });
+  await verifyR2Hash(
+    `${prefix}/${STABLE_CHANNEL_RECEIPT}`,
+    await sha512File(receiptPath),
+    join(scratchDirectory, `verified-${STABLE_CHANNEL_RECEIPT}`),
+  );
 }
 
 const scratchDirectory = await mkdtemp(join(tmpdir(), 'rally-r2-release-'));
@@ -432,7 +467,7 @@ try {
     artifactNames: release.artifacts.map(({ name }) => name),
     canonicalDmgFile: canonicalDmgName,
     checksumsFile: checksumsName,
-    latestFile: latestManifestName,
+    latestFile: LEGACY_RELEASE_MANIFEST,
     bucket,
     prefix,
     downloadBaseUrl: baseUrl.origin,
@@ -459,14 +494,20 @@ try {
           publicUrl(`${release.feed.version}/${checksumsName}`),
         ],
         canonicalDmg: `${prefix}/${canonicalDmgName}`,
-        latestManifest: `${prefix}/${latestManifestName}`,
+        channelManifests: {
+          legacy: `${prefix}/${LEGACY_RELEASE_MANIFEST}`,
+          stable: `${prefix}/${STABLE_RELEASE_MANIFEST}`,
+          faster: `${prefix}/${FASTER_RELEASE_MANIFEST}`,
+        },
+        stableChannelReceipt: `${prefix}/${STABLE_CHANNEL_RECEIPT}`,
+        stablePromotionIntervalHours: 24,
         siteRelease: proposedSiteConfig,
       }, null, 2));
       return;
     }
 
-    const existingManifestPath = join(scratchDirectory, 'existing-latest-mac.yml');
-    const hasManifest = await getR2Object(`${prefix}/${latestManifestName}`, existingManifestPath);
+    const existingManifestPath = join(scratchDirectory, `existing-${LEGACY_RELEASE_MANIFEST}`);
+    const hasManifest = await getR2Object(`${prefix}/${LEGACY_RELEASE_MANIFEST}`, existingManifestPath);
     let releaseIsCommitted = false;
     let liveArtifactNames = new Set();
     if (hasManifest) {
@@ -490,6 +531,29 @@ try {
       assertReleaseAfterMissingManifest(currentSiteConfig.version, release.feed.version);
     }
 
+    const existingChannelFeeds = new Map();
+    for (const manifestName of [STABLE_RELEASE_MANIFEST, FASTER_RELEASE_MANIFEST]) {
+      const manifestPath = join(scratchDirectory, `existing-${manifestName}`);
+      if (!await getR2Object(`${prefix}/${manifestName}`, manifestPath)) continue;
+      const bytes = await readFile(manifestPath);
+      const feed = parseMacUpdateFeed(bytes.toString('utf8'));
+      if (compareVersions(feed.version, release.feed.version) > 0) {
+        throw new Error(
+          `Refusing to roll ${manifestName} back from ${feed.version} to ${release.feed.version}`,
+        );
+      }
+      if (feed.version === release.feed.version && !bytes.equals(release.manifestBytes)) {
+        throw new Error(`Release ${release.feed.version} already has different ${manifestName} bytes in R2`);
+      }
+      for (const { url } of feed.files) liveArtifactNames.add(url);
+      existingChannelFeeds.set(manifestName, feed);
+    }
+
+    const stableReceiptPath = join(scratchDirectory, `existing-${STABLE_CHANNEL_RECEIPT}`);
+    const hasStableReceipt = await getR2Object(`${prefix}/${STABLE_CHANNEL_RECEIPT}`, stableReceiptPath);
+    const stableReceipt = hasStableReceipt
+      ? parseStableChannelReceipt(JSON.parse(await readFile(stableReceiptPath, 'utf8')))
+      : undefined;
     // Each immutable payload is hash-verified through R2 and HEAD/Range-verified
     // through the public custom domain before either mutable channel pointer moves.
     const immutablePublicArtifacts = [];
@@ -539,17 +603,38 @@ try {
     // immutable DMG is verified, and before latest-mac.yml commits the channel.
     await publishCanonicalDmg(versionedDmg, scratchDirectory);
 
-    // The update manifest is the R2 release commit point and must be the final
-    // object upload. Landing-page state is activated only after it verifies.
-    const manifestKey = `${prefix}/${latestManifestName}`;
-    const localManifestPath = join(scratchDirectory, latestManifestName);
-    await writeFile(localManifestPath, release.manifestBytes);
-    await putR2Object(manifestKey, localManifestPath, {
-      contentType: releaseContentType(latestManifestName),
-      cacheControl: 'public, max-age=0, must-revalidate',
+    // `latest-mac.yml` remains the commit point for installed builds that
+    // predate channel selection. Faster then follows every committed release.
+    // Stable moves only when its durable receipt permits another promotion.
+    await publishManifest(LEGACY_RELEASE_MANIFEST, release.manifestBytes, scratchDirectory);
+    await publishManifest(FASTER_RELEASE_MANIFEST, release.manifestBytes, scratchDirectory);
+    const stableDecision = decideStableChannelPromotion({
+      candidateVersion: release.feed.version,
+      stableVersion: existingChannelFeeds.get(STABLE_RELEASE_MANIFEST)?.version,
+      receipt: stableReceipt,
+      now: Date.now(),
     });
-    await purgePublicUrl(publicUrl(latestManifestName));
-    await verifyPublicManifest(release.manifestBytes);
+    let nextStableReceipt = stableDecision.receipt;
+    if (stableDecision.promote) {
+      await publishManifest(STABLE_RELEASE_MANIFEST, release.manifestBytes, scratchDirectory);
+      // Start the rolling 24-hour window only after the manifest is publicly
+      // verified. Measuring from the earlier release transaction would permit
+      // the next promotion slightly less than 24 hours after this pointer moved.
+      nextStableReceipt = {
+        version: release.feed.version,
+        promotedAt: new Date().toISOString(),
+      };
+    }
+    if (!stableReceipt
+      || nextStableReceipt.version !== stableReceipt.version
+      || nextStableReceipt.promotedAt !== stableReceipt.promotedAt) {
+      await publishStableReceipt(nextStableReceipt, scratchDirectory);
+    }
+    console.log(
+      stableDecision.promote
+        ? `Promoted Stable to Rally ${nextStableReceipt.version} (${stableDecision.reason})`
+        : `Kept Stable on Rally ${nextStableReceipt.version} (${stableDecision.reason})`,
+    );
 
     const publishedSiteConfig = createPublishedSiteReleaseConfig(currentSiteConfig, {
       ...publicationOptions,
@@ -557,7 +642,7 @@ try {
     });
     await writeSiteReleaseConfigAtomically(siteConfigPath, publishedSiteConfig);
     console.log(
-      `Published Rally ${release.feed.version}: immutable artifacts, recovery DMG, latest-mac.yml, then site activation`,
+      `Published Rally ${release.feed.version}: immutable artifacts, Faster, guarded Stable, then site activation`,
     );
   };
 
