@@ -9,6 +9,9 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   const declaration = parsed.statements.find((node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === 'createMainWindow');
   expect(declaration).toBeDefined();
+  const reveal = parsed.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === 'revealWindow');
+  expect(reveal).toBeDefined();
   let ready!: () => void;
   const startup = new Promise<void>((resolve) => { ready = resolve; });
   let finishLoad!: () => void;
@@ -27,7 +30,7 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
     once = (_event: string, callback: () => void) => { readyToShow = callback; };
     constructor() { created(); }
   }
-  const create = runInNewContext(`${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
+  const create = runInNewContext(`${ts.transpile(reveal!.getText(parsed))}; ${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
     mainWindowStartup: startup, mainWindowLoading: null, mainWindowReadyToShow: false, mainWindow: null, rendererReady: false,
     BrowserWindow: Window, process: { platform: 'darwin' }, app: { isPackaged: true },
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
