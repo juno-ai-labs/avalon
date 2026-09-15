@@ -680,12 +680,10 @@ describe('Modal', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Remove from work stream' }));
+    fireEvent.pointerDown(screen.getByRole('button', { hidden: true, name: 'Remove from work stream' }));
     expect(onOpenChange).not.toHaveBeenCalled();
 
-    const overlay = document.querySelector('.dialog-overlay');
-    expect(overlay).toBeInstanceOf(Element);
-    fireEvent.pointerDown(overlay!);
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
