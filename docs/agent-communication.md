@@ -11,7 +11,7 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | --- | --- |
 | `packages/contracts/src/agent-communication.ts` | Conversation addresses and strict message schemas with attachments. |
 | `apps/api/src/durable-objects/agent-team-storage.ts` | Teams, additive membership, ownership, and immutable message routes. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Migration 57 and internal host RPCs. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 59 and internal host RPCs. |
 | `apps/api/src/services/agent-communication-service.ts` | Creation, contact authorization, attachment forwarding, delivery, discovery and owned stops. |
 | `apps/api/src/services/agent-communication-plugin.ts` | Model tools and coordination guidance. |
 | `apps/api/src/services/agent-message-content.ts` | Durable sender/reply content, rendered consistently on admission and context rebuild. |
@@ -67,7 +67,7 @@ attachment manifests and current-turn image projection. Resource IDs alone are
 not a substitute for those durable message attachments. Model-facing tools keep
 the existing composed-message and attachment limits, also enforced at admission.
 
-Conversation migration 58 stores the background principal and a stop timestamp.
+Conversation migration 59 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it in
 the same transaction that admits the message.
