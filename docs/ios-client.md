@@ -361,7 +361,16 @@ also mint the local development session (`/auth/dev/session` plus
 `/auth/dev/identity`) so the simulator can sign in against wrangler; ATS allows
 local HTTP without disabling it globally. The feed projects every desktop
 `messageType` (text, thought, tool, plugin, accordion, elicitation, system,
-automation, omitted; suggestions stripped). Work-stream substreams use the same
+automation, omitted; suggestions stripped). Live feed frames use
+`transcript_turn_upserted` plus `stream_started` / `stream_delta` /
+`stream_completed`; `turn_upserted` is the range-protocol name and is ignored
+on this socket. Multi-select elicitation answers go on the wire as a JSON
+array. Authenticated HTTP refreshes the access token once on 401 and retries.
+Work-stream directory menus send `workspace` / `personal`. Digest saves keep
+the decoded `deliveryTargets`. Sign-out revokes both stored sessions. Archive
+export writes an IPA (`destination = export`). Test bundles do not inherit the
+app Info.plist or APNs entitlements. The association file claims the iPhone
+bundle next to the Mac. Work-stream substreams use the same
 parent + child ids as desktop: **New substream** on the substream list and on a
 settled main-feed message opens the launch composer, and prepare/confirm run on
 submit. Opening a substream or the substream list replaces the stack on the tap

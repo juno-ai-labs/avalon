@@ -304,6 +304,11 @@ struct MessageList: View {
             .onChange(of: model.isLoadingOlder) { _, loading in
                 if !loading { requestOlderIfNeeded() }
             }
+            .onChange(of: messages.last?.id, initial: true) { _, _ in
+                if edge.nearBottom || !settledAtBottom {
+                    scrollToLatest(proxy)
+                }
+            }
             .onChange(of: messages.last?.text) { _, _ in
                 guard edge.nearBottom else { return }
                 scrollToLatest(proxy)
@@ -376,16 +381,14 @@ struct MessageRow: View {
                 OmittedPlaceholder(text: message.text)
             }
         }
-        .onAppear { startCursor() }
+        .task(id: message.isStreaming) { await runCursor() }
     }
 
-    private func startCursor() {
+    private func runCursor() async {
         guard message.isStreaming, !reduceMotion else { return }
-        Task {
-            while !Task.isCancelled && message.isStreaming {
-                try? await Task.sleep(for: .seconds(RallyMotion.cursorBlink))
-                cursorOn.toggle()
-            }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(RallyMotion.cursorBlink))
+            cursorOn.toggle()
         }
     }
 }
@@ -425,6 +428,10 @@ struct UserBubble: View {
                         Text(delivery.replacingOccurrences(of: "_", with: " "))
                             .font(RallyType.caption())
                             .foregroundStyle(colors.textSecondary)
+                        if delivery == "failed" {
+                            Button("Retry") { Task { await model.retryFailedSend(message) } }
+                                .font(RallyType.caption())
+                        }
                     }
                     if !message.isStreaming {
                         MessageActions(message: message)
@@ -535,7 +542,8 @@ struct ElicitationCard: View {
                 .foregroundStyle(colors.textPrimary)
             let elicitation = message.elicitation
             let closed = elicitation?.status != "open"
-            if let elicitation, elicitation.responseType == "text" || elicitation.responseType.isEmpty {
+            let isMulti = elicitation?.responseType == "multi_select"
+            if let elicitation, elicitation.responseType == "text" || elicitation.responseType == "free_text" || elicitation.responseType.isEmpty {
                 TextField("Your answer", text: $textAnswer, axis: .vertical)
                     .disabled(closed)
                     .padding(10)
@@ -544,7 +552,7 @@ struct ElicitationCard: View {
                 ForEach(elicitation.options) { option in
                     let value = option.value ?? option.label ?? option.id
                     Button {
-                        if elicitation.responseType == "multi" {
+                        if isMulti {
                             if selected.contains(value) { selected.remove(value) } else { selected.insert(value) }
                         } else {
                             selected = [value]
@@ -567,15 +575,25 @@ struct ElicitationCard: View {
                     }
                     Spacer()
                     Button("Submit") {
-                        let answer: String?
-                        if message.elicitation?.responseType == "text" || message.elicitation?.responseType.isEmpty == true {
-                            answer = textAnswer
+                        let answer: RallyElicitation.RallyElicitationAnswer?
+                        if message.elicitation?.responseType == "text"
+                            || message.elicitation?.responseType == "free_text"
+                            || message.elicitation?.responseType.isEmpty == true {
+                            answer = .text(textAnswer)
+                        } else if isMulti {
+                            answer = .list(selected.sorted())
                         } else {
-                            answer = selected.sorted().joined(separator: ",")
+                            answer = .text(selected.sorted().first ?? "")
                         }
                         Task { await model.answerElicitation(message.elicitation ?? RallyElicitation(id: message.id, prompt: message.text, responseType: "text", options: [], status: "open", answer: nil), answer: answer, skipped: false) }
                     }
-                    .disabled(textAnswer.isEmpty && selected.isEmpty && (message.elicitation?.responseType == "text" || message.elicitation?.responseType.isEmpty == true))
+                    .disabled(
+                        (message.elicitation?.responseType == "text"
+                            || message.elicitation?.responseType == "free_text"
+                            || message.elicitation?.responseType.isEmpty == true)
+                            ? textAnswer.isEmpty
+                            : selected.isEmpty
+                    )
                 }
                 .font(RallyType.button())
             }

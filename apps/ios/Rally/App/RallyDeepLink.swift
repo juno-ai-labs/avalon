@@ -6,6 +6,8 @@ import Foundation
 /// or `?substream=`). `"0"` is Main and is omitted from the returned child id.
 enum RallyDeepLink {
     struct WorkstreamTarget: Equatable {
+        var region: RallyRegion? = nil
+        var workspaceId: String? = nil
         var workstreamId: String
         var substreamId: String
     }
@@ -49,7 +51,23 @@ enum RallyDeepLink {
         if index + 3 < parts.count, parts[index + 2] == "substreams" {
             substreamId = parts[index + 3]
         }
-        return WorkstreamTarget(workstreamId: workstreamId, substreamId: normalized(substreamId, query: url))
+        var region: RallyRegion?
+        var workspaceId: String?
+        if let workspaceIndex = parts.firstIndex(of: "workspaces"), workspaceIndex + 1 < index {
+            let first = parts[workspaceIndex + 1]
+            if index == workspaceIndex + 3, let parsed = RallyRegion(rawValue: first) {
+                region = parsed
+                workspaceId = parts[workspaceIndex + 2]
+            } else if index == workspaceIndex + 2 {
+                workspaceId = first
+            }
+        }
+        return WorkstreamTarget(
+            region: region,
+            workspaceId: workspaceId,
+            workstreamId: workstreamId,
+            substreamId: normalized(substreamId, query: url)
+        )
     }
 
     private static func normalized(_ pathSubstream: String, query url: URL) -> String {

@@ -38,8 +38,11 @@ final class DeepLinkTests: XCTestCase {
 
     func testWorkstreamUniversalLink() throws {
         let url = try XCTUnwrap(URL(string: "https://rallywith.ai/app/workspaces/ws_1/workstreams/wsr_9"))
-        XCTAssertEqual(RallyDeepLink.workstreamId(from: url), "wsr_9")
-        XCTAssertEqual(RallyDeepLink.workstreamTarget(from: url)?.substreamId, "0")
+        let target = try XCTUnwrap(RallyDeepLink.workstreamTarget(from: url))
+        XCTAssertEqual(target.workstreamId, "wsr_9")
+        XCTAssertEqual(target.substreamId, "0")
+        XCTAssertEqual(target.workspaceId, "ws_1")
+        XCTAssertNil(target.region)
     }
 
     func testWorkstreamChildPath() throws {
@@ -47,6 +50,8 @@ final class DeepLinkTests: XCTestCase {
         let target = try XCTUnwrap(RallyDeepLink.workstreamTarget(from: url))
         XCTAssertEqual(target.workstreamId, "00000000-0000-4000-8000-000000000009")
         XCTAssertEqual(target.substreamId, "00000000-0000-4000-8000-00000000000a")
+        XCTAssertEqual(target.workspaceId, "ws_1")
+        XCTAssertEqual(target.region, .global)
     }
 
     func testWorkstreamQuerySubstream() throws {
@@ -654,6 +659,57 @@ final class AppearanceTests: XCTestCase {
         XCTAssertFalse(RallyPaletteKey.lime.usesLightInk)
         XCTAssertTrue(RallyPaletteKey.red.usesLightInk)
         XCTAssertTrue(RallyPaletteKey.black.usesLightInk)
+    }
+}
+
+final class ConversationFeedFrameTests: XCTestCase {
+    func testLiveTurnUsesTranscriptTurnUpserted() throws {
+        let json = """
+        {"type":"transcript_turn_upserted","turn":{"turnId":"t1","transcriptSequence":2,"actor":"assistant","createdAtUtc":"2026-09-15T12:00:00.000Z","blocks":[{"type":"text","text":"Hello"}]}}
+        """.data(using: .utf8)!
+        guard case .turnUpserted(let turn) = ConversationSocket.incoming(from: json) else {
+            return XCTFail("expected transcript_turn_upserted")
+        }
+        XCTAssertEqual(turn.turnId, "t1")
+    }
+
+    func testRangeProtocolTurnUpsertedIsIgnored() {
+        let json = Data(#"{"type":"turn_upserted","turn":{"turnId":"t1"}}"#.utf8)
+        XCTAssertNil(ConversationSocket.incoming(from: json))
+    }
+
+    func testStreamFramesAccumulateAndComplete() throws {
+        let started = Data(#"{"type":"stream_started","turnId":"t9","streamId":"s1","reset":false}"#.utf8)
+        guard case .streamStarted(let turnId, let streamId, let reset) = ConversationSocket.incoming(from: started) else {
+            return XCTFail("expected stream_started")
+        }
+        XCTAssertEqual(turnId, "t9")
+        XCTAssertEqual(streamId, "s1")
+        XCTAssertFalse(reset)
+
+        let delta = Data(#"{"type":"stream_delta","turnId":"t9","streamId":"s1","delta":"Hi","reset":true}"#.utf8)
+        guard case .streamDelta(_, _, let text, let deltaReset) = ConversationSocket.incoming(from: delta) else {
+            return XCTFail("expected stream_delta")
+        }
+        XCTAssertEqual(text, "Hi")
+        XCTAssertTrue(deltaReset)
+
+        let completed = Data(#"{"type":"stream_completed","streamId":"s1"}"#.utf8)
+        guard case .streamCompleted(let done) = ConversationSocket.incoming(from: completed) else {
+            return XCTFail("expected stream_completed")
+        }
+        XCTAssertEqual(done, "s1")
+    }
+}
+
+final class DigestDecodeTests: XCTestCase {
+    func testPreservesSlackDeliveryTargets() throws {
+        let json = """
+        {"enabled":true,"days":[1],"times":[540],"timezone":"America/Los_Angeles","deliveryTargets":[{"type":"slack_agent_dm","connectionId":"conn_1"}]}
+        """.data(using: .utf8)!
+        let digest = try JSONCoding.decoder.decode(RallyDigest.self, from: json)
+        XCTAssertEqual(digest.deliveryTargets?.first?.type, "slack_agent_dm")
+        XCTAssertEqual(digest.deliveryTargets?.first?.connectionId, "conn_1")
     }
 }
 

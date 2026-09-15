@@ -3,6 +3,9 @@ import Foundation
 actor RallyClient {
     private var baseURL: URL
     private var accessToken: String?
+    private var refreshToken: String?
+    private var refreshTask: Task<RallySession, Error>?
+    private var sessionListener: (@Sendable (RallySession) async -> Void)?
     private let session: URLSession
     private let decoder = JSONCoding.decoder
     private let encoder = JSONCoding.encoder
@@ -13,13 +16,18 @@ actor RallyClient {
         self.session = session
     }
 
-    func update(baseURL: URL, accessToken: String?) {
+    func update(baseURL: URL, accessToken: String?, refreshToken: String? = nil) {
         self.baseURL = baseURL
         self.accessToken = accessToken
+        self.refreshToken = refreshToken
     }
 
     func setAccessToken(_ token: String?) {
         accessToken = token
+    }
+
+    func setSessionListener(_ listener: (@Sendable (RallySession) async -> Void)?) {
+        sessionListener = listener
     }
 
     // MARK: Auth
@@ -96,10 +104,18 @@ actor RallyClient {
     }
 #endif
 
-    func logout(refreshToken: String?) async {
+    func logout(refreshToken: String?, baseURL: URL? = nil, accessToken: String? = nil) async {
         struct Body: Encodable { var refreshToken: String? }
         do {
-            try await postVoid(path: "/auth/logout", body: Body(refreshToken: refreshToken), authorized: true)
+            try await requestVoid(
+                method: "POST",
+                path: "/auth/logout",
+                body: Body(refreshToken: refreshToken),
+                authorized: true,
+                extraHeaders: [:],
+                baseURL: baseURL,
+                bearerToken: accessToken
+            )
         } catch {
             // Logout is idempotent.
         }
@@ -409,6 +425,9 @@ actor RallyClient {
             var times: [Int]
             var deliveryTargets: [Target]
         }
+        let targets = (digest.deliveryTargets ?? []).map {
+            Target(type: $0.type, connectionId: $0.connectionId)
+        }
         return try await request(
             method: "PUT",
             path: "/digest",
@@ -416,7 +435,7 @@ actor RallyClient {
                 enabled: digest.enabled,
                 days: digest.days,
                 times: digest.times,
-                deliveryTargets: [Target(type: "email", connectionId: nil)]
+                deliveryTargets: targets.isEmpty ? [Target(type: "email", connectionId: nil)] : targets
             ),
             as: RallyDigest.self
         )
@@ -532,7 +551,10 @@ actor RallyClient {
         method: String,
         path: String,
         body: Body?,
-        authorized: Bool = true
+        authorized: Bool = true,
+        extraHeaders: [String: String] = [:],
+        baseURL: URL? = nil,
+        bearerToken: String? = nil
     ) async throws {
         let data = try body.map { try encoder.encode($0) }
         let (responseData, response) = try await send(
@@ -541,7 +563,9 @@ actor RallyClient {
             bodyData: data,
             contentType: data == nil ? nil : "application/json",
             authorized: authorized,
-            extraHeaders: [:]
+            extraHeaders: extraHeaders,
+            baseURL: baseURL,
+            bearerToken: bearerToken
         )
         if (200..<300).contains(response.statusCode) { return }
         throw decodeError(data: responseData, status: response.statusCode)
@@ -555,7 +579,8 @@ actor RallyClient {
         authorized: Bool,
         extraHeaders: [String: String],
         baseURL: URL? = nil,
-        bearerToken: String? = nil
+        bearerToken: String? = nil,
+        didRefresh: Bool = false
     ) async throws -> (Data, HTTPURLResponse) {
         let root = baseURL ?? self.baseURL
         guard let url = URL(string: path, relativeTo: root)?.absoluteURL else {
@@ -567,7 +592,8 @@ actor RallyClient {
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        if authorized, let token = bearerToken ?? accessToken {
+        let tokenUsed = bearerToken ?? accessToken
+        if authorized, let token = tokenUsed {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         for (key, value) in extraHeaders {
@@ -579,11 +605,57 @@ actor RallyClient {
             guard let http = response as? HTTPURLResponse else {
                 throw RallyAPIError.offline
             }
+            if http.statusCode == 401,
+               authorized,
+               !didRefresh,
+               bearerToken == nil,
+               refreshToken != nil {
+                _ = try await refreshCurrentSession()
+                return try await send(
+                    method: method,
+                    path: path,
+                    bodyData: bodyData,
+                    contentType: contentType,
+                    authorized: authorized,
+                    extraHeaders: extraHeaders,
+                    baseURL: baseURL,
+                    bearerToken: nil,
+                    didRefresh: true
+                )
+            }
             return (data, http)
         } catch let error as RallyAPIError {
             throw error
         } catch {
             throw RallyAPIError.offline
+        }
+    }
+
+    /// One in-flight refresh per stored token, matching desktop's rotation rule.
+    private func refreshCurrentSession() async throws -> RallySession {
+        if let refreshTask {
+            return try await refreshTask.value
+        }
+        guard let token = refreshToken else {
+            throw RallyAPIError(status: 401, code: "unauthorized", message: "That session has expired.")
+        }
+        let task = Task { try await refresh(refreshToken: token) }
+        refreshTask = task
+        do {
+            let session = try await task.value
+            accessToken = session.accessToken
+            refreshToken = session.refreshToken
+            if session.workspace != nil, let url = URL(string: session.apiBaseUrl) {
+                baseURL = url
+            }
+            if let sessionListener {
+                await sessionListener(session)
+            }
+            refreshTask = nil
+            return session
+        } catch {
+            refreshTask = nil
+            throw error
         }
     }
 

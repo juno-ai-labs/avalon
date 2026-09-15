@@ -13,7 +13,14 @@ struct WorkspacePickerView: View {
                     Section("Your workspaces") {
                         ForEach(model.onboarding.workspaces) { workspace in
                             Button {
-                                Task { try? await model.activate(workspace) }
+                                Task {
+                                    do {
+                                        try await model.activate(workspace)
+                                    } catch {
+                                        model.errorMessage = (error as? LocalizedError)?.errorDescription
+                                            ?? "Couldn’t open that workspace."
+                                    }
+                                }
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(workspace.name)
