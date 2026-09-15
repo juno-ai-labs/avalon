@@ -1,6 +1,8 @@
 import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, type SubstreamContent, type ConversationFile } from "@rally/contracts";
 import { z } from "zod";
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
+import type { Env } from "../env";
+import { FirecrawlClient, FirecrawlError } from "../lib/firecrawl";
 import { ApiError } from "../lib/api-error";
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -120,12 +122,22 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
   }
   return nodes.flatMap((node) => {
     const message = object(object(node)['message']);
-    const role = object(message['author'])['role'];
+    const sourceRole = object(message['author'])['role'];
+    const role = sourceRole === "tool" && message['channel'] === "final" ? "assistant" : sourceRole;
     const metadata = object(message['metadata']);
     if ((role !== "user" && role !== "assistant") || metadata['is_visually_hidden_from_conversation'] === true
       || message['channel'] === "analysis" || message['channel'] === "summary"
       || (message['recipient'] != null && message['recipient'] !== "all")) return [];
     const content = object(message['content']);
+    if (["model_editable_context", "thoughts", "reasoning_recap"].includes(text(content['content_type']))) return [];
+    // Only final image outputs are user-visible tool results. Preserve their files,
+    // never the tool's prose, invocation, or intermediate/hidden image copies.
+    if (sourceRole === "tool") {
+      const images = array(content['parts']).filter((part) => object(part)['content_type'] === "image_asset_pointer");
+      return visibleMessage("assistant", "", images.map((part) => sourceFile({
+        ...object(part), name: text(metadata['image_gen_title']) || "Generated image",
+      }, "artifact")));
+    }
     const kind = role === "user" ? "attachment" : "artifact";
     const files = array(metadata['attachments']).flatMap((file) => sourceFiles(file, kind));
     if (content['content_type'] !== "text" && content['content_type'] !== "multimodal_text") {
@@ -156,6 +168,10 @@ function claudeMessages(value: unknown): SubstreamContent["messages"] {
     if (role !== "user" && role !== "assistant") return [];
     const kind = role === "user" ? "attachment" : "artifact";
     const files = [...array(message['attachments']), ...array(message['files'])].flatMap((file) => sourceFiles(file, kind));
+    if (message['truncated'] === true) throw new Error("Claude message is truncated");
+    const reportedFiles = typeof message['file_count'] === "number" ? message['file_count'] : 0;
+    if (reportedFiles > files.length) files.push({ name: "Hidden shared attachments", mimeType: "application/octet-stream", kind,
+      source: { kind: "unavailable", reference: text(message['uuid']) || "hidden-attachments", reason: "The shared conversation hides attachment contents." } });
     const content = message['content'];
     const parts: string[] = [];
     if (typeof content === "string") parts.push(content);
@@ -214,26 +230,28 @@ export function parseSessionExport(provider: "chatgpt" | "claude", input: string
   } catch (error) {
     const detail = error instanceof z.ZodError ? `Invalid conversation fields: ${describeZodIssues(error)}`
       : error instanceof Error && !(error instanceof SyntaxError) ? error.message : "Malformed conversation data";
-    throw new ApiError(422, "invalid_session_export", `${detail}. Import one conversation as JSON or a Claude Code JSONL export.`);
+    throw new ApiError(422, "invalid_session_export", detail);
   }
 }
 
-export async function previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>, fetcher: typeof fetch = fetch) {
+export async function previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>, env: Pick<Env, "FIRECRAWL_API_KEY">, fetcher: typeof fetch = fetch) {
   if (input.kind === "export") return parseSessionExport(input.provider, input.text);
   const { provider, url } = sessionShareUrl(input.url);
+  if (!env.FIRECRAWL_API_KEY) throw new ApiError(503, "session_import_unavailable", "Conversation importing is not configured.");
   const endpoint = provider === "claude"
     ? `https://claude.ai/api/chat_snapshots/${url.pathname.split('/').at(-1)}?rendering_mode=messages&render_all_tools=true`
     : url.href;
-  let response: Response;
-  let body: string;
+  let source: Awaited<ReturnType<FirecrawlClient["scrapeSource"]>>;
   try {
-    response = await fetcher(endpoint, { redirect: "manual" });
-    body = await response.text();
-  } catch {
+    source = await new FirecrawlClient({ apiKey: env.FIRECRAWL_API_KEY, fetch: fetcher }).scrapeSource(endpoint);
+  } catch (error) {
+    if (error instanceof FirecrawlError && error.kind === "parse") throw new ApiError(502, "invalid_session_source", error.message);
     throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Check that the link is public and try again.");
   }
-  if (!response.ok || (provider === "claude" && body.trimStart().startsWith("<"))) {
-    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Check that the link is public and try again.");
+  // Firecrawl can report API success for a block or login page. Require a
+  // successful source response at the expected destination before decoding.
+  if (source.statusCode !== 200 || !source.url || source.url !== endpoint) {
+    throw new ApiError(422, "session_unavailable", "The provider did not return the public shared conversation.");
   }
-  return parseSessionExport(provider, body, url.href);
+  return parseSessionExport(provider, source.body, url.href);
 }

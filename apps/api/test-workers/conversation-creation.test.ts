@@ -1,3 +1,4 @@
+import { previewSessionImport } from "../src/services/session-import";
 import { prepareSessionImport } from "../src/services/session-import-files";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import type { SessionImportPreview } from "@rally/contracts";
@@ -120,6 +121,28 @@ describe("creating a work stream", () => {
     expect(boot.workstream.title).toBe("Garden irrigation");
     expect(boot.workstream.titleStatus).toBe("automatic");
     expect(boot.transcript.ranges.flatMap((range) => range.turns)).toHaveLength(2);
+  });
+
+  it("materializes Firecrawl source as idle imported human and assistant turns", async () => {
+    const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
+    const url = "https://chatgpt.com/share/00000000-0000-4000-8000-000000000001";
+    const preview = await previewSessionImport({ kind: "link", url }, { FIRECRAWL_API_KEY: "test-key" }, async () => Response.json({
+      success: true, data: { metadata: { url, statusCode: 200 }, rawHtml: JSON.stringify({ title: "Generated garden", linear_conversation: [
+        { message: { author: { role: "user" }, content: { content_type: "text", parts: ["Draw my garden"] } } },
+        { message: { author: { role: "assistant" }, content: { content_type: "model_editable_context", model_set_context: "Internal context" } } },
+        { message: { author: { role: "tool" }, channel: "final", metadata: { image_gen_title: "Garden.png" }, content: { content_type: "multimodal_text", parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://garden", mime_type: "image/png" }] } } },
+      ] }) },
+    }));
+    const prepared = await prepareSessionImport(importEnv, AUTH, preview, "firecrawl-import");
+    const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({ title: preview.title, clientMessageId: "firecrawl-import", participantUserIds: [] }, prepared);
+    const boot = await new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id).boot();
+    const turns = boot.transcript.ranges.flatMap((range) => range.turns);
+    expect(turns.map((turn) => turn.actor)).toEqual(["human", "assistant"]);
+    expect(JSON.stringify(turns)).toContain("Draw my garden");
+    expect(JSON.stringify(turns)).toContain("Unavailable artifact: Garden.png");
+    expect(JSON.stringify(turns)).not.toContain("Internal context");
+    expect(JSON.stringify(turns)).toContain("imported_session");
+    expect(created.harnessRunId).toBeNull();
   });
 
   it("imports user files and assistant artifacts through upload storage and attaches each to its source turn", async () => {
