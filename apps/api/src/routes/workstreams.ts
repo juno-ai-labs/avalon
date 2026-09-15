@@ -1,3 +1,5 @@
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
+import { prepareSessionImport, resolveSessionImportFiles } from "../services/session-import-files";
 import { SessionImportPreviewSchema, SessionImportPreviewRequestSchema, SessionImportRequestSchema } from "@rally/contracts";
 import { previewSessionImport, sessionShareUrl } from "../services/session-import";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
@@ -148,21 +150,20 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   )));
 });
 workstreamRoutes.post("/import/preview", zValidator("json", SessionImportPreviewRequestSchema), async (c) => {
-  return c.json(SessionImportPreviewSchema.parse(await previewSessionImport(c.req.valid("json"))));
+  return c.json(SessionImportPreviewSchema.parse(await resolveSessionImportFiles(c.env, await previewSessionImport(c.req.valid("json")))));
 });
 workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema), async (c) => {
   const body = c.req.valid("json");
   if (body.source.url && sessionShareUrl(body.source.url).provider !== body.source.provider) {
     throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
   }
-  const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).create({
+  const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
+  const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
     title: body.title,
-    openingMessage: "",
     clientMessageId: body.clientMessageId,
     participantUserIds: [],
-    attachmentIds: [],
     scope: "personal",
-  }, { initialContent: { ...body.content, source: body.source }, reason: "session_import" });
+  }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(body) });
   return c.json(CreatedWorkstreamSchema.parse(result), 201);
 });
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),

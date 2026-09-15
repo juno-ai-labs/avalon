@@ -1,3 +1,4 @@
+import type { PreparedConversation } from "@rally/contracts";
 import { asSubstreamId, asUserId, asWorkstreamId, type AgentModelOverride } from "@rally/contracts";
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
 import type { SubstreamCreationResult, SubstreamOpeningMessage } from "@rally/contracts/substream-creation";
@@ -142,6 +143,7 @@ export class SubstreamCreationService {
      * what a pin is everywhere else — decided once, at creation, and fixed.
      */
     modelOverride: AgentModelOverride | null = null,
+    preparedConversation?: PreparedConversation,
   ): Promise<SubstreamCreationResult> {
     const parent = await this.parent(parentId);
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId };
@@ -164,6 +166,7 @@ export class SubstreamCreationService {
       throw error;
     }
     if (operation.status === "ready") {
+      if (preparedConversation) await this.installConversation(parentId, operation, preparedConversation);
       return this.openSubstream(parentId, operation, opening);
     }
     if (operation.status !== "confirming" || !operation.preparedContext) {
@@ -203,6 +206,7 @@ export class SubstreamCreationService {
     await target.installPreparedSubstreamContext({
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId, operationId,
     });
+    if (preparedConversation) await this.installConversation(parentId, operation, preparedConversation);
     await this.parent(parentId);
     // Readiness is the publication fence, so it is the last thing that happens:
     // it is what puts the child in every member's sidebar, and nobody may see
@@ -210,6 +214,13 @@ export class SubstreamCreationService {
     // the same way with its route activation.
     return this.openSubstream(parentId, operation, opening, () =>
       parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title }));
+  }
+
+  private async installConversation(parentId: string, operation: PrivateChildPreparationOperation, conversation: PreparedConversation) {
+    const target = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, operation.substreamId));
+    return target.installPreparedConversation({ workspaceId: this.auth.workspaceId, workstreamId: parentId,
+      substreamId: operation.substreamId, operationId: operation.operationId, conversation });
   }
 
   /**

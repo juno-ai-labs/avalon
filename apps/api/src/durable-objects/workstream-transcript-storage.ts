@@ -1,4 +1,7 @@
+import { stableUuid } from "../lib/stable-uuid";
 import {
+  PreparedConversationSchema,
+  type PreparedConversation,
   ExternalActorSchema,
   PendingTranscriptInputSchema,
   type ExternalActor,
@@ -1770,6 +1773,29 @@ export class WorkstreamTranscriptStorage {
   async appendParticipantMessage(input: ParticipantMessageInput): Promise<number> {
     const prepared = await this.prepareParticipantMessage(input);
     return this.storage.transactionSync(() => this.appendPreparedParticipantMessage(prepared));
+  }
+
+  /** Prepare facts for any new conversation. The caller owns identity and its publication fence. */
+  async prepareConversation(input: {
+    conversation: PreparedConversation;
+    firstTurnId: string;
+    clientMessageId: string;
+    human: { userId: string; snapshot: { displayName: string; avatarUrl: string | null } };
+    now: number;
+  }): Promise<PreparedParticipantMessage[]> {
+    const conversation = PreparedConversationSchema.parse(input.conversation);
+    return Promise.all(conversation.messages.map(async (message, index) => this.prepareParticipantMessage({
+      turnId: index === 0 ? input.firstTurnId : await stableUuid(["prepared-turn", input.firstTurnId, index]),
+      actor: message.role === "user" ? "human" : "assistant",
+      authorUserId: message.role === "user" ? input.human.userId : null,
+      authorSnapshot: message.role === "user" ? input.human.snapshot : null,
+      ...(index === 0 ? { clientMessageId: input.clientMessageId } : {}),
+      messageType: "text", text: message.text,
+      structuredContentJson: message.structuredContent == null ? null : JSON.stringify(message.structuredContent),
+      externalActorJson: null, producedByRunId: null,
+      messageSequenceNumber: index + 1, attentionOrdinal: index + 1,
+      createdAtUtc: new Date(input.now).toISOString(),
+    })));
   }
 
   async prepareParticipantMessage(input: ParticipantMessageInput): Promise<PreparedParticipantMessage> {

@@ -12,6 +12,12 @@ The platform currently uses summary-based context with
 `google/gemini-2.5-flash-lite` and creator-only membership. These are shared
 platform policies, not controls offered to the user.
 
+Prepared history may be supplied by the internal coordinator on confirmation.
+It uses the same canonical preparation/materialization and resource-reservation
+owner as a root conversation, before the parent publishes readiness. The durable
+preparation receipt rejects changed replay; an ordinary opening can then start
+execution independently. See [prepared conversations](session-import.md).
+
 ## Where the code lives
 
 | File | Responsibility |
@@ -846,3 +852,18 @@ subordinate to the conversation labels in both appearances.
 automation parents still consume child status locally even when they do not
 forward the original child projection. The sidebar presentation must not
 change child discovery or membership.
+
+
+## Changelog
+
+### 2026-09-15 — Share prepared conversation file ownership
+
+Prepared history may be supplied by the internal coordinator on confirmation.
+It uses the same canonical preparation/materialization and resource-reservation
+owner as a root conversation, before the parent publishes readiness. The durable
+preparation receipt rejects changed replay; an ordinary opening can then start
+execution independently. See [prepared conversations](session-import.md).
+
+The separate durable preparation owner prevents file holds from depending on a
+live-message mailbox that imported history never creates. Fake pending messages
+and generation receipts were rejected because they conflate storage with execution.
