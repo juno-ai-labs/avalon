@@ -3844,11 +3844,17 @@ export class ConnectionService {
  * `connector_operation_finished` happened to share the millisecond, which works
  * only while traffic is this thin.
  *
- * An event type is the provider's own vocabulary — it is in the connector
- * manifest and `connector_operation_finished` already logs it — so it is named
- * here rather than withheld. The `details` carry it to the caller too: a
- * provider dashboard replaying a delivery shows the body, and "Rally does not
- * model fireflies meeting.bot_joined" is the whole diagnosis.
+ * Naming the event type is safe for two different reasons, depending on the
+ * connector. For one Rally ships, it is published vocabulary: the type is in
+ * the manifest and `connector_operation_finished` already logs it. For
+ * `generic_webhook` there is no manifest to check it against — the type is
+ * whatever the workspace's own sender put in the body — so what makes it safe
+ * is that it is the caller's own string going back to the caller that signed
+ * the request, with `redact` bounding it in the log.
+ *
+ * The `details` carry it too: a provider dashboard replaying a delivery shows
+ * the response body, and "Rally does not model the fireflies event
+ * meeting.bot_joined" is the whole diagnosis without anyone opening a log.
  */
 function unsupportedWebhookEvent(
   env: Env,
@@ -3857,7 +3863,6 @@ function unsupportedWebhookEvent(
   logWarn(env, "connector_webhook_event_refused", {
     connection_id: input.connectionId,
     connector_type: input.provider,
-    provider: input.provider,
     event_type: input.eventType,
     code: "unsupported_webhook_event",
   });

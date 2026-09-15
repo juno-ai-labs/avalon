@@ -43,7 +43,7 @@ describe("parseRpcInput", () => {
     // empty path. Spelling it `(root)` put parentheses in the message, which
     // `scheduledAlarmErrorCode` refuses — so the case that most needs the
     // detail was the one that silently lost it.
-    for (const input of [null, [], "projection", 7]) {
+    for (const input of [null, undefined, [], "projection", 7]) {
       let thrown: unknown;
       try {
         parseRpcInput(Projection, input, "projection");
@@ -55,6 +55,24 @@ describe("parseRpcInput", () => {
       expect(code).toContain("projection_invalid");
       expect(code).toContain("_root_");
     }
+  });
+
+  it("names the offending keys when a caller sends a field this binary does not know", () => {
+    // The rollout shape: a caller one deploy ahead adds a field, and the older
+    // binary's `strictObject` refuses it. Zod reports that at an empty path with
+    // the names in `issue.keys`, so a message built from `path` alone would name
+    // neither the field nor a usable location — for the one failure whose whole
+    // diagnosis is the field name.
+    let thrown: unknown;
+    try {
+      parseRpcInput(Projection, { schemaVersion: 1, evaluators: [], surprise: "x" }, "projection");
+    } catch (error) {
+      thrown = error;
+    }
+    const code = scheduledAlarmErrorCode(thrown);
+    expect(code).not.toContain("handler_error");
+    expect(code).toContain("unrecognized_keys");
+    expect(code).toContain("surprise");
   });
 
   it("keeps a path the schema does not control from breaking the code shape", () => {
