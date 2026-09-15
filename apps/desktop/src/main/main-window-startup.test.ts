@@ -11,16 +11,23 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   expect(declaration).toBeDefined();
   let ready!: () => void;
   const startup = new Promise<void>((resolve) => { ready = resolve; });
-  const loaded = vi.fn();
+  let finishLoad!: () => void;
+  const loading = new Promise<void>((resolve) => { finishLoad = resolve; });
+  const loaded = vi.fn(() => loading);
   const created = vi.fn();
+  const shown = vi.fn();
   class Window {
     webContents = { id: 1, on: vi.fn() };
+    isDestroyed = () => false;
+    isMinimized = () => false;
+    show = shown;
+    focus = vi.fn();
     on = vi.fn();
     once = vi.fn();
     constructor() { created(); }
   }
   const create = runInNewContext(`${ts.transpile(declaration!.getText(parsed))}; createMainWindow`, {
-    mainWindowStartup: startup, mainWindow: null, rendererReady: false,
+    mainWindowStartup: startup, mainWindowLoading: null, mainWindow: null, rendererReady: false,
     BrowserWindow: Window, process: { platform: 'darwin' }, app: { isPackaged: true },
     windowBackgroundColor: () => '#fff', preloadPath: () => '/preload',
     installWindowDiagnostics: vi.fn(), rendererUrl: () => 'app://rallywithai/index.html',
@@ -31,11 +38,23 @@ it('defers early main-window creation until renderer protocol and IPC setup comp
   expect(created).not.toHaveBeenCalled();
   expect(loaded).not.toHaveBeenCalled();
   ready();
-  await opening;
+  await Promise.resolve();
+  const secondOpening = create();
+  let secondFinished = false;
+  void secondOpening.then(() => { secondFinished = true; });
+  await new Promise<void>((resolve) => { setImmediate(resolve); });
+  expect(secondFinished).toBe(false);
+  expect(shown).not.toHaveBeenCalled();
+  finishLoad();
+  await Promise.all([opening, secondOpening]);
   expect(created).toHaveBeenCalledTimes(1);
   expect(loaded).toHaveBeenCalledTimes(1);
   const release = source.indexOf('resolveMainWindowStartup();');
-  expect(release).toBeGreaterThan(source.indexOf('await installRendererProtocol();'));
-  expect(release).toBeGreaterThan(source.indexOf('    registerIpc();'));
+  const protocolInstall = source.indexOf('await installRendererProtocol();');
+  const ipcInstall = source.indexOf('    registerIpc();');
+  expect(protocolInstall).toBeGreaterThanOrEqual(0);
+  expect(ipcInstall).toBeGreaterThanOrEqual(0);
+  expect(release).toBeGreaterThan(protocolInstall);
+  expect(release).toBeGreaterThan(ipcInstall);
   expect(release).toBeLessThan(source.indexOf('else await createMainWindow();'));
 });
