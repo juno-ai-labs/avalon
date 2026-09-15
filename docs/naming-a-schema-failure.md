@@ -123,7 +123,7 @@ its own is a boundary that drifts.
 | --- | --- |
 | `apps/api/src/lib/rpc-input.ts` | `parseRpcInput` throws a message that survives an RPC hop |
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
-| `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason` |
+| `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
 | `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop instead of reducing it to the fallback |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries a code-shaped message a Durable Object threw, as `error_code`, where the row said `internal_error` and `Error` |
@@ -155,8 +155,8 @@ Known and not yet converted:
 
 - `packages/agent-harness/src/index.ts` — `if (error instanceof z.ZodError)
   return "validation_error"` names the class and discards the path.
-- Every other Durable Object RPC entry point that opens with `Schema.parse(input)`.
-  Only `applyExternalEventRegistrations` uses `parseRpcInput` so far.
+- The Durable Object RPC entry points listed above by object, which still
+  open with a bare `Schema.parse(input)`.
 
 ## What it costs
 
