@@ -150,7 +150,7 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   )));
 });
 workstreamRoutes.post("/import/preview", zValidator("json", SessionImportPreviewRequestSchema), async (c) => {
-  return c.json(SessionImportPreviewSchema.parse(await resolveSessionImportFiles(c.env, await previewSessionImport(c.req.valid("json")))));
+  return c.json(SessionImportPreviewSchema.parse(await resolveSessionImportFiles(c.env, await previewSessionImport(c.req.valid("json"), c.env))));
 });
 workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema), async (c) => {
   const body = c.req.valid("json");
