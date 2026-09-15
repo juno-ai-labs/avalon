@@ -228,7 +228,7 @@ sites that log nothing at all — the project-default consumer, the Slack
 reaction ticker, push delivery — are unchanged: naming a reason they never
 record is a logging decision for their owners, not this rule.
 
-Shipped in the pull request for this change.
+Shipped in #768.
 
 ### 2026-09-15 — One place to name a schema rejection
 
