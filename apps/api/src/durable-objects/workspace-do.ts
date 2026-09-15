@@ -25,7 +25,7 @@ import {
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
-import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, withMeetingRetirementPrerequisites } from "./meeting-notes-retirement";
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
   readNotificationIntentForDelivery as readStoredPushIntent,
@@ -3715,12 +3715,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.initialized = this.initializeDurableObject(async () => {
-      await this.applyMigrations(() => withMeetingRetirementPrerequisites(state.storage, () => applyDurableObjectSqliteMigrations({
+      await this.applyMigrations(() => applyMeetingRetirementMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-      })));
+      }));
       await this.armNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -7252,6 +7252,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { deletedKeys: keys.length };
   }
 
+  /** Operator calls after verifying external cleanup; pending cleanup is an error. */
+  async finalizeMeetingRetirement() {
+    await this.initialized;
+    await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
+      storage: this.state.storage,
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      component: MIGRATION_COMPONENT,
+      workerVersionId: this.env.APP_VERSION ?? "unknown",
+    }));
+    return { schemaVersion: 58 };
+  }
+
   private isRetiredMeetingResource(resource: z.infer<typeof AuthorizationResourceSchema>): boolean {
     return resource.kind === 'resource' && this.state.storage.sql.exec(
       'SELECT 1 FROM retired_meeting_resources WHERE resource_id = ?', resource.resourceId).toArray().length > 0;
@@ -9032,11 +9044,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
     this.assertWorkspace(request.subject.workspaceId);
-    const generations: number[] = [];
+    // Resolve async keys first, then validate the whole batch before any writes.
+    const keys = await Promise.all(request.resources.map(resource => searchAuthorizationKey(request.subject, resource)));
     for (const resource of request.resources) {
       this.assertWorkspace(resource.workspaceId);
-      const key = await searchAuthorizationKey(request.subject, resource);
       if (this.isRetiredMeetingResource(resource)) throw new Error('meeting_notes_retired');
+    }
+    const generations: number[] = [];
+    for (const [index, resource] of request.resources.entries()) {
+      const key = keys[index]!;
       // Allocate before owner reads. A later attempt supersedes an earlier one even in the same millisecond.
       const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
         (cache_key, generation, resource_id, parent_id, connection_id) VALUES (?, 1, ?, ?, ?)
@@ -10401,6 +10417,7 @@ applyRetirementGate(WorkspaceDO, {
     // private helpers these reach need no entry of their own.
     "purgeMeetingNoteObjects",
     "purgeMeetingSearchAuthorization",
+    "finalizeMeetingRetirement",
     "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
