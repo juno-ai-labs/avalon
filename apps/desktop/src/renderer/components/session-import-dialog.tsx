@@ -48,7 +48,7 @@ export function SessionImportForm({ api, onImported, open, onOpenChange }: Sessi
   return <>
     <Modal open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }} title="Import conversation" footer={<>
       <Button disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
-      <Button type="submit" form="session-import-form" disabled={busy || !url.trim()}>{busy ? 'Working…' : 'Import into new work stream'}</Button>
+      <Button type="submit" form="session-import-form" disabled={busy || !url.trim()}>{busy ? 'Working…' : 'Create a new work stream'}</Button>
     </>}>
       <p className="modal-copy">Bring in a ChatGPT or Claude conversation, including available attachments and artifact files. Imported messages keep their user and assistant roles and show who imported them.</p>
       <form id="session-import-form" className="session-import-link-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
