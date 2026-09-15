@@ -41,8 +41,10 @@ one small row per successful intent/device at the current product size, rather
 than adding a cross-store retention job for launch. Future pruning should join
 existing intent retention, not introduce another scheduler.
 
-Payloads carry the first 1,000 Unicode code points with an ellipsis when shortened,
-fitted further to Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to
+Payload bodies reduce Markdown formatting and Rally's internal citation and
+person-mention references to readable plain text before carrying the first
+1,000 Unicode code points with an ellipsis when shortened, fitted further to
+Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to
 the recipient's count of unarchived, non-system work streams in that workspace that
 are unread for them, or `needs_input` while they are a participant — the same
 directory `attention` read already returns as `unreadAndNeedsInputCount`. Each
@@ -145,6 +147,24 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-09-15 — Alert bodies are plain text, not Markdown
+
+**What changed:** Mention and participant-added alert bodies pass through the
+same plain-text reducer as email and Slack. Formatting marks are removed, and a
+stored
+`[@Name](person://<uuid>)` mention reaches APNs as `@Name`; Rally citations also
+degrade to their visible labels without appending a source list to the alert.
+
+**Why:** The push consumer handed canonical stored message text directly to
+APNs, so macOS displayed Rally's durable mention syntax and UUID instead of the
+chip label a person sees inside the app. Fixing presentation in each Apple
+client would duplicate a server-owned message protocol and leave notification
+extensions dependent on Rally's Markdown grammar.
+
+**Consequences:** Payload truncation still runs after reduction, so the 1,000
+code-point preview and 4,096-byte APNs ceiling apply to what the recipient
+actually reads. Both Apple platforms receive the same plain reference text.
 
 ### 2026-09-15 — Set APNs badge from unread and needs-input work streams
 

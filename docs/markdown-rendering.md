@@ -21,7 +21,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
-| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
+| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), the compact resource embed and intrinsic image treatment, and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
@@ -619,7 +619,8 @@ inserts the SVG Mermaid sanitised. Invalid input falls back to source.
 
 The *protocol* is shared; the *rendering* is not. `@rally/contracts/citations`
 holds the scheme allowlist, the footnote grammar, and the plain-text reduction,
-because three surfaces have to agree on what a citation is and the cost of them
+because every rendered and outbound surface has to agree on what a citation or
+person mention is, and the cost of them
 disagreeing is invisible until somebody reads an email. How a markdown string
 becomes DOM is still this module's alone, and deliberately not shared:
 Rally's outbound email has one shared converter,
@@ -736,6 +737,28 @@ The traps, both of which have bitten:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it), with
   a fixture that exercises the nesting — a three-level bulleted list alone
   exercises none of the `ol` selectors.
+
+### 2026-09-15 — Non-renderer deliveries share one plain-text reduction
+
+**What changed:** `rewriteMessageAsPlainText` now composes citation,
+person-mention, and general Markdown reduction for transactional email, Slack,
+and Apple push. A person mention
+leaves Rally as its visible `@Name`, never as `[Name](person://<uuid>)`; each
+surface still chooses whether its citation source list is Markdown, plain text,
+or omitted.
+
+**Why:** Email and Slack had independently composed the same two reducers, while
+push sent stored message text straight to APNs. That made a Mac alert expose the
+internal person link shown as a chip in Rally. Keeping the composition at the
+protocol boundary makes adding another outbound surface a choice of source-list
+shape rather than another chance to forget one internal syntax.
+
+**Consequences:** Formatting punctuation such as headings, emphasis, strike,
+code spans, and link destinations does not reach these plain-text surfaces.
+Lists and fenced code retain readable indentation and content without their
+delimiters. Citation syntax inside code retains the existing literal-code
+contract, while person mentions preserve the pre-existing email and Slack
+reduction behavior.
 
 ### 2026-09-10 — A published site gets its own mark
 

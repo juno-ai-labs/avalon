@@ -23,11 +23,11 @@ const workspace = () => env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(works
 const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: 'TARGETING_MATCH' }) } }).FLAGS!;
 const pushEnv = () => ({ ...env, FLAGS: flags });
 const message = (intentId = 'mention:one') => ({ workspaceId, recipientUserId: userId, region: 'global' as const, intentId });
-async function addIntent(intentId: string) {
+async function addIntent(intentId: string, messageText = 'Hello') {
   await runInDurableObject(workspace(), (_instance, state) => {
     const sourceId = crypto.randomUUID();
     const payload = { kind: 'mention_notification', intentId, messageId: sourceId, recipientUserId: userId,
-      authorUserId: actorId, authorNameSnapshot: 'Author', workstreamTitleSnapshot: 'Planning', messageText: 'Hello', occurredAt: '2026-09-14T00:00:00.000Z' };
+      authorUserId: actorId, authorNameSnapshot: 'Author', workstreamTitleSnapshot: 'Planning', messageText, occurredAt: '2026-09-14T00:00:00.000Z' };
     state.storage.sql.exec(`INSERT INTO workstream_notification_intents
       (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
        source_version, required_directory_version, notification_kind, payload_json, payload_hash, state, attempts, created_at, updated_at)
@@ -125,6 +125,21 @@ it('sets the APNs badge to unread and needs-input work streams in this workspace
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
   expect(send.mock.calls.map((call) => JSON.parse(String(call.at(2))).aps.badge)).toEqual([2, 2]);
+});
+it('reduces person mention Markdown before sending an APNs alert', async () => {
+  const intentId = 'mention:markdown';
+  await addIntent(
+    intentId,
+    `Please ask [@Alex Todorovic](person://${actorId}) and [@Adam Juhasz](person://${userId}) to **review this**.`,
+  );
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+
+  expect(await deliverPush(pushEnv(), message(intentId), send)).toBe(true);
+
+  expect(send.mock.calls.map((call) => JSON.parse(String(call.at(2))).aps.alert.body)).toEqual([
+    'Please ask @Alex Todorovic and @Adam Juhasz to review this.',
+    'Please ask @Alex Todorovic and @Adam Juhasz to review this.',
+  ]);
 });
 it('disables devices Apple reports unregistered', async () => {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'unregistered', timestamp: Date.now() + 1000 }));
