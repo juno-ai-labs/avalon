@@ -189,7 +189,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "work_opportunity_user_states",
   "workspace_activity_event_targets",
   "workspace_activity_events",
-  "workspace_batch_dispatch_note_targets",
   "workspace_batch_dispatch_targets",
   "workspace_batch_dispatches",
   "workspace_directory_state",

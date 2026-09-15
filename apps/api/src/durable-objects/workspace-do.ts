@@ -25,7 +25,7 @@ import {
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
-import { MEETING_NOTES_RETIREMENT_MIGRATION,purgeRetiredMeetingObjects } from "./meeting-notes-retirement";
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, withMeetingRetirementPrerequisites } from "./meeting-notes-retirement";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
   readNotificationIntentForDelivery as readStoredPushIntent,
@@ -880,10 +880,9 @@ const SIDEBAR_LIST_SOURCE_TABLES = new Map<string, SidebarList>([
   ["automation_subscriptions", "automations"],
   ["automation_templates", "automations"],
   ["automation_template_versions", "automations"],
-  ["notes", "notes"],
 ]);
 
-type SidebarList = "automations" | "notes";
+type SidebarList = "automations";
 
 function workspaceMutationTarget(sql: string): string | null {
   return /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
@@ -3271,7 +3270,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
   "PRAGMA defer_foreign_keys = OFF"
 ]
-}, MEETING_NOTES_RETIREMENT_MIGRATION];
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -3716,12 +3715,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.initialized = this.initializeDurableObject(async () => {
-      await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
+      await this.applyMigrations(() => withMeetingRetirementPrerequisites(state.storage, () => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-      }));
+      })));
       await this.armNextAlarm();
     });
     state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -7012,11 +7011,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the cross-work-stream index. The caller turns each returned work-stream id
    * into one Queue event; it never probes child objects to rediscover this
    * list.
-   *
-   * The notes the same filter selects come back beside them because they are
-   * in this database too. They are counted here and archived here — see
-   * `archiveNotesForBatch` — rather than fanned out, since a note has no object
-   * of its own for an event to reach.
    */
   async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
     await this.initialized;
@@ -7236,11 +7230,52 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return purgeRetiredMeetingObjects(this.state.storage, this.env.PAYLOADS, this.env.AVALON_REGION, workspaceId, resourceId === undefined ? undefined : IdSchema.parse(resourceId));
   }
 
+  /** Delete only decisions whose canonical resource has verified meeting provenance. */
+  async purgeMeetingSearchAuthorization() {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    const keys = sql.exec<{ cache_key: string }>(`SELECT cache_key FROM search_authorization_keys
+      WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).toArray();
+    for (const { cache_key: key } of keys) {
+      // The retirement check rejects new registrations and publications. Drain an
+      // already admitted KV write before deleting its external copy.
+      await this.searchPublications.get(key)?.catch(() => {});
+      if (this.env.AUTHORIZATION_CACHE) await this.env.AUTHORIZATION_CACHE.delete(key);
+      this.state.storage.transactionSync(() => {
+        sql.exec('DELETE FROM search_authorization_dependencies WHERE cache_key = ?', key);
+        sql.exec('DELETE FROM authorization_snapshots WHERE cache_key = ?', key);
+        sql.exec('DELETE FROM search_authorization_keys WHERE cache_key = ?', key);
+      });
+    }
+    sql.exec(`DELETE FROM search_authorization_push WHERE kind = 'resource'
+      AND target_id IN (SELECT resource_id FROM retired_meeting_resources)`);
+    return { deletedKeys: keys.length };
+  }
+
+  private isRetiredMeetingResource(resource: z.infer<typeof AuthorizationResourceSchema>): boolean {
+    return resource.kind === 'resource' && this.state.storage.sql.exec(
+      'SELECT 1 FROM retired_meeting_resources WHERE resource_id = ?', resource.resourceId).toArray().length > 0;
+  }
+
   async retiredMeetingInventory() {
     await this.initialized;
+    const sql = this.state.storage.sql;
+    const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_schema WHERE type = 'table'").toArray();
+    const references: Array<{ table: string; count: number }> = [];
+    for (const { name } of tables) {
+      // Cloudflare's hidden KV tables are not accessible through SQL.
+      if (name === 'retired_meeting_resources' || /^(?:_+cf_|sqlite_)/.test(name)) continue;
+      const quoted = '"' + name.replaceAll('"', '""') + '"';
+      if (!sql.exec<{ name: string }>(`PRAGMA table_info(${quoted})`).toArray().some(column => column.name === 'resource_id')) continue;
+      const count = sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${quoted} WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).one().count;
+      if (count) references.push({ table: name, count });
+    }
     return {
       workspaceId: this.workspaceId(),
-      resources: this.state.storage.sql.exec<{
+      schemaVersion: sql.exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version,
+      featureTables: tables.map(row => row.name).filter(name => ['notes', 'note_transcript_segments', 'note_privacy_change_outbox', 'note_resource_deletion_outbox', 'workspace_batch_dispatch_note_targets'].includes(name)),
+      references,
+      resources: sql.exec<{
         resource_id: string; note_id: string | null; objects_deleted: number;
       }>('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources ORDER BY resource_id').toArray(),
     };
@@ -9001,6 +9036,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const resource of request.resources) {
       this.assertWorkspace(resource.workspaceId);
       const key = await searchAuthorizationKey(request.subject, resource);
+      if (this.isRetiredMeetingResource(resource)) throw new Error('meeting_notes_retired');
       // Allocate before owner reads. A later attempt supersedes an earlier one even in the same millisecond.
       const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
         (cache_key, generation, resource_id, parent_id, connection_id) VALUES (?, 1, ?, ?, ?)
@@ -9067,6 +9103,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const previous = this.searchPublications.get(key) ?? Promise.resolve();
       // Serialize only this key's network writes; unrelated WorkspaceDO events stay runnable.
       const publication = previous.catch(() => {}).then(async () => {
+        if (this.isRetiredMeetingResource(snapshot.resource)) { stats.superseded++; return; }
         const current = this.state.storage.sql.exec<{ generation: number }>(
           'SELECT generation FROM search_authorization_keys WHERE cache_key = ?', key).toArray()[0];
         if (current?.generation !== snapshot.generation) { stats.superseded++; return; }
@@ -9697,11 +9734,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map(automationSummary);
   }
 
-  private listSidebarNotes(
-  ): { items: never[]; nextCursor: string | null } {
-    return { items: [], nextCursor: null };
-  }
-
   private pinnedDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
@@ -9848,8 +9880,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
       },
       notes: {
-        waterline: this.sidebarListWaterline("notes"),
-        ...this.listSidebarNotes(),
+        waterline: 0, items: [], nextCursor: null,
       },
       projects: this.projectSnapshot(attachment.userId),
     });
@@ -9865,8 +9896,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Re-send one sidebar list to every subscribed socket, per viewer.
    *
-   * Read once per socket rather than once per workspace because both lists are
-   * scoped — a personal automation or note belongs to its owner, and sending
+   * Read once per socket rather than once per workspace because the list is
+   * scoped — a personal automation belongs to its owner, and sending
    * one reader's list to another would leak it. This mirrors
    * `publishWorkstreamState`, which re-reads its row per viewer for the same
    * reason.
@@ -9887,12 +9918,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      // The note push carries its cursor so a reader who has paged past the
-      // first screen can tell a complete list from its head and merge rather
-      // than truncate back to one page.
-      const page = list === "automations"
-        ? { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) }
-        : this.listSidebarNotes();
+      const page = { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) };
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
           type: "workspace_sidebar_list",
@@ -10374,6 +10400,7 @@ applyRetirementGate(WorkspaceDO, {
     // Only the entry points. A permit carries the whole call beneath it, so the
     // private helpers these reach need no entry of their own.
     "purgeMeetingNoteObjects",
+    "purgeMeetingSearchAuthorization",
     "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
