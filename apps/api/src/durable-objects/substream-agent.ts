@@ -102,6 +102,7 @@ import {
   reapStaleHarnessRuns,
   RunOwnershipLostError,
   terminalizeHarnessAttempt,
+  loadPersistedHarnessHostOutcome,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -373,6 +374,7 @@ const RuntimeBootstrapRequestSchema = z.strictObject({
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.strictObject({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
+  completedByTool: z.literal(true).optional(),
   finalTurnId: TranscriptTurnIdSchema.optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
   metrics: HarnessRunMetricsSchema.optional(),
@@ -3972,6 +3974,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       claim.lease,
       {
         status: outcome.status,
+        ...(outcome.completedByTool ? { completedByTool: true as const } : {}),
         ...(outcome.finalTurnId ? { finalTurnId: outcome.finalTurnId } : {}),
         ...(outcome.error ? { error: outcome.error } : {}),
         memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
@@ -4591,8 +4594,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // and the canonical final turn remain authoritative.
       }
     }
+    const hostOutcome = await loadPersistedHarnessHostOutcome(
+      createHarnessRunObjectPort(executionEnv, input.workspaceId, input.parentId), input,
+    );
     return AgentTerminalOutcomeSchema.parse({
       status,
+      ...(hostOutcome?.completedByTool ? { completedByTool: true } : {}),
       ...(row.final_turn_id ? { finalTurnId: row.final_turn_id } : {}),
       ...(error ? { error } : {}),
       // Receipt cancellation is provenance only. It can explain a terminal
@@ -4678,7 +4685,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // cleanup may still run without a final turn, but no adapter may invent or
     // stream response prose that the canonical transcript does not contain.
     const text = canonicalExternalResultText(message);
-    if (input.agentExchange && (input.backgroundAgent
+    if (!outcome.completedByTool && input.agentExchange && (input.backgroundAgent
       || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))) {
       const response = outcome.status === "completed" || outcome.status === "needs_input" ? text
         : outcome.status === "failed"

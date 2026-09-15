@@ -46,6 +46,6 @@ A stop requests existing active-execution cancellation and retains a background 
 
 ## Remaining implementation decisions
 
-Terminal results now use existing durable external settlement and ordinary reply references, with a stable identity per completed execution. Archived destinations refuse delivery. Deliberate completion without replying still needs a supported Bind contract; empty-completion checks remain enabled. The interaction with explicit replies and acknowledgment-only exchanges is not yet complete.
+Terminal results now use existing durable external settlement and ordinary reply references, with a stable identity per completed execution. Archived destinations refuse delivery. The proposed `end_turn({})` tool returns `{ended: true}` and uses Bind's existing `halt: "completed"` result. Its explicit `completedByTool` outcome is persisted in the existing host receipt, required for textless terminalization, and retained during recovery to suppress automatic replies. Ordinary empty completions remain defects. This addition to the model-tool contract is reserved for final approval.
 
 The count uses existing child common-state projections and ephemeral desktop control metadata, including nested background substreams. Unknown or disconnected state clears the displayed count. The composer no longer exposes queue controls and sends through existing safe-boundary delivery. Archive traversal requests owned stops. Attachment/media presentation, archive race coverage and complete model-tool evaluations remain acceptance work.

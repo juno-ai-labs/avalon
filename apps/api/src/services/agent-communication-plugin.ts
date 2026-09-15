@@ -26,9 +26,21 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationServic
     canonicalId: "avalon:agents", modelId: "rally_agents", shortWireName: "agents",
     displayName: "Background agents", description: "Delegate work to background agents and communicate with teammates.",
     searchAliases: ["background", "delegate", "teammate", "send message", "reply", "subagent"],
-    systemMessage: "Keep the participant conversation available. Delegate substantial research, blocking tools, and independent work with start_agent, then return to the conversation. Give explicit context and attachments: a new agent does not receive your transcript. Agents use the same model and eligible tools and may delegate recursively when useful. Communicate using send_message or reply; ask for status through an ordinary message. A sent message wakes an idle agent and reaches a running agent at a safe boundary. Stop only owned agents with stop_agent. A delegated agent's nonempty final response returns through the originating exchange. Use explicit replies for intermediate questions and other exchanges, and avoid repeating a sent message in the final response. Do not send acknowledgments that invite endless reply loops. Names and descriptions identify teammates without inspecting their transcripts. Before Sidekick setup, use sidekicks_list and prefer a suitable Sidekick owned by the current workstream. Reuse it by sending instructions to its authoring agent. Otherwise use create_sidekick, which defaults to workstream ownership, and send it setup instructions. Use personal or workspace scope when explicitly requested or clearly appropriate. The Sidekick drafts its own configuration and replies with questions or the saved result.",
+    systemMessage: "Keep the participant conversation available. Delegate substantial research, blocking tools, and independent work with start_agent, then return to the conversation. Give explicit context and attachments: a new agent does not receive your transcript. Agents use the same model and eligible tools and may delegate recursively when useful. Communicate using send_message or reply; ask for status through an ordinary message. A sent message wakes an idle agent and reaches a running agent at a safe boundary. Stop only owned agents with stop_agent. A delegated agent's nonempty final response returns through the originating exchange. Use explicit replies for intermediate questions and other exchanges, and avoid repeating a sent message in the final response. Use end_turn to finish without an automatic reply when no response is needed or you already sent the necessary replies. Do not return empty completion text or send acknowledgments that invite endless reply loops. Names and descriptions identify teammates without inspecting their transcripts. Before Sidekick setup, use sidekicks_list and prefer a suitable Sidekick owned by the current workstream. Reuse it by sending instructions to its authoring agent. Otherwise use create_sidekick, which defaults to workstream ownership, and send it setup instructions. Use personal or workspace scope when explicitly requested or clearly appropriate. The Sidekick drafts its own configuration and replies with questions or the saved result.",
     preload: false,
     tools: [
+      {
+        definition: {
+          name: "end_turn",
+          description: "End this turn without an automatic reply, when no response is needed or all necessary messages have already been sent.",
+          inputSchema: z.toJSONSchema(z.strictObject({}), { io: "input" }) as Record<string, unknown>,
+          capability: "agents.end_turn", mode: "read", idempotency: "safe",
+        },
+        async execute(input) {
+          z.strictObject({}).parse(input);
+          return { output: { ended: true }, summary: "Turn ended", halt: "completed" };
+        },
+      },
       tool("sidekicks_list", "Find accessible Sidekicks, with current-workstream Sidekicks first, and their authoring agent IDs.", z.strictObject({}), () => service.sidekicks()),
       tool("create_sidekick", "Create a minimal Sidekick, then send its authoring agent setup instructions. Prefer reusing an existing workstream Sidekick.", z.strictObject({ scope: z.enum(["workstream", "personal", "workspace"]).default("workstream") }), (input, context) => service.createSidekick(input.scope, context)),
       tool("start_agent", "Start an independent background agent; returns immediately after durable admission.", StartAgentInputSchema, (input, context) => service.start(input, context)),

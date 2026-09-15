@@ -98,6 +98,7 @@ export interface ImmutableRunScope {
 
 export interface TerminalOutcome {
   status: HarnessTerminalStatus;
+  completedByTool?: true;
   finalTurnId?: string;
   model?: string;
   usage?: Record<string, unknown>;
@@ -106,6 +107,7 @@ export interface TerminalOutcome {
 }
 
 export interface PersistedHarnessHostOutcome {
+  completedByTool?: true;
   finalTurnId?: string;
   participantNoticeTurnId?: string;
   status: HarnessTerminalStatus;
@@ -715,7 +717,7 @@ export async function persistHarnessHostOutcome(
   lease: AttemptLease,
   finalTurn: { turnId: string; text: string } | null,
   participantNotice: { turnId: string; text: string } | null,
-  hostOutcome: Pick<TerminalOutcome, "status" | "error">,
+  hostOutcome: Pick<TerminalOutcome, "status" | "error" | "completedByTool">,
 ): Promise<void> {
   const published = await runs.publishHostOutcome({
     runId: input.harnessRunId,
@@ -725,6 +727,7 @@ export async function persistHarnessHostOutcome(
     finalTurn,
     participantNotice,
     hostOutcomeStatus: hostOutcome.status,
+    ...(hostOutcome.completedByTool ? { completedByTool: true as const } : {}),
     hostOutcomeError: hostOutcome.error ?? null,
     lifecycleEventId: uuidV7(),
     // A member who stopped the run still gets to read what it had already
@@ -745,6 +748,7 @@ export async function persistHarnessHostOutcome(
     || (persistedOutcome.finalTurnId ?? null) !== (finalTurn?.turnId ?? null)
     || (persistedOutcome.participantNoticeTurnId ?? null) !== (participantNotice?.turnId ?? null)
     || persistedOutcome.status !== hostOutcome.status
+    || persistedOutcome.completedByTool !== hostOutcome.completedByTool
     || stableJson(persistedOutcome.error ?? null) !== stableJson(hostOutcome.error ?? null)
   ) {
     throw new Error("host_outcome_mismatch");
@@ -774,11 +778,13 @@ export async function loadPersistedHarnessHostOutcome(
     throw new Error("host_outcome_invalid");
   }
   const payload = decoded as {
+    completedByTool?: unknown;
     finalTurnId?: unknown;
     participantNoticeTurnId?: unknown;
     error?: unknown;
   };
   if (lifecycle.event_type !== "host_outcome_persisted"
+    || (payload.completedByTool !== undefined && (payload.completedByTool !== true || lifecycle.status !== "completed"))
     || (payload.finalTurnId !== null && typeof payload.finalTurnId !== "string")
     || (payload.participantNoticeTurnId !== null
       && typeof payload.participantNoticeTurnId !== "string")) {
@@ -809,6 +815,7 @@ export async function loadPersistedHarnessHostOutcome(
     : undefined;
   if (rawError !== undefined && !error) throw new Error("host_outcome_invalid");
   return {
+    ...(payload.completedByTool === true ? { completedByTool: true as const } : {}),
     ...(typeof payload.finalTurnId === "string" ? { finalTurnId: payload.finalTurnId } : {}),
     ...(typeof payload.participantNoticeTurnId === "string"
       ? { participantNoticeTurnId: payload.participantNoticeTurnId }
@@ -1376,8 +1383,16 @@ export async function terminalizeHarnessAttempt(
   const target = await runs.run({ runId: input.harnessRunId });
   if (!target || target.parent_tool_call_id !== null) throw new Error("harness_run_not_found");
   if (outcome.status === "completed") {
-    if (!outcome.finalTurnId) throw new Error("final_turn_required");
-    await assertFinalTurnPersisted(runs, input.harnessRunId, outcome.finalTurnId);
+    if (outcome.completedByTool) {
+      // Bind explicitly ended this execution through a tool outcome. Require
+      // that fact in the durable host receipt; absence of response text alone
+      // is never evidence of a successful completion.
+      const persisted = await loadPersistedHarnessHostOutcome(runs, input);
+      if (persisted?.status !== "completed" || persisted.completedByTool !== true) {
+        throw new Error("tool_completion_not_persisted");
+      }
+    } else if (!outcome.finalTurnId) throw new Error("final_turn_required");
+    if (outcome.finalTurnId) await assertFinalTurnPersisted(runs, input.harnessRunId, outcome.finalTurnId);
   }
   const now = Date.now();
   const payload = stableJson(outcome.memberSafePayload ?? {});

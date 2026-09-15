@@ -74,9 +74,11 @@ Completed responses use existing external settlement to send an ordinary reply
 to the originating exchange. The reply identity is stable for that execution,
 so settlement recovery uses normal message replay. Stopped work does not publish
 partial text as success. An archived destination ends delivery with the existing
-refusal instead of retrying a permanently closed conversation. Deliberate
-completion without a response remains an implementation decision in the plan;
-empty-completion checks are not disabled.
+refusal instead of retrying a permanently closed conversation. The proposed
+`end_turn` tool uses Bind's native tool-ended completion to suppress an automatic
+reply. The host records this explicit outcome in its existing durable receipt
+and verifies it before terminalization and after recovery. Empty-completion
+checks remain enabled; no response text is fabricated.
 
 Background identity travels in the existing child common-state projection.
 The conversation parent counts running background substreams, including nested

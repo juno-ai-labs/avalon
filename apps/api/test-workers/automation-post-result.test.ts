@@ -107,6 +107,14 @@ const DEFINITION: AutomationDraft = {
 let heldBackgroundModel: Promise<void> | null = null;
 const provider = useOpenRouterDouble(async (call) => {
   if (heldBackgroundModel && JSON.stringify(call.messages).includes("HOLD_BACKGROUND")) await heldBackgroundModel;
+  const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
+  if (JSON.stringify(latestInput?.content ?? "").includes("NO_REPLY_REQUIRED")) {
+    const endTurn = call.toolNames.find((name) => name.endsWith("end_turn"));
+    if (endTurn) return { callTool: { name: endTurn, arguments: {}, text: "No further response is needed." } };
+    const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
+    if (!load) throw new Error("agent_plugin_loader_missing");
+    return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
+  }
   const tool = call.toolNames.find((name) => name.endsWith("sidekick_post_result"));
   const toolAnswered = call.messages.some((message) => message.role === "tool");
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { text: RESULT_TEXT } } };
@@ -298,6 +306,36 @@ beforeEach(async () => {
 });
 
 describe("sidekick_post_result", () => {
+  it("ends through Bind without an automatic reply and continues on a later message", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    await expect.poll(() => runInDurableObject(child, (_instance, state) => state.storage.sql.exec<{ settled: number }>(
+      "SELECT external_settled_at IS NOT NULL AS settled FROM runs WHERE run_id = ?", run!.run_id,
+    ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(0);
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "idle" });
+    await service.send({ agentId: started.agentId, message: "Now send a useful result.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+  });
+
   it("forwards an existing attachment into the worker's canonical message and reply", async () => {
     const resourceId = crypto.randomUUID();
     const imageId = crypto.randomUUID();
