@@ -44,6 +44,10 @@ describe('ConnectorMark', () => {
     expect(fireflies.container.querySelector('.lucide')).toBeNull();
     expect(ashby.container.querySelector('svg title')?.textContent).toBe('Ashby');
     expect(fireflies.container.querySelector('svg title')?.textContent).toBe('Fireflies');
+    // The product icon is a serif A punched from a rounded square
+    // (ashbyhq.com/favicon.png), not the stacked marketing lockup.
+    expect(ashby.container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 192 192');
+    expect(ashby.container.querySelector('path')?.getAttribute('fill-rule')).toBe('evenodd');
   });
 });
 
