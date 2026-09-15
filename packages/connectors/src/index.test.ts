@@ -1918,96 +1918,131 @@ describe("connectors", () => {
     )).rejects.toMatchObject({ details: { reason: "wrong_id_family", expected: "eventId" } });
   });
 
-  it("requires RFC reply headers when creating a Gmail draft in an existing thread", async () => {
-    let requestBody: Record<string, unknown> | null = null;
-    const fetcher: typeof fetch = async (_input, init) => {
-      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return googleJson({ id: "draft-1", message: { id: "message-draft", threadId: "thread-1" } });
+  // Gmail itself cannot run in this suite. Double only its HTTP boundary and
+  // inspect the actual request bodies and MIME produced by the adapter.
+  it.each(["gmail.create_draft", "gmail.send"])("%s resolves a reply from one message and preserves explicit recipients", async (name) => {
+    const requests: Array<{ url: URL; method: string; body: Record<string, unknown> }> = [];
+    const isDraft = name === "gmail.create_draft";
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = requestUrl(input);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {} });
+      if (method === "GET") return googleJson({
+        threadId: "thread-original",
+        payload: { headers: [
+          { name: "subject", value: "Design review" },
+          { name: "message-id", value: "<original@example.com>" },
+          { name: "References", value: "<earlier@example.com>\r\n <original@example.com> invalid-token" },
+          { name: "To", value: "other@example.com" },
+          { name: "Cc", value: "unselected@example.com" },
+        ] },
+      });
+      return googleJson(isDraft
+        ? { id: "draft-1", message: { id: "message-created", threadId: "thread-original" } }
+        : { id: "message-created", threadId: "thread-original" });
     };
-    const adapter = googleAdapter(fetcher);
-    const context = {
-      connection: googleConnection(["gmail.draft"]),
-      principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: neverAborts()
-    };
-    await expect(adapter.executeTool("gmail.create_draft", {
-      to: ["recipient@example.com"],
-      subject: "Re: Design review",
-      body: "Looks good.",
-      threadId: "thread-1"
-    }, context)).rejects.toThrow(/RFC Message-ID/u);
-
-    const result = await adapter.executeTool("gmail.create_draft", {
-      to: ["recipient@example.com"],
-      subject: "Re: Design review",
-      body: "Looks good.",
-      threadId: "thread-1",
-      inReplyTo: "<original@example.com>",
-      references: ["<earlier@example.com>"]
-    }, context);
-    expect(result.providerOperationId).toBe("draft-1");
-    expect(result.output).toMatchObject({ message: { threadId: "thread-1" } });
-    // A draft a person is meant to review comes back with somewhere to open it,
-    // the way every calendar write already does.
-    expect(result.output).toMatchObject({
-      id: "draft-1",
-      webUrl: "https://mail.google.com/mail/u/0/#all/thread-1"
+    const result = await googleAdapter(fetcher).executeTool(name, {
+      message: {
+        kind: "reply", messageId: "message-original", to: ["recipient@example.com"],
+        cc: ["chosen@example.com"], body: "Looks good.",
+      },
+    }, {
+      connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send", "gmail.read"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(),
     });
-    expect(requestBody).not.toBeNull();
-    const message = ((requestBody as unknown as Record<string, unknown>).message ?? {}) as Record<string, unknown>;
-    const raw = String(message.raw ?? "");
-    const decoded = new TextDecoder().decode(
-      Uint8Array.from(atob(raw.replace(/-/gu, "+").replace(/_/gu, "/").padEnd(Math.ceil(raw.length / 4) * 4, "=")), (character) => character.charCodeAt(0))
-    );
-    expect(decoded).toContain("In-Reply-To: <original@example.com>\r\n");
-    expect(decoded).toContain("References: <earlier@example.com> <original@example.com>\r\n");
+    expect(requests.map(({ url, method }) => [method, url.pathname])).toEqual([
+      ["GET", "/gmail/v1/users/me/messages/message-original"],
+      ["POST", `/gmail/v1/users/me/${isDraft ? "drafts" : "messages/send"}`],
+    ]);
+    expect(requests[0]?.url.searchParams.get("format")).toBe("metadata");
+    expect(requests[0]?.url.searchParams.getAll("metadataHeaders")).toEqual(["Subject", "Message-ID", "References"]);
+    const posted = requests[1]?.body ?? {};
+    const message = isDraft ? posted.message as Record<string, unknown> : posted;
+    expect(message.threadId).toBe("thread-original");
+    const mime = atob(String(message.raw).replace(/-/gu, "+").replace(/_/gu, "/"));
+    expect(mime).toBe([
+      "To: recipient@example.com", "Cc: chosen@example.com", "Subject: Design review",
+      "In-Reply-To: <original@example.com>", "References: <earlier@example.com> <original@example.com>",
+      "MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit",
+      "", "Looks good.",
+    ].join("\r\n"));
+    expect(result.providerOperationId).toBe(isDraft ? "draft-1" : "message-created");
+    expect(result.output).toMatchObject({
+      id: isDraft ? "draft-1" : "message-created",
+      message: { id: "message-created", threadId: "thread-original" },
+      webUrl: "https://mail.google.com/mail/u/0/#all/thread-original",
+    });
   });
 
-  it("names both repairs when a send carries a threadId with no inReplyTo", async () => {
-    const adapter = googleAdapter(async () => googleJson({ id: "unused" }));
-    const args = {
-      to: ["support@example.com"],
-      subject: "Partnership enquiry",
-      body: "Hello.",
-      threadId: "thread-1",
+  it.each(["gmail.create_draft", "gmail.send"])("%s starts a new conversation without reading or adding reply headers", async (name) => {
+    const requests: Array<{ url: URL; method: string; body: Record<string, unknown> }> = [];
+    const isDraft = name === "gmail.create_draft";
+    const fetcher: typeof fetch = async (input, init) => {
+      requests.push({ url: requestUrl(input), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+      return googleJson(isDraft
+        ? { id: "draft-1", message: { id: "message-sent", threadId: "thread-sent" } }
+        : { id: "message-sent", threadId: "thread-sent" });
     };
-    // A brand-new email has no message to reply to, so "supply the Message-ID"
-    // is advice it cannot take: the model either invents an id and mis-threads
-    // the mail, or reports the tool as broken. Dropping the stray threadId is
-    // the repair that applies, so the refusal has to offer it.
-    const issues = adapter.validateToolInput?.("gmail.send", args)?.issues ?? [];
-    // Selected by path rather than position, which also pins where the refusal
-    // is reported: the harness renders `<path>: <message>`, so it has to name
-    // the field the first instruction tells the model to drop.
-    const issue = issues.find((candidate) => candidate.path.join(".") === "threadId");
-    expect(issue?.message).toContain("Omit threadId to start a new email conversation");
-    expect(issue?.message).toContain("inReplyTo");
-    expect(issue?.message).toContain("Never invent a Message-ID");
-
-    // A new message with neither field is not the error's business at all.
-    expect(adapter.validateToolInput?.("gmail.send", {
-      to: ["support@example.com"],
-      subject: "Partnership enquiry",
-      body: "Hello.",
-    })).toBeNull();
-  });
-
-  it("returns a followable thread for a sent message, whose id is not nested", async () => {
-    const fetcher: typeof fetch = async () =>
-      googleJson({ id: "message-sent", threadId: "thread-sent", labelIds: ["SENT"] });
-    const result = await googleAdapter(fetcher).executeTool(
-      "gmail.send",
-      { to: ["recipient@example.com"], subject: "Shipped", body: "Done." },
-      {
-        connection: googleConnection(["gmail.send"]),
-        principal: { type: "user", userId: TEST_USER_ID },
-        signal: neverAborts()
-      }
-    );
+    const result = await googleAdapter(fetcher).executeTool(name, {
+      message: { kind: "new", to: ["recipient@example.com"], cc: null, subject: "Shipped", body: "Done." },
+    }, {
+      connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(),
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.url.pathname).toBe(`/gmail/v1/users/me/${isDraft ? "drafts" : "messages/send"}`);
+    const posted = requests[0]?.body ?? {};
+    const message = isDraft ? posted.message as Record<string, unknown> : posted;
+    expect(Object.keys(message)).toEqual(["raw"]);
+    expect(atob(String(message.raw).replace(/-/gu, "+").replace(/_/gu, "/"))).toBe([
+      "To: recipient@example.com", "Subject: Shipped", "MIME-Version: 1.0",
+      'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "", "Done.",
+    ].join("\r\n"));
     expect(result.output).toMatchObject({
       message: { id: "message-sent", threadId: "thread-sent" },
-      webUrl: "https://mail.google.com/mail/u/0/#all/thread-sent"
+      webUrl: "https://mail.google.com/mail/u/0/#all/thread-sent",
     });
+  });
+
+  it.each(["gmail.create_draft", "gmail.send"])("%s refuses a reply without read permission before contacting Gmail", async (name) => {
+    const requests: string[] = [];
+    const adapter = googleAdapter(async (input) => {
+      requests.push(requestUrl(input).pathname);
+      return googleJson({});
+    });
+    await expect(adapter.executeTool(name, {
+      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Hello." },
+    }, {
+      connection: googleConnection([name === "gmail.send" ? "gmail.send" : "gmail.draft"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(),
+    })).rejects.toMatchObject({ code: "unsupported_capability" });
+    expect(requests).toEqual([]);
+  });
+
+  it.each([
+    { label: "missing message", status: 404, payload: {}, reason: "message_or_thread_not_found" },
+    { label: "malformed message id", status: 400, payload: {}, reason: "message_or_thread_not_found" },
+    { label: "missing thread", status: 200, payload: { payload: { headers: [{ name: "Message-ID", value: "<parent@example.com>" }] } }, reason: "reply_headers_unavailable" },
+    { label: "missing Message-ID", status: 200, payload: { threadId: "thread-original" }, reason: "reply_headers_unavailable" },
+    { label: "invalid Message-ID", status: 200, payload: { threadId: "thread-original", payload: { headers: [{ name: "Message-ID", value: "." }] } }, reason: "reply_headers_unavailable" },
+  ])("refuses a reply with $label before any Gmail write", async ({ status, payload, reason }) => {
+    const methods: string[] = [];
+    const adapter = googleAdapter(async (_input, init) => {
+      methods.push(init?.method ?? "GET");
+      return new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
+    });
+    await expect(adapter.executeTool("gmail.send", {
+      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Hello." },
+    }, {
+      connection: googleConnection(["gmail.send", "gmail.read"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(),
+    })).rejects.toMatchObject({ code: "invalid_payload", details: { reason, field: "message.messageId" } });
+    expect(methods).toEqual(["GET"]);
   });
 
   it("uses native bounded Google Docs and Sheets read/write APIs", async () => {

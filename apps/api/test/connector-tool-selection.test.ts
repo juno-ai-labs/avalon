@@ -1600,54 +1600,29 @@ describe("connector tools selected for harness runs", () => {
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
   });
 
-  it("demonstrates a new Gmail email with no threading fields, and a reply whose identifiers the tool refuses verbatim", async () => {
+  it.each([
+    {
+      capabilities: ["gmail.read", "gmail.draft", "gmail.send"],
+      expected: [["google_gmail_create_draft", "new"], ["google_gmail_create_draft", "reply"], ["google_gmail_send", "new"], ["google_gmail_send", "reply"]],
+    },
+    { capabilities: ["gmail.send"], expected: [["google_gmail_send", "new"]] },
+    { capabilities: ["gmail.draft"], expected: [["google_gmail_create_draft", "new"]] },
+  ])("demonstrates exactly the Gmail message kinds permitted by $capabilities", async ({ capabilities, expected }) => {
     const database = new ToolSelectionDatabase([
-      connection(
-        OWNER_CONNECTION_ID,
-        "personal",
-        USER_ID,
-        GOOGLE_MAIL_CALENDAR_CAPABILITIES,
-        "2026-07-01T00:00:00.000Z",
-      ),
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities, "2026-07-01T00:00:00.000Z"),
     ]);
-
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
-    const draft = mail?.tools.find((tool) => tool.definition.name === "gmail.create_draft");
-    const drafted = workedExampleCalls(mail?.systemMessage ?? "")
-      .filter((call) => call.wireName === "google_gmail_create_draft")
-      .map((call) => call.arguments);
-
-    // The reply was once the only draft example on this surface. A model
-    // composing a brand-new email had nothing else to copy, so it copied the
-    // reply, filled in identifiers a new conversation does not have, and
-    // reported the tool as requiring reply fields. The non-threaded shape is
-    // demonstrated as its own call, and it is a call the tool accepts.
-    const newEmail = drafted.filter((call) =>
-      !("threadId" in call) && !("inReplyTo" in call) && !("references" in call));
-    expect(newEmail).toHaveLength(1);
-    expect(draft?.validateInput?.(newEmail[0])).toBeNull();
-
-    // And the reply example's identifiers stay placeholders. That is the point
-    // of them: a placeholder that parses — the angle-bracketed
-    // `<hit.messageIdHeader>` that stood here satisfied the Message-ID rule
-    // exactly — is forwarded to Gmail, which rejects the call without naming a
-    // field. One that does not parse is refused here, against the field to
-    // fill in.
-    const reply = drafted.filter((call) => "threadId" in call);
-    expect(reply).toHaveLength(1);
-    expect(draft?.validateInput?.(reply[0])).toBeInstanceOf(Error);
-
-    // Both literals are pinned because only one of them is load-bearing for the
-    // assertion above. `inReplyTo` carries it through `RfcMessageIdSchema`;
-    // `threadId` is an unformatted `min(1)` string, so every placeholder parses
-    // and restoring `<hit.threadId>` alone leaves the whole-call assertion
-    // green. `threadId` is also the field with no argument-naming on Google's
-    // side, per the open consequence in docs/connectors.md — it travels in the
-    // request body, which `googleRejectedArgument` cannot read — so it is the
-    // one that most needs to stay a placeholder, and the literal is the only
-    // guard available for it until that check exists.
-    expect(reply[0]).toMatchObject({ threadId: "…", inReplyTo: "…" });
+    const examples = workedExampleCalls(mail?.systemMessage ?? "")
+      .filter((call) => /google_gmail_(?:send|create_draft)$/u.test(call.wireName));
+    expect(examples.map((call) => [call.wireName, call.arguments])).toMatchObject(
+      expected.map(([wireName, kind]) => [wireName, { message: { kind } }]),
+    );
+    for (const call of examples) {
+      const name = call.wireName.endsWith("create_draft") ? "gmail.create_draft" : "gmail.send";
+      const tool = mail?.tools.find((candidate) => candidate.definition.name === name);
+      expect(tool?.validateInput?.(call.arguments)).toBeNull();
+    }
   });
 
   it("preloads an explicitly attached workspace identity without dropping another eligible personal plugin", async () => {
