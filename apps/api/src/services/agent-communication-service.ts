@@ -97,7 +97,7 @@ export class AgentCommunicationService {
       await child.stopOwnedAgent();
       throw new AgentCommunicationError("agent_origin_stopped");
     }
-    let sourceStopped = false;
+    let sourceStopped: boolean;
     try {
       await this.send({ ...args, agentId: childId }, context);
     } finally {
