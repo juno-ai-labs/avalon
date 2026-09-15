@@ -12,6 +12,9 @@ export function retainQueryData(client: QueryClient, keys: readonly QueryKey[]):
   const retained = new Map<Query, () => void>();
   const retain = (query: Query): void => {
     if (!hashes.has(query.queryHash) || retained.has(query)) return;
+    // QueryObserver writes its options onto the shared Query: preserve the
+    // fetcher and GC policy. The overrides below control only the observer;
+    // Query itself does not read enabled or notifyOnChangeProps from its options.
     const observer = new QueryObserver(client, {
       ...query.options,
       queryKey: query.queryKey,

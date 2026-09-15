@@ -46,6 +46,8 @@ import {
   applyVersionedProjectSnapshot,
   applyVersionedSidebarList,
   SIDEBAR_LIST_QUERY_KEYS,
+  PROJECTS_QUERY_KEY,
+  INACTIVE_PROJECTS_QUERY_KEY,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
@@ -225,7 +227,7 @@ export function WorkspaceSocketProvider({
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
       SIDEBAR_LIST_QUERY_KEYS.notes,
-      ['projects'], ['projects-inactive'], CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY, CLIENT_FEATURE_FLAGS_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
     let stopped = false;

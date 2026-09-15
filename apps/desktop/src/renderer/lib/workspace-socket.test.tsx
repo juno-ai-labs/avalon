@@ -885,6 +885,15 @@ describe('WorkspaceSocketProvider', () => {
       },
     }));
 
+    act(() => socket.message({
+      type: 'workspace_project_snapshot',
+      occurredAt: '2026-08-27T00:01:00.000Z',
+      projects: {
+        active: { waterline: 4, items: [] },
+        inactive: { waterline: 4, items: [] },
+      },
+    }));
+
     // All three painted from a frame nobody asked for.
     expect(queryClient.getQueryData(['workstreams']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000002' })]);
@@ -902,7 +911,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
-    const keys = ['workstreams', 'automations', 'notes', 'feature-flags',
+    const keys = ['workstreams', 'automations', 'notes', 'projects', 'projects-inactive', 'feature-flags',
       'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
     const snapshot = keys.map((key) => queryClient.getQueryData(key));
     expect(snapshot.every((value) => value !== undefined)).toBe(true);
