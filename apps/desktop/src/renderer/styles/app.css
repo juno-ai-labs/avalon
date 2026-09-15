@@ -5761,40 +5761,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   transition: grid-template-rows var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
 }
 
-.sidebar-new-chat-draft {
-  align-items: center;
-  background: var(--av-cmp-row-background-hover);
-  border-radius: 8px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  font-size: 14px;
-  font-weight: 500;
-  gap: 9px;
-  line-height: 20px;
-  margin: 0 1px 12px;
-  min-height: 44px;
-  padding: 4px 8px;
-}
-
-.sidebar-new-chat-draft-icon {
-  align-items: center;
-  background: var(--av-ref-color-neutral-4);
-  border: 1px solid var(--av-ref-color-line-4);
-  border-radius: 50%;
-  color: var(--av-sys-color-text-subtle);
-  display: flex;
-  flex: 0 0 30px;
-  height: 30px;
-  justify-content: center;
-  width: 30px;
-}
-
-[data-theme='dark'] .sidebar-new-chat-draft-icon {
-  background: var(--av-sys-color-surface-raised-hover);
-  border-color: var(--av-sys-color-border-strong);
-  color: var(--av-sys-color-text-subtle);
-}
-
 .sidebar-new-button {
   align-items: center;
   background: transparent;
@@ -6100,20 +6066,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 9px;
   width: 54px;
 }
-/* The draft row, the headings and the group gaps close as the rail narrows. */
-.app-shell .sidebar .sidebar-new-chat-draft {
-  height: 44px;
-  overflow: hidden;
-  transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
-}
-.app-shell .sidebar.is-compact .sidebar-new-chat-draft {
-  height: 0;
-  margin-bottom: 0;
-  min-height: 0;
-  opacity: 0;
-  padding-block: 0;
-  visibility: hidden;
-}
+/* The headings and the group gaps close as the rail narrows. */
 .app-shell .sidebar .sidebar-section-heading,
 .app-shell .sidebar .sidebar-group-heading {
   overflow: hidden;

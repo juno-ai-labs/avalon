@@ -201,7 +201,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [recipientQuery, setRecipientQuery] = useState('');
-  const [recipientPickerOpen, setRecipientPickerOpen] = useState(owningProjectId === undefined);
+  const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -290,11 +290,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     )));
     setPickerOpen(false);
   }, [members.data, owningProject?.scope, personalProjectParticipantIds, workspace.currentUser.id]);
-  useEffect(() => {
-    if (owningProjectId !== undefined || launching) return;
-    const frame = requestAnimationFrame(() => recipientInputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [launching, owningProjectId]);
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -791,10 +786,11 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             api={api ?? undefined}
             ariaLabel="Opening work-stream message"
             attachments={attachmentDraft.attachments}
-            autoFocus={owningProjectId !== undefined}
+            autoFocus
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
+            key={draftKey}
             layout="message-capsule"
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
