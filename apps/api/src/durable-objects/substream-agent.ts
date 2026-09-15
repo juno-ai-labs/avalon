@@ -1,6 +1,7 @@
 import { parseRpcInput } from "../lib/rpc-input";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
@@ -4668,7 +4669,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         final_turn_id: outcome.finalTurnId,
       });
     }
-    // Hidden workers publish only through explicit messaging tools. Their
+    if (input.backgroundAgent && outcome.status === "failed") {
+      await new AgentCommunicationService(this.env, input).notifyFailure(outcome.error?.code ?? "unknown reason");
+    }
+    // Hidden workers publish results only through explicit messaging tools. Their
     // local final response must not be projected into the parent's Slack room.
     if (input.backgroundAgent) return settlementDiagnosticCode;
     const elicitationMessage = outcome.status === "needs_input"
