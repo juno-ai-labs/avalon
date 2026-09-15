@@ -1,5 +1,51 @@
 # Operations runbook
 
+## Agent production boundary
+
+The [agent production rules](../AGENTS.md#production-operations) apply to every
+production command in this runbook. A documented command, an available API token,
+or a request to implement, remove, debug, or test a feature does not authorize
+running it against production. Local development, local migrations, dry-run
+builds, and read-only investigation remain the default verification path.
+
+Production releases use the checked-in CI workflow and a reviewed, immutable
+commit already merged into `main`. Coding agents must not directly upload or
+promote production Worker versions, deploy Workers, or roll them back through
+Wrangler, package-script aliases, Cloudflare API/MCP tools, or the dashboard.
+Uploading a version without assigning traffic is still a production upload.
+An agent may merge, enable auto-merge, or dispatch/re-run a release workflow only
+when the user explicitly requested that action. An authorized merge includes the
+normal deployment it triggers. CI's ability to accept an arbitrary ref does not
+authorize deploying unmerged code, and a request to open a PR stops at the PR.
+
+Before an authorized production operation, establish the target environment,
+exact source commit or existing version, affected data and migration versions,
+compatibility with the running schema, and a recovery plan. Include automatic
+migration effects in the release scope. Additional remote migrations or data
+repair/cleanup outside that release need explicit authorization covering the
+operation and its data effects. Keep the authorization and content-free execution
+evidence with the task. Do not put
+secrets or retrieved user content into logs, commits, or PR descriptions.
+
+Durable Object SQLite migrations are application code executed at object
+initialization. Promoting a Worker can therefore advance persistent production
+schemas as objects wake, even when no `wrangler d1 migrations apply` command ran.
+The deployment workflow's `apply_migrations` input controls D1 migrations only.
+Worker rollback does not roll back those SQLite changes. Preserve the shipped
+migration definitions and hashes and the schema-ahead guard.
+
+If the deployed source cannot be established, or the proposed release cannot
+handle the schema already applied, stop before production writes and prepare a
+reviewed recovery change. The deployment selector's existing direct-mode
+fallback is not authorization to proceed past an unknown source or schema.
+Do not bypass CI, review, migration, or credential protections to finish a task
+or to recover an outage. Rally's product policy against individual tool
+confirmations does not apply to these engineering operations.
+
+These are agent instructions, not technical access controls. Credential
+separation and GitHub deployment protections must enforce the same boundary;
+their presence must be verified rather than inferred from this document.
+
 ## Local development
 
 [The development environment guide](dev-environment.md) covers this in full,

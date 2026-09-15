@@ -4,6 +4,36 @@ This is the project-wide rule sheet for AI coding agents, exposed as `CLAUDE.md`
 through a symlink. Keep it short: it is read in full at the start of every
 session, so detail belongs in `docs/` behind a pointer.
 
+## Production operations
+
+**Never deploy unmerged or uncommitted code to production.** Implementation,
+debugging, testing, and opening a PR do not authorize a production release or
+production data changes. Available credentials are not authorization.
+
+- Production releases use the repository's CI workflows from a reviewed,
+  immutable commit already merged into `main`. Do not upload, deploy, promote,
+  or roll back production Workers directly from an agent session through
+  Wrangler, a package script, the Cloudflare API/MCP, or the dashboard.
+- Do not push to `main`, merge or enable auto-merge, or dispatch/re-run a
+  deployment workflow unless the user explicitly requested that release action.
+  Never use CI's ref input to deploy an unmerged branch. An authorized merge
+  includes its normal automatic CI deployment; opening a PR does not.
+- **A Worker promotion can be a database migration.** Durable Object SQLite
+  migrations run when objects initialize; no separate migration command is
+  needed. Turning off CI's D1 migrations does not disable them.
+- Remote migrations and production data repair/cleanup outside the authorized
+  CI release require explicit authorization for the environment and operation.
+  Make migration/data effects and the recovery plan clear before a release or
+  operator action. Preserve shipped migration definitions and hashes; never
+  bypass the schema-ahead guard to force a rollout.
+- If production's source or schema is unknown or incompatible, stop production
+  actions, report the mismatch, and prepare a reviewed recovery change. An
+  outage does not authorize bypassing this boundary. Continue local work and
+  read-only investigation within the requested scope.
+
+Read [the production operations boundary](docs/runbook.md#agent-production-boundary)
+before any action that can release code or mutate production.
+
 ## Names
 
 **Rally** is the product. **Avalon** is its internal code name, carried over from
@@ -58,6 +88,10 @@ is soon, and is probably you. Move fast on _what_ gets built. Do not move fast o
 whether it works, or on whether the next person can follow it.
 
 ## Tool execution product policy
+
+This section governs tools inside the Rally product. It does not govern coding
+agents operating the repository or production; [Production operations](#production-operations)
+applies to those actions.
 
 **Rally never asks users to confirm individual tool calls.** This applies to
 reads and writes, built-in tools, connectors, hosted MCP, and future tools.
