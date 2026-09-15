@@ -2007,6 +2007,89 @@ describe("connectors", () => {
     });
   });
 
+  it.each(["gmail.create_draft", "gmail.send"])("%s rejects undeclared write options before any provider request", async (name) => {
+    let requests = 0;
+    const adapter = googleAdapter(async () => {
+      requests++;
+      return googleJson({ id: "unexpected-write" });
+    });
+    const context = {
+      connection: googleConnection([name === "gmail.send" ? "gmail.send" : "gmail.draft", "gmail.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID }, signal: neverAborts(),
+    };
+    for (const message of [
+      { kind: "new", to: ["recipient@example.com"], subject: "Hello", body: "Body." },
+      { kind: "reply", to: ["recipient@example.com"], messageId: "message-original", body: "Body." },
+    ]) {
+      for (const extra of [{ preview: true }, { threadId: ".", inReplyTo: ".", references: [] }]) {
+        await expect(adapter.executeTool(name, { message, ...extra }, context)).rejects.toThrow();
+        await expect(adapter.executeTool(name, { message: { ...message, ...extra } }, context)).rejects.toThrow();
+      }
+    }
+    expect(requests).toBe(0);
+  });
+
+  it.each([
+    { label: "long ASCII", subject: "a".repeat(998) },
+    { label: "long accented text", subject: "é".repeat(400) },
+    { label: "multibyte chunk boundaries", subject: `${"a".repeat(38)}😀${"€".repeat(15)}😀` },
+    { label: "original whitespace", subject: " A  subject\twith whitespace ".repeat(8) },
+  ])("folds a $label Subject into independently decodable encoded words", ({ subject }) => {
+    const mime = __testing.serializeEmail({ to: ["recipient@example.com"], cc: [], subject, body: "Body.", references: [] });
+    const subjectHeader = mime.match(/^Subject:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*/mu)?.[0];
+    expect(subjectHeader).toBeDefined();
+    expect(subjectHeader!.split("\r\n").every((line) => Buffer.byteLength(line, "utf8") <= 76)).toBe(true);
+    const words = [...subjectHeader!.matchAll(/=\?UTF-8\?B\?([^?]+)\?=/gu)];
+    expect(words.length).toBeGreaterThan(1);
+    expect(words.every(([word]) => word.length <= 75)).toBe(true);
+    // Decode each word independently: slicing the UTF-8 bytes or a surrogate
+    // pair across words must fail even if concatenating all payloads would work.
+    const decoded = words.map(([, payload]) => new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(payload!, "base64"))).join("");
+    expect(decoded).toBe(subject);
+    expect(mime.endsWith("\r\n\r\nBody.")).toBe(true);
+  });
+
+  it("keeps short Unicode subjects readable and neutralizes subject header injection", () => {
+    const mime = __testing.serializeEmail({
+      to: ["recipient@example.com"], cc: [], subject: "Café\r\nBcc: hidden@example.com", body: "Body.", references: [],
+    });
+    expect(mime).toContain("Subject: =?UTF-8?B?Q2Fmw6kgIEJjYzogaGlkZGVuQGV4YW1wbGUuY29t?=\r\n");
+    expect(mime).not.toContain("\r\nBcc:");
+  });
+
+  it.each(["gmail.create_draft", "gmail.send"])("%s folds an inherited reply Subject beyond the new-message input limit", async (name) => {
+    const subject = "Réunion 😀 ".repeat(200);
+    const writes: Record<string, unknown>[] = [];
+    const isDraft = name === "gmail.create_draft";
+    const fetcher: typeof fetch = async (_input, init) => {
+      if (init?.method !== "POST") return googleJson({
+        threadId: "thread-original",
+        payload: { headers: [{ name: "Subject", value: subject }, { name: "Message-ID", value: "<parent@example.com>" }] },
+      });
+      writes.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return googleJson(isDraft
+        ? { id: "draft-1", message: { id: "reply", threadId: "thread-original" } }
+        : { id: "reply", threadId: "thread-original" });
+    };
+    await googleAdapter(fetcher).executeTool(name, {
+      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Reply body." },
+    }, {
+      connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send", "gmail.read"]),
+      principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    });
+    expect(writes).toHaveLength(1);
+    const message = isDraft ? writes[0]?.message as Record<string, unknown> : writes[0];
+    const mime = Buffer.from(String(message?.raw), "base64url").toString("utf8");
+    const subjectHeader = mime.match(/^Subject:[^\r\n]*(?:\r\n[ \t][^\r\n]*)*/mu)?.[0];
+    expect(subjectHeader!.split("\r\n").every((line) => line.length <= 76)).toBe(true);
+    expect([...subjectHeader!.matchAll(/=\?UTF-8\?B\?([^?]+)\?=/gu)]
+      .map(([, payload]) => new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(payload!, "base64"))).join(""))
+      .toBe(subject);
+    expect(message?.threadId).toBe("thread-original");
+    expect(mime).toContain("In-Reply-To: <parent@example.com>\r\n");
+    expect(mime.endsWith("\r\n\r\nReply body.")).toBe(true);
+  });
+
   it.each(["gmail.create_draft", "gmail.send"])("%s folds a long References chain without losing or duplicating ancestors", async (name) => {
     const ancestors = Array.from({ length: 2_000 }, (_, index) => `<message-${index}@example.com>`);
     const parent = "<parent@example.com>";

@@ -6479,7 +6479,10 @@ function connectorPluginPresentation(
         : []),
       ...(granted.has("gmail.draft") || granted.has("gmail.send")
         ? [
-          "To start a new email, pass message with kind=new, to, subject, and body. To reply, pass message with kind=reply, messageId copied from a search hit's id, to, and body. Rally resolves the reply's subject and threading headers from that message; choose to and cc explicitly, since Rally does not add recipients automatically. Replying requires this connection's gmail.read capability.",
+          "To start a new email, pass message with kind=new, to, subject, and body. Choose to and cc explicitly, since Rally does not add recipients automatically.",
+          ...(granted.has("gmail.read")
+            ? ["To reply, pass message with kind=reply, messageId copied from a search hit's id, to, and body. Rally resolves the reply's subject and threading headers from that message. Replying requires this connection's gmail.read capability."]
+            : []),
           "A draft or message body is delivered as plain text exactly as written, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
         ]
         : []),

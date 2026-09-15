@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { asUserId } from "@rally/contracts";
 
 import {
   droppedNullableBranches,
   nonObjectRootSchema,
   nonObjectRootUnionBranches,
-  repairRootSchemaForProviders,
+  runHarness,
   weakenedCompositionBranches,
 } from "@rally/agent-harness";
 import { __integrationTesting } from "../src/services/integrations";
@@ -48,12 +49,12 @@ import { everyAuthoredToolSchema } from "./helpers/authored-tool-schemas";
  * `pnpm test` rather than three days later in a payload log.
  */
 describe("tool schema sanitization", () => {
-  it("keeps Gmail new/reply arguments identical at the model and executor boundaries", () => {
+  it("preserves Gmail declared-field constraints through the actual model request", async () => {
     const adapter = createTestConnectorRegistry().get("google");
     const content = { to: ["recipient@example.com"], body: "Hello." };
     const newMessage = { kind: "new", ...content, subject: "A new conversation" };
     const reply = { kind: "reply", ...content, messageId: "18f0a2c4d5e6f702" };
-    const cases: Array<{ label: string; message: unknown; accepted: boolean }> = [
+    const cases: Array<{ label: string; message: unknown; accepted: boolean; wireAccepted?: boolean }> = [
       { label: "new", message: newMessage, accepted: true },
       { label: "new with null cc", message: { ...newMessage, cc: null }, accepted: true },
       { label: "new with cc", message: { ...newMessage, cc: ["copied@example.com"] }, accepted: true },
@@ -66,33 +67,79 @@ describe("tool schema sanitization", () => {
       { label: "long body", message: { ...newMessage, body: "a".repeat(500_001) }, accepted: false },
       { label: "no recipients", message: { ...newMessage, to: [] }, accepted: false },
       { label: "invalid address", message: { ...newMessage, to: ["recipient"] }, accepted: false },
-      { label: "new with messageId", message: { ...newMessage, messageId: "." }, accepted: false },
-      { label: "reply with subject", message: { ...reply, subject: "Unrelated subject" }, accepted: false },
+      { label: "new with messageId", message: { ...newMessage, messageId: "." }, accepted: false, wireAccepted: true },
+      { label: "reply with subject", message: { ...reply, subject: "Unrelated subject" }, accepted: false, wireAccepted: true },
       { label: "reply with empty messageId", message: { ...reply, messageId: "" }, accepted: false },
       { label: "reply without messageId", message: { kind: "reply", ...content }, accepted: false },
       ...["threadId", "inReplyTo", "references"].flatMap((field) => [
-        { label: `new with stray ${field}`, message: { ...newMessage, [field]: field === "references" ? ["."] : "." }, accepted: false },
-        { label: `reply with supplied ${field}`, message: { ...reply, [field]: field === "references" ? [] : "." }, accepted: false },
+        { label: `new with stray ${field}`, message: { ...newMessage, [field]: field === "references" ? ["."] : "." }, accepted: false, wireAccepted: true },
+        { label: `reply with supplied ${field}`, message: { ...reply, [field]: field === "references" ? [] : "." }, accepted: false, wireAccepted: true },
       ]),
     ];
     const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft"].includes(tool.name));
     expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send"]);
+    const requests: Array<{ tools: Array<{ function: { name: string; parameters: Record<string, unknown> } }> }> = [];
+    // Only the remote model is doubled. The real harness builds the plugin,
+    // runs Bind's sanitizer and root repair, then serializes the HTTP request.
+    const outcome = await runHarness({
+      config: {
+        apiKey: "test-key", primaryModel: "test/schema-contract", maxIterations: 1, maxToolCalls: 1,
+        // Ambient budgets, not the subject of this test.
+        maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 1,
+        fetch: async (_input, init) => {
+          requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+          return new Response('data: {"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+            headers: { "content-type": "text/event-stream" },
+          });
+        },
+      },
+      workspaceId: "schema-contract-workspace", workstreamId: "schema-contract-workstream",
+      loopId: "schema-contract-run", harnessRunId: "schema-contract-run",
+      executionPrincipal: { type: "user", userId: asUserId("00000000-0000-4000-8000-000000000001") },
+      systemPrompt: "Describe the available tools without calling them.",
+      messages: [{ role: "user", content: "Describe the available tools." }],
+      corePlugins: [{
+        canonicalId: "rally:google", modelId: "rally_google", shortWireName: "google",
+        description: "Google Mail", preload: true, explicit: false,
+        tools: mailWrites.map((definition) => ({
+          definition,
+          execute: async () => { throw new Error("This schema probe must never execute a mail tool"); },
+        })),
+      }],
+      onAssistantTurnReserved: ({ modelTurnIndex }) => ({ transcriptSequence: modelTurnIndex }),
+      onStepSettled: () => ({ transitions: [], stop: false }),
+      onEvent: () => {},
+    });
+    expect(outcome.status).toBe("completed");
+    expect(requests).toHaveLength(1);
     for (const tool of mailWrites) {
       const authored = tool.inputSchema;
-      const schemas = [authored, repairRootSchemaForProviders(authored)]
-        .map((schema) => z.fromJSONSchema(schema));
-      for (const { label, message, accepted } of cases) {
+      const authoredSchema = z.fromJSONSchema(authored);
+      const wire = requests[0]!.tools.find((candidate) => candidate.function.name === `google_${tool.name.replaceAll(".", "_")}`)!.function.parameters;
+      const wireSchema = z.fromJSONSchema(wire);
+      for (const { label, message, accepted, wireAccepted = accepted } of cases) {
         const args = { message };
         expect(adapter.validateToolInput?.(tool.name, args) === null, `${tool.name}: ${label}, executor`).toBe(accepted);
-        for (const schema of schemas) {
-          expect(schema.safeParse(args).success, `${tool.name}: ${label}, advertised`).toBe(accepted);
-        }
+        expect(authoredSchema.safeParse(args).success, `${tool.name}: ${label}, authored`).toBe(accepted);
+        // Bind intentionally removes additionalProperties:false for xAI
+        // compatibility. The executor remains strict; only declared-field
+        // constraints can promise equality on every supported provider. The
+        // explicit exceptions pin this known limitation rather than hiding it
+        // behind a test that never exercised the compatibility pass.
+        expect(wireSchema.safeParse(args).success, `${tool.name}: ${label}, HTTP payload`).toBe(wireAccepted);
       }
+      const messageSchema = wire.properties as { message: { description: string; oneOf: Array<{ description: string }> } };
+      expect(messageSchema.message.description).toContain("Do not supply threadId, inReplyTo, or references");
+      expect(messageSchema.message.oneOf.map((branch) => branch.description)).toEqual([
+        "Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field.",
+        "Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field.",
+      ]);
       // The old production failure shape must fail on both sides, including
       // when it carries the nonempty placeholders the old JSON schema allowed.
       const legacy = { ...content, subject: "A new conversation", threadId: ".", inReplyTo: ".", references: [] };
       expect(adapter.validateToolInput?.(tool.name, legacy)).not.toBeNull();
-      for (const schema of schemas) expect(schema.safeParse(legacy).success).toBe(false);
+      expect(authoredSchema.safeParse(legacy).success).toBe(false);
+      expect(wireSchema.safeParse(legacy).success).toBe(false);
     }
   });
 

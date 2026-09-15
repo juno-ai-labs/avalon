@@ -1613,6 +1613,7 @@ describe("connector tools selected for harness runs", () => {
     ]);
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
+    expect(mail?.systemMessage?.includes("To reply, pass message with kind=reply")).toBe(capabilities.includes("gmail.read"));
     const examples = workedExampleCalls(mail?.systemMessage ?? "")
       .filter((call) => /google_gmail_(?:send|create_draft)$/u.test(call.wireName));
     expect(examples.map((call) => [call.wireName, call.arguments])).toMatchObject(
