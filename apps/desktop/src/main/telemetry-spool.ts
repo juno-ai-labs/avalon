@@ -3,7 +3,7 @@ import { RegionSchema } from "@rally/contracts/regions";
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from '@rally/contracts';
+import { isRetiredMeetingTelemetry, TelemetryEnvelopeSchema, type TelemetryEnvelope } from '@rally/contracts';
 import { z } from 'zod';
 
 const LOCAL_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
@@ -249,6 +249,10 @@ export class TelemetrySpool {
   private async readRow(path: string): Promise<TelemetrySpoolRow | null> {
     try {
       const parsed = StoredRowSchema.safeParse(JSON.parse(await readFile(path, 'utf8')) as unknown);
+      if (parsed.success && isRetiredMeetingTelemetry(parsed.data.event)) {
+        await rm(path, { force: true });
+        return null;
+      }
       return parsed.success ? parsed.data : null;
     } catch (error) {
       if (error instanceof SyntaxError) return null;

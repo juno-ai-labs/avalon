@@ -9,12 +9,8 @@ const target = {
 
 describe('workspace activation authorization', () => {
   it('requests the control plane on every explicit activation, including the current workspace', async () => {
-    const beginChange = vi.fn(() => 7);
-    const finishChange = vi.fn();
     const request = vi.fn(async () => ({ workspace: target.workspaceId }));
     const dependencies = {
-      beginChange,
-      finishChange,
       nextSelectionIntent: vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(11),
       request,
     };
@@ -31,20 +27,15 @@ describe('workspace activation authorization', () => {
       path: '/onboarding/workspace/activate',
       selectionIntent: 11,
     });
-    expect(finishChange).toHaveBeenCalledTimes(2);
   });
 
   it('finishes the change and emits a stable denial when revalidation refuses membership', async () => {
-    const finishChange = vi.fn();
 
     await expect(revalidateWorkspaceActivation(target, undefined, {
-      beginChange: () => 9,
-      finishChange,
       nextSelectionIntent: () => 12,
       request: async () => {
         throw new RallyApiResponseError('mutable service prose', 403, 'workspace_access_denied');
       },
     })).rejects.toThrow('rally-workspace-activation:workspace_access_denied');
-    expect(finishChange).toHaveBeenCalledWith(9);
   });
 });

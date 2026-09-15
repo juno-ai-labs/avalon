@@ -39,7 +39,7 @@ describe('native system audio controller', () => {
     target.emit(audio, 1);
 
     expect(target.owner.send).toHaveBeenCalledOnce();
-    expect(target.owner.send).toHaveBeenCalledWith('meeting-audio:data', audio, 48_000);
+    expect(target.owner.send).toHaveBeenCalledWith('transcription-audio:data', audio, 48_000);
   });
 
   it('allows only one meeting to own the native tap and only that owner to stop it', async () => {

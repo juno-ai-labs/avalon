@@ -1,15 +1,15 @@
 import { TRANSCRIPTION_MAX_FRAME_CHARACTERS, TRANSCRIPTION_MAX_APPEND_BYTES } from '@rally/contracts/realtime-transcription';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import type { SocketTicket } from './types';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
+import type { SocketTicket } from './types';
 import {
   appendDictationTranscript,
   isFinalTranscriptionEvent,
   nextLiveTranscript,
   useRealtimeDictation,
 } from './use-realtime-dictation';
-import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
 
 const systemAudioBridge = vi.hoisted(() => ({
   listener: undefined as ((data: ArrayBuffer, sampleRate: number) => void) | undefined,
@@ -20,9 +20,9 @@ const systemAudioBridge = vi.hoisted(() => ({
 
 vi.mock('./platform', () => ({
   desktopBridge: () => ({
-    onMeetingSystemAudioData: systemAudioBridge.subscribe,
-    startMeetingSystemAudioCapture: systemAudioBridge.start,
-    stopMeetingSystemAudioCapture: systemAudioBridge.stop,
+    onSystemAudioData: systemAudioBridge.subscribe,
+    startSystemAudioCapture: systemAudioBridge.start,
+    stopSystemAudioCapture: systemAudioBridge.stop,
   }),
 }));
 

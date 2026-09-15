@@ -70,7 +70,7 @@ export class NativeSystemAudioController {
           return;
         }
         if (this.owner !== owner || owner.isDestroyed() || !validAudioChunk(data, sampleRate)) return;
-        owner.send('meeting-audio:data', data, sampleRate);
+        owner.send('transcription-audio:data', data, sampleRate);
       });
       if (!validCaptureInfo(info)) {
         throw new Error('The native computer audio tap returned an invalid stream format.');

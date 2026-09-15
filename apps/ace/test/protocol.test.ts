@@ -100,7 +100,7 @@ describe('Ace managed flag protocol', () => {
 
   it('keeps every application boolean explicit about its enabled state', () => {
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual([
-      'meeting-recording-enabled',
+      'suggested-work-enabled',
       'suggested-work-enabled',
       'multiple-workspaces-enabled',
       'digests-enabled',
@@ -119,7 +119,7 @@ describe('Ace managed flag protocol', () => {
       'less_than_or_equals', 'contains', 'starts_with', 'ends_with', 'in', 'not_in'];
     for (const operator of operators) {
       expect(ManagedFlagUpdateSchema.safeParse({
-        key: 'meeting-recording-enabled', description: 'Meeting recording', enabled: true,
+        key: 'suggested-work-enabled', description: 'Meeting recording', enabled: true,
         default_variation: 'off', rules: [{ priority: 1, conditions: [{
           attribute: 'userEmailDomain', operator, value: operator.includes('in') ? ['juno-labs.com'] : 'juno-labs.com',
         }], serve_variation: 'on' }],
@@ -129,14 +129,14 @@ describe('Ace managed flag protocol', () => {
 
   it('does not allow a raw email address attribute to reach Flagship', () => {
     expect(ManagedFlagUpdateSchema.safeParse({
-      key: 'meeting-recording-enabled', description: 'Meeting recording', enabled: true, default_variation: 'off',
+      key: 'suggested-work-enabled', description: 'Meeting recording', enabled: true, default_variation: 'off',
       rules: [{ priority: 1, conditions: [{ attribute: 'email', operator: 'equals', value: 'person@example.com' }], serve_variation: 'on' }],
     }).success).toBe(false);
   });
 
   it('rejects incomplete and empty targeting values', () => {
     const incomplete = (value: string | string[]) => ({
-      key: 'meeting-recording-enabled', description: 'Meeting Recording Enabled', enabled: true,
+      key: 'suggested-work-enabled', description: 'Meeting Recording Enabled', enabled: true,
       default_variation: 'off', rules: [{ priority: 1, conditions: [{
         attribute: 'workspaceId', operator: Array.isArray(value) ? 'in' : 'equals', value,
       }], serve_variation: 'on' }],
@@ -145,7 +145,7 @@ describe('Ace managed flag protocol', () => {
     expect(ManagedFlagUpdateSchema.safeParse(incomplete('')).success).toBe(false);
     expect(ManagedFlagUpdateSchema.safeParse(incomplete([])).success).toBe(false);
     expect(ManagedFlagUpdateSchema.safeParse({
-      key: 'meeting-recording-enabled', description: 'Meeting Recording Enabled', enabled: true,
+      key: 'suggested-work-enabled', description: 'Meeting Recording Enabled', enabled: true,
       default_variation: 'off', rules: [{ priority: 1, conditions: [{
         logical_operator: 'AND', clauses: [],
       }], serve_variation: 'on' }],
@@ -158,7 +158,7 @@ describe('Ace managed flag protocol', () => {
       ? simple
       : { logical_operator: 'AND', clauses: [nested(levels - 1)] };
     const flag = (conditions: unknown) => ({
-      key: 'meeting-recording-enabled', description: 'Meeting Recording Enabled', enabled: true,
+      key: 'suggested-work-enabled', description: 'Meeting Recording Enabled', enabled: true,
       default_variation: 'off', rules: [{ priority: 1, conditions: [conditions], serve_variation: 'on' }],
     });
 

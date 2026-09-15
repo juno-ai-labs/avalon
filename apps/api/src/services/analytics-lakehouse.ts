@@ -3,6 +3,7 @@ import { RegionSchema, type Region } from "@rally/contracts/regions";
 import {
   TELEMETRY_EVENTS,
   TelemetryEnvelopeSchema,
+  isRetiredMeetingTelemetry,
   type TelemetryEnvelope,
 } from "@rally/contracts/telemetry";
 import { z } from "zod";
@@ -279,6 +280,10 @@ export async function deliverAnalyticsLakehousePointer(
     return rejectStoredAnalyticsRow(env, row, "stored_envelope_schema_incompatible");
   }
   const envelope = parsedEnvelope.data as TelemetryEnvelope;
+  if (isRetiredMeetingTelemetry(envelope)) {
+    await env.DB.prepare("DELETE FROM telemetry_accepted_events WHERE event_id = ?").bind(pointer.eventId).run();
+    return { outcome: "suppressed" };
+  }
   if (row.subject_user_id !== null
     && envelope.category !== "essential"
     && row.product_analytics_enabled !== 1) {
