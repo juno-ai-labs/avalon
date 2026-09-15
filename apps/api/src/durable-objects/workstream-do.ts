@@ -1758,6 +1758,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     now: number,
   ): void {
     if (substreamId === "0") return;
+    if (effect.backgroundAgent) {
+      this.parentSql.exec("UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1", now);
+      return;
+    }
     const changed = this.parentSql.exec<{ substream_id: string }>(
       `UPDATE conversation_children SET title = ?, updated_at = ?
         WHERE substream_id = ? AND kind = 'child' AND title IS NOT ?
@@ -1767,10 +1771,21 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (changed) this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
-  protected override afterChildEffects(): Promise<void> {
-    // Everyone reading *this* work stream hears now, over the control socket.
-    // Every other surface hears through the outbox, the Queue, and WorkspaceDO.
-    return this.broadcastMetadata();
+  protected override async afterChildEffects(): Promise<void> {
+    const row = this.metadataRow();
+    if (row?.archived_at != null) {
+      // The durable archive is the retry authority. Every owned worker uses
+      // this same parent, including recursively delegated workers. A shared
+      // Sidekick has a different parent and is not part of this traversal.
+      for (const child of this.childRegistry()) {
+        const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+          row.workspace_id, conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id),
+            row.workstream_id, asSubstreamId(child.substreamId)));
+        await stub.stopOwnedAgent();
+      }
+    }
+    // Everyone reading this workstream hears through the existing control socket.
+    await this.broadcastMetadata();
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -2092,6 +2107,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
+      backgroundAgentCount: this.parentSql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM substream_directory
+          WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
+            AND json_extract(effect_json, '$.state') = 'running'
+            AND json_extract(effect_json, '$.archivedAt') IS NULL`,
+      ).one().n,
       latestAttentionSequenceNumber: row.latest_attention_ordinal,
       unreadTrackingStartSequenceNumber: row.unread_tracking_start_ordinal,
       lastActivityAt: iso(row.last_activity_at),

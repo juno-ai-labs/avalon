@@ -545,33 +545,24 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
-  "After submit_draft succeeds, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
+  "After saving a draft, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
-  "Ask which scope before you submit, because it cannot be changed afterwards:",
+  "Use the scope already selected for this Sidekick. Do not ask participants to choose it again. Workstream ownership cannot change. Before first publication, change between personal and workspace scope only when explicitly requested. Published scope cannot change.",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",
-  "and \"workstream\" belongs to this work stream — everyone in the room can manage it,",
-  "Rally posts its results here, and it outlives whoever asked for it.",
-  "Nothing else is delivered for a Sidekick: if its result should reach an inbox, a channel, a DM, or a document,",
-  "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
-  "and a result the instructions do not send goes nowhere.",
-  "A Sidekick can never deliver into a different work stream, so do not offer to send results to one.",
-  "To change a Sidekick that already exists, call sidekicks_list, start from its current definition,",
+  "and \"workstream\" belongs to its owning work stream — everyone in that room can manage it,",
+  "A Sidekick outlives whoever asked for it. Include each result destination and delivery step in its instructions.",
+  "To send a result to an inbox, channel, DM, or document, name the recipient and tell the run to send it.",
+  "Scheduled result delivery to a workstream is limited to the owning workstream.",
+  "To change a Sidekick that already exists, discover it and start from its current definition,",
   "and submit the whole revised draft with its sidekickId; ready changes save immediately.",
 ].join(" ");
 
 /**
- * The drafting tools, as a plugin any work-stream agent can load.
- *
- * Deferred rather than preloaded: discovered through `list_plugins` and loaded
- * with `load_plugin`, the way `rally:terminal` is. Loading it starts,
- * authorizes and persists nothing — it puts the drafting tools in the catalog,
- * and the first thing that durably exists is the draft a person is asked to
- * accept, in the feed where the conversation happened.
- *
- * Withheld from an automation occurrence, and that is the host's call to make:
- * an occurrence that could draft automations from the email it just read is a
- * spam engine with a human approval step in front of it.
+ * Drafting tools for a Sidekick's own authoring conversation. The host controls
+ * eligibility and supplies the existing Sidekick identity. Loading tools does
+ * not create another Sidekick; a ready submission saves through normal domain
+ * validation. Occurrences and coordinating workstreams use their own surfaces.
  */
 export function createAutomationsPlugin(
   host: AutomationCreatorToolHost,
@@ -598,7 +589,7 @@ export function createAutomationsPlugin(
       "every week", "when this happens", "watch for", "remind",
     ],
     description:
-      "Create or teach a Sidekick to provide reusable knowledge or carry out delegated work, for a person, the workspace, or this work stream.",
+      "Configure this Sidekick to provide reusable knowledge or carry out delegated work within its existing scope.",
     systemMessage,
     tools: createAutomationCreatorTools(host),
     preload: false,

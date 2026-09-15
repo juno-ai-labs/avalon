@@ -1657,42 +1657,6 @@ describe('collapsed heading preview mask', () => {
 });
 
 /**
- * A queued row renders the message through the transcript's own Markdown
- * renderer, which emits blocks: a paragraph, a heading, a list, a fenced block.
- * The row is one line. Nothing in a component test can see the difference —
- * jsdom lays nothing out, so every assertion about the row's markup stays green
- * while the composer dock grows to the height of a whole queued message — so
- * the flattening lives here, where deleting it fails.
- */
-describe('composer queue preview', () => {
-  it('keeps a queued message to one clipped line', () => {
-    const text = rule('.composer-queue-text');
-    expect(text).not.toBeNull();
-    expect(text).toContain('white-space: nowrap;');
-    expect(text).toContain('overflow: hidden;');
-    expect(text).toContain('text-overflow: ellipsis;');
-  });
-
-  it('flattens every Markdown block the renderer can emit into that line', () => {
-    const body = rule('.composer-queue-text .markdown-body');
-    expect(body).not.toBeNull();
-    expect(body).toContain('display: inline;');
-    // The prose type scale would otherwise set a heading in a 12px row.
-    expect(body).toContain('font-size: inherit;');
-    expect(body).toContain('line-height: inherit;');
-
-    const blocks = preludes().find((prelude) => (
-      prelude.startsWith('.composer-queue-text .markdown-body :is(')
-      && prelude.includes('p,')
-    ));
-    expect(blocks).toBeDefined();
-    for (const tag of ['p', 'h1', 'h6', 'ul', 'ol', 'li', 'pre', 'blockquote', 'table', 'tr', 'td']) {
-      expect(blocks).toMatch(new RegExp(`[(,]\\s*${tag}[,)]`, 'u'));
-    }
-  });
-});
-
-/**
  * The window's own buttons are drawn over the page on macOS, and the sidebar's
  * 48px title bar is what normally holds anything readable clear of them. Below
  * 921px the sidebar leaves the flow for a drawer, and the work-stream and

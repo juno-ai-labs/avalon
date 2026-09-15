@@ -62,20 +62,21 @@ and Rally keeps running unchanged when Flagship is unreachable.
 
 ### One flag per agent
 
-Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
+Each model-using agent type uses a flag keyed `agent-model-<agent>`. Background
+agents use the work-stream agent type and inherit the source conversation's
+model override:
 
 | Agent | Flag key | Default model | Fallback models |
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
-The first three names match the `AgentInferenceSource` values written to the
-inference ledger, so a ledger row and a flag key name the same agent; an
+The work-stream entry matches the `AgentInferenceSource` value written to the
+inference ledger, so a ledger row and its flag key name the same agent; an
 automation run and the conversation that drafts one are `workstream` runs on
 the work-stream agent's flag. The rest
 are the standalone structured-output agents: message addressing uses the
@@ -199,10 +200,10 @@ whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
 the budget and the failure code. Do not answer a pinned run's provider outage by
 adding fallbacks here.
 
-It reaches only the work-stream agent, which is also what drafts an
-automation and runs one. The inline subagent keeps its own flag: it is a
-distinct agent, and the whole point of giving it a flag was that it can be
-moved on its own.
+It reaches the work-stream agent, which also authors Sidekicks, runs their
+occurrences, and executes background work. A background agent inherits its
+source conversation's override. The retired inline-child flag does not control
+these agents.
 
 The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
 `@rally/contracts` — because a pin bypasses the rollout, so what it can reach

@@ -96,7 +96,6 @@ describe("which harness-run operations commit a directory projection", () => {
     storage.runIsActive({ runId: RUN });
     storage.triggerPartId({ runId: RUN });
     storage.staleLeaseRuns({ now: NOW + 90_000, limit: 10 });
-    storage.reapableInlineChildren({ now: NOW + 90_000, limit: 10 });
     storage.residualRepairCandidates({
       markerEventKey: "residual_receipts_settled", limit: 10,
     });

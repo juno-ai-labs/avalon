@@ -1,7 +1,10 @@
 import { parseRpcInput } from "../lib/rpc-input";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
+import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
+import { conversationParentStub } from "../services/conversation-parent-client";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
@@ -223,6 +226,8 @@ import {
 } from "./workstream-object-product";
 import {
   AdmitExternalMessageInputSchema,
+  AdmitAgentMessageInputSchema,
+  type AdmitAgentMessageInput,
   AnswerExternalElicitationInputSchema,
   ExternalMessageAdmissionResultSchema,
   type ExternalMessageAdmissionResult,
@@ -1980,6 +1985,85 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  /** Internal runtime metadata, never a transcript or a participant-facing inspection API. */
+  async agentRuntimeInfo() {
+    await this.initialized;
+    const identity = this.identityRows.identity();
+    if (!identity) return null;
+    const background = this.state.storage.sql.exec<{ execution_principal_json: string; stopped_at: number | null }>(
+      "SELECT execution_principal_json, stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0];
+    return {
+      name: identity.title, description: identity.description,
+      status: background?.stopped_at != null ? "stopped" : this.loop.loop()?.status ?? "idle",
+      background: !!background,
+      executionPrincipal: background ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json)) : null,
+    };
+  }
+
+  async initializeBackgroundAgent(input: { executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"] }) {
+    await this.initialized;
+    const principal = ExecutionPrincipalSchema.parse(input.executionPrincipal);
+    this.state.storage.sql.exec(
+      "INSERT OR IGNORE INTO background_agent (id, execution_principal_json) VALUES (1, ?)", JSON.stringify(principal),
+    );
+  }
+
+  /** Ownership is resolved by the host's workspace team authority before this RPC. */
+  async stopOwnedAgent() {
+    await this.initialized;
+    this.state.storage.transactionSync(() => {
+      const now = Date.now();
+      // Hold future admissions; never terminate or settle an active Bind step
+      // here. Active execution observes the same fenced stop as foreground work.
+      this.state.storage.sql.exec("UPDATE background_agent SET stopped_at = COALESCE(stopped_at, ?) WHERE id = 1", now);
+      const loop = this.loop.loop();
+      if (loop?.status === "executing" && loop.active_execution_id !== null
+        && loop.active_execution_epoch !== null && loop.lease_owner !== null) {
+        this.loop.requestStopInTransaction({
+          executionId: loop.active_execution_id,
+          executionEpoch: loop.active_execution_epoch, leaseOwner: loop.lease_owner,
+          expectedLoopRevision: loop.revision, reason: "stopped_by_parent", now,
+        });
+      }
+    });
+    return { stopped: true as const };
+  }
+
+  /** Persist a teammate input and request an independent loop activation. */
+  async admitAgentMessage(input: AdmitAgentMessageInput): Promise<
+    { accepted: true; messageId: string } | { accepted: false; code: string }
+  > {
+    await this.initialized;
+    const request = AdmitAgentMessageInputSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.workstreamId
+      || agentIdForAddress({
+        parentKind: identity.parentKind, parentId: identity.parentId,
+        substreamId: asSubstreamId(this.externalSubstreamId()),
+      }) !== request.recipientAgentId) return { accepted: false, code: "agent_destination_mismatch" };
+    const parent = await conversationParentStub(this.env, {
+      workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId,
+    });
+    const authority = await parent.authority({ workspaceId: asWorkspaceId(identity.workspaceId), parentId: identity.parentId });
+    if (!authority.exists || authority.archived) return { accepted: false, code: "workstream_archived" };
+    if (authority.authorityGeneration !== this.objectStore.realtimeAuthorityGeneration()) {
+      return { accepted: false, code: "workstream_authority_generation_stale" };
+    }
+    try {
+      const result = await this.product.admitSystemActivation(request);
+      if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
+      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+      return { accepted: true, messageId: result.turn.turnId };
+    } catch (error) {
+      if (error instanceof Error && error.message === "workstream_archived") {
+        return { accepted: false, code: "workstream_archived" };
+      }
+      throw error;
+    }
+  }
+
   /** Authoritative current readers for privacy decisions made outside this object. */
   async sidekickAttachments(input: { workspaceId: string; workstreamId: string; removeId?: string }): Promise<string[]> {
     await this.initialized;
@@ -3353,7 +3437,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `SELECT archived_at FROM workstream WHERE id = 1`,
     ).toArray()[0];
     if (authority && authority.archived_at !== null) return null;
+    const backgroundStopped = this.state.storage.sql.exec<{ stopped_at: number | null }>(
+      "SELECT stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0]?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
+    // A stopped agent can still recover its active lease to let Bind settle
+    // the stop and any tool receipts. Only a new execution is held here.
+    if (backgroundStopped && loop.status !== "executing") return null;
     if (loop.status === "executing") {
       if (loop.lease_expires_at === null || loop.active_execution_id === null
         || loop.active_execution_epoch === null || loop.lease_expires_at > now) return null;
@@ -3396,6 +3486,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
         seed: DemoSeedSchema.nullable().optional(),
+        agentExchange: AgentExchangeSchema.optional(),
       }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
@@ -3409,6 +3500,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         triggerMessageId: pending.prepared_turn_id,
         activityId: null,
         executionPrincipal: authorization.executionPrincipal,
+        ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
+        backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -4576,6 +4669,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         final_turn_id: outcome.finalTurnId,
       });
     }
+    if (input.backgroundAgent && outcome.status === "failed") {
+      await new AgentCommunicationService(this.env, input).notifyFailure(outcome.error?.code ?? "unknown reason");
+    }
+    // Hidden workers publish results only through explicit messaging tools. Their
+    // local final response must not be projected into the parent's Slack room.
+    if (input.backgroundAgent) return settlementDiagnosticCode;
     const elicitationMessage = outcome.status === "needs_input"
       ? await this.product.elicitationMessageForRunForRuntime(input.harnessRunId)
       : null;
@@ -4584,6 +4683,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // cleanup may still run without a final turn, but no adapter may invent or
     // stream response prose that the canonical transcript does not contain.
     const text = canonicalExternalResultText(message);
+
     if (input.digestDeliveryId) {
       await settleDigestRun(
         this.env,

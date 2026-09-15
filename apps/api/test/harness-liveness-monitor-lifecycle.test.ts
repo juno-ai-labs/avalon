@@ -26,22 +26,16 @@ function expectOrdered(source: string, markers: readonly string[]): void {
 }
 
 describe("what a run may consult, and what it may do", () => {
-  it("offers the built-in library to roots and inline children while child writes remain denied", () => {
+  it("offers the built-in library through the shared substream harness", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
+      "function azureInferenceConfig(",
     );
-    // Offered to both live run kinds. Withholding a skill would hide advice and
-    // never authority, and would hide a future general skill along with it.
+    // Foreground and background substreams use this same harness. Skills
+    // offer guidance; normal tool authorization still decides execution.
     expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)]");
 
-    const inlineChild = section(
-      "function createInlineChildAgentTool(",
-      "async function recordOpenRouterInferenceAttempt(",
-    );
-    // What the read-only child may *do* is decided by tool mode before the call.
-    expect(inlineChild).toContain('rejectToolModesBeforeCall(\n              ["write"],');
-    expect(inlineChild).toContain("skills: [...BUILT_IN_SKILLS]");
+
   });
 
 });
@@ -50,16 +44,11 @@ describe("what a run reports when Bind refuses a tool result", () => {
   it("wires the rejection port the production run would otherwise drop on the floor", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
+      "function azureInferenceConfig(",
     );
 
-    // Bind synthesizes a rejected tool result rather than throwing, so the
-    // model reads it and nothing else does unless this port is wired. The one
-    // that makes it matter is `InputBlockedBySuspendError`: Bind declines to
-    // append a participant steer that arrived while an elicitation is open,
-    // and that steer is already committed to this repository's ledger — so
-    // without a line here the drop is silent and the invalid replay order it
-    // sets up has no antecedent to search for.
+    // Bind synthesizes rejected tool results rather than throwing them. Keep
+    // the rejection port so the model-facing refusal has an operational record.
     expect(root).toContain("onToolCallRejected: ({ toolCallId, code }) => {");
     expect(root).toContain('logStructuredEvent(env, "warn", "agent_tool_call_rejected", {');
     // Queryable fields, not prose: Workers Logs filters on these.
@@ -73,7 +62,7 @@ describe("harness liveness-monitor lifetime", () => {
   it("starts the root monitor only after fallible pre-inference setup", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
+      "function azureInferenceConfig(",
     );
 
     expectOrdered(root, [
@@ -91,21 +80,5 @@ describe("harness liveness-monitor lifetime", () => {
     ]);
   });
 
-  it("does not start the child monitor until its fallible tool surface exists", () => {
-    const child = section(
-      "function installInlineChildAgentTool(",
-      "async function recordOpenRouterInferenceAttempt(",
-    );
 
-    expectOrdered(child, [
-      "await createInlineChildHarnessSurface({",
-      "await childLiveness.pulse(\"inference_start\", true);",
-      "const childMonitor = childLiveness.startMonitor(5_000);",
-      "try {",
-      "await persistInlineChildScope(",
-      "const outcome = await runHarness({",
-      "} finally {",
-      "await childMonitor.stop();",
-    ]);
-  });
 });

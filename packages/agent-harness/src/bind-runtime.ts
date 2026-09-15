@@ -2972,7 +2972,9 @@ function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
     modeByWireName.set(wireName, harnessTool.definition.mode);
     defined.push(defineTool({
       name: harnessTool.definition.name,
-      description: harnessTool.definition.description,
+      description: harnessTool.definition.longRunning
+        ? `${harnessTool.definition.description}\nThis call may take a while. Consider delegating it to keep the participant conversation available. If you are already a background agent, or the call returns without waiting, use it directly when appropriate.`
+        : harnessTool.definition.description,
       schema: z.unknown(),
       rawJsonSchema: harnessTool.definition.inputSchema,
       annotations: {
