@@ -124,9 +124,7 @@ it('sets the APNs badge to unread and needs-input work streams in this workspace
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
-  for (const call of send.mock.calls) {
-    expect(JSON.parse(String(call[2])).aps.badge).toBe(2);
-  }
+  expect(send.mock.calls.map((call) => JSON.parse(String(call.at(2))).aps.badge)).toEqual([2, 2]);
 });
 it('disables devices Apple reports unregistered', async () => {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'unregistered', timestamp: Date.now() + 1000 }));
