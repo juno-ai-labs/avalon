@@ -275,10 +275,12 @@ const SummaryRowSchema = TranscriptRowSchema.extend({
      * and `transcript_chapters` are `[String]`, `extended_sections` is
      * `[SummarySection]`), so `String` is not shorthand for a list.
      *
-     * The union is not only for that. The same page says a summary's fields are
-     * produced by "AI apps" an account can customize, so the documented string
-     * may still be what somebody else's workspace returns. Rejecting either
-     * shape breaks a real account.
+     * The union is not only for that, and the two halves rest on different
+     * things. Rejecting the array breaks the account this was read against —
+     * observed. Rejecting the documented string would refuse the provider's own
+     * published contract, which the same page says an account can vary through
+     * customizable "AI apps" — reasoned, with no string-returning account
+     * observed here. Accepting both refuses neither.
      *
      * Declaring only the documented one is what made every workspace
      * `get_meeting_summary` fail: the provider answered HTTP 200, this rejected
