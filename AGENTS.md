@@ -11,14 +11,14 @@ debugging, testing, and opening a PR do not authorize a production release or
 production data changes. Available credentials are not authorization.
 
 - Production releases use the repository's CI workflows from a reviewed,
-  immutable commit already merged into `main`. Do not upload, deploy, promote,
+  immutable commit already merged into `main`. **Never** upload, deploy, promote,
   or roll back production Workers directly from an agent session through
   Wrangler, a package script, the Cloudflare API/MCP, or the dashboard.
-- Do not push to `main`, merge or enable auto-merge, or dispatch/re-run a
+- **Never** push to `main`, merge or enable auto-merge, or dispatch/re-run a
   deployment workflow unless the user explicitly requested that release action.
-  Never use CI's ref input to deploy an unmerged branch. An authorized merge
+  **Never** use CI's ref input to deploy an unmerged branch. An authorized merge
   includes its normal automatic CI deployment; opening a PR does not.
-- **A Worker promotion can be a database migration.** Durable Object SQLite
+- **Before every production Worker promotion, verify its migration effects and compatibility with the schemas already in production.** Durable Object SQLite
   migrations run when objects initialize; no separate migration command is
   needed. Turning off CI's D1 migrations does not disable them.
 - Remote migrations and production data repair/cleanup outside the authorized
