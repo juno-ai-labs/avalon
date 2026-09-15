@@ -390,10 +390,28 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   Resolving a reply adds one metadata request and depends on that message still
   being readable at execution time.
 
+  Short ASCII subjects stay plain. Longer or non-ASCII subjects use UTF-8
+  encoded-words split at complete Unicode characters, including when a reply's
+  inherited subject exceeds the new-message input limit. Each encoded-word is
+  at most 75 characters and each physical line containing them at most 76,
+  including the `Subject:` prefix or continuation space, per
+  [RFC 2047 §2](https://www.rfc-editor.org/rfc/rfc2047.html#section-2).
+  Folding whitespace between encoded-words does not change the decoded subject;
+  original spaces stay inside the encoded text. Input CR/LF is neutralized
+  before serialization.
+
   `EmailArgsSchema` supplies both runtime validation and the advertised schema
   through `z.toJSONSchema(..., { io: "input" })`. Its new/reply union is nested
   under `message` so the root remains an object across providers. Unknown fields
-  are rejected in both branches, including old flat arguments. The selected
+  are rejected in both branches by execution, including old flat arguments.
+  Bind's `toolWireDefinition` sanitizes even `rawJsonSchema` before Rally's root
+  repair. Its xAI compatibility pass removes `additionalProperties: false`, so
+  the final model schema is not a closed-object guarantee: explicit allowed-key
+  descriptions survive on each branch, and execution remains strict. Ignoring
+  undeclared write options could change intent, such as turning an invented
+  `preview: true` into an actual send. The regression test captures the real
+  harness HTTP request, checks declared-field constraints against execution,
+  and checks that the allowed-key guidance survives. The selected
   plugin's worked examples show both kinds for each granted write capability,
   with replies shown only when read access is granted. Callers using older flat arguments need the refreshed tool definition
   before retrying.
@@ -1165,12 +1183,15 @@ message id, recipients, and body, and the adapter fetches the original subject
 and threading headers under the same connection. One Zod schema defines both
 advertised inputs and runtime validation. Threading headers are deduplicated
 with a Set and folded between IDs, with byte validation ensuring that even an
-indivisible UTF-8 ID fits on one physical line.
+indivisible UTF-8 ID fits on one physical line. Long and Unicode subjects use
+independently decodable, folded encoded-words. Allowed-key descriptions survive
+Bind's compatibility sanitizer, and wire tests now inspect the actual request
+rather than a schema that has only passed Rally's root repair.
 
 **Why:** Two fixes to examples and error wording still left a production run
 making nine rejected sends. Nonempty reply placeholders satisfied the advertised
 schema but failed the executor, and the model repeated the same invalid shape.
-The 2026-09-15 new-email-example change below improved guidance but could not
+The 2026-09-14 new-email-example change below improved guidance but could not
 remove that contradictory contract or the unnecessary threading work assigned
 to the model.
 
@@ -1179,6 +1200,14 @@ array scans and single-line References join. Forty ordinary ancestor IDs already
 produced a 1,032-byte line, beyond the protocol maximum; the old 50-ID input cap
 did not guarantee a valid line either. Processing and folding the chain in linear
 time preserves the history without making long conversations expensive to send.
+Subject encoding had the same physical-line defect: 400 accented characters
+became a 1,089-byte line, and one large encoded-word also violated RFC 2047.
+
+The first regression check missed Bind's intermediate sanitizer. That pass
+deliberately drops `additionalProperties: false` because xAI rejected nested
+boolean schemas; the final model contract therefore cannot promise rejection
+of unknown keys. Explicit branch guidance and a real request-boundary test make
+that limitation visible while keeping execution strict.
 
 **Considered and rejected:** Another prompt/error repair or accepting more
 placeholder spellings would keep that ambiguity. Separate new/reply tool names
@@ -1193,6 +1222,13 @@ An ancestor-count cap would discard valid history while still admitting an
 oversized individual ID. Folding preserves the chain, and the existing metadata
 response bound covers total input size.
 
+Restoring `additionalProperties: false` globally would reinstate a documented
+xAI request failure. Silently stripping unknown write fields would violate the
+tool policy and risk discarding caller intent. Alternate schema keywords are
+not uniformly supported across the routed providers, so this change retains
+strict execution and explicit allowed-key descriptions instead of claiming
+universal closed-object enforcement in the model schema.
+
 **Consequences:** Replies require read access and one metadata fetch before the
 write. Recipients stay explicit; unreadable or unthreadable originals produce a
 field-named error before any write. Existing flat inputs are deliberately
@@ -1200,7 +1236,10 @@ rejected, so callers need refreshed tool definitions. A parent Message-ID that
 cannot fit on a continuation line is refused before the write; an oversized
 ancestor is omitted without truncating any ID. The tests use synthetic messages
 and inspect provider requests, including long duplicate-heavy chains and ASCII
-and UTF-8 byte boundaries; they do not send live email.
+and UTF-8 byte boundaries; they do not send live email. Required fields, kinds,
+and declared-value constraints are checked after the real harness serialization
+path. Unknown-key rejection remains an execution guarantee, not a guarantee
+of every provider-facing schema.
 
 PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
 
