@@ -85,6 +85,8 @@ export const AdmitAgentMessageInputSchema = z.strictObject({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   agentExchange: AgentExchangeSchema,
   recipientAgentId: AgentIdSchema,
+  /** Host settlement notices do not resume a stopped recipient. */
+  resumeStopped: z.boolean().optional(),
   attachmentIds: z.array(IdSchema).max(10).default([]),
   executionPrincipal: ExecutionPrincipalSchema,
   origin: z.literal("agent_message"),

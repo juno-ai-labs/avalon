@@ -39,6 +39,8 @@ Discovery reads a team's roster after checking the requester belongs to it.
 Send requires a shared team. The host prefers the incoming exchange's scope;
 otherwise the stable first common team supplies the scope. Reply uses the
 received message's original sender and team, and only its recipient can reply.
+Replies to Sidekick authoring conversations recheck current Sidekick access;
+permanent team membership does not preserve revoked domain access.
 
 `agent_message_routes` stores addresses, not bodies or delivery receipts.
 Recording a route does not prove a recipient accepted a message: recipient
@@ -89,7 +91,9 @@ A failed background run emits one host notice to its owning parent:
 `Agent failed due to <reason>. Id: <id>`. The reason is the terminal diagnostic
 code (or `unknown reason` when unavailable), and the ID identifies the agent.
 The run supplies stable delivery identity, so settlement retries cannot duplicate
-the notice. An archived parent refuses admission without blocking settlement.
+the notice. A failure notice preserves a stopped parent’s admission hold; it
+remains pending until an explicit continuation resumes the parent. An archived
+parent refuses admission without blocking settlement.
 The model sends any needed reply before finishing through Bind's ordinary final
 response. No `end_turn` tool or separate silent-completion receipt is required.
 Explicit sends use durable tool effect identities and ordinary admission replay;

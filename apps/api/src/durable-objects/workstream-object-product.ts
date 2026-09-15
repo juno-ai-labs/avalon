@@ -3662,7 +3662,7 @@ export class WorkstreamObjectProductService {
           prepared,
           preparation.loop_id,
         );
-        if ("agentExchange" in input && completed.outcome === "admitted") {
+        if ("agentExchange" in input && input.resumeStopped !== false && completed.outcome === "admitted") {
           // Continuation and admission are one durable transition. Replaying
           // an older message must never clear a stop requested after it.
           this.storage.sql.exec("UPDATE background_agent SET stopped_at = NULL WHERE id = 1");
