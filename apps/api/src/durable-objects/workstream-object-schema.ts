@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 56;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 57;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3018,6 +3018,24 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         attempt_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
         active INTEGER NOT NULL CHECK (active IN (0, 1))
+      ) STRICT`,
+    ],
+  },
+  {
+    version: 57,
+    description: "separate provider observations from terminal retention intent",
+    statements: [
+      `CREATE TABLE terminal_provider_observation (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        sandbox_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        request_id TEXT NOT NULL,
+        requested_at INTEGER NOT NULL,
+        next_observe_at INTEGER NOT NULL,
+        observed_at INTEGER,
+        state TEXT,
+        recoverable INTEGER CHECK (recoverable IN (0, 1)),
+        error_code TEXT
       ) STRICT`,
     ],
   },

@@ -116,6 +116,7 @@ function provider(): TerminalSandboxProvider {
       state: "running" as const,
       domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
     })),
+    recoverSandbox: vi.fn(async () => undefined),
     startSandbox: vi.fn(async () => undefined),
     stopSandbox: vi.fn(async () => undefined),
     archiveSandbox: vi.fn(async () => undefined),

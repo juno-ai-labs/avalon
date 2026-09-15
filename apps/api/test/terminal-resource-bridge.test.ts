@@ -172,7 +172,8 @@ function fixture(
   });
   const env = baseEnv;
   const provider: TerminalSandboxProvider = {
-    createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
+    createSandbox: vi.fn(), getSandbox: vi.fn(), recoverSandbox: vi.fn(async () => undefined),
+    startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
     configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
     readFile: vi.fn(), writeFile: vi.fn(async () => undefined),
     runUtilityCommand: vi.fn(),

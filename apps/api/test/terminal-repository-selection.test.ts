@@ -163,6 +163,7 @@ async function fixture(input?: {
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(),
     getSandbox: vi.fn(),
+    recoverSandbox: vi.fn(async () => undefined),
     startSandbox: vi.fn(async () => undefined),
     stopSandbox: vi.fn(),
     archiveSandbox: vi.fn(),
