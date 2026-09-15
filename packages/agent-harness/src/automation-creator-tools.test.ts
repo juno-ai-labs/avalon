@@ -192,13 +192,13 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("personal");
     expect(systemMessage).toContain("workspace");
     expect(systemMessage).toContain("workstream");
-    expect(systemMessage).toContain("cannot be changed afterwards");
+    expect(systemMessage).toContain("Published scope cannot change");
     expect(systemMessage).toContain("Use the scope already selected");
     expect(systemMessage).toContain("Do not ask participants to choose it again");
     // The room an automation belongs to is the one it was written in, so an
     // agent offering to deliver somewhere else is offering something that does
     // not exist.
-    expect(systemMessage).toContain("never deliver into a different work stream");
+    expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
   });
 
   it("publishes ready submissions without a separate activation tool", () => {
