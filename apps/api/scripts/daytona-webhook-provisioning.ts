@@ -53,7 +53,7 @@ export async function provisionDaytonaWebhook(input: {
     if (page.done) break;
     if (!page.iterator || page.iterator === iterator) throw new Error("Svix endpoint pagination did not advance");
     iterator = page.iterator;
-  } while (true);
+  } while (iterator !== null);
   if (matches.length > 1) throw new Error("Multiple Svix endpoints already target this URL; reconcile the duplicate registrations first");
   // Adopt a manually registered endpoint too, preserving its signing secret.
   const endpointPath = `${collectionPath}/${encodeURIComponent(matches[0]?.id ?? uid)}`;
