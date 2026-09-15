@@ -26,6 +26,7 @@ export type TerminalProviderRequestOperation =
   | "secret.delete";
 
 export type TerminalUtilityOperation =
+  | "sandbox.readiness"
   | "path.resolve"
   | "file.inspect"
   | "file.read_page"
