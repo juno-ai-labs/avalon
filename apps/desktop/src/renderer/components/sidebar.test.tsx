@@ -210,6 +210,16 @@ describe('Sidebar work-stream markers', () => {
       .toBeLessThan(links.findIndex((text) => text?.includes('New shared activity')));
   });
 
+  it('keeps the unsent new work stream out of the sidebar', () => {
+    render(<MemoryRouter initialEntries={['/workstreams/new']}><Tooltip.Provider>
+      <Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()}
+        workspace={workspace} workstreams={[]} />
+    </Tooltip.Provider></MemoryRouter>);
+
+    expect(screen.queryByLabelText('New work stream draft')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'New work stream' })).toHaveAttribute('aria-current', 'page');
+  });
+
   it('reduces the GrokBot shell navigation to work streams', () => {
     render(
       <MemoryRouter>

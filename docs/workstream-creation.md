@@ -58,6 +58,13 @@ those things: it is the same message capsule at the same width on both sides of
 the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
+The launcher starts with focus in the opening-message text input, including
+when opened from a project. The composer is keyed by its draft identity so
+switching between project launchers also restores initial focus; that key stays
+stable throughout the launch hand-off. The sidebar lists existing work streams without a
+placeholder row for the unsent draft. Recipient selection remains available
+when the person chooses the recipient field.
+
 ### What moves
 
 Two things animate, and they are the whole transition:
@@ -376,6 +383,27 @@ see
 - These are component, stylesheet, and service tests, so none of them sees the
   transition. **A change to the animation or to either state's geometry still has
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
+
+## Changelog
+
+### 2026-09-14 — New work streams start with the opening message
+
+**What changed:** Both workspace and project launchers focus the message composer.
+The recipient picker starts closed, and the sidebar no longer lists an unsent
+draft as “New work stream.” The existing creation controls remain available.
+
+**Why:** The recipient-first focus made immediate typing search people instead
+of composing the opening message. The requested starting point is writing the
+message, without a placeholder suggesting a work stream already exists.
+Keeping the picker initially open and closing it from the composer's focus
+handler would make the starting state depend on a second control's mount event;
+it now starts closed directly.
+
+**Consequences:** Recipient selection opens when the person reaches the recipient
+field. Changing launcher draft identity remounts the composer to restore focus,
+while the same draft keeps its composer across the launch hand-off. Future launcher changes must preserve initial composer focus and keep
+unsent drafts out of the work-stream list. The earlier recipient-first launcher
+and sidebar-label changelog entries describe the behavior before this change.
 
 ### 2026-09-10 — Project-owned creation uses the message capsule too
 
