@@ -1569,6 +1569,34 @@ rows retain null and their original labels; later activity revisions preserve
 the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 
+## Active inference delay
+
+Substream migration 56 adds `inference_delay_status`, transient per-inference
+checkpoints and settlement tombstones. `inference_delay_changed` shares the
+normal sequenced, authorized conversation socket pipeline. It carries the root
+harness run, owning execution and lease attempt, parent attempt for children, inference request, turn, and
+active flag. Both root and inline child calls publish to their own conversation.
+The object checks the running root/execution and both current lease attempts before
+accepting a notice. A cleared attempt cannot become active again; terminal run
+status removes its checkpoints. First output initiates the attempt-scoped clear;
+status transport cannot block inference. Tombstones also fence activation delivery
+that finishes after its clear.
+Snapshots and resyncs use the same store query for `activeInferenceDelays`, selecting
+the current root of a running conversation and filtering out settled,
+expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
+
+## Changelog
+
+### 2026-09-14 — Keep slowdown notices scoped to a live inference
+
+The new 30-second first-output warning must survive a socket reconnect without
+surviving the inference itself. Conversation-owned checkpoints, lease checks,
+and settlement tombstones replace a client elapsed-time guess: old callbacks
+cannot resurrect a warning, and concurrent calls clear independently. These
+rows are runtime status, never transcript history or workspace-wide broadcasts.
+Children carry their parent attempt identity because a replacement parent may
+reuse the root run ID while an old child lease is still current.
+
 ### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
 
 **What changed:** the pending-input queue is no longer drained in arrival order

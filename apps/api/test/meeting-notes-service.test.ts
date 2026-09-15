@@ -87,6 +87,7 @@ describe("MeetingNotesService", () => {
         // cadence is the recovery, and the next tick reads the same transcript
         // window. Flattening this to the deployment budget makes a briefing wait
         // and re-ask inside a sixty-second wall clock.
+        ttftTimeoutMs: 45_000,
         transportRetries: 0,
       },
     });
@@ -207,6 +208,7 @@ describe("MeetingNotesService", () => {
     expect(captured!.config).toMatchObject({
       reasoningEffort: "medium",
       maxWallClockMs: 120_000,
+      ttftTimeoutMs: 45_000,
       // The final pass has no successor to defer to, so it takes the
       // deployment's budget rather than a literal that would outrank an
       // operator turning the retry off.

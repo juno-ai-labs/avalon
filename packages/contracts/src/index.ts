@@ -2689,6 +2689,17 @@ export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
 export const WORKSPACE_SOCKET_INVALID_MESSAGE_CODE = 4400;
 export const WORKSPACE_SOCKET_SESSION_INACTIVE_CODE = 4401;
 
+/** Transient status for one provider attempt within an active conversation run. */
+export const InferenceDelayStateSchema = z.object({
+  harnessRunId: IdSchema,
+  parentAttemptId: IdSchema.optional(),
+  executionId: IdSchema,
+  attemptId: IdSchema,
+  inferenceRequestId: IdSchema,
+  turnId: z.string().min(1),
+});
+export type InferenceDelayState = z.infer<typeof InferenceDelayStateSchema>;
+
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
@@ -2704,6 +2715,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     initialContextChunkCount: z.number().int().nonnegative().optional(),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
+    activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("initial_context_snapshot_chunk"),
@@ -2787,6 +2799,11 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), streamId: IdSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
   ServerEventBaseSchema.extend({
+    type: z.literal("inference_delay_changed"),
+    ...InferenceDelayStateSchema.shape,
+    active: z.boolean(),
+  }),
+  ServerEventBaseSchema.extend({
     type: z.literal("compaction_started"),
     compaction: AgentCompactionStateSchema,
   }),
@@ -2819,6 +2836,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     /** Preserves the explicit compaction indicator across replay-window loss. */
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
+    activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
   }),
   ServerEventBaseSchema.extend({
     type: z.literal("error"),
