@@ -749,7 +749,7 @@ characters.
 
 **Why:** A `ZodError` does not survive a Durable Object RPC hop. The serializer
 reduces it to a bare `Error` carrying no `issues`, no derived message and not
-even the name, so the calling object logs the five letters `ZodError` and
+even the name, so the calling object logs the bare word `ZodError` and
 stops.
 
 That was not a cosmetic loss. A Sidekick's registrations are written only by

@@ -23,6 +23,16 @@ const SetupResponse = z.object({
   connection: ConnectionSchema,
   manualRegistration: ConnectorManualRegistrationSchema.nullable(),
 });
+// The identifying fields of the refusal's log entry, and only those: the entry
+// also carries a timestamp, region and build, which say nothing about which
+// delivery was refused.
+const RefusalLog = z.object({
+  event: z.literal('connector_webhook_event_refused'),
+  connector_type: z.string(),
+  connection_id: z.string(),
+  event_type: z.string(),
+  code: z.string(),
+});
 const ApiFailure = z.object({
   error: z.object({
     code: z.string(),
@@ -55,6 +65,10 @@ async function fixture(options: { connectorEnabled?: boolean } = {}) {
   ]);
   const testEnv = {
     ...env,
+    // `wrangler.test.jsonc` runs the suite at `error`, which drops every
+    // `logWarn` — including the refusal diagnostic asserted below, whose
+    // assertion would otherwise pass against an empty list forever.
+    LOG_LEVEL: 'warn' as const,
     SESSION_SIGNING_KEY: sessionKey,
     CONNECTOR_CREDENTIALS_KEY: envelopeKey,
     CONNECTOR_CREDENTIALS_KEY_VERSION: '1',
@@ -279,15 +293,27 @@ describe('the Fireflies workspace installation', () => {
     // anchor Fireflies gives, since it signs the body and nothing else.
     expect((await f.deliver(connection.id, payload('meeting.summarized', 'meeting-1', Date.now() - 7_200_000), secret)).status).toBe(401);
     // Verified, and still refused: an event this connector does not handle.
+    // The log line is the half that matters and the half the response cannot
+    // prove: `request_failed` never records a refusal's message and withholds
+    // its detail values, so without this entry an operator reading Workers Logs
+    // sees `request_failed 400 unsupported_webhook_event` and cannot tell which
+    // delivery it was. Asserted in-isolate, on the real `console.warn` the
+    // logger writes through.
+    const warnings = vi.spyOn(console, 'warn');
     const botJoined = await f.deliver(connection.id, payload('meeting.bot_joined'), secret);
     expect(botJoined.status).toBe(400);
     const refusal = ApiFailure.parse(botJoined.body).error;
     expect(refusal.code).toBe('unsupported_webhook_event');
-    // The refusal names the event it refused. Without it the operator sees only
-    // `request_failed 400 unsupported_webhook_event`, which cannot distinguish
-    // an event Rally has no reason to model from one it was meant to handle.
     expect(refusal.message).toContain('meeting.bot_joined');
     expect(refusal.details).toEqual({ provider: 'fireflies', eventType: 'meeting.bot_joined' });
+    expect(warnings.mock.calls.map(([entry]) => RefusalLog.safeParse(entry).data).filter(Boolean)).toEqual([{
+      event: 'connector_webhook_event_refused',
+      connector_type: 'fireflies',
+      connection_id: connection.id,
+      event_type: 'meeting.bot_joined',
+      code: 'unsupported_webhook_event',
+    }]);
+    warnings.mockRestore();
 
     await f.drainQueue('event');
     expect(await f.activities()).toEqual([]);
