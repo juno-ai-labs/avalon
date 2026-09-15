@@ -218,9 +218,17 @@ export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
  * tile — 60px in the sidebar, 36px in the rail — instead of holding a pixel
  * size and swelling as the shape around it shrinks, which is the same reason
  * the new-Sidekick outline is stroked in these units.
+ *
+ * X and Y are separate because Lucide `Play` is not centred in its 24-unit
+ * box: the triangle's lowest vertex sits at about 20.73, so a shared origin
+ * that looks right on the right edge leaves that vertex a noticeable gap
+ * above the hexagon's bottom (the path's bottom vertex is at y=98). Y is the
+ * origin that puts that vertex just above that edge (`74 + 20.73 * 26 / 24 ≈
+ * 96.5`); X stays on the right.
  */
 const MARKER_BOX = 26;
-const MARKER_ORIGIN = 69;
+const MARKER_X = 69;
+const MARKER_Y = 74;
 
 /**
  * How wide the knockout is stroked, in the marker's own 24-unit box. A stroke
@@ -297,7 +305,7 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
             <marker.symbol
               className="automation-glyph-knockout" fill="black" overflow="visible" size={MARKER_BOX}
               stroke="black" strokeLinejoin="round" strokeWidth={MARKER_KNOCKOUT}
-              x={MARKER_ORIGIN} y={MARKER_ORIGIN}
+              x={MARKER_X} y={MARKER_Y}
             />
           </mask>
         </defs>
@@ -331,12 +339,12 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
             answers `visiblePainted` while painting nothing; `fill="none"` would
             be invisible to the pointer too.
           */}
-          <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+          <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_X} y={MARKER_Y} />
           {/* Solid rather than stroked: at the rail's 36px the marker is about 7px
               across, where a 2-unit outline is most of the symbol and the shape
               stops reading as a play at all. */}
           <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
-            x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+            x={MARKER_X} y={MARKER_Y} />
         </g>
       )}
     </svg>
