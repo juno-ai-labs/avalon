@@ -138,11 +138,19 @@ to update.
 
 If the catalog has no slug — Ashby and Fireflies today — a local component in
 `apps/desktop/src/renderer/lib/brand-marks/` draws the company's own mark the
-same way: `currentColor`, through `ConnectorMark`, one file per brand. Ashby's
-is the product icon (a serif A punched from the rounded square at
-`ashbyhq.com/favicon.png`), not the stacked marketing lockup. A Lucide or Tabler
-stand-in is not a company mark and is not the fallback. The generic plug is only
-for a connector that has not been named in the table yet.
+same way: `currentColor`, through `ConnectorMark`, one file per brand. A Lucide
+or Tabler stand-in is not a company mark and is not the fallback. The generic
+plug is only for a connector that has not been named in the table yet.
+
+The local file has to fill the same square slot the catalogued marks do.
+`.connector-mark` is a square box and the SVG scales by height, so a tall
+lockup draws as a sliver — Ashby's stacked marketing mark was 7.5px wide in
+the 16px box. Use the company's square product icon (Ashby's is the serif A
+punched from the rounded square at `ashbyhq.com/favicon.png`), drop the
+wordmark, paint in `currentColor`, and ship no element ids or `url(#…)`
+references: two cards on Settings would duplicate them, which is why Google's
+`default` art is refused. Look at it at 14px, 15px, and 16px in a real window
+before it ships; a passing DOM test does not catch a half-width glyph.
 
 Not every glyph is a company. The two virtual groups, the public web, and an
 inbound webhook are shapes no brand owns and keep their Tabler line icons; an
