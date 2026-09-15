@@ -790,7 +790,8 @@ export interface ConnectorAdapter {
     ok: boolean;
     message: string;
     /**
-     * Why the check failed, in the adapter's own fixed vocabulary, for the log.
+     * Why the check failed, or why an `ok` result carries a `warning`, in the
+     * adapter's own fixed vocabulary, for the log.
      *
      * `message` cannot serve: an adapter is free to return a caught provider
      * error's text there — X returns the body's own `message` field — and that

@@ -277,13 +277,12 @@ Three of seven, and one of three polling streams withheld outright.
 
 ## Granola
 
-One of four.
+One of three.
 
 | Activity type | Digestible | Reason |
 | --- | --- | --- |
 | `note.generated` | Yes | The meeting note was written for the first time; effectively "the meeting happened". |
-| `note.regenerated` | No | Granola improving its own earlier output. |
-| `note.edited` | No | A revision to a note already reported. |
+| `note.edited` | No | A revision to a note already reported, including Granola regenerating its own earlier output. |
 | `note.access_granted` | No | A permission change, not something that happened. |
 
 ## Fireflies
