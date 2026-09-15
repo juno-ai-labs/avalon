@@ -224,7 +224,6 @@ export function WorkspaceSocketProvider({
     const releaseData = retainQueryData(queryClient, [
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
-      SIDEBAR_LIST_QUERY_KEYS.notes,
       PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY, CLIENT_FEATURE_FLAGS_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
