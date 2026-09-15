@@ -5,7 +5,6 @@ import { sha256Hex } from "../../lib/crypto";
 import type { AcquiredTerminalSandbox, TerminalSandboxCoordinator } from "./coordinator";
 import {
   DAYTONA_REQUEST_TIMEOUT_MS,
-  isTerminalProviderNotFound,
   type TerminalSandboxProvider,
 } from "./provider-contract";
 import type {
@@ -743,8 +742,9 @@ export function createDaytonaTerminalRuntime(
       }
       try {
         return await provider.readFile(sandbox.providerSandboxId, path);
-      } catch (error) {
-        if (isTerminalProviderNotFound(error)) return null;
+      } catch {
+        // Only the successful filesystem inspection above establishes absence.
+        // A download 404 can instead mean the toolbox is temporarily unavailable.
         throw new TerminalToolError(
           "file_read_failed",
           "The file could not be read. Use terminal_run_command with `ls -l` or `file` to verify that it exists and is a regular file.",

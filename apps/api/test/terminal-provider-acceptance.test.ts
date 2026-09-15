@@ -7,7 +7,8 @@ describe("Terminal provider acceptance lifecycle", () => {
     const events: string[] = [];
     const provider = {
       stopSandbox: vi.fn(async () => { events.push("stop"); }),
-      startSandbox: vi.fn(async () => { events.push("start"); }),
+      recoverSandbox: vi.fn(async () => undefined),
+    startSandbox: vi.fn(async () => { events.push("start"); }),
       archiveSandbox: vi.fn(async () => { events.push("archive"); }),
     };
     const verifyWorkspace = vi.fn(async (phase: "restart" | "restore") => {

@@ -3043,8 +3043,15 @@ export class WorkstreamObjectProductService {
               expire_due_at, lifecycle_claim_expires_at
          FROM terminal_workspace WHERE id = 1`,
     ));
+    const observation = first(this.storage.sql.exec<{ next_observe_at: number }>(
+      `SELECT o.next_observe_at FROM terminal_provider_observation o
+        JOIN terminal_workspace w ON w.id = o.id
+          AND w.sandbox_id = o.sandbox_id AND w.generation = o.generation
+        WHERE o.id = 1`,
+    ));
     const terminalCandidates = terminal?.sandbox_id
       ? [
+          observation?.next_observe_at ?? 0,
           terminal.lifecycle_state === "running" ? terminal.idle_expires_at : null,
           terminal.lifecycle_state === "stopped" ? terminal.archive_due_at : null,
           terminal.expire_due_at,
