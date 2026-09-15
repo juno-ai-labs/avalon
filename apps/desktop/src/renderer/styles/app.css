@@ -2969,7 +2969,8 @@ pre {
    arrow is the only thing that says this row is a substream, and at 10% it
    read as a smudge beside a title drawn in full ink. */
 .workstream-substream-arrow { color: var(--av-sys-color-text-muted); transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
-.workstream-new-substream { color: var(--av-sys-color-text-muted); }
+.workstream-new-substream,
+.workstream-add-sidekick { color: var(--av-sys-color-text-muted); }
 /* The row of a substream that does not exist yet: a place held, not a
    destination. It takes the selected background like the conversation it
    is about to be, and none of the pointer affordances, because there is
@@ -6979,21 +6980,19 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
+.sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
+.sidekick-recommendation:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.sidekick-recommendation-tooltip { max-width: 280px; white-space: normal; }
+.workstream-context-sidebar.is-compact .sidekick-recommendation { display: none; }
+.sidekick-picker-search { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; padding: 10px 12px; width: 100%; }
+.sidekick-picker-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
+.sidekick-picker-list .button { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; width: 100%; }
+.sidekick-picker-list .button > span { color: var(--av-sys-color-text-muted); }
 /* The hexagon in the 36px slot every other row in this rail marks itself with,
    drawn a little inside it so the shape's own points are not the row's edge. */
 .workstream-context-sidekick-glyph { display: block; height: 28px; width: 28px; }
-/* Beside the row rather than under it, so every Sidekick occupies one row of
-   the same height whether or not it can be detached — a control on its own
-   line put a ragged gap between rows that are otherwise identical. It travels
-   the compact interval and is clipped to nothing rather than `display: none`,
-   so it fades with the copy it sits next to instead of vanishing a frame
-   ahead of the edge. */
 .sidekick-section-list > li { align-items: center; display: flex; }
 .sidekick-section-list > li > .workstream-context-row { min-width: 0; }
-.sidekick-section-remove { background: transparent; border: 0; border-radius: 6px; color: var(--av-sys-color-text-muted); flex: 0 0 auto; font: inherit; font-size: 11px; overflow: hidden; padding: 4px 6px; transition: opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
-.sidekick-section-remove:hover { color: var(--av-sys-color-text-default); }
-.sidekick-section-remove:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
-.workstream-context-sidebar.is-compact .sidekick-section-remove { opacity: 0; padding: 0; visibility: hidden; width: 0; }
 
 /* The two navigation rails share square controls and symmetric gutters. */
 .workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }

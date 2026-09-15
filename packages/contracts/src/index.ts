@@ -3706,6 +3706,7 @@ export type SidekickSkillSource = z.infer<typeof SidekickSkillSourceSchema>;
 export const SidekickSkillSnapshotSchema = z.object({
   sources: z.array(SidekickSkillSourceSchema),
   activeRefs: z.array(z.string()),
+  recommendedRefs: z.array(z.string()).optional(),
 });
 export type SidekickSkillSnapshot = z.infer<typeof SidekickSkillSnapshotSchema>;
 

@@ -118,7 +118,7 @@ export const AVALON_SKILLS_SYSTEM_MESSAGE = [
 
 export interface SkillRuntime {
   /** Tier-1 catalog for this run, in the harness's total order. */
-  summaries: readonly SkillSummary[];
+  summaries: readonly (SkillSummary & { recommended?: boolean })[];
   /** Refs loaded so far. Mutated in place by activation; read by the prompt render. */
   activeRefs: Set<string>;
   /** Wrapped bodies for the active set, in the same total order as the catalog. */
@@ -190,7 +190,7 @@ export async function createSkillRuntime(input: {
 
   const summaries = registry.summaries(
     input.eligiblePlugins === undefined ? undefined : { availablePlugins: input.eligiblePlugins },
-  );
+  ).map((summary) => ({ ...summary, recommended: input.skills.some((skill) => skill.name === summary.name && skill.recommended) }));
   const byName = new Map(summaries.map((summary) => [summary.name, summary]));
   const activeRefs = new Set<string>();
   const loadedShas: Record<string, string> = {};
