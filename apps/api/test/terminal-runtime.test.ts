@@ -348,15 +348,30 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/src/file.txt");
   });
 
+  it.each([400, 404])("uses the real file read on a healthy sandbox and retains it after HTTP %s", async (status) => {
+    const { provider, runtime, objectStore } = fixture();
+    const unavailable = Object.assign(new Error("file endpoint unavailable"), { status });
+    vi.mocked(provider.readFile).mockRejectedValueOnce(unavailable);
+    await expect(runtime.readFile(context, "src/file.txt")).rejects.toMatchObject({ code: "file_read_failed" });
+    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/src/file.txt");
+    expect(vi.mocked(provider.runUtilityCommand).mock.calls.some(([, input]) => input.operation === "sandbox.readiness")).toBe(false);
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.startSandbox).not.toHaveBeenCalled();
+    await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-runtime" });
+  });
+
   it("reads a bounded text page inside the sandbox without downloading the file", async () => {
     const { provider, runtime } = fixture();
 
     await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toEqual({
       content: "hello", startLine: 1, endLine: 1, totalLines: 1, truncated: false,
     });
-    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(2);
+    expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
     expect(provider.runCommand).not.toHaveBeenCalled();
-    expect(vi.mocked(provider.readFile).mock.calls.filter(([, path]) => path !== "/etc/hostname")).toEqual([]);
+    expect(provider.readFile).not.toHaveBeenCalled();
   });
 
   it("rejects a text line larger than the page budget instead of returning a stuck cursor", () => {
@@ -379,7 +394,7 @@ describe("Daytona Terminal runtime", () => {
 
   it("maps an oversized text line to an actionable limit error", async () => {
     const { provider, runtime } = fixture();
-    vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" }).mockResolvedValueOnce({
+    vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({
       exitCode: 51, stdout: String(256 * 1_024 + 1), stderr: "",
     });
 
@@ -419,7 +434,7 @@ describe("Daytona Terminal runtime", () => {
     expect(acquire).toHaveBeenCalledOnce();
     expect(prepareSandbox).toHaveBeenCalledOnce();
     expect(provider.createSandbox).toHaveBeenCalledOnce();
-    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(65);
+    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(64);
   });
 
   it("reacquires after the cached operation lease expires", async () => {
@@ -442,11 +457,11 @@ describe("Daytona Terminal runtime", () => {
 
   it("cleans an uploaded write temp file after a provider request failure", async () => {
     const { provider, runtime } = fixture();
-    vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" }).mockRejectedValueOnce(new Error("provider unavailable"));
+    vi.mocked(provider.runUtilityCommand).mockRejectedValueOnce(new Error("provider unavailable"));
 
     await expect(runtime.writeFile(context, "src/new.txt", new TextEncoder().encode("new")))
       .rejects.toThrow("provider unavailable");
-    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(3);
+    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(2);
     expect(provider.runUtilityCommand).toHaveBeenLastCalledWith("sandbox-runtime", expect.objectContaining({
       operation: "file.temp_cleanup",
       command: expect.stringMatching(/^rm -f -- /u),
@@ -456,7 +471,7 @@ describe("Daytona Terminal runtime", () => {
   it("rejects a provider-resolved symlink escape before reading bytes", async () => {
     const { provider, runtime } = fixture();
     await expect(runtime.readFile(context, "escape/file.txt")).rejects.toBeInstanceOf(TerminalToolError);
-    expect(vi.mocked(provider.readFile).mock.calls.filter(([, path]) => path !== "/etc/hostname")).toEqual([]);
+    expect(provider.readFile).not.toHaveBeenCalled();
   });
 
   it("refuses stale command admission after a stopped run hands off the lease", async () => {
@@ -595,7 +610,7 @@ describe("Daytona Terminal runtime", () => {
   it("quotes parent-directory creation for deliberate writes whose paths contain spaces", async () => {
     const { provider, runtime } = fixture();
     await runtime.writeFile(context, "reports/august result.txt", new TextEncoder().encode("result"));
-    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(2);
+    expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
     expect(provider.runUtilityCommand).toHaveBeenLastCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining('dirname -- "$target"'),
     }));
@@ -766,7 +781,7 @@ describe("Daytona Terminal runtime", () => {
     )).rejects.toMatchObject({ code: "sandbox_busy" });
     expect(linkedReadSettled).toBe(false);
     expect(provider.startSandbox).not.toHaveBeenCalled();
-    expect(vi.mocked(provider.readFile).mock.calls.filter(([, path]) => path !== "/etc/hostname")).toEqual([]);
+    expect(provider.readFile).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -777,11 +792,11 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.stopSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-runtime");
-    expect(provider.readFile).toHaveBeenCalledTimes(3);
+    expect(provider.readFile).toHaveBeenCalledTimes(2);
     expect(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0]!);
     expect(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(provider.readFile).mock.invocationCallOrder[2]!);
+      .toBeLessThan(vi.mocked(provider.readFile).mock.invocationCallOrder[0]!);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state, termination_reason FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -813,7 +828,7 @@ describe("Daytona Terminal runtime", () => {
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
       "src/file.txt",
     )).rejects.toMatchObject({ code: "sandbox_busy" });
-    expect(vi.mocked(provider.readFile).mock.calls.filter(([, path]) => path !== "/etc/hostname")).toEqual([]);
+    expect(provider.readFile).not.toHaveBeenCalled();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
