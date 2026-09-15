@@ -25,6 +25,7 @@ import {
 import { evictCachedWorkstream } from './workstreams-cache';
 import { retainConversationChildren } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import { retainQueryData } from './retain-query-data';
 
 type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
@@ -131,6 +132,7 @@ export function useWorkstreamControlSocket(
   initialReasonRef.current = initialReason;
   useEffect(() => {
     if (!api || !enabled) return;
+    const releaseData = retainQueryData(queryClient, [['workstream-children', workstreamId]]);
     let stopped = false;
     /**
      * The children the local cache was last told to keep. The control
@@ -341,6 +343,7 @@ export function useWorkstreamControlSocket(
     void connect();
     return () => {
       stopped = true;
+      releaseData();
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       clearReconnect();

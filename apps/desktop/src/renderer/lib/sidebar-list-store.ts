@@ -33,6 +33,9 @@ export const SIDEBAR_LIST_QUERY_KEYS = {
   notes: ['notes'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
+export const PROJECTS_QUERY_KEY = ['projects'] as const;
+export const INACTIVE_PROJECTS_QUERY_KEY = ['projects-inactive'] as const;
+
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
 /**
@@ -145,7 +148,7 @@ export function applyVersionedProjectSnapshot(
     SIDEBAR_LIST_WATERLINES_KEY,
     (current = {}) => ({ ...current, projects: snapshot.active.waterline }),
   );
-  queryClient.setQueryData(['projects'], snapshot.active);
-  queryClient.setQueryData(['projects-inactive'], snapshot.inactive);
+  queryClient.setQueryData(PROJECTS_QUERY_KEY, snapshot.active);
+  queryClient.setQueryData(INACTIVE_PROJECTS_QUERY_KEY, snapshot.inactive);
   return true;
 }
