@@ -5552,11 +5552,18 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-row .sidebar-row-icon {
   /* Hole geometry for the status marker, shared by the badge and the
-     glyph's knockout so the two cannot drift. The app-shell restates the
-     three values at the 36px mark. */
+     glyph's knockout so the two cannot drift. The app-shell restates
+     hole and dot size at the 36px mark; the hole's radius is derived,
+     not copied: concentric rounded squares, outer = inner + gap. */
   --workstream-status-hole: 12px;
   --workstream-status-hole-right: -3px;
   --workstream-status-hole-bottom: -2px;
+  --workstream-status-dot: 6px;
+  --workstream-status-dot-radius: var(--av-cmp-marker-radius);
+  --workstream-status-hole-radius: calc(
+    var(--workstream-status-dot-radius)
+    + (var(--workstream-status-hole) - var(--workstream-status-dot)) / 2
+  );
   align-items: center;
   display: flex;
   height: 30px;
@@ -5579,46 +5586,92 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: var(--workstream-status-hole);
 }
 .workstream-row-status .status-indicator {
+  border-radius: var(--workstream-status-hole-radius);
   height: var(--workstream-status-hole);
   width: var(--workstream-status-hole);
 }
 .workstream-row .workstream-row-status .status-dot {
   /* `.sidebar-row .status-dot` restyles the same element into the
-     navigation tick — 2px radius, a glow, a stretched height. This badge
-     is a sharp square in a square hole; drop the radius, the glow, and
-     the stretch. */
-  border-radius: 0;
+     navigation tick — a glow and a stretched height. Keep that tick's
+     radius on the badge; the hole's radius is larger by the gap, so the
+     two curves read as the same rounding. Drop the glow and the stretch. */
+  border-radius: var(--workstream-status-dot-radius);
   box-shadow: none;
-  height: 6px;
+  height: var(--workstream-status-dot);
   inset: auto;
   left: 50%;
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 6px;
+  width: var(--workstream-status-dot);
 }
-/* Punch a square hole in the filled glyph around the status marker.
-   A painted disc of `surface-default` used to stand in for this: the gap
-   was a circle sitting over a blob that is not one, and an opaque patch
-   of the default surface sat on a row that is painted in a hover fill
-   half the time. Masking the glyph leaves a hole instead, so the gap
-   follows the marker and takes the row's real background — the same
-   reason HexagonGlyph knocks its play out of the fill rather than laying
-   a badge on it. The hole is the overlay's own box (12×12, 14×14 in the
-   app shell), not a circle inscribed in it; the compact tick is a sharp
-   square in that box. Two mask layers, the second the badge's box at
-   the badge's own `right`/`bottom`, xor'd so they cannot drift. */
+/* Punch a rounded-square hole in the filled glyph around the status
+   marker. A painted disc of `surface-default` used to stand in for this:
+   the gap was a circle sitting over a blob that is not one, and an
+   opaque patch of the default surface sat on a row that is painted in a
+   hover fill half the time. Masking the glyph leaves a hole instead, so
+   the gap follows the marker and takes the row's real background — the
+   same reason HexagonGlyph knocks its play out of the fill rather than
+   laying a badge on it. The hole is the overlay's own box (12×12, 14×14
+   in the app shell) with a radius that is the compact tick's radius plus
+   the gap between them — concentric rounding, so the eye reads two
+   equivalent curves rather than a tighter outer corner. A full cover
+   minus a vertical bar, a horizontal bar, and four corner circles is the
+   rounded square; destination-out so the overlapping bars cannot fill
+   the centre back in the way xor would. */
 .workstream-row .sidebar-row-icon:has(.workstream-row-status) .workstream-glyph {
-  -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
-  -webkit-mask-position: 0 0, right var(--workstream-status-hole-right) bottom var(--workstream-status-hole-bottom);
+  -webkit-mask-image:
+    linear-gradient(#000 0 0),
+    linear-gradient(#000 0 0),
+    linear-gradient(#000 0 0),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%);
+  -webkit-mask-position:
+    0 0,
+    right calc(var(--workstream-status-hole-right) + var(--workstream-status-hole-radius)) bottom var(--workstream-status-hole-bottom),
+    right var(--workstream-status-hole-right) bottom calc(var(--workstream-status-hole-bottom) + var(--workstream-status-hole-radius)),
+    right var(--workstream-status-hole-right) bottom var(--workstream-status-hole-bottom),
+    right calc(var(--workstream-status-hole-right) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)) bottom var(--workstream-status-hole-bottom),
+    right var(--workstream-status-hole-right) bottom calc(var(--workstream-status-hole-bottom) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)),
+    right calc(var(--workstream-status-hole-right) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)) bottom calc(var(--workstream-status-hole-bottom) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius));
   -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: 100% 100%, var(--workstream-status-hole) var(--workstream-status-hole);
-  -webkit-mask-composite: xor;
-  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
-  mask-position: 0 0, right var(--workstream-status-hole-right) bottom var(--workstream-status-hole-bottom);
+  -webkit-mask-size:
+    100% 100%,
+    calc(var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)) var(--workstream-status-hole),
+    var(--workstream-status-hole) calc(var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius));
+  -webkit-mask-composite: destination-out, destination-out, destination-out, destination-out, destination-out, destination-out;
+  mask-image:
+    linear-gradient(#000 0 0),
+    linear-gradient(#000 0 0),
+    linear-gradient(#000 0 0),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%),
+    radial-gradient(circle closest-side, #000 100%, transparent 100%);
+  mask-position:
+    0 0,
+    right calc(var(--workstream-status-hole-right) + var(--workstream-status-hole-radius)) bottom var(--workstream-status-hole-bottom),
+    right var(--workstream-status-hole-right) bottom calc(var(--workstream-status-hole-bottom) + var(--workstream-status-hole-radius)),
+    right var(--workstream-status-hole-right) bottom var(--workstream-status-hole-bottom),
+    right calc(var(--workstream-status-hole-right) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)) bottom var(--workstream-status-hole-bottom),
+    right var(--workstream-status-hole-right) bottom calc(var(--workstream-status-hole-bottom) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)),
+    right calc(var(--workstream-status-hole-right) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)) bottom calc(var(--workstream-status-hole-bottom) + var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius));
   mask-repeat: no-repeat;
-  mask-size: 100% 100%, var(--workstream-status-hole) var(--workstream-status-hole);
-  mask-composite: exclude;
+  mask-size:
+    100% 100%,
+    calc(var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)) var(--workstream-status-hole),
+    var(--workstream-status-hole) calc(var(--workstream-status-hole) - 2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius)),
+    calc(2 * var(--workstream-status-hole-radius)) calc(2 * var(--workstream-status-hole-radius));
+  mask-composite: subtract, subtract, subtract, subtract, subtract, subtract;
 }
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
 .settings-navigation-group button,
@@ -5704,13 +5757,10 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   --workstream-status-hole: 14px;
   --workstream-status-hole-right: 0px;
   --workstream-status-hole-bottom: 0px;
+  --workstream-status-dot: 8px;
   flex: 0 0 36px;
   height: 36px;
   width: 36px;
-}
-.app-shell .workstream-row .workstream-row-status .status-dot {
-  height: 8px;
-  width: 8px;
 }
 .app-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
 .app-shell .sidebar-scroll { padding-top: 0; }
