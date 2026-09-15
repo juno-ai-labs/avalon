@@ -3739,6 +3739,42 @@ describe("agent harness", () => {
     });
   });
 
+  it.each([true, false, undefined])("preserves advisory longRunning=%s through plugin loading without blocking direct execution", async (longRunning) => {
+    const requests: Array<{ tools?: Array<{ function: { name: string; description?: string } }>; messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDeltaWithArguments(0, "load", "load_plugin", '{"pluginId":"rally_test"}')] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDeltaWithArguments(0, "draw", "test_draw", "{}")] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const execute = vi.fn(async () => ({ output: { resourceId: "image-1" }, summary: "Created image" }));
+    const plugin: HarnessPlugin = {
+      ...testCorePlugin([{
+        definition: {
+          name: "draw", description: "Draw an image.", capability: "image.generate",
+          mode: "write", idempotency: "safe", longRunning,
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+        execute,
+      }]),
+      preload: false,
+    };
+    const outcome = await runHarness({ ...runInput(fetcher), plugins: [plugin] });
+    expect(outcome).toMatchObject({ status: "completed", content: "done" });
+    expect(execute).toHaveBeenCalledTimes(1);
+    const description = requests[1]?.tools?.find((tool) => tool.function.name === "test_draw")?.function.description;
+    if (longRunning) {
+      expect(description).toContain("Consider delegating it");
+      expect(description).toContain("use it directly when appropriate");
+      expect(requests[1]?.messages.find((message) => message.role === "tool")?.content).toContain("Consider delegating it");
+    } else {
+      expect(description).toBe("Draw an image.");
+    }
+  });
+
   it("normalizes schema-declared numeric strings before receipts and execution", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: unknown }>;

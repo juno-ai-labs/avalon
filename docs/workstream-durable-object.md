@@ -47,6 +47,13 @@ reach the ledger through the `residentContext` object-port authority.
 
 ## Sidekick durable boundaries
 
+WorkspaceDO migration 59 stores implicit agent teams, additive membership,
+delegation ownership, and message addressing references. The workspace owns
+those cross-conversation relationships; the conversation remains authoritative
+for its content and execution. [Agent communication](agent-communication.md)
+owns the typed host RPCs and storage behavior.
+
+
 Substream migration 46 adds `sidekick_skill_names`, a conversation-owned map from
 canonical Sidekick ID to a unique model-facing name. Assignment is synchronous
 and transactional. Removed Sidekicks keep their reservation so a name present in

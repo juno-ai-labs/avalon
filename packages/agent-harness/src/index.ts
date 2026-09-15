@@ -2226,6 +2226,7 @@ export interface AutomationCreatorPluginCatalogEntry {
     mode: "read" | "write";
     idempotency?: "safe" | "provider_key" | "record_before_execute";
     timeoutMs?: number;
+    longRunning?: boolean;
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
@@ -2403,7 +2404,7 @@ export function executeAutomationCreatorDiscoveryTool(
         description: plugin.description,
         scope: plugin.scope,
         aliases: plugin.searchAliases,
-        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode })),
+        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
         activityTriggerCount: plugin.activityTriggers.length,
       })),
     };
@@ -2431,6 +2432,7 @@ export function executeAutomationCreatorDiscoveryTool(
           description: tool.description,
           capability: tool.capability,
           mode: tool.mode,
+          ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
         })),
       })),
     };
@@ -2452,6 +2454,7 @@ export function executeAutomationCreatorDiscoveryTool(
           capability: tool.capability,
           mode: tool.mode,
           idempotency: tool.idempotency ?? "safe",
+          ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
           inputSchema: tool.inputSchema,
         })),
         // Projected rather than returned whole, like `plugins_search` above.
@@ -3045,7 +3048,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "sidekicks_list",
-    description: "List the Sidekicks this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in a Sidekick's own conversation, that Sidekick. Start an edit from the definition returned here and submit the whole revised draft with its sidekickId.",
+    description: "Read this Sidekick’s current definition before editing it. Use the returned sidekickId and submit the full revised draft.",
     capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",
@@ -3053,7 +3056,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "submit_draft",
-    description: "Save the best current Sidekick draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
+    description: "Save the full Sidekick draft. If required information is missing, set ready=false and ask the requester for it. If an agent requested the work, send that agent your question. Before saving ready=true with a connector_activity, semantic_activity, or webhook trigger, add at least one evaluator rule.",
     capability: "rally.sidekick.submit",
     mode: "write",
     idempotency: "record_before_execute",

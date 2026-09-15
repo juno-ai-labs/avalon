@@ -26,6 +26,8 @@ import {
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import { AgentIdSchema, type AgentId } from "@rally/contracts";
+import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
   readNotificationIntentForDelivery as readStoredPushIntent,
@@ -3270,7 +3272,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
   "PRAGMA defer_foreign_keys = OFF"
 ]
-}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION];
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -3736,6 +3738,78 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   protected override migrationsReady(): Promise<void> {
     return this.initialized;
+  }
+
+  /** Internal host RPCs: callers resolve execution/resource authority before changing membership. */
+  async ensureAgentTeam(input: { workspaceId: string; originAgentId: AgentId }): Promise<{ teamId: string }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, originAgentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { teamId: new AgentTeamStorage(this.state.storage).ensureTeam(request.originAgentId) };
+  }
+
+  async joinAgentTeam(input: { workspaceId: string; teamId: string; agentId: AgentId }): Promise<{ joined: true }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, teamId: AgentIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    new AgentTeamStorage(this.state.storage).addMember(request.teamId, request.agentId);
+    return { joined: true };
+  }
+
+  async registerAgentDelegation(input: { workspaceId: string; teamId: string; ownerAgentId: AgentId; agentId: AgentId }): Promise<AgentTeamResult<{ registered: true }>> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, teamId: AgentIdSchema, ownerAgentId: AgentIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return agentTeamResult(() => {
+      new AgentTeamStorage(this.state.storage).recordDelegation(request.teamId, request.ownerAgentId, request.agentId);
+      return { registered: true as const };
+    });
+  }
+
+  async listAgentTeammates(input: { workspaceId: string; teamId: string; requesterAgentId: AgentId }): Promise<AgentTeamResult<{ agentIds: AgentId[] }>> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, teamId: AgentIdSchema, requesterAgentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return agentTeamResult(() => ({ agentIds: new AgentTeamStorage(this.state.storage).members(request.teamId, request.requesterAgentId) }));
+  }
+
+  async resolveAgentMessage(input: {
+    workspaceId: string; messageId: string; senderAgentId: AgentId;
+    recipientAgentId?: AgentId; replyToMessageId?: string; preferredTeamId?: string;
+  }): Promise<AgentTeamResult<AgentMessageRoute>> {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema, messageId: IdSchema, senderAgentId: AgentIdSchema,
+      recipientAgentId: AgentIdSchema.optional(), replyToMessageId: IdSchema.optional(),
+      preferredTeamId: AgentIdSchema.optional(),
+    }).refine((value) => (value.recipientAgentId === undefined) !== (value.replyToMessageId === undefined),
+      "Specify a recipient or a received message, never both.").parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return agentTeamResult(() => {
+      const teams = new AgentTeamStorage(this.state.storage);
+      const route = request.replyToMessageId !== undefined
+        ? teams.replyRoute(request.replyToMessageId, request.senderAgentId)
+        : {
+            teamId: teams.sharedTeam(request.senderAgentId, AgentIdSchema.parse(request.recipientAgentId), request.preferredTeamId),
+            senderAgentId: request.senderAgentId,
+            recipientAgentId: AgentIdSchema.parse(request.recipientAgentId),
+          };
+      return teams.recordMessage({ messageId: request.messageId, ...route });
+    });
+  }
+
+  async agentOwner(input: { workspaceId: string; agentId: AgentId }): Promise<{ agentId: AgentId | null }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { agentId: new AgentTeamStorage(this.state.storage).owner(request.agentId) };
+  }
+
+  async ownedAgentDescendants(input: { workspaceId: string; agentId: AgentId }): Promise<{ agentIds: AgentId[] }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { agentIds: new AgentTeamStorage(this.state.storage).ownedDescendants(request.agentId) };
   }
 
   override async fetch(request: Request): Promise<Response> {

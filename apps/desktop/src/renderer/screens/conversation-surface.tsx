@@ -1,7 +1,7 @@
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   AlertTriangle,
@@ -52,12 +52,6 @@ import {
   groupThinkingMessages,
   optimisticMentionRendering,
   orderedTranscriptMessages,
-  applyPendingInputQueueOrder,
-  assignPendingInputQueueSequences,
-  composerQueueOverlays,
-  isComposerQueueOverlay,
-  pendingOverlayInputId,
-  transcriptOverlayIdentityKey,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
   transcriptCoverageAdvanced,
@@ -101,7 +95,6 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState } from '../components/primitives';
 import { CopyButton } from '../components/copy-button';
-import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
@@ -1143,22 +1136,10 @@ export function ConversationSurface({
     id,
     members.data ?? [],
   ), [id, members.data, orderedTranscript.data]);
-  const harnessRunning = routedDetail?.harnessStatus === 'running';
-  const queueOverlays = useMemo(
-    () => composerQueueOverlays(transcriptOverlays.data, { harnessRunning }),
-    [harnessRunning, transcriptOverlays.data],
-  );
-  const queueItems = useMemo<ComposerQueueItem[]>(
-    () => queueOverlays.map((overlay) => ({
-      key: transcriptOverlayIdentityKey(overlay.identity),
-      inputId: pendingOverlayInputId(overlay) ?? null,
-      text: overlay.message.text ?? '',
-      mentions: overlay.message.mentions ?? [],
-      member: queueAuthorMember(overlay.message, members.data ?? []),
-      sending: overlay.message.deliveryState === 'sending',
-    })),
-    [members.data, queueOverlays],
-  );
+  const backgroundAgents = useQuery({
+    queryKey: ['workstream-background-agents', id], queryFn: skipToken,
+    initialData: null as number | null,
+  });
   const liveMessageIds = useMemo(() => new Set((transcriptOverlays.data ?? [])
     .filter((overlay) => overlay.provenance.source === 'client_command'
       || overlay.provenance.source === 'stream_event'
@@ -1166,8 +1147,7 @@ export function ConversationSurface({
     .map((overlay) => overlay.message.id)), [transcriptOverlays.data]);
   const transcript = useMemo(
     () => {
-      const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
-        !isComposerQueueOverlay(overlay, { harnessRunning }));
+      const feedOverlays = transcriptOverlays.data ?? [];
       return collapseSettledWorkIntoAccordion(
         foldSettledWorkIntoMessages(
           groupThinkingMessages(
@@ -1178,7 +1158,7 @@ export function ConversationSurface({
         ),
       );
     },
-    [canonicalTranscript, harnessRunning, transcriptOverlays.data],
+    [canonicalTranscript, transcriptOverlays.data],
   );
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
@@ -1926,27 +1906,6 @@ export function ConversationSurface({
     }
   };
 
-  const reorderQueue = async (inputIds: string[]): Promise<void> => {
-    const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId));
-    queryClient.setQueryData<TranscriptOverlay[]>(
-      transcriptOverlaysQueryKey(id, substreamId),
-      (current) => applyPendingInputQueueOrder(current, inputIds),
-    );
-    try {
-      const result = await socketConnection.reorderPendingInputs(inputIds);
-      queryClient.setQueryData<TranscriptOverlay[]>(
-        transcriptOverlaysQueryKey(id, substreamId),
-        (current) => assignPendingInputQueueSequences(current, result.pendingInputs),
-      );
-    } catch (error) {
-      if (previous) {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), previous);
-      }
-      setSendError(error instanceof Error ? error.message : 'Queued messages could not be reordered.');
-      throw error;
-    }
-  };
-
   useEffect(() => {
     if (!routedDetail || searchTurnId || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
@@ -2354,8 +2313,7 @@ export function ConversationSurface({
             onStop={async () => {
               await stop.mutateAsync();
             }}
-            onReorderQueue={reorderQueue}
-            queueItems={queueItems}
+            backgroundAgentCount={backgroundAgents.data}
             sendBlocked={feedFromLocalCache}
             sending={sending}
             uploading={attachmentDraft.uploading}

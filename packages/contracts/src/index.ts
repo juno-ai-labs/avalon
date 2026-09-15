@@ -5,6 +5,8 @@ import { AutomationLifecycleStateSchema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
+export * from "./agent-communication";
+import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { DemoSeedSchema } from "./demo-seed";
 import {
@@ -2342,6 +2344,8 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   exactState: z.string().min(1).max(80),
   harnessStatus: HarnessStatusSchema,
+  /** Omission means this snapshot does not know the current background count. */
+  backgroundAgentCount: z.number().int().nonnegative().optional(),
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
   lastActivityAt: TimestampSchema,
@@ -2891,6 +2895,10 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * its definition from the automation by revision when it starts.
    */
   automationRun: AutomationRunReferenceV1Schema.optional(),
+  /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
+  agentExchange: AgentExchangeSchema.optional(),
+  /** Host-derived conversation kind; not a model-selectable execution option. */
+  backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The
@@ -3006,6 +3014,8 @@ export const ToolDefinitionSchema = z.object({
   capability: z.string().min(1),
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
+  /** Advisory only: consider background execution; does not change dispatch or authority. */
+  longRunning: z.boolean().optional(),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
   timeoutMs: z.number().int().positive().max(1_050_000).optional()
 });

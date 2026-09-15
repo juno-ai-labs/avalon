@@ -74,6 +74,7 @@ export type MultimodalGenerationToolExecutors = {
 const definitions = memoizedValue(() => ({
   generate_image: {
     name: "generate_image",
+    longRunning: true,
     description: "Generate one new PNG image from a text prompt and attach it to the current workstream as a durable resource.",
     capability: "multimodal.generate",
     mode: "write",
@@ -83,6 +84,7 @@ const definitions = memoizedValue(() => ({
   },
   edit_image: {
     name: "edit_image",
+    longRunning: true,
     description: "Edit one attached image, optionally using an attached PNG mask, and publish the single resulting PNG as a new version of that same resource.",
     capability: "multimodal.edit",
     mode: "write",

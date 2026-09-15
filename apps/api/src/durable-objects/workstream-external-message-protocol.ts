@@ -1,5 +1,7 @@
 import {
   AutomationActivationV1Schema,
+  AgentExchangeSchema,
+  AgentIdSchema,
   ExecutionPrincipalSchema,
   ExternalActorSchema,
   IdSchema,
@@ -73,6 +75,28 @@ export const AdmitAutomationActivationInputSchema = z.strictObject({
 });
 
 export const ExternalMessageAdmissionResultSchema = WorkstreamMessageAdmissionReceiptSchema;
+
+/** A teammate message is system-attributed input, never a fabricated participant. */
+export const AdmitAgentMessageInputSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  messageId: IdSchema,
+  clientMessageId: z.string().min(1).max(120),
+  text: z.string().max(MESSAGE_MAX_CHARACTERS),
+  agentExchange: AgentExchangeSchema,
+  recipientAgentId: AgentIdSchema,
+  /** Host settlement notices do not resume a stopped recipient. */
+  resumeStopped: z.boolean().optional(),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
+  executionPrincipal: ExecutionPrincipalSchema,
+  origin: z.literal("agent_message"),
+  now: z.number().int().nonnegative(),
+}).refine((input) => input.agentExchange.messageId === input.messageId, "Agent exchange and input message IDs must match.");
+export const AdmitSystemActivationInputSchema = z.union([
+  AdmitAutomationActivationInputSchema, AdmitAgentMessageInputSchema,
+]);
+export type AdmitAgentMessageInput = z.infer<typeof AdmitAgentMessageInputSchema>;
+export type AdmitSystemActivationInput = z.infer<typeof AdmitSystemActivationInputSchema>;
 
 export type AdmitExternalMessageInput = z.infer<typeof AdmitExternalMessageInputSchema>;
 export type AdmitAutomationActivationInput = z.infer<typeof AdmitAutomationActivationInputSchema>;

@@ -1538,7 +1538,12 @@ That deadline must be a **cancellable** one — `createDeadline`/`withDeadline` 
 
 The deadlines long enough to matter have been converted: the connector poll (20s), the Slack public-channel sync in the activity queue consumer (3 minutes), and the two inside the bind loop's Workflow step — per-tool-call (`TOOL_DEFAULT_TIMEOUT_MS`, 30s) and plugin reauthorization (30s). Not yet converted are the fixed 5–10 second `slackApi` calls in `slack-agent-service.ts`, which hold a queue invocation open for at most ten seconds each; they are the same class and are tracked as follow-up work rather than fixed here. Any new deadline in one of these contexts uses the cancellable form.
 
-Inline read-only subagents use independent ceilings configured with `HARNESS_CHILD_MAX_*`. The production defaults are four model iterations, eight tool calls, 90 seconds, 12,000 tokens, 100 cents, four active credential plugins, 64 KiB of tool schemas, four total runs per chain (the root plus at most three inline children), eight active children per workspace, and depth one. A child inherits and narrows the parent's persisted authority; raising these limits must never enable writes, recursion, or mid-run scope expansion.
+Background agents run independent work-stream Bind loops and inherit the source
+conversation's model override and execution principal. They use normal tool
+capabilities and execution protections. The retired inline-child
+`HARNESS_CHILD_MAX_*` settings do not control this surface. See
+[agent communication](agent-communication.md) for ownership, continuation,
+message delivery, and archive behavior.
 
 ### Inspecting a run's raw inference
 
