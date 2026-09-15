@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 57;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 58;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3037,6 +3037,43 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         recoverable INTEGER CHECK (recoverable IN (0, 1)),
         error_code TEXT
       ) STRICT`,
+    ],
+  },
+  {
+    version: 58,
+    description: "remove built-in meeting resource snapshots and attachments",
+    statements: [
+      `CREATE TABLE retired_meeting_attachment_ids (resource_id TEXT PRIMARY KEY) STRICT`,
+      `INSERT INTO retired_meeting_attachment_ids(resource_id)
+         SELECT resource_id FROM workstream_resource_links
+         WHERE json_extract(resource_json, '$.provider') = 'avalon_note'`,
+      `INSERT OR IGNORE INTO retired_meeting_attachment_ids(resource_id)
+         SELECT resource_id FROM participant_transcript_attachments
+         WHERE json_extract(attachment_json, '$.provider') = 'avalon_note'`,
+      `DELETE FROM participant_transcript_attachments
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `DELETE FROM attachment_tool_receipts
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `DELETE FROM pending_attachment_reservation_recovery
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `DELETE FROM workstream_resource_links
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `UPDATE resource_inventory_revision SET revision = revision + 1
+         WHERE EXISTS (SELECT 1 FROM retired_meeting_attachment_ids)`,
+      `CREATE TRIGGER meeting_resource_links_retired BEFORE INSERT ON workstream_resource_links
+         WHEN json_extract(NEW.resource_json, '$.provider') = 'avalon_note'
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+      `CREATE TRIGGER meeting_resource_link_updates_retired BEFORE UPDATE ON workstream_resource_links
+         WHEN json_extract(NEW.resource_json, '$.provider') = 'avalon_note'
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+      `CREATE TRIGGER meeting_transcript_attachments_retired BEFORE INSERT ON participant_transcript_attachments
+         WHEN json_extract(NEW.attachment_json, '$.provider') = 'avalon_note'
+           OR NEW.resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+      `CREATE TRIGGER meeting_transcript_attachment_updates_retired BEFORE UPDATE ON participant_transcript_attachments
+         WHEN json_extract(NEW.attachment_json, '$.provider') = 'avalon_note'
+           OR NEW.resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
     ],
   },
 ];

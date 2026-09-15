@@ -15,6 +15,22 @@ realtime dictation transport that feeds it belongs to
 [`security.md`](security.md) and [`runbook.md`](runbook.md); this document starts
 at the transcript text the client already holds.
 
+## Production compatibility state — 2026-09-15
+
+Built-in meeting notes are disabled at the API boundary while repository source
+is reconciled with Durable Object migrations already applied in production.
+`WorkspaceDO` migrations 57 and 58 retire stored note data and then remove the
+feature tables; `SubstreamAgent` migration 58 removes attributable meeting-note
+attachments after the terminal-observation migration already on `main` at 57.
+Those shipped migration definitions and hashes are immutable.
+
+The compatibility release leaves the old implementation files in the tree but
+makes them unreachable: `/notes` is not registered, the meeting-recording flag
+is always false, legacy sidebar payloads contain an empty note page, and ordinary
+resource, Terminal, scheduling, and batch paths do not query the removed tables.
+Desktop removal and deletion of the dead API modules belong to a separate cleanup
+change; they are not required to make a deployment safe against schema 58.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -405,6 +421,26 @@ enthusiastic clients and a corrupted briefing. Note that part 3 is what turns th
 served cadence into an enforced one: the flag already exists and the server
 already reads it, so that step is a scheduler and a budget rather than a new
 knob.
+
+## Changelog
+
+### 2026-09-15 — Reconcile source with production schema 58
+
+**What changed:** The API recognizes the already-applied WorkspaceDO and
+SubstreamAgent migrations and keeps ordinary serving paths away from their
+retired tables. Installed clients retain the legacy response shape with meeting
+recording disabled and an empty note list.
+
+**Why:** Unmerged production deployments advanced Durable Object storage beyond
+`main`; the schema-ahead guard correctly rejected a later CI deployment. A guard
+bypass was rejected because it would let older code query tables migration 58
+removed. Reverting Durable Object storage was rejected because the migrations
+deleted data and changed schema irreversibly.
+
+**Consequences:** A safe deployment requires this compatibility slice or the
+full feature-removal implementation. Do not modify the shipped migration SQL or
+reuse versions 57/58. The retained dead note modules are temporary source debt,
+not callable product behavior.
 
 ### 2026-09-01 — The note list pages instead of stopping at 250
 

@@ -191,7 +191,7 @@ export async function resolveClientFeatureFlagsForSubject(
     controlTowerRefreshSeconds,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
+    Promise.resolve(false),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
