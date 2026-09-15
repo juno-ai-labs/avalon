@@ -265,12 +265,15 @@ attempting a toolbox command. Daytona SDK `archive()` only accepts the operation
 Rally retains the due archive deadline on its last stable `stopped` intent
 and uses the existing scheduled retry until metadata confirms completion. SDK
 `start()` and `recover()` wait for provider lifecycle state, which is insufficient
-proof of toolbox availability. Before admitting work, acquisition runs a no-op
-command and downloads `/etc/hostname` through the existing provider operations.
-Both read-only probes must succeed, even when metadata already reports running.
-A failure returns `sandbox_unavailable` and retains the binding; a subsequent
-acquisition probes again. No user command is replayed and no fixed readiness
-sleep is imposed. This costs two toolbox requests per acquisition. Scheduled
+proof of toolbox availability. Restore and recovery run a no-op command and
+download `/etc/hostname` before admitting work. Both read-only probes must
+succeed. Healthy running acquisitions do not preflight the toolbox: the first
+requested operation establishes its own availability, and an operation failure
+preserves the sandbox binding. File absence comes from a successful filesystem
+inspection, never a download-endpoint 404. Failed restore probes return `sandbox_unavailable`;
+no user command is replayed and no fixed readiness sleep is imposed. The two
+extra toolbox requests apply only to restore/recovery, including adopting a
+running provider sandbox when Rally's intent is still stopped. Scheduled
 cleanup likewise retains unexpected missing metadata before expiry and restores
 its stable due state so the existing scheduler can retry.
 These semantics were verified against the installed SDK 0.204.0 and Daytona's
@@ -773,8 +776,9 @@ update lag before changing the default.
 provider Worker exposes `recoverSandbox`, and acquisition recovers recoverable
 errors without replacing the generation. Shared stop/delete reconciliation
 reconciles explicit deletion against metadata. Unexpected metadata absence
-preserves the binding, and acquisition independently checks command and file
-readiness before admitting work. Scheduled cleanup adopts provider
+preserves the binding, and restore/recovery independently check command and
+file readiness before admitting work. Healthy acquisitions use the requested
+operation itself to establish availability, avoiding two extra requests per run. Scheduled cleanup adopts provider
 archival and confirms asynchronous archival before recording completion.
 Provider observation now has its own persisted ordering and freshness, shared by
 acquisition, signed webhook readback, and periodic workspace scheduling. The setup
@@ -795,7 +799,9 @@ replacing the workspace or adding a guessed sleep would not model readiness.
 provider read-back and independent site import support. Adding another retry
 loop or copying archived files to Rally storage would duplicate Daytona's own
 lifecycle instead of honoring its recovery and persistence contract. A successful start response is not a
-substitute for checking both command and file availability.
+substitute for checking both command and file availability during restore.
+Preflighting every healthy acquisition was also rejected: it adds two sequential
+round trips when the requested operation can establish its own availability.
 
 **Consequences:** Restore and recovery keep the same ID and generation. Unknown
 recoverability fails closed; only an explicit loss verdict permits automatic
