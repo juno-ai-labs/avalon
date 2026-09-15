@@ -72,6 +72,9 @@
     "ref.color.neutral.1": {
       "$type": "color"
     },
+    "ref.color.neutral.2": {
+      "$type": "color"
+    },
     "ref.color.neutral.3": {
       "$type": "color"
     },
