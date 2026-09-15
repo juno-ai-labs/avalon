@@ -6,6 +6,7 @@ import { AutomationLifecycleStateSchema,
   AutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./agent-communication";
+import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { DemoSeedSchema } from "./demo-seed";
 import {
@@ -2890,6 +2891,8 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * its definition from the automation by revision when it starts.
    */
   automationRun: AutomationRunReferenceV1Schema.optional(),
+  /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
+  agentExchange: AgentExchangeSchema.optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The

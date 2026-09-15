@@ -3102,6 +3102,15 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     `ALTER TABLE prepared_attachment_recovery RENAME TO pending_attachment_reservation_recovery`,
     `CREATE INDEX pending_attachment_reservation_recovery_input_idx ON pending_attachment_reservation_recovery(input_id, resource_id)`,
   ] },
+  {
+    version: 60,
+    description: "retain a background agent's inherited execution principal",
+    statements: [`CREATE TABLE background_agent (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      execution_principal_json TEXT NOT NULL CHECK (json_valid(execution_principal_json)),
+      stopped_at INTEGER
+    ) STRICT`],
+  },
 ];
 
 /**
