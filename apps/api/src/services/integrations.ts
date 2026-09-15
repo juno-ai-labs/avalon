@@ -2190,6 +2190,7 @@ async function loadAutomationCreatorPluginCatalog(
           mode: definition.mode,
           idempotency: definition.idempotency,
           ...(definition.timeoutMs === undefined ? {} : { timeoutMs: definition.timeoutMs }),
+          ...(definition.longRunning === undefined ? {} : { longRunning: definition.longRunning }),
           inputSchema: definition.inputSchema,
           execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
             env,
