@@ -193,8 +193,18 @@ export class AgentCommunicationService {
     const workspace = await this.workspace();
     const owned = await workspace.ownedAgentDescendants({ workspaceId: this.input.workspaceId, agentId: this.senderId });
     if (!owned.agentIds.includes(agentId)) throw new AgentCommunicationError("agent_not_owned");
-    const descendants = await workspace.ownedAgentDescendants({ workspaceId: this.input.workspaceId, agentId });
-    for (const id of [agentId, ...descendants.agentIds]) await (await this.conversation(id)).stopOwnedAgent();
+    const pending = [agentId];
+    const stopped = new Set<AgentId>();
+    while (pending.length > 0) {
+      const id = pending.pop()!;
+      if (stopped.has(id)) continue;
+      await (await this.conversation(id)).stopOwnedAgent();
+      stopped.add(id);
+      // Fence each owner before reading its descendants. A concurrent start
+      // either appears here or observes its stopped owner after registration.
+      const descendants = await workspace.ownedAgentDescendants({ workspaceId: this.input.workspaceId, agentId: id });
+      pending.push(...descendants.agentIds);
+    }
     return { stopped: true };
   }
 }
