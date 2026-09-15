@@ -450,6 +450,13 @@ export function instrumentConnectorAdapter(
           (result) => ({
             activity_count: result.activities.length,
             stream_error_count: result.streamErrors?.length ?? 0,
+            // A poll whose every stream failed logs as `succeeded` with a
+            // count. The codes are the adapter's own or a schema rejection's
+            // paths — never the messages, which can carry provider text and
+            // already reach the connection row.
+            ...(result.streamErrors?.length
+              ? { stream_error_codes: [...new Set(result.streamErrors.map((entry) => entry.code))] }
+              : {}),
             provider_resource_ids: activityResourceIds(result.activities),
           }),
         );
@@ -507,7 +514,13 @@ export function instrumentConnectorAdapter(
           "tool_input_validate",
           { tool_name: name, ...providerIdentifierFields(connectorType, args) },
           () => adapter.validateToolInput!(name, args),
-          (error) => ({ outcome: error === null ? "valid" : "invalid" }),
+          // A returned `ZodError` had its paths in hand and logged the word
+          // `invalid`; the same rejection thrown would have been named. Paths
+          // and issue codes are the tool's schema, not the model's values.
+          (error) => ({
+            outcome: error === null ? "valid" : "invalid",
+            ...(error === null ? {} : { code: zodDiagnosticCode(error, "tool_input") }),
+          }),
         );
       },
     } : {}),
