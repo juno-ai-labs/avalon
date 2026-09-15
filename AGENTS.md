@@ -25,6 +25,8 @@ Always have a platform mindset. You can always make a simple thing more complica
 
 If you have a Slack connector available start a thread in Channel #firehose-agents (use the channel configured in your team) when you start a working in a new session (not when you open a new session as that is too early and you don't understand your task but once you start on your actual task). Then keep sending updates to that thread every 30-60 minutes based on the complexity and size of the task.
 
+If you are only doing (code) review then do not start a thread or send updates.
+
 ## Where we are
 
 **Rally is a seed-stage startup iterating quickly, and the right engineering
