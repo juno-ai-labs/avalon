@@ -219,12 +219,21 @@ export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
  * size and swelling as the shape around it shrinks, which is the same reason
  * the new-Sidekick outline is stroked in these units.
  *
- * X and Y are separate because Lucide `Play` is not centred in its 24-unit
- * box: the triangle's lowest vertex sits at about 20.73, so a shared origin
- * that looks right on the right edge leaves that vertex a noticeable gap
- * above the hexagon's bottom (the path's bottom vertex is at y=98). Y is the
- * origin that puts that vertex just above that edge (`74 + 20.73 * 26 / 24 ≈
- * 96.5`); X stays on the right.
+ * X and Y are separate because the hexagon is not square in its own viewBox:
+ * it spans 88 units across (x 6→94) but 93.5 down (y 3.75→97.25), so one
+ * origin cannot sit the marker against both edges. Y is the origin that puts
+ * `Play`'s lowest point — y=21 of its 24-unit box, where the bottom-left
+ * rounding arc bottoms out — just inside the hexagon's own lowest point at
+ * y=97.25 (`74 + 21 * 26 / 24 = 96.75`). X is unchanged, and leaves the
+ * play's right tip 2.25 units inside the right edge.
+ *
+ * `MARKER_Y + MARKER_BOX` is exactly 100, the viewBox's bottom. The hover
+ * rect still gets its full 26 units, but a later bump to Y would clip that
+ * target against the root SVG rather than fail the attribute test (which
+ * compares the rect to the symbol, not to what was painted). The knockout's
+ * dilated stroke also now reaches ~100.5, past both the root viewBox and
+ * the mask's `0 0 100 100` region. Harmless today: the hexagon fill ends at
+ * 97.25, so there is nothing down there to cut.
  */
 const MARKER_BOX = 26;
 const MARKER_X = 69;
@@ -239,6 +248,8 @@ const MARKER_Y = 74;
  * fills its box to about 3 units from the top and 21 from the left, so any
  * dilation past 3 is cut off square at three edges — the shape-accurate gap
  * flattening into a box corner exactly where the marker crosses the hexagon.
+ * That overflow only defeats the *icon* viewport. The root viewBox and the
+ * mask region are a second clipper; see `MARKER_Y`.
  */
 const MARKER_KNOCKOUT = 7;
 
