@@ -1,4 +1,5 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { alreadyAborted, neverAborts } from "./test-signals";
 import { NormalizedActivitySchema } from "@rally/contracts";
@@ -331,6 +332,34 @@ describe("connectors", () => {
     });
     expect(result.streamErrors).toEqual([expect.objectContaining({ streamId: "calendar" })]);
     expect(Date.parse(result.nextPollAt!)).toBeLessThanOrEqual(Date.now() + 6_000);
+  });
+
+  it("names the field a stream's provider answered without, where a network fault says poll_failed", async () => {
+    // A provider answering a poll with a body the stream's schema does not
+    // model is not an outage, and `poll_failed` is what an outage also says.
+    // The code reaches the connection row as the stream's degradation reason.
+    const connection = googleConnection([]);
+    const result = await pollCheckpointedActivityStreams({
+      streams: () => [
+        { id: "calendar", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "mail", idlePollIntervalSeconds: 300, digestible: true },
+      ],
+      normalizeHighWatermark: () => ({}),
+      async pollStream(_connection, stream) {
+        if (stream.id === "calendar") {
+          const parsed = z.strictObject({ items: z.array(z.strictObject({ start: z.string() })) })
+            .safeParse({ items: [{ start: { dateTime: "member content must remain absent" } }] });
+          if (!parsed.success) throw parsed.error;
+        }
+        throw new Error("temporary mail outage");
+      },
+    }, connection, neverAborts());
+
+    expect(result.streamErrors).toEqual([
+      expect.objectContaining({ streamId: "calendar", code: "response_invalid:items.0.start:invalid_type" }),
+      expect.objectContaining({ streamId: "mail", code: "poll_failed" }),
+    ]);
+    expect(result.streamErrors![0]!.message).not.toContain("member content must remain absent");
   });
 
   it("normalizes provider-native sequence, date, and cursor watermarks on load and commit", async () => {
