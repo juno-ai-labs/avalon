@@ -152,7 +152,7 @@ export async function reconcileDueTerminalSandbox(
   });
   if (!claimed?.sandboxId) return { transition: "none" };
   const claimedSandboxId = claimed.sandboxId;
-  const settleMissingSandbox = async (): Promise<{ transition: TerminalLifecycleTransition }> => {
+  const settleMissingSandbox = async (deletionConfirmed = false): Promise<{ transition: TerminalLifecycleTransition }> => {
     if (desired === "expired") {
       const settled = await terminal.settleLifecycleTransition({
         lifecycleState: "expired",
@@ -166,6 +166,7 @@ export async function reconcileDueTerminalSandbox(
       }
       return { transition: "expired" };
     }
+    if (!deletionConfirmed) throw new Error("terminal_lifecycle_metadata_missing");
     const retired = await terminal.retireMissingSandboxAfterLifecycleClaim({
       generation: row.generation,
       sandboxId: claimedSandboxId,
@@ -187,9 +188,9 @@ export async function reconcileDueTerminalSandbox(
       claimId,
       claimNow,
     );
-    if (cleanup.sandboxAbsent) return settleMissingSandbox();
+    if (cleanup.sandboxAbsent) return settleMissingSandbox(true);
     const observed = await observeTerminalSandbox(provider, claimedSandboxId);
-    if (!observed || observed.state === "expired") return settleMissingSandbox();
+    if (!observed || observed.state === "expired") return await settleMissingSandbox(observed?.state === "expired");
     let providerStopped = observed.state === "stopped" || observed.state === "archived";
     if (desired !== "expired" && !providerStopped && observed.state !== "running") {
       throw new Error("terminal_lifecycle_provider_transition_pending");
@@ -227,7 +228,7 @@ export async function reconcileDueTerminalSandbox(
       await provider.archiveSandbox(claimedSandboxId);
       // archive() accepts the request; unlike start()/stop() it does not wait.
       const archived = await observeTerminalSandbox(provider, claimedSandboxId);
-      if (!archived || archived.state === "expired") return settleMissingSandbox();
+      if (!archived || archived.state === "expired") return await settleMissingSandbox(archived?.state === "expired");
       if (archived.state !== "archived") throw new Error("terminal_lifecycle_archive_pending");
     } else {
       // The final diff was captured before the sandbox was stopped. Daytona
@@ -250,7 +251,9 @@ export async function reconcileDueTerminalSandbox(
     transitionError = error;
     // Toolbox/runner 404s say nothing about the retained sandbox identity.
     const observed = await observeTerminalSandbox(provider, claimedSandboxId).catch(() => undefined);
-    if (observed === null || observed?.state === "expired") return settleMissingSandbox();
+    if (observed?.state === "expired" || (observed === null && desired === "expired")) {
+      return settleMissingSandbox(true);
+    }
     const reconciled = desired === "stopped"
       ? observed?.state === "stopped" || observed?.state === "archived"
       : desired === "archived"

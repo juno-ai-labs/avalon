@@ -240,7 +240,8 @@ preserving the sandbox ID, generation, and filesystem.
 | Stopped or archived | Start the same sandbox; Daytona restores archived files. |
 | Error with `recoverable: true` | Recover the same sandbox from Daytona's backup. |
 | Error with no recoverability verdict | Preserve the identity and return unavailable. |
-| Explicitly unrecoverable error, deleted, or metadata lookup confirms absence | Confirm deletion/absence, then replace the generation. |
+| Explicitly unrecoverable error or explicit deleted state | Confirm deletion, then replace the generation. |
+| Unexpected metadata 404 | Preserve the ID and generation; return unavailable and reconcile again. |
 | Transitional or unknown | Preserve the identity and retry after the transition. |
 
 A start or recovery timeout does not establish loss. Acquisition reads metadata
@@ -253,14 +254,25 @@ resource-visibility boundary.
 `observeTerminalSandbox`, `stopTerminalSandbox`, and `deleteTerminalSandbox`
 share the metadata boundary across acquisition and task cleanup. A runner,
 command, file, or session `404` is not sandbox absence. Only the sandbox metadata
-lookup can establish that; an archived sandbox has no runner but retains its
-filesystem.
+lookup records observed absence; unexpected absence alone cannot retire the
+binding. An archived sandbox has no runner but retains its filesystem. A failed
+explicit deletion may still reconcile against metadata absence, because the
+caller already chose deletion; an incidental stop failure has no such authority.
 
 Scheduled lifecycle work also reads metadata before preservation or mutation.
 If Daytona already archived the sandbox, Rally records `archived` without
 attempting a toolbox command. Daytona SDK `archive()` only accepts the operation;
 Rally retains the due archive deadline on its last stable `stopped` intent
-and uses the existing scheduled retry until metadata confirms completion. SDK `start()` and `recover()` wait for readiness.
+and uses the existing scheduled retry until metadata confirms completion. SDK
+`start()` and `recover()` wait for provider lifecycle state, which is insufficient
+proof of toolbox availability. Before admitting work, acquisition runs a no-op
+command and downloads `/etc/hostname` through the existing provider operations.
+Both read-only probes must succeed, even when metadata already reports running.
+A failure returns `sandbox_unavailable` and retains the binding; a subsequent
+acquisition probes again. No user command is replayed and no fixed readiness
+sleep is imposed. This costs two toolbox requests per acquisition. Scheduled
+cleanup likewise retains unexpected missing metadata before expiry and restores
+its stable due state so the existing scheduler can retry.
 These semantics were verified against the installed SDK 0.204.0 and Daytona's
 [sandbox lifecycle](https://www.daytona.io/docs/sandboxes) and
 [recovery guidance](https://www.daytona.io/docs/en/troubleshooting/).
@@ -760,7 +772,9 @@ update lag before changing the default.
 **What changed:** Provider snapshots carry Daytona's recovery verdict, the
 provider Worker exposes `recoverSandbox`, and acquisition recovers recoverable
 errors without replacing the generation. Shared stop/delete reconciliation
-requires metadata evidence of absence. Scheduled cleanup adopts provider
+reconciles explicit deletion against metadata. Unexpected metadata absence
+preserves the binding, and acquisition independently checks command and file
+readiness before admitting work. Scheduled cleanup adopts provider
 archival and confirms asynchronous archival before recording completion.
 Provider observation now has its own persisted ordering and freshness, shared by
 acquisition, signed webhook readback, and periodic workspace scheduling. The setup
@@ -772,12 +786,16 @@ with permanent loss. Its replacement path could delete a recoverable filesystem
 and abandon an identity after failed deletion. Existing cleanup also treated a
 runner `404` as sandbox deletion and trusted archive submission as completion.
 Retention deadlines alone left the internal view stale between tool calls; an
-archived sandbox could remain labelled running for weeks.
+archived sandbox could remain labelled running for weeks. Live archive tests
+also reproduced toolbox 404s while metadata remained 200, including approximately
+29 seconds after a successful start. A fresh SDK object showed the same failure;
+replacing the workspace or adding a guessed sleep would not model readiness.
 
 **Considered and rejected:** Reverting the whole PR would remove necessary
 provider read-back and independent site import support. Adding another retry
 loop or copying archived files to Rally storage would duplicate Daytona's own
-lifecycle instead of honoring its recovery and persistence contract.
+lifecycle instead of honoring its recovery and persistence contract. A successful start response is not a
+substitute for checking both command and file availability.
 
 **Consequences:** Restore and recovery keep the same ID and generation. Unknown
 recoverability fails closed; only an explicit loss verdict permits automatic
