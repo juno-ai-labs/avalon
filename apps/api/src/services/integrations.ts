@@ -4979,9 +4979,18 @@ async function loadHarnessTools(
   // Drafting belongs to the Sidekick's authoring conversation. Other agents
   // discover or create that conversation and send it the setup request.
   const loadedAutomationPluginIds = new Set<string>();
-  const automationsPlugin = input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && !input.automationRun
+  const sidekickPlugin = !input.automationRun && (input.parentKind === "workstream"
+    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds)
     : null;
+  const automationsPlugin = sidekickPlugin && input.parentKind === "workstream"
+    ? {
+      ...sidekickPlugin,
+      description: "Discover Sidekicks and attach or detach workspace Sidekick recommendations for this workstream.",
+      systemMessage: "Use sidekicks_list, attach and detach to manage workstream recommendations when useful. Recommendations affect future executions; load_skill is still required to use a Sidekick now. Coordinate authoring in the Sidekick's own conversation through the agent communication tools.",
+      tools: sidekickPlugin.tools.filter((tool) => ["sidekicks_list", "attach", "detach"].includes(tool.definition.name)),
+    }
+    : sidekickPlugin;
   // The one way a run reaches the room that owns its automation. Offered only
   // to a run of a room's automation, so a personal or workspace automation
   // cannot post into a room at all.
