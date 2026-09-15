@@ -24,8 +24,14 @@ import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpe
 describe("connector activity-trigger vocabulary", () => {
   it("lets a rule name every connector that can emit an activity event", () => {
     const registry = createTestConnectorRegistry();
-    // Guard the guard: a connector missing from the fixture would otherwise
-    // pass this by never being built.
+    // A connector missing from the fixture would pass this by never being
+    // built. `testRegistryConfig` is typed `Required<…>` over the factory's own
+    // input, so that cannot happen without a compile failure; this is the
+    // weaker second check, for a connector on the telemetry list the fixture
+    // builds under a different key. It is deliberately not the coverage oracle:
+    // telemetry is a separate vocabulary, and a connector absent from both it
+    // and the fixture would be invisible to it — which is the same mistake as
+    // the bug above, one level up.
     expect(unconfiguredConnectorTypes(registry)).toEqual([]);
 
     const unnameable = registry.list()

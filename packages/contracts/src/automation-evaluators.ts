@@ -15,9 +15,10 @@ const PersonIdSchema = IdSchema.brand<"PersonId">();
 /**
  * Every connector whose activity a rule may name.
  *
- * Kept in step with the connector registry by a test in `@rally/connectors`,
- * which is where the manifests are and which can see both. Nothing else links
- * them: this list is a second spelling of the registry's own membership, and
+ * Kept in step with the connector registry by
+ * `apps/api/test/connector-activity-trigger-vocabulary.test.ts`, which is the
+ * nearest place that can see both the manifests and this list. Nothing else
+ * links them: this list is a second spelling of the registry's membership, and
  * it silently drifted once — `fireflies` was added as a connector and not
  * here, so every Fireflies Sidekick was accepted, showed as published, and
  * then had its registration projection rejected at this field on a hop where
