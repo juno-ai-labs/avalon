@@ -512,7 +512,7 @@ describe("sidekick_post_result", () => {
     ).one().n)).toBe(1);
   });
 
-  it.each(["needs_input", "failed"] as const)("does not synthesize a %s reply to the coordinator", async (status) => {
+  it.each(["needs_input", "failed"] as const)("settles %s with only failed runs notifying their owner once", async (status) => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -535,16 +535,24 @@ describe("sidekick_post_result", () => {
       const target = instance as unknown as {
         deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" | "failed"; error: { code: string; message: string } }) => Promise<string | null>;
       };
-      await target.deliverAgentRunResult(childInput, { status, error: {
-        code: "ambiguous_external_write", message: "An external action's outcome could not be confirmed; do not repeat it.",
-      } });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await target.deliverAgentRunResult(childInput, { status, error: {
+          code: "ambiguous_external_write", message: "An external action's outcome could not be confirmed; do not repeat it.",
+        } });
+      }
     });
+    if (status === "failed") {
+      await settledRun(roomConversation());
+      expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(
+        `Agent failed due to ambiguous_external_write. Id: ${started.agentId}`,
+      ))).toBe(true);
+    }
     expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM runs",
-    ).one().n)).toBe(0);
-    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
-    ).one().n)).toBe(0);
+      `SELECT COUNT(*) AS n FROM (
+        SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
+        UNION SELECT client_message_id FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'agent-message:%'
+      )`,
+    ).one().n)).toBe(status === "failed" ? 1 : 0);
   });
 
   it("fences an owner before reading descendants during recursive stop", async () => {

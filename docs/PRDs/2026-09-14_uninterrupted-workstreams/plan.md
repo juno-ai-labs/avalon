@@ -29,13 +29,13 @@ Implement the full PRD on `codex/uninterrupted-workstreams`, rebased onto the me
 - The inline-child runtime and participant queue UI are removed. Bind remains the owner of every loop; no timing barrier or alternate mailbox was added.
 - The branch was rebased onto 4927e9306 to resolve actual conflicts. Shipped migrations remain unchanged; team and background migrations are each 59 in their separate authorities; socket teardown retains both main's query-data release and background-count cleanup.
 - User clarification on 2026-09-15 removes automatic forwarding. Every message to another agent uses send_message or reply; ordinary final responses remain local. No end_turn tool, special completion receipt, or new Bind dependency is needed. The previous native-completion proposal and generated-result admission exception are withdrawn.
-- The updated workerd suite exercises actual reply tool calls, local-only worker and Sidekick final responses, no synthesized failure/needs-input messages, and replay after lost admission confirmation. Current validation is recorded in [acceptance.md](acceptance.md).
+- The updated workerd suite exercises actual reply tool calls, local-only worker and Sidekick final responses, one parent failure notice and no synthesized needs-input messages, and replay after lost admission confirmation. Current validation is recorded in [acceptance.md](acceptance.md).
 
 ## Decisions for the final review
 
-The user asked that material decisions be collected at the end. The remaining proposals are:
+The user asked that material decisions be collected at the end. Archive settlement remains pending; attachment forwarding is approved:
 
 - **Archive settlement:** Liveness renewal continues for an already-started step so Bind can settle an archived run as cancelled. Authority checks remain before every new model and tool call. The previous liveness authorization check instead turned the stop into a persistence failure.
-- **Attachment audience:** An agent may explicitly forward an accessible attachment to an authorized Sidekick whose authoring conversation has a broader audience. Source attachment access and destination contact authority are enforced; no audience-comparison gate is added, following the model-trust team design.
+- **Approved attachment audience (2026-09-15):** An agent may explicitly forward an accessible attachment to an authorized Sidekick whose authoring conversation has a broader audience. Source attachment access and destination contact authority are enforced; no audience-comparison gate is added, following the model-trust team design.
 
 Live-model and three-participant acceptance still require a configured development provider. These are acceptance gaps, not reasons to change Bind protections or replace model evaluation with scripted-provider evidence.

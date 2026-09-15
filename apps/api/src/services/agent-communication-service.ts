@@ -39,7 +39,7 @@ export class AgentCommunicationService {
   }
 
   /** Stable across retries of the exact durable tool effect. */
-  private async messageId(context: HarnessToolContext): Promise<string> {
+  private async messageId(context: Pick<HarnessToolContext, "effectIntentId">): Promise<string> {
     if (!context.effectIntentId) throw new AgentCommunicationError("agent_effect_identity_missing");
     const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
       `agent-message:${this.input.workspaceId}:${this.senderId}:${context.effectIntentId}`,
@@ -110,8 +110,25 @@ export class AgentCommunicationService {
   }
 
   async send(args: SendAgentMessageInput | ReplyToAgentMessageInput, context: HarnessToolContext) {
-    const messageId = await this.messageId(context);
     if ("agentId" in args) await this.contactSidekick(args.agentId);
+    return this.deliver(args, await this.messageId(context));
+  }
+
+  /** Host failure settlement is the sole automatic parent notification. */
+  async notifyFailure(reason: string) {
+    const owner = await (await this.workspace()).agentOwner({ workspaceId: this.input.workspaceId, agentId: this.senderId });
+    if (!owner.agentId) return;
+    try {
+      await this.deliver({ agentId: owner.agentId, message: `Agent failed due to ${reason}. Id: ${this.senderId}`, attachmentIds: [] },
+        await this.messageId({ effectIntentId: `failure:${this.input.harnessRunId}` }));
+    } catch (error) {
+      // Archival closes admission; it must not prevent the failed run settling.
+      if (error instanceof AgentCommunicationError && error.code === "workstream_archived") return;
+      throw error;
+    }
+  }
+
+  private async deliver(args: SendAgentMessageInput | ReplyToAgentMessageInput, messageId: string) {
     const route = await (await this.workspace()).resolveAgentMessage({
       workspaceId: this.input.workspaceId, messageId, senderAgentId: this.senderId,
       ...("agentId" in args ? { recipientAgentId: args.agentId, preferredTeamId: await this.team() }

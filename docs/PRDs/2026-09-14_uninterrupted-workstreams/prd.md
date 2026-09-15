@@ -60,7 +60,7 @@ Background agents use the same agent harness as workstream agents and inherit th
 
 Agents use the same start and message primitives recursively. A child can delegate when useful. Retain only the lineage needed for authorization, reporting, and stopping owned execution; do not introduce tree scheduling or aggregate task state.
 
-Agents send results and questions through `send_message` or `reply`. Standard assistant responses remain in their own conversation and are never automatically forwarded to another agent; this applies equally to parents, siblings, and Sidekick authoring agents. Completion, failure, and needs-input states do not synthesize inter-agent messages. Follow-up instructions continue the same substream with its existing context. Reuse message references for returning answers rather than creating separate return-destination machinery.
+Agents send results and questions through `send_message` or `reply`. Standard assistant responses remain in their own conversation and are never automatically forwarded to another agent; this applies equally to parents, siblings, and Sidekick authoring agents. A failed background agent posts one host-generated notice to its owning parent: `Agent failed due to <reason>. Id: <id>`. Settlement retries do not duplicate it. Completion and needs-input states do not synthesize messages. Follow-up instructions continue the same substream with its existing context. Reuse message references for returning answers rather than creating separate return-destination machinery.
 
 ### Minimal participant visibility
 
@@ -170,7 +170,7 @@ Retain existing resource-level write controls and safe handling of uncertain ext
 | Stop agent | Stop the addressed agent and its owned descendants using existing host controls. Continue later with a message. |
 | Initialize or locate Sidekick | Discover accessible Sidekicks with ownership scope, presenting current-workstream entries first. Prefer suitable existing workstream Sidekicks; default new Sidekicks to current-workstream ownership. Establish the authorized authoring destination and implicit team membership; setup itself happens through messages. |
 
-Final responses and failures settle locally through the existing execution host. Inter-agent messages require explicit send_message or reply calls; there is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
+Final responses settle locally through the existing execution host. Failed background runs additionally notify their owning parent. Model-authored inter-agent messages require explicit send_message or reply calls; there is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
 
 ### Agreed wire shapes
 
