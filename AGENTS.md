@@ -164,6 +164,37 @@ resolution here.
   unfixed — only then, and only if it is named in the report and the pull
   request description. Never leave an intermittent failure unmentioned.
 
+## Naming a schema failure
+
+**A rejection that reaches a log, a notice, an operator, or the far side of an
+RPC hop must name the field it rejected.** A `ZodError` knows exactly what was
+wrong and where, and almost every boundary in this tree throws that away: a
+Durable Object RPC reduces it to a bare `Error` with no `issues` and no message,
+`connectorObservationErrorCode` reads it as `unexpected_error` because it is not
+a `ConnectorError`, and `scheduledAlarmErrorCode` reads it as `handler_error`
+because its message is a JSON blob rather than a code.
+
+Four such boundaries lost the same information in one week, and each cost a
+separate diagnosis of the same bug.
+[`docs/naming-a-schema-failure.md`](docs/naming-a-schema-failure.md) records
+what that cost and holds the catalogue.
+
+- **Use `zodDiagnosticCode`, `describeZodIssues` or `codeShaped` from
+  `@rally/contracts`.** They are one implementation deliberately: a boundary
+  that writes its own is how the root path shipped spelled `(root)`, outside the
+  character class the operator notice required.
+- **Never widen what is reported to the caller.** Paths and issue codes are
+  schema shape and may cross; the rejected _values_ are member or provider data
+  and may not. That is the same line `errorHandler` draws when it records
+  `validation_issues`.
+- **A generic code is a defect, not a fallback.** `unexpected_error`,
+  `handler_error`, `ZodError`, `internal_error` and `unhealthy` on a path that
+  had the reason in hand are each a bug to fix in the change that finds one —
+  the same standing as a flaky test.
+- **An adapter that returns a failure owes its reason too.** A `{ ok: false,
+  message }` is not exempt because it did not throw; Granola's health check
+  computed "webhook endpoint identity is missing" and the log said `unhealthy`.
+
 ## Capturing command output
 
 For any command with non-trivial output — tests, typecheck, lint, migrations,

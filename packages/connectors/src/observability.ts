@@ -8,6 +8,7 @@ import {
   type ConnectorPollingActivitySource,
   type ConnectorWebhookActivitySource,
 } from "./types";
+import { zodDiagnosticCode } from "@rally/contracts";
 import type { FetchLike } from "./provider-utils";
 
 /** Logging is diagnostic only: a sink failure must never become a connector failure. */
@@ -27,7 +28,13 @@ export function observeConnector(
 export function connectorObservationErrorCode(error: unknown): string {
   if (error instanceof ConnectorError) return error.code;
   if (error instanceof Error && error.name === "AbortError") return "request_aborted";
-  return "unexpected_error";
+  // A schema rejection is the one "unexpected" error that knows exactly what
+  // went wrong. A provider answering 200 with a body this adapter does not
+  // model is an ordinary Tuesday — the shape drifts, a field goes null, an
+  // array holds objects where it held strings — and the whole diagnosis is the
+  // path. Collapsing it to `unexpected_error` discards that and leaves an
+  // operator comparing two identical log lines.
+  return zodDiagnosticCode(error, "response") ?? "unexpected_error";
 }
 
 export function connectorObservationFailureLevel(error: unknown): ConnectorLogLevel {
@@ -548,6 +555,14 @@ export function instrumentConnectorAdapter(
             outcome: result.ok ? (result.warning ? "degraded" : "healthy") : "unhealthy",
             reconnect_required: result.reconnectRequired ?? false,
             warning_present: Boolean(result.warning),
+            // An adapter that *returns* `ok: false` had its reason in hand and
+            // dropped it here, while one that *throws* got a `code` logged four
+            // lines down. Granola returns, so "Granola webhook endpoint identity
+            // is missing" — the entire diagnosis, already computed — reached the
+            // log as the word `unhealthy` and nothing else. The message is the
+            // adapter's own prose about its own configuration, not provider or
+            // member content, and `redact` bounds it.
+            ...(result.ok ? {} : { reason: result.message }),
             duration_ms: Date.now() - startedAt,
             ...fields,
           },

@@ -1,5 +1,6 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   authorizedConnection,
   ConnectorError,
@@ -28,6 +29,27 @@ function connection() {
 }
 
 describe("connector observability", () => {
+  it("names the failing field when a provider's response does not match the adapter's schema", () => {
+    // The real failure this exists for: Fireflies answered `get_meeting_summary`
+    // with HTTP 200 and a body whose shape had drifted. A `ZodError` is not a
+    // `ConnectorError`, so it landed as `unexpected_error` — twice, identically,
+    // naming nothing. The Sidekick had no summary to write and sent no email.
+    const rejection = z.looseObject({
+      summary: z.looseObject({ topics_discussed: z.array(z.string()).nullish() }).nullish(),
+    }).safeParse({ summary: { topics_discussed: [{ name: "pricing" }] } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    const code = connectorObservationErrorCode(rejection.error);
+    expect(code).not.toBe("unexpected_error");
+    expect(code).toContain("summary.topics_discussed.0");
+  });
+
+  it("keeps its own vocabulary for the errors that already had one", () => {
+    expect(connectorObservationErrorCode(new ConnectorError("unauthorized", "no"))).toBe("unauthorized");
+    expect(connectorObservationErrorCode(new Error("something else"))).toBe("unexpected_error");
+  });
+
+
   it("logs provider request starts and terminal outcomes at useful levels without URL content", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
