@@ -209,7 +209,12 @@ test('deploy verify shards workers the same way CI does', async () => {
     readFile(ciWorkflowPath, 'utf8'),
   ]);
 
-  for (const lane of ['api-tests-workers-1-of-n', 'api-tests-workers-2-of-n']) {
+  for (const lane of [
+    'api-tests-workers-1-of-n',
+    'api-tests-workers-2-of-n',
+    'api-tests-workers-3-of-n',
+    'api-tests-workers-4-of-n',
+  ]) {
     assert.equal(
       matrixCommand(deploy, lane),
       matrixCommand(ci, lane),
