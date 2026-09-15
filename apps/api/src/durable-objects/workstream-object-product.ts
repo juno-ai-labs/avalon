@@ -1,8 +1,6 @@
-import {
-  WorkstreamAppearanceSchema,
-  WorkstreamAppearancePatchSchema,
-  type WorkstreamAppearancePatch,
-} from "@rally/contracts";
+import { stableUuid } from "../lib/stable-uuid";
+import { ConversationInitializationSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -180,6 +178,7 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   emailAddress: z.string().email().max(254).nullable(),
   creatorUserId: z.string().uuid(),
+  initialization: ConversationInitializationSchema.default({ kind: "prompt" }),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
   mentions: z.array(MentionSchema).default([]),
   openingStructuredContent: z.unknown().nullable().default(null),
@@ -729,6 +728,7 @@ export class WorkstreamObjectProductService {
   }
 
   private async reserveAttachmentDrafts(input: {
+    preparationId?: string;
     workspaceId: string;
     workstreamId: string;
     inputId: string;
@@ -753,14 +753,14 @@ export class WorkstreamObjectProductService {
         this.storage.sql.exec(
           `INSERT INTO pending_attachment_reservation_recovery
              (input_id, resource_id, workspace_id, workstream_id,
-              release_authority, created_at)
-           VALUES (?, ?, ?, ?, 'preparation', ?)
+              release_authority, created_at, preparation_id)
+           VALUES (?, ?, ?, ?, 'preparation', ?, ?)
            ON CONFLICT(input_id, resource_id) DO NOTHING`,
           input.inputId,
           resourceId,
           input.workspaceId,
           input.workstreamId,
-          input.now,
+          input.now, input.preparationId ?? null,
         );
       }
       const tracked = this.storage.sql.exec<{
@@ -836,11 +836,12 @@ export class WorkstreamObjectProductService {
       mailbox_state: "failed" | "discarded";
     } & SqlRow>(
       `SELECT recovery.input_id, recovery.workspace_id, recovery.workstream_id,
-              recovery.release_authority, mailbox.state AS mailbox_state
+              recovery.release_authority, COALESCE(mailbox.state, 'failed') AS mailbox_state
          FROM pending_attachment_reservation_recovery recovery
-         JOIN pending_loop_input_mailbox mailbox ON mailbox.input_id = recovery.input_id
-        WHERE mailbox.state IN ('failed', 'discarded')
-        ORDER BY mailbox.input_sequence, recovery.input_id LIMIT 1`,
+         LEFT JOIN pending_loop_input_mailbox mailbox ON mailbox.input_id = recovery.input_id
+         LEFT JOIN prepared_conversation_receipts preparation ON preparation.operation_id = recovery.preparation_id
+        WHERE mailbox.state IN ('failed', 'discarded') OR preparation.state = 'failed'
+        ORDER BY recovery.created_at, recovery.input_id LIMIT 1`,
     ));
   }
 
@@ -1038,16 +1039,147 @@ export class WorkstreamObjectProductService {
     );
   }
 
+  private async prepareConversationMaterialization(input: {
+    conversation: PreparedConversation; operationId: string; identityHash?: string;
+    firstTurnId: string; clientMessageId: string; userId: string;
+    snapshot: { displayName: string; avatarUrl: string | null }; now: number;
+    workspaceId: string; workstreamId: string;
+  }) {
+    const hash = input.identityHash ?? workstreamImportHash(input.conversation);
+    const conversation = this.storage.transactionSync(() => {
+      const existing = first(this.storage.sql.exec<{ content_hash: string; content_json: string; state: string }>(
+        `SELECT content_hash, content_json, state FROM prepared_conversation_receipts WHERE operation_id = ?`, input.operationId));
+      if (existing) {
+        if (existing.content_hash !== hash || existing.state === "failed") throw new ApiError(409, "conversation_initialization_conflict", "This preparation changed or failed; start a new import");
+        return PreparedConversationSchema.parse(JSON.parse(existing.content_json));
+      }
+      this.storage.sql.exec(`INSERT INTO prepared_conversation_receipts(operation_id, content_hash, first_turn_id, content_json, state, created_at)
+        VALUES (?, ?, ?, ?, 'preparing', ?)`, input.operationId, hash, input.firstTurnId, JSON.stringify(input.conversation), input.now);
+      return input.conversation;
+    });
+    try {
+      const turns = await this.transcript.prepareConversation({ conversation,
+        firstTurnId: input.firstTurnId, clientMessageId: input.clientMessageId,
+        human: { userId: input.userId, snapshot: input.snapshot }, now: input.now });
+      const attachments: AttachmentResourceRow[] = [];
+      for (const [index, turn] of turns.entries()) attachments.push(...await this.reserveAttachmentDrafts({
+        workspaceId: input.workspaceId, workstreamId: input.workstreamId, inputId: turn.input.turnId,
+        preparationId: input.operationId, userId: input.userId, resourceIds: conversation.messages[index]?.attachmentIds ?? [], now: input.now,
+      }));
+      return { conversation, turns, attachments };
+    } catch (error) {
+      // Only definite input refusals end this operation. An uncertain RPC
+      // response leaves the durable owner preparing, so the same request can
+      // reconcile its reservation rather than delete possibly committed bytes.
+      if (error instanceof ApiError && [409, 422].includes(error.status)) await this.failConversationPreparation(input.operationId);
+      throw error;
+    }
+  }
+
+  private async failConversationPreparation(operationId: string): Promise<void> {
+    this.storage.sql.exec(`UPDATE prepared_conversation_receipts SET state = 'failed' WHERE operation_id = ? AND state = 'preparing'`, operationId);
+    while (await this.recoverTerminalAttachmentReservation()) { /* release durable terminal owners */ }
+  }
+
+  private commitConversationPreparation(operationId: string): void {
+    const receipt = first(this.storage.sql.exec<{ state: string }>(`SELECT state FROM prepared_conversation_receipts WHERE operation_id = ?`, operationId));
+    if (!receipt || receipt.state === "failed") throw new ApiError(409, "conversation_initialization_failed", "The preparation failed; start a new import");
+    this.storage.sql.exec(`UPDATE prepared_conversation_receipts SET state = 'committed' WHERE operation_id = ?`, operationId);
+  }
+
+  /** Joins the caller's identity/publication transaction for roots and children. */
+  private commitPreparedConversation(
+    conversation: PreparedConversation,
+    transcriptMessages: Awaited<ReturnType<WorkstreamTranscriptStorage["prepareConversation"]>>,
+    attachments: AttachmentResourceRow[], userId: string, now: number,
+  ): void {
+    for (const message of transcriptMessages) this.transcript.appendPreparedParticipantMessage(message);
+      transcriptMessages.forEach((turn, turnIndex) => (conversation.messages[turnIndex]?.attachmentIds ?? []).forEach((resourceId, position) => {
+        const resource = attachments.find((candidate) => String(candidate.id) === resourceId)!;
+        const descriptor = {
+          id: resourceId,
+          connectionId: resource.connection_id == null ? null : String(resource.connection_id),
+          type: String(resource.resource_type),
+          provider: String(resource.provider),
+          providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
+          title: String(resource.title),
+          mimeType: resource.mime_type == null ? null : String(resource.mime_type),
+          contentRef: resource.content_ref == null ? null : String(resource.content_ref),
+          canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
+          metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
+        };
+        this.storage.sql.exec(
+          `INSERT INTO participant_transcript_attachments(turn_id, resource_id, position, attachment_json)
+           VALUES (?, ?, ?, ?)`,
+          turn.input.turnId, resourceId, position, JSON.stringify({ attachedAt: iso(now) }),
+        );
+        this.storage.sql.exec(
+          `INSERT OR IGNORE INTO workstream_resource_links
+             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at)
+           VALUES (?, ?, 0, 'message_attachment', ?, ?, ?)`,
+          resourceId, userId, JSON.stringify(descriptor), now, now,
+        );
+      }));
+    for (const turn of transcriptMessages) this.markAttachmentReleaseOwnedByProjection(turn.input.turnId);
+  }
+
+  /** Internal coordinator operation, valid only for a freshly provisioned conversation. */
+  async installPreparedConversation(auth: AuthContext, operationId: string, rawConversation: PreparedConversation, replayOnly = false): Promise<{ turnId: string }> {
+    const conversation = PreparedConversationSchema.parse(rawConversation);
+    const root = this.root();
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== auth.workspaceId || root.created_by_user_id !== auth.userId) {
+      throw new ApiError(403, "conversation_initialization_denied", "Only the creator may initialize this conversation");
+    }
+    const hash = workstreamImportHash(conversation);
+    const replay = () => {
+      const receipt = first(this.storage.sql.exec<{ content_hash: string; first_turn_id: string }>(
+        `SELECT content_hash, first_turn_id FROM prepared_conversation_receipts WHERE operation_id = ? AND state = 'committed'`, operationId));
+      if (receipt && receipt.content_hash !== hash) throw new ApiError(409, "conversation_initialization_conflict", "This preparation already has different content");
+      return receipt;
+    };
+    const existing = replay();
+    if (existing) { await this.enqueueDirectorySnapshot(); return { turnId: existing.first_turn_id }; }
+    if (replayOnly) throw new ApiError(409, "conversation_initialization_missing", "A published conversation cannot receive initial history");
+    if (this.transcript.transcriptThrough() > 0) throw new ApiError(409, "conversation_already_started", "Prepared history requires an empty conversation");
+    const now = Date.now();
+    const firstTurnId = await stableUuid(["prepared-conversation", identity, operationId]);
+    const names = await this.messageUsers([auth.userId]);
+    const person = names.get(auth.userId);
+    const prepared = await this.prepareConversationMaterialization({ conversation, firstTurnId, operationId,
+      clientMessageId: operationId, userId: auth.userId, snapshot: {
+        displayName: person?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME, avatarUrl: person?.avatar_url ?? null }, now,
+      workspaceId: auth.workspaceId, workstreamId: identity.parentId });
+    const { turns, attachments } = prepared;
+    try {
+    this.storage.transactionSync(() => {
+      if (replay()) return;
+      if (this.transcript.transcriptThrough() > 0) throw new ApiError(409, "conversation_already_started", "The conversation started during preparation");
+      this.commitConversationPreparation(operationId);
+      this.commitPreparedConversation(prepared.conversation, turns, attachments, auth.userId, now);
+      this.storage.sql.exec(`UPDATE workstream SET next_sequence_number = ?, next_attention_ordinal = ?, updated_at = ? WHERE id = 1`, turns.length + 1, turns.length + 1, now);
+
+    });
+    } catch (error) { await this.failConversationPreparation(operationId); throw error; }
+    await this.enqueueDirectorySnapshot();
+    return { turnId: firstTurnId };
+  }
+
   async initialize(
     auth: AuthContext,
     rawInput: InitializeWorkstreamObjectRequest,
   ): Promise<{
     workstream: Workstream;
     turnId: string;
-    harnessRunId: string;
-    workflowInput: WorkstreamWorkflowInput;
+    harnessRunId: string | null;
+    workflowInput: WorkstreamWorkflowInput | null;
   }> {
     const input = InitializeWorkstreamObjectInputSchema.parse(rawInput);
+    const history = input.initialization.kind === "history" ? input.initialization.conversation : null;
+    if (history && (input.seed || input.mentions.length || input.attachmentIds.length || input.openingStructuredContent !== null)) {
+      throw new ApiError(422, "invalid_initial_content", "Prepared history cannot also execute a scripted opening or attach opening-message metadata");
+    }
     if (input.seed && input.seed.assistant === null) {
       throw new ApiError(
         422,
@@ -1077,15 +1209,6 @@ export class WorkstreamObjectProductService {
     // draft filter travels with the request so somebody else's draft — or an
     // already sent one — cannot be attached by id.
     const workspaceObject = await this.workspaceDirectory(input.workspaceId);
-    const attachments = input.attachmentIds.length === 0 ? [] : (await workspaceObject
-      .resourceDescriptors({
-        workspaceId: input.workspaceId,
-        resourceIds: [...new Set(input.attachmentIds)],
-        draftUploadedByUserId: input.creatorUserId,
-      })).items;
-    if (attachments.length !== input.attachmentIds.length) {
-      throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
-    }
     const originResources = input.originResourceIds.length === 0 ? [] : (await workspaceObject
       .resourceDescriptors({
         workspaceId: input.workspaceId,
@@ -1118,6 +1241,11 @@ export class WorkstreamObjectProductService {
         `SELECT run_id, execution_context_json FROM runs
           WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
       ));
+      if (part && !run && history) {
+        await this.enqueueDirectorySnapshot();
+        return { workstream: await this.summary(existingRoot, auth.userId), turnId: part.id,
+          harnessRunId: null, workflowInput: null };
+      }
       if (!part || !run || run.execution_context_json === null) {
         throw new ApiError(409, "workstream_create_replay_incomplete", "The work stream is incomplete");
       }
@@ -1175,40 +1303,41 @@ export class WorkstreamObjectProductService {
       : [];
     const actorName = names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME;
     const now = Date.now();
-    const messageId = uuidV7(now);
+    const messageId = await stableUuid(["conversation-initialization", input.workstreamId, input.clientMessageId]);
     const runId = asHarnessRunId(uuidV7(now));
-    const model = input.modelOverride
+    const model = history ? null : input.modelOverride
       ? pinnedModelRouting(input.modelOverride).model
       : (await resolveNewWorkstreamModelRouting(this.env, {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
         })).model;
-    const transcriptMessage = await this.transcript.prepareParticipantMessage({
-      turnId: messageId,
-      actor: "human",
-      authorUserId: input.creatorUserId,
-      authorSnapshot: {
-        displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
-        avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
-      },
-      clientMessageId: input.clientMessageId,
-      messageType: "text",
-      text: prepared.text,
-      structuredContentJson: input.openingStructuredContent === null
-        ? null
-        : JSON.stringify(input.openingStructuredContent),
-      externalActorJson: null,
-      producedByRunId: null,
-      messageSequenceNumber: 1,
-      createdAtUtc: new Date(now).toISOString(),
-      attentionOrdinal: 1,
+    const authorSnapshot = {
+      displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
+      avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
+    };
+    const materialization = await this.prepareConversationMaterialization({
+      conversation: history ?? { messages: [{ role: "user", text: prepared.text,
+        structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
+      operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
+      ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
+      userId: input.creatorUserId, snapshot: authorSnapshot, now,
+      workspaceId: input.workspaceId, workstreamId: input.workstreamId,
     });
-    const openingWorkflowInput = this.workflowInput(input, runId, messageId);
+    const { conversation, turns: transcriptMessages, attachments } = materialization;
+    const initialMessages = conversation.messages;
+    const openingWorkflowInput = history ? null : this.workflowInput(input, runId, messageId);
+    let initializedElsewhere = false;
     this.storage.transactionSync(() => {
+      // Hashing and directory reads yield. Another delivery can initialize
+      // the room while those awaits are in flight; decide against current SQL.
+      if (first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`))?.authority_mode === "authoritative") {
+        initializedElsewhere = true;
+        return;
+      }
       this.storage.sql.exec(
         `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
-             title = ?, description = ?, scope = ?, exact_state = 'scheduled',
-             state_reason_code = ?, next_sequence_number = 2, next_attention_ordinal = 2,
+             title = ?, description = ?, scope = ?, exact_state = ?,
+             state_reason_code = ?, next_sequence_number = ?, next_attention_ordinal = ?,
              authority_epoch = 1, scope_epoch = 0, listing_epoch = 1, run_revision = 1,
              created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
              created_by_user_id = ?, email_address = ?, email_route_status = 'active',
@@ -1216,7 +1345,8 @@ export class WorkstreamObjectProductService {
              opportunity_display_prompt_hash = ?, opportunity_execution_prompt_hash = ?,
              description_source = ?, system_kind = ?, title_status = ?, model_override = ?, updated_at = ?
          WHERE id = 1 AND authority_mode = 'preparing'`,
-        input.generation, input.title, input.objective, input.scope, input.reason, now, now, now,
+        input.generation, input.title, input.objective, input.scope, history ? "idle" : "scheduled",
+        input.reason, initialMessages.length + 1, initialMessages.length + 1, now, now, now,
         input.creatorUserId, input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
         input.opportunityDisplayPromptHash, input.opportunityExecutionPromptHash,
         input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride, now,
@@ -1244,10 +1374,11 @@ export class WorkstreamObjectProductService {
            (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
             manual_unread_from_ordinal, latest_mention_attention_ordinal,
             last_seen_at, version, updated_at)
-         VALUES (?, 0, 1, NULL, 0, ?, 0, ?)`,
-        input.creatorUserId, now, now,
+         VALUES (?, 0, ?, NULL, 0, ?, 0, ?)`,
+        input.creatorUserId, initialMessages.length, now, now,
       );
-      this.transcript.appendPreparedParticipantMessage(transcriptMessage);
+      this.commitConversationPreparation(input.clientMessageId);
+      this.commitPreparedConversation(conversation, transcriptMessages, attachments, input.creatorUserId, now);
       prepared.mentions.forEach((mention, index) => {
         this.storage.sql.exec(
           `INSERT INTO participant_transcript_mentions
@@ -1273,33 +1404,6 @@ export class WorkstreamObjectProductService {
           );
         }
       });
-      input.attachmentIds.forEach((resourceId, position) => {
-        const resource = attachments.find((candidate) => String(candidate.id) === resourceId)!;
-        const descriptor = {
-          id: resourceId,
-          connectionId: resource.connection_id == null ? null : String(resource.connection_id),
-          type: String(resource.resource_type),
-          provider: String(resource.provider),
-          providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
-          title: String(resource.title),
-          mimeType: resource.mime_type == null ? null : String(resource.mime_type),
-          contentRef: resource.content_ref == null ? null : String(resource.content_ref),
-          canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
-          metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
-        };
-        this.storage.sql.exec(
-          `INSERT INTO participant_transcript_attachments(turn_id, resource_id, position, attachment_json)
-           VALUES (?, ?, ?, ?)`,
-          messageId, resourceId, position, JSON.stringify({ attachedAt: iso(now) }),
-        );
-        this.storage.sql.exec(
-          `INSERT INTO workstream_resource_links
-             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
-              resource_json, attached_at, updated_at)
-           VALUES (?, ?, 0, 'message_attachment', ?, ?, ?)`,
-          resourceId, input.creatorUserId, JSON.stringify(descriptor), now, now,
-        );
-      });
       for (const resourceId of input.originResourceIds) {
         const resource = originResources.find((candidate) => String(candidate.id) === resourceId)!;
         const descriptor = {
@@ -1322,8 +1426,9 @@ export class WorkstreamObjectProductService {
           resourceId, input.creatorUserId, JSON.stringify(descriptor), now, now,
         );
       }
-      this.storage.sql.exec(
-        `INSERT INTO runs
+      if (openingWorkflowInput) {
+        this.storage.sql.exec(
+          `INSERT INTO runs
            (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
             model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
             active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
@@ -1332,9 +1437,10 @@ export class WorkstreamObjectProductService {
             trigger_part_id, execution_context_json, created_at, updated_at)
          VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', 1, 0, ?,
                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, 0, ?, ?, ?, ?, ?)`,
-        runId, now, input.reason, JSON.stringify(input.executionPrincipal), model,
-        messageId, JSON.stringify(openingWorkflowInput), now, now,
-      );
+          runId, now, input.reason, JSON.stringify(input.executionPrincipal), model,
+          messageId, JSON.stringify(openingWorkflowInput), now, now,
+        );
+      }
       // Product identity, never an activation receipt, owns the singleton.
       // Every later message, retry, and recovery therefore derives this exact
       // same loop instead of minting a new logical conversation.
@@ -1344,6 +1450,7 @@ export class WorkstreamObjectProductService {
         now,
       });
     });
+    if (initializedElsewhere) return this.initialize(auth, rawInput);
     await this.objectStore.commitWithRegionalEffects(
       () => undefined,
       () => {
@@ -1420,7 +1527,7 @@ export class WorkstreamObjectProductService {
     return {
       workstream: await this.summary(this.root(), auth.userId),
       turnId: messageId,
-      harnessRunId: runId,
+      harnessRunId: openingWorkflowInput ? runId : null,
       workflowInput: openingWorkflowInput,
     };
   }

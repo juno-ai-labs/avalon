@@ -1,3 +1,5 @@
+import { buildAttachmentManifestPart } from "./attachment-model-content";
+import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
@@ -291,8 +293,6 @@ const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
 const TOOL_TRANSCRIPT_REPLAY_BUDGET_MS = 5_000;
-const MAX_REPLAYED_TRANSCRIPT_MESSAGES = 2_000;
-const MAX_REPLAYED_TRANSCRIPT_BYTES = 4 * 1_024 * 1_024;
 const INLINE_CHILD_SYSTEM_PROMPT = [
   "You are a focused read-only Rally sub-agent.",
   "Complete exactly the delegated objective and return a concise result with evidence.",
@@ -1130,7 +1130,6 @@ async function loadTriggerFencedTranscriptMessages(
   }
 
   const messages: Message[] = [];
-  let replayBytes = 0;
   let cursor = beforeSequence;
   while (true) {
     const page = await listMessages(
@@ -1140,13 +1139,9 @@ async function loadTriggerFencedTranscriptMessages(
       cursor,
     );
     const newerThanCheckpoint = page.filter((message) => message.sequenceNumber > afterSequence);
-    replayBytes += new TextEncoder().encode(JSON.stringify(newerThanCheckpoint)).byteLength;
-    if (messages.length + newerThanCheckpoint.length > MAX_REPLAYED_TRANSCRIPT_MESSAGES
-      || replayBytes > MAX_REPLAYED_TRANSCRIPT_BYTES) {
-      throw Object.assign(new Error("The uncompacted transcript exceeds the bounded replay preflight"), {
-        code: "context_limit_exceeded",
-      });
-    }
+    // Replay transports the complete canonical history. Bind's model-context
+    // preparation/compaction owns the inference budget; a second count/byte
+    // ceiling here made successfully imported conversations impossible to run.
     messages.unshift(...newerThanCheckpoint);
     const oldestSequence = page[0]?.sequenceNumber;
     if (
@@ -1461,6 +1456,16 @@ async function projectModelProtocolTranscript(
       modelContentStatus: "failed" as const,
       modelContentErrorCode: "source_unavailable",
     });
+    const imported = ImportedMessageProvenanceSchema.safeParse(message.structuredContent);
+    if (imported.success && (message.author.type === "human" || message.author.type === "agent")) {
+      // Historical roles remain intact. The importer is a custodian, not the
+      // author of the source prompt; do not apply the live-member author wrapper.
+      projected.push(modelDerivative(
+        { role: message.author.type === "human" ? "user" : "assistant", content: [message.textContent, ...(sources.length ? [buildAttachmentManifestPart(sources).text] : [])].filter(Boolean).join("\n\n") },
+        "participant_turn", message.id, message.sequenceNumber,
+      ));
+      continue;
+    }
     const participantMessage = message.author.type === "external"
       ? await projectParticipantModelMessage(env, {
           author: { type: "external", actor: message.author.actor },
