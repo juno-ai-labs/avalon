@@ -1,5 +1,4 @@
-import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, type SubstreamContent } from "@rally/contracts";
-import { preparedContentMessages } from "@rally/agent-harness";
+import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, SubstreamContentSchema, type SubstreamContent, type ConversationFile } from "@rally/contracts";
 import { z } from "zod";
 import { ApiError } from "../lib/api-error";
 
@@ -59,6 +58,45 @@ function chatGptHtmlData(html: string): unknown {
   return decode(entry);
 }
 
+function sourceFile(value: unknown, kind: ConversationFile["kind"]): ConversationFile {
+  const file = object(value);
+  const name = text(file['file_name']) || text(file['filename']) || text(file['name']) || text(file['title']) || "Imported file";
+  const mimeType = text(file['mime_type']) || text(file['file_type']) || text(file['content_type']) || "application/octet-stream";
+  const url = text(file['download_url']) || text(file['url']);
+  const extracted = text(file['extracted_content']);
+  return { name: extracted ? `${name} (extracted text).txt` : name, mimeType: extracted ? "text/plain" : mimeType, kind, source:
+    extracted ? { kind: "inline", encoding: "utf8", data: extracted }
+    : url.startsWith('https://') ? { kind: "remote", url }
+    : { kind: "unavailable", reference: url || text(file['id']) || text(file['asset_pointer']) || name,
+      reason: "The export does not contain downloadable file bytes." } };
+}
+
+function sourceFiles(value: unknown, kind: ConversationFile["kind"]): ConversationFile[] {
+  const file = object(value);
+  const extracted = text(file['extracted_content']);
+  if (!extracted) return [sourceFile(value, kind)];
+  const original = { ...file };
+  delete original['extracted_content'];
+  return [sourceFile(original, kind), sourceFile(value, kind)];
+}
+
+function visibleMessage(role: "user" | "assistant", body: string, files: ConversationFile[]) {
+  // Claude's share/export text can contain complete artifact documents. Preserve
+  // them as files, never execute or deploy their HTML, JavaScript or SVG.
+  const rendered = body.replace(/<antArtifact\b([^>]*)>([\s\S]*?)<\/antArtifact>/g, (_match, attributes: string, content: string) => {
+    const attribute = (key: string) => new RegExp(`${key}="([^"]*)"`).exec(attributes)?.[1];
+    const name = attribute("title") || attribute("identifier") || "Claude artifact";
+    files.push({ name, mimeType: attribute("type") || "text/plain", kind: "artifact",
+      source: { kind: "inline", encoding: "utf8", data: content } });
+    return `[Artifact: ${name}]`;
+  });
+  for (const match of rendered.matchAll(/\[([^\]]+)\]\((sandbox:\/[^)]+)\)/g)) {
+    files.push({ name: match[1]!, mimeType: "application/octet-stream", kind: role === "assistant" ? "artifact" : "attachment",
+      source: { kind: "unavailable", reference: match[2]!, reason: "This sandbox file is not included in the export. Add the original file to import it." } });
+  }
+  return rendered.trim() || files.length ? [{ role, text: rendered, ...(files.length ? { files } : {}) }] : [];
+}
+
 function chatGptMessages(value: unknown): SubstreamContent["messages"] {
   const conversation = object(value);
   let nodes: unknown[];
@@ -76,37 +114,81 @@ function chatGptMessages(value: unknown): SubstreamContent["messages"] {
     }
     nodes.reverse();
   } else {
-    nodes = array(conversation['linear_conversation']);
+    if (!Array.isArray(conversation['linear_conversation'])) throw new Error("Expected mapping/current_node or linear_conversation");
+    nodes = conversation['linear_conversation'];
   }
   return nodes.flatMap((node) => {
     const message = object(object(node)['message']);
     const role = object(message['author'])['role'];
     const metadata = object(message['metadata']);
     if ((role !== "user" && role !== "assistant") || metadata['is_visually_hidden_from_conversation'] === true
-      || (message['channel'] === "analysis" || message['channel'] === "summary")
+      || message['channel'] === "analysis" || message['channel'] === "summary"
       || (message['recipient'] != null && message['recipient'] !== "all")) return [];
     const content = object(message['content']);
-    if (content['content_type'] !== "text" && content['content_type'] !== "multimodal_text") return [];
-    const body = array(content['parts']).filter((part): part is string => typeof part === "string").join("\n\n");
-    return body.trim() ? [{ role, text: body }] : [];
+    const kind = role === "user" ? "attachment" : "artifact";
+    const files = array(metadata['attachments']).flatMap((file) => sourceFiles(file, kind));
+    if (content['content_type'] !== "text" && content['content_type'] !== "multimodal_text") {
+      throw new Error("Unsupported ChatGPT content.content_type");
+    }
+    if (!Array.isArray(content['parts'])) throw new Error("Expected ChatGPT content.parts array");
+    const parts: string[] = [];
+    for (const part of content['parts']) {
+      if (typeof part === "string") parts.push(part);
+      else if (object(part)['content_type'] === "image_asset_pointer") files.push(sourceFile(part, kind));
+      else throw new Error("Unsupported ChatGPT visible content part");
+    }
+    return visibleMessage(role, parts.join("\n\n"), files);
   });
 }
 
 function claudeMessages(value: unknown): SubstreamContent["messages"] {
-  const messages = Array.isArray(value) ? value : array(object(value)['chat_messages']);
+  const data = object(value);
+  const messages = Array.isArray(value) ? value : Array.isArray(data['chat_messages']) ? data['chat_messages']
+    : Object.hasOwn(data, 'message') ? [data] : null;
+  if (!messages) throw new Error("Expected Claude chat_messages or Code message records");
   return messages.flatMap((value) => {
     const event = object(value);
-    // Code exports wrap API messages and include separate progress/summary events.
     if (event['isCompactSummary'] === true || event['isMeta'] === true) return [];
     const message = Object.hasOwn(event, 'message') ? object(event['message']) : event;
     const sender = message['sender'] ?? message['role'];
     const role = sender === "human" ? "user" : sender;
     if (role !== "user" && role !== "assistant") return [];
+    const kind = role === "user" ? "attachment" : "artifact";
+    const files = [...array(message['attachments']), ...array(message['files'])].flatMap((file) => sourceFiles(file, kind));
     const content = message['content'];
-    const body = typeof content === "string" ? content : Array.isArray(content)
-      ? content.flatMap((part: unknown) => object(part)['type'] === "text" ? [text(object(part)['text'])] : []).join("\n\n")
-      : text(message['text']);
-    return body.trim() ? [{ role, text: body }] : [];
+    const parts: string[] = [];
+    if (typeof content === "string") parts.push(content);
+    else if (Array.isArray(content)) for (const raw of content) {
+      const part = object(raw);
+      if (part['type'] === 'text') {
+        if (typeof part['text'] !== 'string') throw new Error("Expected Claude text block text");
+        parts.push(part['text']);
+      } else if (part['type'] === 'image' || part['type'] === 'document') {
+        const source = object(part['source']);
+        files.push(source['type'] === 'base64' && typeof source['data'] === 'string'
+          ? { name: text(part['title']) || text(part['name']) || `Imported ${part['type']}`, mimeType: text(source['media_type']) || 'application/octet-stream', kind,
+              source: { kind: 'inline', encoding: 'base64', data: source['data'] } }
+          : sourceFile({ ...part, url: source['url'] }, kind));
+      } else if (part['type'] === 'artifact') {
+        if (typeof part['content'] !== 'string') files.push(sourceFile(part, 'artifact'));
+        else files.push({ name: text(part['title']) || 'Claude artifact', mimeType: text(part['mime_type']) || 'text/plain', kind: 'artifact',
+          source: { kind: 'inline', encoding: 'utf8', data: part['content'] } });
+      } else if (part['type'] === 'tool_use' && ['Write', 'artifacts'].includes(text(part['name']))) {
+        const artifact = object(part['input']);
+        const path = text(artifact['file_path']);
+        const name = path.split('/').at(-1) || text(artifact['title']) || text(artifact['id']) || 'Claude artifact';
+        files.push({ name, mimeType: text(artifact['type']) || 'text/plain', kind: 'artifact',
+          source: typeof artifact['content'] === 'string'
+            ? { kind: 'inline', encoding: 'utf8', data: artifact['content'] }
+            : { kind: 'unavailable', reference: path || text(artifact['id']) || name,
+                reason: 'This artifact event does not contain a complete file. Add the original file instead.' } });
+      } else if (!['tool_use', 'tool_result', 'thinking', 'redacted_thinking'].includes(text(part['type']))) {
+        throw new Error("Unsupported Claude content block type");
+      }
+    }
+    else if (typeof message['text'] === 'string') parts.push(message['text']);
+    else throw new Error("Expected Claude visible message content");
+    return visibleMessage(role, parts.join("\n\n"), files);
   });
 }
 
@@ -124,14 +206,14 @@ export function parseSessionExport(provider: "chatgpt" | "claude", input: string
     }
     const data = object(value);
     const messages = provider === "chatgpt" ? chatGptMessages(value) : claudeMessages(value);
-    // The same projection is consumed by prepared demos and checkpoint fixtures.
-    preparedContentMessages({ messages });
+    SubstreamContentSchema.parse({ messages });
     return SessionImportPreviewSchema.parse({
       title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || `Imported ${provider === "chatgpt" ? "ChatGPT" : "Claude"} conversation`,
       source: { provider, url: sourceUrl }, content: { messages },
     });
-  } catch {
-    throw new ApiError(422, "invalid_session_export", "No readable conversation was found. Import one conversation as JSON or a Claude Code JSONL export.");
+  } catch (error) {
+    const detail = error instanceof Error && !(error instanceof SyntaxError) && !(error instanceof z.ZodError) ? error.message : "Malformed conversation data";
+    throw new ApiError(422, "invalid_session_export", `${detail}. Import one conversation as JSON or a Claude Code JSONL export.`);
   }
 }
 

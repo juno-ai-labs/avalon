@@ -1,14 +1,16 @@
-import { SubstreamContentSchema, type SubstreamContent } from "@rally/contracts";
+import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { createLoopCheckpoint, type CheckpointBindings } from "@juno-ai/bind/session";
 
-/** One text projection for imported history, scripted demos and eval fixtures. */
-export function preparedContentMessages(content: SubstreamContent) {
-  return SubstreamContentSchema.parse(content).messages.map(({ role, text }) => ({ role, content: text }));
+/** Project resolved fixture history; the eval host owns the referenced resources. */
+export function preparedContentMessages(content: PreparedConversation) {
+  return PreparedConversationSchema.parse(content).messages.map(({ role, text, attachmentIds }) => ({ role,
+    content: [text, ...(attachmentIds?.length ? [`Attached resources: ${JSON.stringify(attachmentIds)}`] : [])].filter(Boolean).join("\n\n"),
+  }));
 }
 
 /** The host supplies environment identity and budget; Bind owns checkpoint semantics. */
 export function checkpointFromContent(input: {
-  content: SubstreamContent;
+  content: PreparedConversation;
   executionId: string;
   maxIterations: number;
   bindings: CheckpointBindings;

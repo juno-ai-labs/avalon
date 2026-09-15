@@ -937,7 +937,7 @@ describe("durable UI-to-model transcript projection", () => {
     expect(listMessages).toHaveBeenCalledTimes(2);
   });
 
-  it("fails before provider projection when an uncompacted transcript exceeds the replay byte ceiling", async () => {
+  it("preserves large canonical history for Bind context preparation", async () => {
     const oversized = message("00000000-0000-4000-8000-000000000098", 1, {
       author: "human",
       textContent: "x".repeat(4 * 1_024 * 1_024 + 1),
@@ -947,7 +947,7 @@ describe("durable UI-to-model transcript projection", () => {
       transcriptPort({}),
       { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
       async () => [oversized],
-    )).rejects.toMatchObject({ code: "context_limit_exceeded" });
+    )).resolves.toEqual([oversized]);
   });
 
   it.each(["get", "body"] as const)(

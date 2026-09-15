@@ -24,7 +24,11 @@ preparation operation that drives them, and the operator API the Ace Demos
 page calls. **Open questions** below says what remains.
 
 
-Scripted text responses share the prepared-content projection with imports and eval fixtures. Execution still uses ordinary runs; see [prepared content and session import](session-import.md).
+Text-only openings may select `execution: history`: they materialize prepared
+conversation facts through the same authority path as imports, start idle and
+confirm canonical content without inventing a run. The memo opening uses this mode.
+Tool/elicitation scenarios retain ordinary scripted executions. See
+[prepared conversations and session import](session-import.md).
 
 ## Where the code lives
 
@@ -676,6 +680,17 @@ no run is now appended to the loop's projection at the next admission
 ([`agent-harness.md`](agent-harness.md)), so a presenter's question about what
 the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
+
+## Changelog
+
+### 2026-09-15 — Separate prepared prose from scripted execution
+
+The pack's creation action now explicitly chooses history or execution. History
+uses the common conversation materializer and verifies the stored turns; readiness
+can expect idle without a run receipt. The decision memo exercises this mode.
+Wrapping each prose string in a model-message helper did not share creation behavior,
+and pretending the assistant ran would make demo readiness depend on fabricated
+execution. Real scripted tool/elicitation runs remain unchanged.
 
 ### 2026-09-10 — A demo is cast from the company's directory, not invented
 

@@ -1,3 +1,8 @@
+import { prepareSessionImport } from "../src/services/session-import-files";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
+import type { SessionImportPreview } from "@rally/contracts";
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useSelectedModel } from "./helpers/selected-model";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -13,7 +18,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
@@ -23,6 +28,9 @@ import { conversationObjectName, workspaceDOName, workstreamDOName } from "../sr
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+
+useSelectedModel();
+const provider = useOpenRouterDouble(() => ({ say: "Continuing the imported conversation." }));
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000bb0");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000bb1");
@@ -95,14 +103,59 @@ function creationEnv(): Env {
 }
 
 describe("creating a work stream", () => {
+  it("imports user files and assistant artifacts through upload storage and attaches each to its source turn", async () => {
+    const importEnv = withWorkspaceRuntimeDatabase(creationEnv(), WORKSPACE_ID);
+    const preview: SessionImportPreview = { title: "Imported files", source: { provider: "claude", url: null }, content: { messages: [
+      { role: "user", text: "", files: [{ name: "requirements.txt", mimeType: "text/plain", kind: "attachment", source: { kind: "inline", encoding: "utf8", data: "Keep it simple." } }] },
+      { role: "assistant", text: "The artifact", files: [
+        { name: "report.html", mimeType: "text/html", kind: "artifact", source: { kind: "inline", encoding: "utf8", data: "<h1>Report</h1>" } },
+        { name: "broken.png", mimeType: "image/png", kind: "artifact", source: { kind: "inline", encoding: "base64", data: "%%%" } },
+        { name: "missing.png", mimeType: "image/png", kind: "artifact", source: { kind: "unavailable", reference: "file-1", reason: "Login required" } },
+      ] },
+    ] } };
+    const conversation = await prepareSessionImport(importEnv, AUTH, preview, "import-files");
+    expect(await prepareSessionImport(importEnv, AUTH, preview, "import-files")).toEqual(conversation);
+    await expect(new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
+      title: preview.title, clientMessageId: "import-files-invalid", participantUserIds: [],
+    }, { messages: [conversation.messages[0]!, { ...conversation.messages[1]!, attachmentIds: ["00000000-0000-7000-8000-00000000ffff"] }] })).rejects.toThrow("unavailable");
+    expect(await runInDurableObject(workspace(), (_instance, ctx) => ctx.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_attachment_reservations`).one().count)).toBe(0);
+    const created = await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
+      title: preview.title, clientMessageId: "import-files", participantUserIds: [],
+    }, conversation);
+    const boot = await new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id).boot();
+    const turns = boot.transcript.ranges.flatMap((range) => range.turns);
+    expect(JSON.stringify(turns[0])).toContain("requirements.txt");
+    expect(JSON.stringify(turns[1])).toContain("report.html");
+    expect(JSON.stringify(turns[1])).toContain("Login required");
+    expect(JSON.stringify(turns[1])).toContain("invalid encoded file bytes");
+    const resources = await runInDurableObject(workspace(), (_instance, ctx) => ctx.storage.sql.exec<{ content_ref: string; provider: string }>(`SELECT content_ref, provider FROM resources ORDER BY title`).toArray());
+    expect(resources).toHaveLength(2);
+    expect(resources.every((resource) => resource.provider === "avalon_upload")).toBe(true);
+    const stored = [];
+    for (const resource of resources) stored.push(await (await env.PAYLOADS.get(resource.content_ref))!.text());
+    expect(stored).toEqual(expect.arrayContaining(["Keep it simple.", "<h1>Report</h1>"]));
+    expect((await prepareSessionImport(importEnv, AUTH, preview, "import-files")).messages).toEqual(conversation.messages);
+    expect(await new WorkstreamObjectCreationService(importEnv, AUTH).createPrepared({
+      title: preview.title, clientMessageId: "import-files", participantUserIds: [],
+    }, conversation)).toMatchObject({ turnId: created.turnId, harnessRunId: null });
+    const client = new WorkstreamObjectClient(importEnv, AUTH, created.workstream.id);
+    const followup = await client.createMessage({ text: "Use the imported files", clientMessageId: "files-followup", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, created.workstream.id)));
+    await runDurableObjectAlarm(agent);
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Use the imported files")), { timeout: 20_000 }).toBe(true);
+    const request = provider.calls.find((call) => JSON.stringify(call.messages).includes("Use the imported files"))!;
+    expect(request.messages.some((message) => message.role === "user" && JSON.stringify(message.content).includes("requirements.txt"))).toBe(true);
+    expect(request.messages.some((message) => message.role === "assistant" && JSON.stringify(message.content).includes("report.html"))).toBe(true);
+    await expect.poll(() => runInDurableObject(agent, (_instance, ctx) => ctx.storage.sql.exec<{ status: string }>(`SELECT status FROM runs WHERE trigger_part_id = ?`, followup.turn.turnId).toArray()[0]?.status), { timeout: 20_000 }).toBe("completed");
+  });
+
   it("stores prepared history atomically without admitting a run and replays the receipt", async () => {
     const service = new WorkstreamObjectCreationService(creationEnv(), AUTH);
     const request = { title: "Imported conversation", openingMessage: "", clientMessageId: "import-1", participantUserIds: [], attachmentIds: [] };
     const initialContent = {
-      source: { provider: "claude" as const, url: "https://claude.ai/share/f027df6e-0004-460c-8ec7-0666310a2ee2" },
-      messages: [{ role: "user" as const, text: "Original question" }, { role: "assistant" as const, text: "Original answer" }],
+      messages: [{ role: "user" as const, text: "Original question", structuredContent: { kind: "imported_session", importedByUserId: USER_ID, importedByName: "Adam", source: { provider: "claude", url: null } } }, { role: "assistant" as const, text: "Original answer" }],
     };
-    const created = await service.create(request, { initialContent });
+    const created = await service.create(request, { initialization: { kind: "history", conversation: initialContent } });
     expect(created.harnessRunId).toBeNull();
     const client = new WorkstreamObjectClient(creationEnv(), AUTH, created.workstream.id);
     const boot = await client.boot();
@@ -117,17 +170,23 @@ describe("creating a work stream", () => {
     }));
     expect(state.runs).toEqual([]);
     expect(state.root).toMatchObject({ exact_state: "idle", next_attention_ordinal: 3 });
-    expect(await service.create(request, { initialContent })).toMatchObject({ turnId: created.turnId, harnessRunId: null, workstream: { id: created.workstream.id } });
-    await expect(service.create(request, { initialContent: { ...initialContent, messages: [{ role: "user", text: "Changed" }] } })).rejects.toThrow("already used");
+    expect(await service.create(request, { initialization: { kind: "history", conversation: initialContent } })).toMatchObject({ turnId: created.turnId, harnessRunId: null, workstream: { id: created.workstream.id } });
+    await expect(service.create(request, { initialization: { kind: "history", conversation: { ...initialContent, messages: [{ role: "user", text: "Changed" }] } } })).rejects.toThrow("already used");
     expect((await client.boot()).transcript.ranges.flatMap((range) => range.turns)).toHaveLength(2);
     const continuation = await client.createMessage({
       text: "Continue from the original answer", clientMessageId: "import-followup-1",
       mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
-      seed: { packVersion: "import-test", actionId: "continue", assistant: { kind: "say", text: "Continuing" } },
     });
-    const admittedRuns = await runInDurableObject(stub, (_instance, ctx) =>
-      ctx.storage.sql.exec(`SELECT run_id FROM runs WHERE trigger_part_id = ?`, continuation.turn.turnId).toArray());
-    expect(admittedRuns).toHaveLength(1);
+    await runDurableObjectAlarm(stub);
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Continue from the original answer")), { timeout: 20_000 }).toBe(true);
+    const call = provider.calls.find((call) => JSON.stringify(call.messages).includes("Continue from the original answer"))!;
+    expect(call.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "Original question" }),
+      expect.objectContaining({ role: "assistant", content: "Original answer" }),
+    ]));
+    await expect.poll(() => runInDurableObject(stub, (_instance, ctx) =>
+      ctx.storage.sql.exec<{ status: string }>(`SELECT status FROM runs WHERE trigger_part_id = ?`, continuation.turn.turnId).toArray()[0]?.status), { timeout: 20_000 }).toBe("completed");
+
 
   });
 

@@ -12,6 +12,7 @@ type LocalOnlyTranscriptOperation =
   | "captureSubstreamContext"
   | "installInitialContext"
   | "prepareParticipantMessage"
+  | "prepareConversation"
   // Authenticated product operations resolve immutable human provenance and
   // join the object transaction locally; no generic RPC may impersonate one.
   | "appendParticipantMessage"

@@ -1,3 +1,4 @@
+import { createLoopCheckpoint, parseLoopCheckpoint, advanceLoopCheckpoint } from "@juno-ai/bind/session";
 import { INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import {
   detectCompletionDefect,
@@ -643,7 +644,14 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   const signal = deadline?.withExternal(input.signal)
     ?? input.signal
     ?? new AbortController().signal;
-  const state: ToolLoopState = {
+  const savedState = input.checkpoints?.start ? parseLoopCheckpoint(input.checkpoints.start).state : null;
+  const state: ToolLoopState = savedState ? {
+    messages: savedState.messages, inputTokens: savedState.inputTokens, outputTokens: savedState.outputTokens,
+    costCents: savedState.costCents, lastPromptTokens: savedState.lastPromptTokens, lastOutputTokens: savedState.lastOutputTokens,
+    hasFreshTokenCount: savedState.hasFreshTokenCount, toolCalls: savedState.toolCalls,
+    ...(savedState.endedTurnViaTool === undefined ? {} : { endedTurnViaTool: savedState.endedTurnViaTool }),
+    ...(savedState.suspended ? { suspended: savedState.suspended } : {}),
+  } : {
     messages: [],
     inputTokens: 0,
     outputTokens: 0,
@@ -1077,7 +1085,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         "Bind loop requires host recovery of incomplete model protocol",
       );
     }
-    state.messages.push(...healed.messages);
+    if (input.checkpoints?.start) {
+      if (await hashBindLoop(state.messages) !== healedHash) throw new Error("checkpoint_host_projection_mismatch");
+    } else state.messages.push(...healed.messages);
     const contextWindowTokensByModel = input.compaction
       ? await resolveOpenRouterContextWindows(input, signal)
       : new Map<string, number>();
@@ -1347,7 +1357,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       }));
     };
 
-    const result = await runToolLoop({
+    const checkpointStart = input.checkpoints ? input.checkpoints.start ?? createLoopCheckpoint({
+      executionId: input.harnessRunId, messages: state.messages, maxIterations,
+      bindings: input.checkpoints.bindings,
+    }) : null;
+    let checkpoint = checkpointStart;
+    const loopParams: ToolLoopParams = {
       state,
       activePlugins: runtime.active,
       maxIterations,
@@ -1935,7 +1950,23 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           costCents: state.costCents,
           toolCalls: state.toolCalls,
         })),
-    });
+    };
+    const result = input.checkpoints && checkpointStart ? await runToolLoop(loopParams, {
+      iterationsUsed: checkpointStart.iterationsUsed,
+      onBoundary: async (boundary) => {
+        if (!bindLoopProjection || !checkpoint) throw new Error("checkpoint_projection_missing");
+        checkpoint = advanceLoopCheckpoint(checkpoint, boundary, checkpointStart, await input.checkpoints!.captureBindings());
+        const projection = { loopId: bindLoopProjection.loopId, generation: bindLoopProjection.generation,
+          stateRevision: bindLoopProjection.stateRevision, lastModelTurnIndex: bindLoopProjection.lastModelTurnIndex,
+          lastAssistantReservation: bindLoopProjection.lastAssistantReservation, systemProjection: bindLoopProjection.systemProjection };
+        await input.checkpoints!.commit({ loop: checkpoint,
+          projection: { ...projection, messages: projectBindLoopMessages(bindLoopProjection).slice(1).map((message) => ({ ...message })) },
+          activationHints: [...runtime.active], skillActivationHints: [...runtime.skills.activeRefs],
+        });
+        return "continue";
+      },
+    }) : await runToolLoop(loopParams);
+
     await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("iteration_boundary"));
     const resultStats = terminalCompactionInputTokens === 0 && terminalCompactionOutputTokens === 0
       ? result.stats

@@ -198,7 +198,8 @@ export class ResourceService {
     };
   }
 
-  async upload(file: File, title: string | undefined, draftId: string) {
+  async upload(file: File, title: string | undefined, draftId: string,
+    importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; fileIndex: string }) {
     const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
     if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);
@@ -208,9 +209,19 @@ export class ResourceService {
       workspaceId: this.auth.workspaceId,
       resourceId: id,
     });
-    if (exists) throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
     const bytes = new Uint8Array(await file.arrayBuffer());
     const contentSha256 = await sha256Hex(bytes);
+    if (exists) {
+      const existing = importIdentity ? await this.loadResource(id) : null;
+      const metadata = existing ? JSON.parse(String(existing['metadata_json'] ?? "{}")) as Record<string, unknown> : {};
+      if (existing && existing['uploaded_by_user_id'] === this.auth.userId
+        && existing['content_sha256'] === contentSha256
+        && existing['title'] === truncateUtf16Safe(title ?? file.name, 300)
+        && metadata['originalName'] === file.name
+        && metadata['declaredMimeType'] === truncateUtf16Safe(file.type || 'application/octet-stream', 160)
+        && JSON.stringify(metadata['importIdentity']) === JSON.stringify(importIdentity)) return this.get(id);
+      throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
+    }
     const declaredMimeType = truncateUtf16Safe(file.type || "application/octet-stream", 160);
     const verifiedMimeType = verifyAttachmentMimeType(bytes, file.name, declaredMimeType);
     // A draft UUID may be reused after deletion. Make each original object key
@@ -249,7 +260,8 @@ export class ResourceService {
       mimeType: verifiedMimeType,
       contentRef: key,
       contentSha256,
-      metadataJson: JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
+      metadataJson: JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType,
+        ...(importIdentity ? { importIdentity } : {}) }),
       uploadedByUserId: this.auth.userId,
       at,
     });

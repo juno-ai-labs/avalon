@@ -61,7 +61,7 @@ export function SessionImportForm({ api, onImported, open, onOpenChange }: Sessi
       <Button disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
       <Button disabled={busy || !preview?.title.trim()} onClick={() => void submit()}>{busy ? 'Working…' : 'Import into new work stream'}</Button>
     </>}>
-      <p className="modal-copy">Bring in the text from a ChatGPT or Claude conversation. Imported messages keep their user and assistant roles and show who imported them.</p>
+      <p className="modal-copy">Bring in a ChatGPT or Claude conversation, including available attachments and artifact files. Imported messages keep their user and assistant roles and show who imported them.</p>
       <form className="session-import-link-form" onSubmit={(event) => { event.preventDefault(); void load({ kind: 'link', url }); }}>
         <label className="form-field">Shared conversation link
           <input type="url" required value={url} disabled={busy} onChange={(event) => { setUrl(event.target.value); setPreview(null); }} placeholder="https://claude.ai/share/…" />
@@ -87,10 +87,31 @@ export function SessionImportForm({ api, onImported, open, onOpenChange }: Sessi
         <label className="form-field">Work stream title<input value={preview.title} maxLength={180} onChange={(event) => {
           setPreview({ ...preview, title: event.target.value }); setRequestId(crypto.randomUUID());
         }} /></label>
-        <p>{preview.content.messages.length} messages · Only visible conversation text</p>
+        <p>{preview.content.messages.length} messages · Tools and thinking omitted</p>
         <ol>{preview.content.messages.map((message, index) => <li key={index}>
           <strong>{message.role === 'user' ? 'User' : preview.source.provider === 'chatgpt' ? 'ChatGPT' : 'Claude'}</strong>
           <p>{message.text}</p>
+          {!!message.files?.length && <ul>{message.files.map((file, fileIndex) => <li key={fileIndex}>
+            <strong>{file.name}</strong> · {file.kind === 'artifact' ? 'Agent artifact' : 'User attachment'}
+            <p>{file.source.kind === 'inline' ? 'File content included' : file.source.kind === 'unavailable' ? file.source.reason : 'Download pending'}</p>
+            <label className="form-field">{file.source.kind === 'inline' ? 'Replace file' : 'Add original file'}
+              <input type="file" disabled={busy} onChange={(event) => {
+                const selected = event.target.files?.[0];
+                event.target.value = '';
+                if (!selected) return;
+                setBusy(true);
+                void selected.arrayBuffer().then((buffer) => {
+                  let binary = '';
+                  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+                  setPreview((current) => current && ({ ...current, content: { messages: current.content.messages.map((turn, turnIndex) =>
+                    turnIndex === index ? { ...turn, files: turn.files?.map((entry, position) => position === fileIndex
+                      ? { ...entry, name: selected.name, mimeType: selected.type || 'application/octet-stream', source: { kind: 'inline' as const, encoding: 'base64' as const, data: btoa(binary) } } : entry) } : turn) } }));
+                  setRequestId(crypto.randomUUID());
+                }).catch(() => setError('The file could not be read.')).finally(() => setBusy(false));
+              }} />
+            </label>
+          </li>)}</ul>}
+
         </li>)}</ol>
       </div>}
       {error && <InlineError>{error}</InlineError>}

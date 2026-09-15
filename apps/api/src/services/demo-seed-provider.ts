@@ -1,4 +1,3 @@
-import { preparedContentMessages } from "@rally/agent-harness";
 /**
  * The provider seam a seeded run answers itself from.
  *
@@ -100,7 +99,7 @@ function elicitationCall(turn: Extract<DemoSeedTurn, { kind: "ask" }>, seed: Dem
 function streamed(turn: DemoSeedTurn, seed: DemoSeed): Response {
   if (turn.kind === "say") {
     return sse([
-      { choices: [{ delta: { content: preparedContentMessages({ messages: [{ role: "assistant", text: turn.text }] })[0]?.content }, finish_reason: null }] },
+      { choices: [{ delta: { content: turn.text }, finish_reason: null }] },
       { choices: [{ delta: {}, finish_reason: "stop" }] },
       { usage: USAGE },
     ]);

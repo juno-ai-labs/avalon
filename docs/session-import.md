@@ -1,141 +1,167 @@
-# Prepared conversation content and session import
+# Prepared conversations and session import
 
-Prepared conversation content is an ordered list of user and assistant text
-messages. Rally can store it as a new work stream's history without running a
-model, or turn it into a Bind checkpoint for an evaluation. Import provenance
-records who brought the history into Rally, separately from the source roles.
+A prepared conversation is ordered user/assistant content with resolved file
+references and trusted provenance. The same conversation authority materializes
+it into a root work stream or private child. Starting an execution is a separate
+choice. Importing a prior assistant answer never claims Rally executed it.
 
 ## Where the code lives
 
 | File | Responsibility |
 | --- | --- |
-| `packages/contracts/src/substream-content.ts` | Text content, source, preview and provenance contracts. |
-| `packages/agent-harness/src/prepared-content.ts` | Shared model-message projection and Bind 16 checkpoint creation; exports Bind's resume and fork primitives. |
-| `apps/api/src/services/session-import.ts` | Provider formats and public-link retrieval. |
-| `apps/api/src/services/workstream-object-creation-service.ts` | Creation receipt, routing, workspace directory and initial content. |
-| `apps/api/src/durable-objects/workstream-object-product.ts` | Atomic transcript initialization and optional initial execution. |
-| `apps/desktop/src/renderer/components/new-workstream-menu.tsx` | Shared plus-button menu for expanded navigation and compact rail. |
-| `apps/desktop/src/renderer/components/session-import-dialog.tsx` | Link/file input, preview and creation. |
-| `apps/desktop/src/renderer/components/message-byline.tsx` | Imported-by badge beside the speaker identity. |
+| `packages/contracts/src/substream-content.ts` | Source content/files, resolved prepared conversations, initialization modes and import provenance. |
+| `apps/api/src/services/session-import.ts` | Provider envelope decoding and visible message/file extraction. |
+| `apps/api/src/services/session-import-files.ts` | Constrained file retrieval, unavailable outcomes, upload reconciliation and trusted attribution. |
+| `apps/api/src/services/resource-service.ts` | Existing verified upload, staged R2 cleanup and resource creation. |
+| `apps/api/src/durable-objects/workstream-object-product.ts` | Shared materialization, preparation receipts, file reservations, root/child publication. |
+| `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
+| `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
+| `apps/desktop/src/renderer/components/session-import-dialog.tsx` | URL/export preview and original-file replacement. |
 
 ## How it works
 
-The sidebar plus button opens a menu with **start new work stream** and
-**import from ChatGPT or Claude**. The import choice opens a URL dialog on the
-new-workstream screen. Preview accepts a
-public ChatGPT/Claude share link or a JSON/JSONL export. The user can inspect
-all extracted messages and edit the title. Import creates a personal work stream.
-The server derives importer identity and its display snapshot from authentication
-and workspace membership; client-supplied content cannot choose another importer.
+The plus menu offers **start new work stream** and **import from ChatGPT or
+Claude**. Import reads a public link or JSON/JSONL export, previews the extracted
+messages and files, and creates a personal work stream. Missing file references
+remain visible. A person can supply the original file for any reference before
+importing. The source roles stay intact; the byline says who imported them.
 
-The creation service uses the existing receipt and directory workflow. Its
-`initialContent` option is distinct from the ordinary opening message: the
-Durable Object prepares every canonical text fact, then commits the root,
-participants and all turns in one SQLite transaction. The stream starts idle;
-its receipt has no harness run. Retries include content in their request hash.
-A concurrent initializer checks the root again after asynchronous preparation.
+There are three separate boundaries:
 
-Imported user turns use the importer's human account and immutable author
-snapshot. Both roles carry `imported_session` structured content. Assistant turns
-show the source provider, and the identity line exposes **Imported by Adam** via
-an icon and accessible label. Stored timestamps describe import time; the system
-does not invent source message timestamps.
+1. **Decode source content.** Provider adapters identify the selected conversation,
+   visible text, embedded bytes and recognized file descriptors. Unknown visible
+   content is an error, not permission to omit part of a conversation. Tools,
+   thinking and compaction remain absent from the transcript.
+2. **Resolve content.** Preview freezes successful remote downloads as bytes and
+   records unavailable outcomes. Import stores bytes through `ResourceService.upload`,
+   which checks existing size policy, verifies MIME, hashes bytes, stages R2 cleanup
+   and creates workspace-owned resources. Stable operation/file identities make
+   retries reconcile the same upload. Importer identity comes from authentication.
+3. **Materialize a conversation.** The authority prepares canonical facts, reserves
+   resource drafts and commits all turns and relationships with its publication
+   fence. Root creation and private-child initialization use the same preparation
+   and commit operations. The latter runs before the parent publishes readiness.
 
-A subsequent user message follows ordinary run admission. Canonical bootstrap
-projects imported turns with their original user/assistant roles, without the
-live-member authorship wrapper. Rally's existing durable Bind projection and
-recovery continue to own execution.
+`ConversationInitialization` distinguishes `prompt` and `history`. Normal opening
+messages retain their existing execution path. `createPrepared` accepts content
+without an empty opening-message field at its caller boundary. The internal
+compatibility adapter still carries legacy opening fields for existing creators.
+A history stream starts idle and has no run. A caller can subsequently submit an
+ordinary message to start execution, including after preparing a private child.
 
-Demo scripted text responses consume the same prepared-text projection while
-retaining real run admission and settlement. A demo elicitation still calls the
-real tool. Imported history never pretends that a demo or provider run happened.
+Demo pack creation has an explicit `execution: history` mode for prose. It uses
+`createPrepared` and verifies canonical turns rather than waiting for an invented
+run. The decision-memo opening exercises that path. Scripted tool/elicitation
+scenarios continue through ordinary production executions.
 
-For eval fixtures, `checkpointFromContent` accepts an execution ID, budget and
-host bindings and calls Bind's `createLoopCheckpoint`. A one-message fixture is
-an initial prompt. `forkLoopCheckpoint` branches an existing settled checkpoint;
-`applyCheckpointInput` supplies new input, and `runFromCheckpoint` executes the
-same Bind loop. Hosts provide `restore`, `captureBindings` and awaited `commit`;
-they own environment snapshots and tool effects. This change supplies those
-composable primitives, not a results database or an eval scheduling product.
+First continuation reads the complete canonical transcript, including attachment
+manifests for both source roles. Historical image bytes are not replayed into the
+model. Existing authorized file tools retrieve stored resources when needed. The replay layer imposes no separate message-count or serialized-byte ceiling.
+The first continuation must still fit the selected model: automatic compaction
+starts only after a completed provider turn supplies usage, and cannot rescue an
+oversized first request. Import never silently truncates the canonical history.
+
+### Evaluations
+
+`runRallyEvaluation` accepts either a prepared scenario or a settled Rally
+checkpoint. The host restores executable configuration and an isolated environment;
+Rally uses the same `runHarnessWithBind` assembly, plugins, authorization hooks,
+provider routing and tool handling as production. There is no separate eval loop.
+
+Bind owns checkpoint validation, boundary advancement, budgets, transcript state,
+forking and reply/wake input. Rally captures its flat projection and capability
+activation hints alongside each Bind checkpoint. Eval forks require a fresh host
+loop identity and rebase Rally reservation identities, preserving settled provider
+messages. A checkpoint after a tool result resumes after that result instead of
+repeating the tool effect. Host bindings remain the host's responsibility: callers
+must restore the corresponding tool environment and persistence, not merely messages.
+This provides an executable eval seam, not a scheduler or scoring database.
 
 ## Invariants
 
-- Historical content starts no execution. Fabricating a run would misrepresent
-  provenance and could accidentally repeat tool effects.
-- Root and text facts commit together. A partial transcript cannot be treated
-  as a completed import receipt.
-- Importer identity is server-owned. Source content does not establish that the
-  importer wrote the original human prompt.
-- Roles and message order are retained; thinking, tools, compaction, images and
-  attachments are omitted. ChatGPT branch traversal follows `current_node`.
-- Import never follows arbitrary redirects or retrieves arbitrary hosts.
-- Bind owns checkpoint validation, forks, budgets and execution boundaries;
-  Rally does not implement a second evaluation loop.
+- Imported history never creates fake runs, tool receipts or artifact deployments.
+- Canonical turns, attachment relationships and preparation completion commit together.
+- Draft holds have a durable owner: either a pending live input or a prepared
+  conversation. Definite failed preparation releases holds; ambiguous responses
+  remain recoverable under the same preparation identity.
+- Source request identity is hashed separately from materialized importer snapshots.
+  The preparation receipt freezes materialized content across retries.
+- Uploaded user files and assistant artifact bytes use the existing resource authority.
+- Unavailable files remain readable references, never fake downloadable resources.
+- Extracted document text is a separately named text file; the original reference remains.
+- Source links do not authorize arbitrary downloads or credential forwarding.
+- Bind owns settled execution state; Rally owns conversation facts and host restoration.
 
 ## Boundary
 
-The public routes are `POST /workstreams/import/preview` and
-`POST /workstreams/import`. Ordinary work-stream creation retains its opening
-message requirement. Prepared content uses the same creation fields with a
-separate history option, keeping history-only semantics off the ordinary route.
-Existing active streams are not bulk-import targets: their durable model
-projection already exists. See [ordered transcript storage](ordered-transcript-sqlite.md)
-and [the agent harness](agent-harness.md) for storage and execution authority.
+Public APIs are `POST /workstreams/import/preview` and `POST /workstreams/import`.
+Clients can provide source content, not another importer's identity. Prepared
+conversation installation is an internal coordinator operation; the private-child
+receipt and conversation creator authorize it. Existing active conversations are
+not bulk-import targets.
+
+Source files are inline UTF-8/base64, recognized HTTPS downloads, or explicitly
+unavailable references. Known Claude image/document blocks, artifact documents and
+full-content Write/artifacts tool payloads preserve file content without importing
+the tool invocation. ChatGPT exports preserve attachment descriptors and image
+references. Source sandbox links without bytes remain unavailable.
 
 ## Failure modes and limits
 
-Provider share formats are not stable public APIs. The ChatGPT adapter reads the
-JSON reference table in the observed share loader without executing JavaScript.
-The Claude adapter reads `chat_messages` from the public snapshot response;
-Claude Code JSONL reads wrapped messages and rejects compaction/meta events.
-An export containing multiple conversations must be split before import.
+Provider share formats are not stable APIs. Public Claude snapshots can challenge
+server HTTP clients; Claude Code URLs require login in the tested browser. These
+cases direct the person to an export rather than copying browser credentials.
+Expired/private file URLs, absent export bytes and unsupported download origins
+remain unavailable, with an original-file replacement control.
 
-Claude Code session links require signed-in access in the tested browser. Public
-Claude shares render without login, but their snapshot endpoint may refuse a
-server HTTP client with a browser challenge. Neither case yields an empty
-successful import: the UI directs the user to a JSON/JSONL export. This change
-does not copy browser credentials or bypass access controls. The public Claude
-format was observed on the supplied September 15 share; the Code link itself
-was not readable without login.
+Downloads refuse redirects and use the existing workspace `MAX_ATTACHMENT_BYTES`
+policy while streaming. File uploads retain the same policy. Prepared histories
+have no additional guessed size ceiling, but HTTP, memory, SQLite and provider
+context limits still apply. Full canonical replay is paged but assembled in memory;
+An oversized first provider request can fail before automatic compaction is available. A source export containing multiple
+conversations must be split before import.
 
-The existing title and message-admission limits still apply to live messages.
-Prepared text has no new guessed size ceiling. Oversized imports remain subject
-to the platform's HTTP, memory and SQLite transaction limits; no partially
-committed history is published as complete.
+HTML/code artifacts remain stored files; importing does not launch a site. Exports
+that contain only patches, inaccessible sandbox paths or proprietary artifact state
+cannot reconstruct original files automatically.
 
 ## Testing
 
-- `pnpm --filter @rally/api exec vitest run test/session-import.test.ts test/model-protocol-transcript.test.ts test/demo-seed-provider.test.ts`
-  covers provider filtering, branch choice, redirect refusal, continuation
-  projection and scripted demo output.
-- `pnpm --filter @rally/api test:workers test-workers/conversation-creation.test.ts`
-  drives real creation, canonical readback, no-run initialization and receipts.
-  The import test was proved by temporarily dropping the assistant write: its
-  canonical readback failed for the missing assistant turn.
-- `pnpm --filter @rally/agent-harness test` covers the Bind upgrade and fixture
-  serialization/fork behavior.
-- Desktop transcript/new-workstream tests cover the existing mapping and launch
-  paths; `new-workstream-menu.test.tsx` covers both plus-menu destinations and
-  `sidebar.test.tsx` covers its expanded and compact triggers. Visual QA renders the actual import form and byline in a browser with a
-  fixture API; this is presentation evidence, not a live provider import.
+- `test/session-import.test.ts`: provider branches, one-record JSONL, visible-format
+  refusal, attachment-only messages, embedded artifacts and extracted-text labeling.
+- `test/session-import-files.test.ts`: constrained origins, redirect refusal,
+  frozen download bytes and the existing file size policy.
+- `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
+  attachments, failed reservation cleanup, idempotent creation, and actual provider
+  continuation with history and attachment manifests.
+- `test-workers/substream-creation-runtime.test.ts`: private-child materialization,
+  publication and conflicting replay.
+- `test-workers/workspace-draft-attachment-reservation.test.ts`: existing draft holds
+  and canonical projection release.
+- `packages/agent-harness/src/evaluation.test.ts`: production runtime from an initial
+  scenario and serialized tool-settled checkpoint, with no repeated write after fork.
+- Desktop menu/launcher/transcript tests cover navigation and attribution. Real
+  Electron visual QA covers file preview, missing-file replacement and submission
+  using a fixture API; backend lifecycle tests provide storage/execution evidence.
 
 ## Changelog
 
-### 2026-09-15 — Separate prepared history from initial execution
+### 2026-09-15 — Compose prepared content, resources and execution
 
-**What changed:** Work-stream creation accepts prepared text history; imports,
-scripted demo text and checkpoint fixtures share a text projection. Import
-provenance is stored in canonical structured content and displayed by the client.
+**What changed:** Root/private creation and text-only demos share authority-owned
+materialization. Imports preserve available files and explicit unavailable references.
+Prepared receipts own content and draft reservations. Evals reuse Rally's production
+Bind runtime and capture both Bind state and Rally projection/activation bindings.
 
-**Why:** Replaying imported assistant messages as demo model responses would
-fabricate execution and couple content creation to inference. History and the
-choice to execute need separate primitives.
+**Why:** A text-to-model field rename did not share actual creation behavior.
+Inferring execution from an optional import field, dropping files and wrapping Bind
+checkpoint exports left each next consumer to invent lifecycle and restoration.
 
-**Consequences:** New history uses the existing transcript authority and receipt
-workflow. Bind remains the checkpoint/loop authority; future eval hosts must
-restore their own environment, and imports into already-running streams need an
-explicit model-projection operation rather than a bulk SQL append.
+**Consequences:** Publication remains with the destination authority, resources remain
+with WorkspaceDO/R2, and execution remains with Bind. Source decoding and file
+retrieval cannot grant identity or execution authority. Eval hosts must restore an
+isolated environment and allocate fresh fork identities.
 
-**Considered and rejected:** A second synthetic transcript store, a second execution loop,
-and direct writes to development seed APIs were rejected because each would
-bypass production ownership and recovery semantics.
+**Considered and rejected:** Replaying history as scripted model executions,
+fabricating generated-resource receipts, separate eval loops and merely raising
+canonical replay ceilings would misrepresent provenance or duplicate ownership.
