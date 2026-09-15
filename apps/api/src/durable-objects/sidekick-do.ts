@@ -1270,10 +1270,18 @@ export class SidekickDO extends ConversationParentDurableObject {
     });
   }
 
+  /** Reserve against current parent authority without a caller-side preflight RPC. */
+  async reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): Promise<ConversationParentReserveChildResult> {
+    const authority = await this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
+    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
+    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
+  }
+
   async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
     await this.initialized;
     const request = ConversationParentReserveChildRequestSchema.parse(input);
     const row = this.assertAutomation(request.workspaceId, request.parentId);
+    if (request.kind === "child" && (row.lifecycle === "deleted" || row.owning_room_archived_at !== null)) throw new Error("workstream_archived");
     this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
     return ConversationParentReserveChildResultSchema.parse({
       reserved: true,

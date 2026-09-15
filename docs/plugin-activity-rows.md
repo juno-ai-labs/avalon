@@ -147,7 +147,8 @@ keeps its glyph. A first-party plugin that is
 absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
-other plugin keeps its own row.
+other plugin keeps its own row. `avalon:agents` keeps its **Background agents**
+row and uses Tabler's **stack-backward** glyph.
 
 Custom MCP activity carries its host-authored `connectorType` independently
 of the configured label. It groups by canonical connection id and always draws
