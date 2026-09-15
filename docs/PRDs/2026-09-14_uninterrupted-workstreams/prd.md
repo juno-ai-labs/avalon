@@ -104,6 +104,8 @@ Discovery and exchanges use their team scope, so sharing one member does not mer
 
 ### Sidekick setup
 
+Prefer reusing a suitable Sidekick owned by the current workstream before creating another or choosing a personal or workspace Sidekick. Discovery presents current-workstream Sidekicks first and includes each result’s ownership scope, so Rally can make that choice explicitly. New Sidekicks default to ownership by the current workstream. Personal and workspace Sidekicks remain available when explicitly requested or clearly appropriate. These are model guidance and creation defaults, not a hard restriction or a change to access rights; contacting an existing Sidekick does not change its ownership.
+
 Rally initializes a new Sidekick or resolves an existing authorized authoring substream, then sends a setup or modification request. The Sidekick’s agent owns the drafting and configuration tools, asks questions by replying, and reports the saved definition and outcome. Rally answers from context or asks participants.
 
 Ordinary workstream and worker conversations do not receive Sidekick drafting tools. Membership does not turn a Sidekick into a child or transfer ownership. Stopping a setup execution does not stop the Sidekick’s scheduled runs or delete it.
@@ -162,7 +164,7 @@ Retain existing resource-level write controls and safe handling of uncertain ext
 | Send message | Address an authorized teammate and persist the message with sender identity and team scope. A follow-up can continue existing execution context. |
 | Reply | Reference a received message; the host resolves the recipient and exchange scope. |
 | Stop agent | Stop the addressed agent and its owned descendants using existing host controls. Continue later with a message. |
-| Initialize or locate Sidekick | Establish the authorized authoring destination and implicit team membership; setup itself happens through messages. |
+| Initialize or locate Sidekick | Discover accessible Sidekicks with ownership scope, presenting current-workstream entries first. Prefer suitable existing workstream Sidekicks; default new Sidekicks to current-workstream ownership. Establish the authorized authoring destination and implicit team membership; setup itself happens through messages. |
 
 Final responses and failures use the existing execution host and message exchange. There is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
 
@@ -195,6 +197,8 @@ Standing guidance remains short:
 
 > Stay available to the participants. Delegate substantial work when useful. Treat long-running annotations as hints, not rules. Coordinate through messages and replies, and continue prior agents when useful. Use existing status or ask an agent when someone wants an update. Bring useful answers back to the conversation.
 
+> For Sidekick setup, first look for a suitable Sidekick owned by this workstream and reuse it. Create new Sidekicks in this workstream by default. Use personal or workspace Sidekicks when explicitly requested or clearly appropriate.
+
 The companion technical design specifies exact wire contracts and reuses the repository’s established tool conventions. It must not expand this product scope into a separate orchestration system.
 
 ## Rollout
@@ -213,7 +217,7 @@ Update the owning subsystem documents when implementing. An implementation plan 
 4. **Messaging:** Send and reply return the accepted message’s ID. A running recipient receives the message at its next existing safe boundary without interrupting in-flight work; an idle or stopped recipient starts execution. Replies reach the correct conversation, including concurrent Sidekick exchanges. Understanding is acknowledged in ordinary prose, not a stored semantic state. Existing resource references carry image and other context.
 5. **Teams:** Product flows create implicit teams and add members. A Sidekick participates in multiple teams, each with its own roster and exchange scope. There is no membership removal, team-management UI, or special multi-team context-management subsystem.
 6. **Minimal UI and tool surface:** Only the correctly pluralized running-agent count is shown. Participants cannot inspect or chat with workers. The model has no `read_agent` tool; status questions use `list_agents` or ordinary messages. No progress tracking infrastructure is added.
-7. **Sidekick setup:** Its authoring agent handles setup, questions, and saved results. Other agents lack drafting tools; existing validation governs configuration writes.
+7. **Sidekick setup:** Discovery includes ownership scope and presents current-workstream Sidekicks first. Given a suitable existing workstream Sidekick, Rally reuses it rather than creating a duplicate or choosing a personal or workspace Sidekick without a reason. New Sidekicks default to current-workstream ownership; explicit requests and appropriate uses of other scopes still work. Its authoring agent handles setup, questions, and saved results. Other agents lack drafting tools; existing validation governs configuration writes.
 8. **Tool access:** Workers load eligible plugins independently and perform authorized writes. Existing principal, credential, resource, and peer lifecycle boundaries continue to hold.
 9. **Hints and judgment:** Image generation exposes the optional long-running hint. Model evaluation covers useful delegation, direct use of already-asynchronous tools, and execution by a background worker without forced recursive delegation. There is no deterministic delegation gate or conflict/advisory classifier.
 10. **Recovery and verification:** Existing durable execution and delivery recover after restart without duplicate effects. Exercise the main flow in a real desktop window and the configured medium fallback model. Runtime integration tests prove the relevant behavior can fail; do not add tests that merely mirror prose or fixtures.
