@@ -9,6 +9,7 @@ import type {
 import type { Region } from "@rally/contracts/regions";
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
+import type { DesktopReleaseChannel } from './release-channels';
 import type {
   DesktopRealtimeSocketCloseInput,
   DesktopRealtimeSocketEvent,
@@ -74,6 +75,10 @@ export interface DesktopLockdownSettings {
 }
 
 export interface DesktopApplicationSettings extends DesktopLockdownSettings {
+  /** Per-device update feed choice. Stable is the default. */
+  releaseChannel: DesktopReleaseChannel;
+  /** False for browser fallback surfaces that cannot configure Electron. */
+  releaseChannelAvailable: boolean;
   /** The **effective** Developer → Debug enabled preference: the stored choice
    * and the service's flag. A device whose flag is off reads `false` here
    * however `application-settings.json` reads. */
@@ -352,6 +357,7 @@ export interface RallyDesktopBridge {
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setReleaseChannel: (channel: DesktopReleaseChannel) => Promise<DesktopApplicationSettings>;
   reportTelemetryScreen: (screen: DesktopTelemetryScreen) => Promise<void>;
   reportTelemetryProductIntent: (intent: DesktopTelemetryProductIntent) => Promise<void>;
   reportJavascriptError: (candidate: DesktopJavascriptErrorCandidate) => Promise<void>;

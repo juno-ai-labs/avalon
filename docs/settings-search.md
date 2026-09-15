@@ -32,6 +32,11 @@ and mutation hook beside it. Options can come from the same option data the
 control renders. Optional aliases describe genuine synonyms, not a parallel
 search catalogue.
 
+The Application page's **Update channel** is a device-local desktop preference.
+It renders through the shared dropdown and is indexed from the same Stable and
+Faster option labels. Browser fallback surfaces omit it because they cannot
+configure Electron's updater.
+
 `SettingsProvider` supplies entries with unique keys. The core provider derives
 entries from the definitions. Connection providers derive entries from the
 already-authorized connection snapshot: GitHub and MCP entries retain the
@@ -149,6 +154,23 @@ in the same settings catalogue; unsigned builds explain that an installed releas
 is required. Permission denial exposes a System Settings action.
 
 ## Changelog
+
+### 2026-09-15 — Make the desktop release channel a searchable device preference
+
+**What changed:** Application settings gained a Stable/Faster update-channel
+dropdown backed by the device preference file and the shared settings registry.
+
+**Why:** Release pace is a choice for one installed Mac, while the release
+service remains authoritative for which signed build each channel names.
+
+**Considered and rejected:** Treating Stable as a slower poll of the same latest
+manifest would still expose the same release immediately after a relaunch and
+would not create an actual release channel. Storing the choice on an account or
+workspace would unexpectedly move every installation together.
+
+**Consequences:** Stable is the migration default for old or invalid preference
+files. The browser hides the control, and changing from Faster to Stable never
+downgrades an installed build.
 
 ### 2026-09-12 — Separate Ashby personal setup from shared event installation
 

@@ -63,7 +63,7 @@ test('nested components require the Rally Developer ID team', () => {
   );
 });
 
-test('embedded updater is pinned to the stable arm64 channel', () => {
+test('embedded updater is pinned to the audited arm64 feed base', () => {
   assert.doesNotThrow(() => assertEmbeddedUpdateConfig([
     'provider: generic',
     `url: ${RALLY_UPDATE_URL}`,

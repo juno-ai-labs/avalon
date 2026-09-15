@@ -48,6 +48,7 @@ import type {
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
+import { parseDesktopReleaseChannel, type DesktopReleaseChannel } from '../../common/release-channels';
 import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal, SegmentedControl } from '../components/primitives';
 import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
@@ -801,7 +802,7 @@ export function WorkspaceSettingsScreen({
   });
   const applyApplicationSettingsMutation = (
     settings: DesktopApplicationSettings,
-    _enabled: boolean,
+    _requested: unknown,
     liveGenerationAtStart: number | undefined,
   ): void => {
     if (liveGenerationAtStart !== applicationSettingsLiveGeneration.current) return;
@@ -835,6 +836,11 @@ export function WorkspaceSettingsScreen({
   });
   const updateProductAnalytics = useMutation({
     mutationFn: (enabled: boolean) => bridge.setProductAnalyticsEnabled(enabled),
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
+  });
+  const updateReleaseChannel = useMutation({
+    mutationFn: (channel: DesktopReleaseChannel) => bridge.setReleaseChannel(channel),
     onMutate: () => applicationSettingsLiveGeneration.current,
     onSuccess: applyApplicationSettingsMutation,
   });
@@ -896,7 +902,8 @@ export function WorkspaceSettingsScreen({
     developer: developerSettingsAvailable,
     menuBar: applicationSettings?.menuBarAvailable !== false,
     login: applicationSettings?.launchAtLoginAvailable !== false,
-  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable]);
+    releaseChannel: applicationSettings?.releaseChannelAvailable !== false,
+  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
     {
@@ -2085,6 +2092,31 @@ export function WorkspaceSettingsScreen({
                   </>
                 )}
                 <ApplicationIconPicker />
+                {applicationSettings && isSettingAvailable(settings.releaseChannel, settingsContext) && (
+                  <>
+                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Updates</h2><p>Choose how quickly this Mac receives Rally releases.</p></div>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <SettingCopy setting={settings.releaseChannel} />
+                        <DropdownSelect
+                          ariaLabel="Update channel"
+                          disabled={updateReleaseChannel.isPending || updateLockdownMode.isPending}
+                          onValueChange={(value) => {
+                            const channel = parseDesktopReleaseChannel(value);
+                            if (channel) updateReleaseChannel.mutate(channel);
+                          }}
+                          options={[
+                            { value: 'stable', label: 'Stable', description: 'At most one release every 24 hours' },
+                            { value: 'faster', label: 'Faster', description: 'Every desktop release' },
+                          ]}
+                          value={applicationSettings.releaseChannel}
+                          variant="secondary"
+                        />
+                      </label>
+                    </div>
+                    {updateReleaseChannel.error && <InlineError>{updateReleaseChannel.error.message}</InlineError>}
+                  </>
+                )}
                 {isSettingAvailable(settings.login, settingsContext) && (
                   <>
                     <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Rally for you.</p></div>

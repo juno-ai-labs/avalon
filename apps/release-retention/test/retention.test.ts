@@ -29,7 +29,7 @@ function stored(
     customMetadata: { release: key },
     etag: etag(content),
     httpMetadata: {
-      cacheControl: key.includes("latest-mac.yml") ? "public, max-age=14400" : "immutable",
+      cacheControl: key.endsWith("-mac.yml") ? "public, max-age=0, must-revalidate" : "immutable",
       contentType: key.endsWith(".dmg") ? "application/x-apple-diskimage" : "application/octet-stream",
     },
     key,
@@ -133,6 +133,28 @@ describe("release retention", () => {
     const plan = await planRetention(createTestR2Bucket(active), 5);
     expect(plan.archiveVersions).toEqual(["1.8.0"]);
     expect(plan.retainedVersions).toEqual(["1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
+  });
+
+  it("retains an older release while the Stable channel still references it", async () => {
+    const objects = inventory(["1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
+    objects.push(
+      stored(`${prefix}stable-mac.yml`, new TextEncoder().encode("version: 1.8.0\n")),
+      stored(`${prefix}faster-mac.yml`, new TextEncoder().encode("version: 1.13.0\n")),
+      stored(`${prefix}stable-channel.json`, new TextEncoder().encode('{"version":"1.8.0"}\n')),
+    );
+
+    const plan = await planRetention(createTestR2Bucket(new MockBucket(objects)), 5);
+
+    expect(plan.archiveVersions).toEqual([]);
+    expect(plan.retainedVersions).toEqual(["1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"]);
+  });
+
+  it("fails closed during a partial channel-pointer publication", async () => {
+    const objects = inventory(["1.8.0"]);
+    objects.push(stored(`${prefix}faster-mac.yml`, new TextEncoder().encode("version: 1.8.0\n")));
+
+    await expect(planRetention(createTestR2Bucket(new MockBucket(objects)), 5))
+      .rejects.toThrow("Missing mutable release pointers");
   });
 
   it("does nothing when exactly five complete releases are active", async () => {

@@ -13,6 +13,7 @@ import type {
   RuntimeConfig,
 } from '../common/desktop';
 import type { MessageExportResult } from '../common/message-export';
+import type { DesktopReleaseChannel } from '../common/release-channels';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
 import {
   REALTIME_SOCKET_IPC_CHANNELS,
@@ -123,6 +124,8 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('application-settings:set-launch-at-login', enabled) as Promise<DesktopApplicationSettings>,
   setProductAnalyticsEnabled: (enabled) =>
     ipcRenderer.invoke('application-settings:set-product-analytics', enabled) as Promise<DesktopApplicationSettings>,
+  setReleaseChannel: (channel: DesktopReleaseChannel) =>
+    ipcRenderer.invoke('application-settings:set-release-channel', channel) as Promise<DesktopApplicationSettings>,
   reportTelemetryScreen: (screen) => ipcRenderer.invoke('telemetry:screen', screen) as Promise<void>,
   reportTelemetryProductIntent: (intent) => ipcRenderer.invoke('telemetry:product-intent', intent) as Promise<void>,
   reportJavascriptError: (candidate) => ipcRenderer.invoke('telemetry:javascript-error', candidate) as Promise<void>,

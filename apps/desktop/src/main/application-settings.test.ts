@@ -95,6 +95,15 @@ describe('desktop application settings', () => {
     }));
   });
 
+  it('defaults old and invalid update-channel preferences to Stable', () => {
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false }).releaseChannel)
+      .toBe('stable');
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, releaseChannel: 'preview' }).releaseChannel)
+      .toBe('stable');
+    expect(parseStoredApplicationSettings({ version: 1, lockdownMode: false, releaseChannel: 'faster' }).releaseChannel)
+      .toBe('faster');
+  });
+
   it('persists preferences in an owner-readable application file', async () => {
     const directory = await temporaryUserDataDirectory();
     await expect(readStoredApplicationSettings(directory))
@@ -114,6 +123,7 @@ describe('desktop application settings', () => {
         productAnalyticsEnabled: true,
         productAnalyticsPreferenceVersion: 0,
         productAnalyticsPreferencePending: false,
+        releaseChannel: 'stable',
         themeChoice: 'system',
       });
     expect((await stat(applicationSettingsFilePath(directory))).mode & 0o777).toBe(0o600);
