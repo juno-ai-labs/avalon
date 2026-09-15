@@ -24,7 +24,7 @@ Implement the full PRD on `codex/uninterrupted-workstreams`, rebased onto the me
 ## Current evidence
 
 - PR #764 is merged; implementation branch starts at `84c3e67619ed5212987447a55c57b840945a6028`.
-- The replaced `workstream_run_subagent` integration executed inline and was absent from production discovery. Its integration has been removed; remaining dead runtime/storage helpers still need a cutover audit.
+- The replaced `workstream_run_subagent` integration executed inline and was absent from production discovery. Its integration and unused runtime/storage entry points have been removed. Historical schema fields and ordinary run receipt/recovery fences remain.
 - Existing Sidekick identity owns a main authoring substream `0`; a bare local substream ID is insufficient as a cross-parent agent address.
 - Existing tool policy lives in `ToolDefinitionSchema`; Bind tool construction is the common point for model-visible descriptions during activation.
 - Shared schemas now cover start/send/reply/stop inputs, optional attachments, and reversible conversation-address encoding (`parentKind/parentId/substreamId`). Names and descriptions use existing conversation metadata bounds.

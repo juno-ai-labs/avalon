@@ -327,8 +327,8 @@ code-authored tool array. It still appears through the same static trusted
 catalog entry. After `load_plugin` reauthorizes the connection, the harness
 single-flights that callback, replaces the empty deferred Bind plugin with the
 returned live surface, and only then persists and exposes the activation. The
-result is cached for that run in both Bind's registry and the host plugin object
-used to narrow inline-child authority; a later run discovers again. Restored or
+result is cached for that run in both Bind's registry and the host plugin object;
+a later run discovers again. Restored or
 preloaded dynamic hints materialize and hash this surface before their initial
 activation receipt is written. A discovery failure
 returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
@@ -758,8 +758,9 @@ The `rally_agents` plugin starts them through durable admission and returns
 without waiting for their execution. Each uses the same Bind harness, inherited
 model and execution principal, explicit opening context, and independent tool
 discovery. Normal authorized writes and recursive delegation are available.
-The obsolete inline child integration and `workstream_run_subagent` surface
-are removed. [Agent communication](agent-communication.md) owns the tools,
+The obsolete inline child integration, runtime/storage entry points, and
+`workstream_run_subagent` surface are removed. Historical schema fields remain
+for existing data; new background work uses normal independent run recovery. [Agent communication](agent-communication.md) owns the tools,
 teams, reply references, Sidekick discovery and separate stop ownership.
 
 Bind remains the core owner of each feed's loop. Independent substreams provide
