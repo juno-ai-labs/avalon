@@ -44,6 +44,28 @@ describe("connector observability", () => {
     expect(code).toContain("summary.topics_discussed.0");
   });
 
+  it("never logs a health-check message, which an adapter may fill from a provider's own error", async () => {
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      healthCheck: () => Promise.resolve({
+        ok: false,
+        // What `x.ts` does: return a caught provider error's own text, which is
+        // the provider's body and may carry anything it chose to put there.
+        message: "Upstream rejected token sk-live-4f9a for alex@juno-labs.com",
+        reasonCode: "provider_refused",
+      }),
+    }, observer);
+
+    await adapter.healthCheck(connection());
+
+    const recorded = JSON.stringify(observations);
+    expect(recorded).toContain("provider_refused");
+    expect(recorded).not.toContain("sk-live-4f9a");
+    expect(recorded).not.toContain("alex@juno-labs.com");
+  });
+
   it("keeps its own vocabulary for the errors that already had one", () => {
     expect(connectorObservationErrorCode(new ConnectorError("unauthorized", "no"))).toBe("unauthorized");
     expect(connectorObservationErrorCode(new Error("something else"))).toBe("unexpected_error");

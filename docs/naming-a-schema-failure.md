@@ -43,25 +43,56 @@ None of the four was careless. Each is a sensible-looking default:
 
 ## What is safe to carry
 
-**Paths and issue codes are schema shape. Rejected values are data.** The API's
-`errorHandler` already draws exactly this line when it records
-`validation_issues` but withholds `detail_keys`' values, and the same line
-applies at every boundary here.
+**Issue codes and *declared* field names are schema shape. Everything else is
+data.** The API's `errorHandler` draws the same line when it records
+`validation_issues` but withholds `detail_keys`' values.
 
 So `summary.topics_discussed.0:invalid_type` may be logged and may cross an RPC
-hop. What was actually in that array may not.
+hop. What was in that array may not.
 
-`unrecognized_keys` is the one issue whose subject is not on its path: Zod
-reports the offending names in `issue.keys` and leaves `path` empty. Those names
-are schema shape too — they are what a caller sent, not what it contained — and
-they are the entire diagnosis of a version skew, so `describeZodIssues` carries
-them.
+The line is narrower than "the path is safe", which is where the first version
+of this got it wrong:
+
+- **`issue.path` is only schema shape when the schema declares its keys.** Under
+  `z.record`, the segments are keys of the rejected *value*. A schema keyed by
+  email address, document title, or token would put that key into a log line, a
+  code crossing an RPC hop, and — through `scheduledAlarmErrorCode` — an
+  operator notice posted to Slack. Sanitizing it to the code's character class
+  does not help: `alex@juno-labs.com` becomes `alex_juno-labs.com`, which is the
+  same value with the punctuation moved.
+- **`issue.keys` on `unrecognized_keys` come from the rejected object**, not the
+  schema. Between two of our own binaries that is the whole diagnosis of a
+  version skew. On a provider's response it is whatever the provider sent.
+
+`describeZodIssues` therefore emits a path segment only when it is an array
+index or looks like a declared property name — a JavaScript identifier — and
+replaces anything else with `_key_`. The shape of the segment decides because
+nothing on a `ZodIssue` says which kind it is. That bounds the exposure rather
+than reasoning about it, which is the trade a diagnostic should make.
+`namesUnknownKeys` opts into the `unrecognized_keys` names, and only
+`parseRpcInput` passes it, because only there is the caller this deployment's
+own code.
+
+## A returned failure owes a code, not its message
+
+An adapter's `message` is written for a person and an adapter may fill it from a
+caught provider error — `x.ts` returns the provider body's own `message` field
+verbatim. `redact` keys on field names, so nothing downstream would catch that.
+
+So `healthCheck` results carry an optional `reasonCode`: a literal the adapter
+writes, naming a condition it already distinguishes, and that is what the
+instrumentation logs. An adapter that sets none logs nothing new. Granola sets
+`webhook_endpoint_identity_missing` and `webhook_endpoint_absent`, which are the
+two conditions that made its connection unusable while the log said `unhealthy`.
 
 ## The primitive
 
 `@rally/contracts`' `zod-diagnostics.ts`, reachable from every package:
 
-- `describeZodIssues(error)` — the failing paths and codes, first three.
+- `describeZodIssues(error, options?)` — the failing paths and codes, first
+  three, with non-declared segments withheld. `namesUnknownKeys` opts into
+  `unrecognized_keys` names and belongs only on a boundary between our own
+  components.
 - `codeShaped(text)` — reduced to the character class and length a code-shaped
   field will carry.
 - `zodDiagnosticCode(error, label)` — a named code, or `null` for anything that
@@ -129,13 +160,23 @@ non-Zod errors, and the code shape over a path the schema does not control.
 rejection; restoring `return "unexpected_error"` fails it with
 `expected 'unexpected_error' not to be 'unexpected_error'`.
 
-**What a future change has to respect:** the value/shape line. Paths and issue
-codes cross; rejected values do not. A boundary that starts logging the value
-because the path was not enough has answered the wrong question — the path not
-being enough means the schema needs a better field name.
+**What a future change has to respect:** the value/shape line, and that it is
+narrower than "the path is safe". Declared field names and issue codes cross;
+record keys, unrecognized key names on an untrusted boundary, and rejected values
+do not. A boundary that starts carrying more because the path was not enough has
+answered the wrong question — an unhelpful path means the schema needs better
+field names, not that the diagnostic needs more of the value.
 
-**Considered and rejected:** making `connectorObservationErrorCode` log
-`error.message` for any error. That is how provider prose and member content
+The first version of this change did claim the wider line, in the docstring and
+in its own tests: it sanitized a record key to `seat_row_3` and asserted that as
+a feature. Sanitizing is not redaction. A reviewer caught it before it shipped.
+
+**Considered and rejected:** logging a health check's `message` instead of
+adding `reasonCode`. It is the shortest path to Granola's diagnosis and it
+carries every adapter's caught provider text with it. Also rejected: sanitizing
+record keys rather than withholding them — the character class was never a
+privacy boundary, only a formatting one. Also rejected: making
+`connectorObservationErrorCode` log `error.message` for any error. That is how provider prose and member content
 reach an indexed field, which is the thing those helpers were written to
 prevent. Also rejected: a lint rule banning `unexpected_error`. The string is
 correct for an error that genuinely carries no structure; what is wrong is

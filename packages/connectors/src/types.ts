@@ -789,6 +789,20 @@ export interface ConnectorAdapter {
   ): Promise<{
     ok: boolean;
     message: string;
+    /**
+     * Why the check failed, in the adapter's own fixed vocabulary, for the log.
+     *
+     * `message` cannot serve: an adapter is free to return a caught provider
+     * error's text there — X returns the body's own `message` field — and that
+     * text is shown to a person, not written to an indexed field. Logging it
+     * would put provider prose, and whatever a provider chose to include in it,
+     * into structured observability.
+     *
+     * So this is a separate, deliberately small thing: a literal the adapter
+     * writes, naming a condition it already distinguishes. Omit it and the log
+     * says only that the check failed, which is where every adapter started.
+     */
+    reasonCode?: string;
     reconnectRequired?: boolean;
     /**
      * A condition worth acting on that does not make the connection unusable —

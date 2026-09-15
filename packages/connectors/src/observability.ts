@@ -559,10 +559,16 @@ export function instrumentConnectorAdapter(
             // dropped it here, while one that *throws* got a `code` logged four
             // lines down. Granola returns, so "Granola webhook endpoint identity
             // is missing" — the entire diagnosis, already computed — reached the
-            // log as the word `unhealthy` and nothing else. The message is the
-            // adapter's own prose about its own configuration, not provider or
-            // member content, and `redact` bounds it.
-            ...(result.ok ? {} : { reason: result.message }),
+            // log as the word `unhealthy` and nothing else.
+            //
+            // `message` is deliberately not what is logged. It is written for a
+            // person and an adapter may fill it from a caught provider error:
+            // `x.ts` returns the provider body's own `message` field verbatim.
+            // `redact` keys on field names, so nothing would catch that. Only
+            // `reasonCode`, which an adapter writes as a literal, crosses here.
+            ...(result.ok || result.reasonCode === undefined
+              ? {}
+              : { reason_code: result.reasonCode }),
             duration_ms: Date.now() - startedAt,
             ...fields,
           },

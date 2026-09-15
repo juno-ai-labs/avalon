@@ -38,6 +38,27 @@ const REPORTED_ISSUES = 3;
 /** The whole value, when the rejection is about its shape rather than a field. */
 const ROOT_PATH = "_root_";
 
+/**
+ * A path segment withheld because it is not a declared field name.
+ *
+ * `issue.path` is only schema shape when the schema declares its keys. Under
+ * `z.record` the segments are keys from the rejected *value*, so a schema keyed
+ * by email address, document title, or token would put that key into a log line,
+ * a code crossing an RPC hop, and — through `scheduledAlarmErrorCode` — an
+ * operator notice posted to Slack. Sanitizing and truncating it does not make it
+ * non-sensitive; it makes it a recognizable value with the punctuation removed.
+ *
+ * Nothing on a `ZodIssue` says which kind of segment it is looking at, so the
+ * shape of the segment decides: a declared property name in this tree is a
+ * JavaScript identifier, and the values that matter here — addresses, titles,
+ * ids, secrets — are not. That bounds the exposure rather than reasoning about
+ * it, which is the trade a diagnostic should make.
+ */
+const WITHHELD_SEGMENT = "_key_";
+
+/** What a declared property name looks like, and what a member's data does not. */
+const DECLARED_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+
 const OUTSIDE_CODE_SHAPE = /[^A-Za-z0-9_:.-]/gu;
 
 /**
@@ -60,16 +81,33 @@ export function codeShaped(text: string): string {
  * they may be logged and may cross a boundary. The rejected *values* may not,
  * and are left behind.
  */
-export function describeZodIssues(error: z.ZodError): string {
+export function describeZodIssues(
+  error: z.ZodError,
+  options: { readonly namesUnknownKeys?: boolean } = {},
+): string {
   const described = error.issues.slice(0, REPORTED_ISSUES).map((issue) => {
-    const path = issue.path.length === 0 ? ROOT_PATH : issue.path.join(".");
+    const path = issue.path.length === 0
+      ? ROOT_PATH
+      : issue.path.map(describeSegment).join(".");
     // `unrecognized_keys` is the one issue whose subject is not on its path:
-    // Zod reports the offending names in `keys` and leaves `path` empty. That is
-    // the version-skew shape, whose whole diagnosis is the field name.
-    const keys = issue.code === "unrecognized_keys" ? `:${issue.keys.join(".")}` : "";
+    // Zod reports the offending names in `keys` and leaves `path` empty. Those
+    // names come from the rejected object, so they are the caller's data unless
+    // the caller is one this deployment controls. They are the whole diagnosis
+    // of a version skew between our own components — and nothing at all worth
+    // the risk on a provider's response.
+    const keys = options.namesUnknownKeys === true && issue.code === "unrecognized_keys"
+      ? `:${issue.keys.map(describeSegment).join(".")}`
+      : "";
     return `${path}:${issue.code}${keys}`;
   });
   return described.join(":") || "no_issues";
+}
+
+/** An array index, a declared field name, or nothing. */
+function describeSegment(segment: PropertyKey): string {
+  if (typeof segment === "number") return String(segment);
+  const name = String(segment);
+  return DECLARED_NAME.test(name) ? name : WITHHELD_SEGMENT;
 }
 
 /**
@@ -80,7 +118,11 @@ export function describeZodIssues(error: z.ZodError): string {
  * string — and reach for this only where it would otherwise have said
  * "something threw".
  */
-export function zodDiagnosticCode(error: unknown, label: string): string | null {
+export function zodDiagnosticCode(
+  error: unknown,
+  label: string,
+  options: { readonly namesUnknownKeys?: boolean } = {},
+): string | null {
   if (!(error instanceof z.ZodError)) return null;
-  return codeShaped(`${label}_invalid:${describeZodIssues(error)}`);
+  return codeShaped(`${label}_invalid:${describeZodIssues(error, options)}`);
 }
