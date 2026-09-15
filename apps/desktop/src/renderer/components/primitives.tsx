@@ -717,7 +717,17 @@ export function Modal({
             if (!dismissible || isComposingKeyEvent(event)) event.preventDefault();
           }}
           onInteractOutside={(event) => {
-            if (!dismissible) event.preventDefault();
+            if (!dismissible) {
+              event.preventDefault();
+              return;
+            }
+            // Menus portal to the document, so a click on one is "outside" the
+            // dialog content even when the trigger lives inside it. Treating
+            // that as a dismissal closes the participant dialog on Remove.
+            const target = event.target;
+            if (target instanceof Element && target.closest('.menu-content')) {
+              event.preventDefault();
+            }
           }}
           onOpenAutoFocus={(event) => {
             const initialFocus = initialFocusRef?.current;

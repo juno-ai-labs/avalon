@@ -1,3 +1,4 @@
+import { parseRpcInput } from "../lib/rpc-input";
 import type { Region } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
@@ -177,6 +178,7 @@ interface PrivateChildPreparationRow extends Record<string, SqlStorageValue> {
   capture_json: string | null;
   completed_parts_json: string;
   prepared_context_json: string | null;
+  prepared_conversation_hash: string | null;
   status: "preparing" | "prepared" | "confirming" | "ready" | "failed";
   error_code: string | null;
   created_at: number;
@@ -576,6 +578,12 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   "DROP TABLE \"_region_copy_workstream_metadata\"",
   "PRAGMA defer_foreign_keys = OFF"
 ]
+}, {
+  version: 12, description: "freeze private child historical content before publication", statements: [
+    // Previously claimed operations had no prepared-history input. Null keeps their replay semantics.
+    `ALTER TABLE private_child_preparations ADD COLUMN prepared_conversation_hash TEXT
+      CHECK (prepared_conversation_hash IS NULL OR (length(prepared_conversation_hash) = 24 AND substr(prepared_conversation_hash, 1, 8) = 'fnv1a64:'))`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -1076,7 +1084,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     input: ClaimPrivateChildConfirmationRequest,
   ): Promise<PrivateChildPreparationOperation> {
     await this.initialized;
-    const request = ClaimPrivateChildConfirmationRequestSchema.parse(input);
+    const request = parseRpcInput(ClaimPrivateChildConfirmationRequestSchema, input, "private_child_confirmation");
     this.assertParent(request.workspaceId, request.parentId);
     this.state.storage.transactionSync(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
@@ -1084,10 +1092,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (!this.canRead(request.actorUserId)) throw new Error("private_child_confirmation_forbidden");
       if (operation.status === "failed") throw new Error("private_child_preparation_failed");
       if (operation.status === "preparing") throw new Error("private_child_context_not_prepared");
+      if (operation.status !== "prepared" && operation.preparedConversationHash !== (request.preparedConversationHash ?? null)) {
+        throw new Error("private_child_initialization_conflict");
+      }
       if (operation.status === "prepared") {
         this.parentSql.exec(
-          `UPDATE private_child_preparations SET status = 'confirming', updated_at = ? WHERE operation_id = ?`,
-          Date.now(), request.operationId,
+          `UPDATE private_child_preparations SET status = 'confirming', prepared_conversation_hash = ?, updated_at = ? WHERE operation_id = ?`,
+          request.preparedConversationHash ?? null, Date.now(), request.operationId,
         );
       }
     });
@@ -1328,6 +1339,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       sourceThroughTurnId: request.sourceThroughTurnId,
       recipe: request.recipe,
       status: row.status,
+      preparedConversationHash: row.prepared_conversation_hash,
       capture: row.capture_json ? JSON.parse(row.capture_json) : null,
       completedParts: JSON.parse(row.completed_parts_json),
       preparedContext: row.prepared_context_json ? JSON.parse(row.prepared_context_json) : null,
@@ -1746,6 +1758,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     now: number,
   ): void {
     if (substreamId === "0") return;
+    if (effect.backgroundAgent) {
+      this.parentSql.exec("UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1", now);
+      return;
+    }
     const changed = this.parentSql.exec<{ substream_id: string }>(
       `UPDATE conversation_children SET title = ?, updated_at = ?
         WHERE substream_id = ? AND kind = 'child' AND title IS NOT ?
@@ -1755,10 +1771,21 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (changed) this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
-  protected override afterChildEffects(): Promise<void> {
-    // Everyone reading *this* work stream hears now, over the control socket.
-    // Every other surface hears through the outbox, the Queue, and WorkspaceDO.
-    return this.broadcastMetadata();
+  protected override async afterChildEffects(): Promise<void> {
+    const row = this.metadataRow();
+    if (row?.archived_at != null) {
+      // The durable archive is the retry authority. Every owned worker uses
+      // this same parent, including recursively delegated workers. A shared
+      // Sidekick has a different parent and is not part of this traversal.
+      for (const child of this.childRegistry()) {
+        const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+          row.workspace_id, conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id),
+            row.workstream_id, asSubstreamId(child.substreamId)));
+        await stub.stopOwnedAgent();
+      }
+    }
+    // Everyone reading this workstream hears through the existing control socket.
+    await this.broadcastMetadata();
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -2080,6 +2107,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
+      backgroundAgentCount: this.parentSql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM substream_directory
+          WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
+            AND json_extract(effect_json, '$.state') = 'running'
+            AND json_extract(effect_json, '$.archivedAt') IS NULL`,
+      ).one().n,
       latestAttentionSequenceNumber: row.latest_attention_ordinal,
       unreadTrackingStartSequenceNumber: row.unread_tracking_start_ordinal,
       lastActivityAt: iso(row.last_activity_at),

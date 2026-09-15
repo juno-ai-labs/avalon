@@ -35,13 +35,13 @@ describe('Ace Hono application', () => {
     const send = vi.fn(async () => undefined);
     const cloudflare = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
       success: true,
-      result: { key: 'meeting-recording-enabled', default_variation: 'off' },
+      result: { key: 'suggested-work-enabled', default_variation: 'off' },
     }));
-    const request = new Request('https://ace.internal.rallywith.ai/api/flags/meeting-recording-enabled', {
+    const request = new Request('https://ace.internal.rallywith.ai/api/flags/suggested-work-enabled', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
       body: JSON.stringify({
-        key: 'meeting-recording-enabled',
+        key: 'suggested-work-enabled',
         description: 'Meeting Recording Enabled',
         enabled: true,
         default_variation: 'off',
@@ -57,7 +57,7 @@ describe('Ace Hono application', () => {
 
     expect(response.status).toBe(200);
     expect(cloudflare).toHaveBeenCalledWith(
-      'https://api.cloudflare.com/client/v4/accounts/account/flagship/apps/app/flags/meeting-recording-enabled',
+      'https://api.cloudflare.com/client/v4/accounts/account/flagship/apps/app/flags/suggested-work-enabled',
       expect.objectContaining({ method: 'PUT' }),
     );
     const [, requestInit] = cloudflare.mock.calls[0]!;
@@ -65,7 +65,7 @@ describe('Ace Hono application', () => {
       variations: { off: false, on: true },
     });
     expect(send).toHaveBeenCalledWith(
-      { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' },
+      { kind: 'flagship_product_flag_changed', flagKey: 'suggested-work-enabled' },
       { delaySeconds: 30 },
     );
   });
@@ -73,7 +73,7 @@ describe('Ace Hono application', () => {
   it('rejects a cross-origin write before it reaches Flagship', async () => {
     const cloudflare = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch!(new Request(
-      'https://ace.internal.rallywith.ai/api/flags/meeting-recording-enabled',
+      'https://ace.internal.rallywith.ai/api/flags/suggested-work-enabled',
       { method: 'PUT', headers: { Origin: 'https://attacker.example' } },
     ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
 
@@ -86,7 +86,7 @@ describe('Ace Hono application', () => {
       success: true,
       result: [
         { key: 'agent-model-workstream', variations: { current: { model: 'x-ai/grok-4.3', fallbackModels: [] } } },
-        { key: 'meeting-recording-enabled', variations: { off: false, on: true } },
+        { key: 'suggested-work-enabled', variations: { off: false, on: true } },
         { key: 'agent-model-unregistered', variations: { current: { model: 'unknown/model', fallbackModels: [] } } },
       ],
     }));

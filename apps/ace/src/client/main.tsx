@@ -236,7 +236,7 @@ function App(): React.JSX.Element {
   // retired workspace has to stay marked when the operator comes back to it.
   const [retiredWorkspaces, setRetiredWorkspaces] = useState<ReadonlyMap<string, RetiredWorkspace>>(new Map());
   const [flags, setFlags] = useState<Flag[]>(MANAGED_FLAGS.map((flag) => emptyFlag(flag.key)));
-  const [selectedKey, setSelectedKey] = useState<Flag['key']>('meeting-recording-enabled');
+  const [selectedKey, setSelectedKey] = useState<Flag['key']>('suggested-work-enabled');
   const [operatorEmail, setOperatorEmail] = useState<string | null>(null);
   const [flagshipConnected, setFlagshipConnected] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);

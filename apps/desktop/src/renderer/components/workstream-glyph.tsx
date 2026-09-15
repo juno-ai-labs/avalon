@@ -218,9 +218,26 @@ export const SIDEKICK_RUNNING_MARKER: HexagonMarker = {
  * tile — 60px in the sidebar, 36px in the rail — instead of holding a pixel
  * size and swelling as the shape around it shrinks, which is the same reason
  * the new-Sidekick outline is stroked in these units.
+ *
+ * X and Y are separate because the hexagon is not square in its own viewBox:
+ * it spans 88 units across (x 6→94) but 93.5 down (y 3.75→97.25), so one
+ * origin cannot sit the marker against both edges. Y is the origin that puts
+ * `Play`'s lowest point — y=21 of its 24-unit box, where the bottom-left
+ * rounding arc bottoms out — just inside the hexagon's own lowest point at
+ * y=97.25 (`74 + 21 * 26 / 24 = 96.75`). X is unchanged, and leaves the
+ * play's right tip 2.25 units inside the right edge.
+ *
+ * `MARKER_Y + MARKER_BOX` is exactly 100, the viewBox's bottom. The hover
+ * rect still gets its full 26 units, but a later bump to Y would clip that
+ * target against the root SVG rather than fail the attribute test (which
+ * compares the rect to the symbol, not to what was painted). The knockout's
+ * dilated stroke also now reaches ~100.5, past both the root viewBox and
+ * the mask's `0 0 100 100` region. Harmless today: the hexagon fill ends at
+ * 97.25, so there is nothing down there to cut.
  */
 const MARKER_BOX = 26;
-const MARKER_ORIGIN = 69;
+const MARKER_X = 69;
+const MARKER_Y = 74;
 
 /**
  * How wide the knockout is stroked, in the marker's own 24-unit box. A stroke
@@ -231,6 +248,8 @@ const MARKER_ORIGIN = 69;
  * fills its box to about 3 units from the top and 21 from the left, so any
  * dilation past 3 is cut off square at three edges — the shape-accurate gap
  * flattening into a box corner exactly where the marker crosses the hexagon.
+ * That overflow only defeats the *icon* viewport. The root viewBox and the
+ * mask region are a second clipper; see `MARKER_Y`.
  */
 const MARKER_KNOCKOUT = 7;
 
@@ -297,7 +316,7 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
             <marker.symbol
               className="automation-glyph-knockout" fill="black" overflow="visible" size={MARKER_BOX}
               stroke="black" strokeLinejoin="round" strokeWidth={MARKER_KNOCKOUT}
-              x={MARKER_ORIGIN} y={MARKER_ORIGIN}
+              x={MARKER_X} y={MARKER_Y}
             />
           </mask>
         </defs>
@@ -331,12 +350,12 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
             answers `visiblePainted` while painting nothing; `fill="none"` would
             be invisible to the pointer too.
           */}
-          <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+          <rect fill="transparent" height={MARKER_BOX} width={MARKER_BOX} x={MARKER_X} y={MARKER_Y} />
           {/* Solid rather than stroked: at the rail's 36px the marker is about 7px
               across, where a 2-unit outline is most of the symbol and the shape
               stops reading as a play at all. */}
           <marker.symbol className="automation-glyph-marker" fill={marker.color} size={MARKER_BOX} stroke="none"
-            x={MARKER_ORIGIN} y={MARKER_ORIGIN} />
+            x={MARKER_X} y={MARKER_Y} />
         </g>
       )}
     </svg>

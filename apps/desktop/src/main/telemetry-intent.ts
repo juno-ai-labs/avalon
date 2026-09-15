@@ -193,17 +193,10 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
     || semanticKind === 'automation_action_completed'
     || semanticKind === 'message_sent'
     || semanticKind === 'content_copied'
-    || semanticKind === 'note_opened'
-    || semanticKind === 'note_created'
-    || semanticKind === 'note_action_completed'
-    || semanticKind === 'transcription_state_changed'
     || semanticKind === 'surface_viewed'
     || semanticKind === 'automation_builder_started'
     || semanticKind === 'automation_opened'
     || semanticKind === 'workstream_resource_action_completed'
-    || semanticKind === 'recording_start_completed'
-    || semanticKind === 'recording_terminal'
-    || semanticKind === 'note_opened_v2'
     || semanticKind === 'realtime_socket_state'
   )) {
     const properties = { ...candidate };

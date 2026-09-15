@@ -3933,115 +3933,6 @@ pre {
 .composer-wrap { margin: 0 auto; max-width: var(--av-cmp-feed-width); position: relative; }
 .composer-stack > .composer-wrap { margin: 0; max-width: none; width: 100%; }
 .composer-wrap > .workstream-composer { position: relative; z-index: 1; }
-.composer-queue {
-  background: var(--av-ref-color-neutral-2);
-  border: 1px solid var(--av-ref-color-line-4);
-  border-bottom: 0;
-  border-radius: var(--av-sys-size-radius-md) var(--av-sys-size-radius-md) 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  list-style: none;
-  margin: 0 10px -10px;
-  padding: 4px 4px 14px;
-  position: relative;
-  z-index: 0;
-}
-.composer-queue-row {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-height: 28px;
-  padding: 3px 6px 3px 2px;
-}
-.composer-queue-row.is-dragging { opacity: .45; }
-.composer-queue-grip {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-sm);
-  color: var(--av-sys-color-text-muted);
-  cursor: grab;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 16px;
-  justify-content: center;
-  line-height: 0;
-  opacity: 0;
-  padding: 0;
-  width: 16px;
-}
-.composer-queue-grip svg { display: block; }
-.composer-queue-row:hover .composer-queue-grip,
-.composer-queue-row:focus-within .composer-queue-grip,
-.composer-queue-row.is-dragging .composer-queue-grip { opacity: 1; }
-.composer-queue-grip:disabled { cursor: default; visibility: hidden; }
-.composer-queue-grip:active { cursor: grabbing; }
-.composer-queue-avatar {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 16px;
-  justify-content: center;
-  width: 16px;
-}
-.composer-queue-avatar .avatar-small {
-  height: 16px;
-  width: 16px;
-}
-.composer-queue-avatar .avatar-fallback { font-size: 7px; }
-.composer-queue-text {
-  color: var(--av-sys-color-text-subtle);
-  flex: 1 1 auto;
-  font-size: 12px;
-  line-height: 16px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* A queued row is one clipped line of the transcript's own Markdown renderer.
-   Flattening it here rather than in a second renderer is deliberate: the row
-   then draws the same chips, the same emphasis, and the same code spans the
-   turn will draw once it lands, and there is no parallel implementation to keep
-   in step with this one. Every block becomes inline so `nowrap` and the
-   ellipsis on the row apply to the whole message, and the prose type scale
-   gives way to the row's. */
-.composer-queue-text .markdown-body {
-  /* Restated rather than inherited: `.markdown-body` paints its own prose ink,
-     and a queued row is deliberately quieter than a turn that has landed. */
-  color: var(--av-sys-color-text-subtle);
-  display: inline;
-  font-size: inherit;
-  line-height: inherit;
-}
-.composer-queue-text .markdown-body :is(
-  p, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, blockquote, table, thead, tbody, tr, th, td, hr
-) {
-  border: 0;
-  display: inline;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  margin: 0;
-  padding: 0;
-}
-/* A block's neighbours would otherwise run together into one word. */
-.composer-queue-text .markdown-body :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, tr)::after {
-  content: ' ';
-  white-space: pre;
-}
-.composer-queue-text .markdown-body :is(li, ul, ol) { list-style: none; }
-/* The transcript's mention chip, in a line a little over half its usual size. */
-.composer-queue-text .mention-chip {
-  height: 1.45em;
-  padding: 1px 5px 1px 2px;
-}
-.composer-queue-text .mention-chip-avatar {
-  font-size: 5.5px;
-  height: 13px;
-  width: 13px;
-}
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: var(--space-3); }
@@ -5069,351 +4960,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .project-recovery-list,
 .project-participant-list { display: grid; gap: 8px; }
 
-/* Read-only notes */
-.note-detail-screen {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
-  height: 100%;
-  min-width: 0;
-}
-.note-detail-main { display: grid; grid-template-rows: 55px minmax(0, 1fr); min-width: 0; }
-.note-detail-scroll { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
-/* `font-size` and `line-height` are the empty state's; the markdown carries its
-   own. No `color` here: `.markdown-body` sets one on itself and a declaration
-   beats inheritance, so a colour stated on this element would reach the markdown
-   not at all and the empty state — which sets `--av-sys-color-text-disabled` below — not either. */
-.note-detail-article {
-  font-size: 14px;
-  line-height: 1.68;
-  margin: 0 auto;
-  max-width: 760px;
-  padding: 58px 54px 100px;
-  width: 100%;
-}
-/* The body of a note is a `.markdown-body`, so everything about how its markdown
-   is drawn — lists, code, quotes, tables, the first/last-child margin trim —
-   comes from that container. A note reads as a document page rather than a chat
-   turn, and its heading scale is the one thing worth saying twice: 22/17/14
-   against the shared 18/16/14.5, which stays close together because a transcript
-   turn is too short for a hierarchy to be worth much. Nothing else belongs here.
-   This surface used to restate the list geometry too, and restating it is
-   precisely how it came to be missing a marker rule the shared container had.
-
-   `.markdown-body` is named in the selector so these win on **specificity**
-   rather than on sitting lower in the file than the shared scale. Written as
-   `.note-detail-article :is(h1, …)` they tied `.markdown-body h1` at (0,1,1) and
-   won only by source order — which is the precise hazard this arrangement exists
-   to avoid, so splitting the stylesheet or moving either block would have put a
-   note quietly back on the transcript's headings with nothing going red. */
-.note-detail-article .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--av-sys-color-text-default); margin: var(--av-cmp-markdown-article-heading-margin); }
-.note-detail-article .markdown-body h1 { font-size: var(--av-cmp-markdown-article-heading-1); }
-.note-detail-article .markdown-body h2 { font-size: var(--av-cmp-markdown-article-heading-2); }
-.note-detail-article .markdown-body :is(h3, h4, h5, h6) { font-size: var(--av-cmp-markdown-article-heading-3); }
-.note-detail-empty,
-.note-transcript-empty {
-  align-items: center;
-  color: var(--av-sys-color-text-disabled);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-.note-detail-empty { min-height: 52vh; }
-.note-detail-empty strong { color: var(--av-sys-color-text-subtle); margin-top: 12px; }
-.note-detail-empty p { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 5px 0 0; }
-.note-detail-state { height: 100%; position: relative; }
-.note-transcript-rail {
-  background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-cmp-surface-radius);
-  display: grid;
-  grid-template-rows: 45px minmax(0, 1fr);
-  margin: 8px 8px 8px 0;
-  min-width: 0;
-  overflow: hidden;
-}
-.note-transcript-rail > header {
-  align-items: center;
-  border-bottom: 1px solid var(--av-ref-color-line-2);
-  display: flex;
-  justify-content: space-between;
-  padding: 0 11px;
-}
-.note-transcript-rail > header > span { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 7px; }
-.note-transcript-rail h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0; }
-.note-transcript-rail small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.note-transcript-scroll { min-height: 0; overflow-y: auto; padding: 16px 14px 28px; scrollbar-gutter: stable; }
-.note-transcript-scroll > p { color: var(--av-sys-color-text-subtle); font-size: 12px; line-height: 1.58; margin: 0 0 14px; }
-.note-transcript-scroll > p:last-child { color: var(--av-sys-color-text-default); margin-bottom: 0; }
-.note-transcript-empty { font-size: var(--av-cmp-control-font-size); gap: 8px; height: 100%; }
-
-/* Dedicated meeting window */
-.meeting-surface {
-  background: var(--av-sys-color-surface-default);
-  color: var(--av-sys-color-text-default);
-  display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 68px;
-  height: 100%;
-}
-
-.meeting-titlebar {
-  align-items: center;
-  background: var(--av-cmp-sidebar-background-solid);
-  border-bottom: 1px solid var(--av-sys-color-border-default);
-  display: flex;
-  justify-content: space-between;
-  padding: 0 18px 0 82px;
-}
-
-.meeting-titlebar-copy {
-  align-items: center;
-  color: var(--av-sys-color-text-subtle);
-  display: flex;
-  font-size: var(--av-cmp-control-font-size);
-  gap: 9px;
-}
-
-.meeting-titlebar-copy > span:last-child::before {
-  color: var(--av-sys-color-text-disabled);
-  content: '\00b7';
-  margin-right: 9px;
-}
-
-.meeting-recording-dot,
-.meeting-start-dot {
-  background: var(--av-sys-color-text-disabled);
-  border-radius: 50%;
-  display: inline-block;
-  height: 8px;
-  width: 8px;
-}
-
-.meeting-recording-dot.is-active,
-.meeting-start-dot { background: var(--av-sys-color-danger-base); }
-.meeting-recording-dot.is-active { box-shadow: 0 0 0 4px var(--av-sys-color-danger-tint); }
-
-.meeting-titlebar > p {
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  margin: 0;
-}
-
-.meeting-layout {
-  display: grid;
-  gap: 18px;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  padding: 24px 26px 20px;
-}
-
-.meeting-heading { margin: 0 auto; max-width: 720px; width: 100%; }
-
-.meeting-heading input {
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-default);
-  font-size: 26px;
-  font-weight: 560;
-  letter-spacing: -.025em;
-  line-height: 1.25;
-  min-width: 0;
-  outline: 0;
-  padding: 0;
-  width: 100%;
-}
-
-.meeting-heading input:focus { box-shadow: inset 0 -1px var(--av-sys-color-border-default); }
-.meeting-heading p { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 7px 0 0; }
-.meeting-heading-meta { align-items: center; display: flex; gap: 14px; justify-content: space-between; }
-.meeting-visibility {
-  align-items: center;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  flex: 0 0 auto;
-  gap: 5px;
-  margin-top: 6px;
-}
-.meeting-visibility select {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  font-size: var(--av-cmp-control-font-size);
-  outline: 0;
-  padding: 2px 15px 2px 0;
-}
-
-.meeting-stack {
-  display: grid;
-  gap: 14px;
-  grid-template-rows: minmax(0, 1fr) minmax(168px, 30vh);
-  margin: 0 auto;
-  max-width: 720px;
-  min-height: 0;
-  width: 100%;
-}
-
-.meeting-live-notes,
-.meeting-transcript-card {
-  display: grid;
-  grid-template-rows: 42px minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-}
-
-.meeting-live-notes > header,
-.meeting-transcript-card > header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  padding: 0 8px;
-}
-
-.meeting-live-notes > header > span,
-.meeting-transcript-card > header > span { align-items: center; display: flex; gap: 8px; }
-.meeting-live-notes h2,
-.meeting-transcript-card h2 { font-size: 13px; margin: 0; }
-.meeting-live-notes .icon-button,
-.meeting-transcript-card .icon-button,
-.meeting-controls .button {
-  background: var(--av-sys-color-surface-raised);
-  border-color: var(--av-sys-color-border-default);
-  color: var(--av-sys-color-text-subtle);
-}
-.meeting-live-notes .icon-button:hover,
-.meeting-transcript-card .icon-button:hover,
-.meeting-controls .button:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
-
-.meeting-updated-at {
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  margin: 0 0 14px;
-}
-
-.meeting-notes-body,
-.meeting-transcript-body {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-/* Sizes the timestamp, the error line and the empty state; the briefing itself
-   is a `.markdown-body` and carries its own. */
-.meeting-notes-body { font-size: 14px; line-height: 1.65; padding: 12px 8px 20px; }
-.meeting-notes-body > :first-child { margin-top: 0; }
-/* The one deliberate departure from the shared renderer, for the same reason the
-   note above has one: this briefing lives in a narrow rail beside a transcript,
-   where a descending heading scale mostly wastes the width, so every level sits
-   at one size. Everything else the briefing draws is `.markdown-body`'s — which
-   is also named here, so this wins on specificity rather than on source order.
-   See the note's block for why that distinction is worth a class. */
-.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6) {
-  font-size: 15px;
-  margin: 22px 0 8px;
-}
-.meeting-summary-progress {
-  align-items: center;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  font-size: var(--av-cmp-control-font-size);
-  gap: 7px;
-  justify-content: flex-end;
-  margin-top: 18px;
-}
-
-.meeting-transcript-card {
-  background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-cmp-surface-radius);
-}
-.meeting-transcript-card > header {
-  border-bottom: 1px solid var(--av-ref-color-line-2);
-  padding: 0 10px 0 14px;
-}
-
-.meeting-transcript-body {
-  display: flex;
-  flex-direction: column;
-  font-size: 13px;
-  line-height: 1.55;
-  padding: 14px;
-}
-.meeting-transcript-body > p {
-  color: var(--av-sys-color-text-subtle);
-  margin: 0 0 9px;
-}
-.meeting-transcript-body > p:last-child { color: var(--av-sys-color-text-default); }
-
-.meeting-empty-state {
-  align-items: center;
-  align-self: center;
-  color: var(--av-sys-color-text-disabled);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  justify-content: center;
-  margin: auto;
-  max-width: 280px;
-  text-align: center;
-}
-.meeting-empty-state strong { color: var(--av-sys-color-text-subtle); margin-top: 12px; }
-.meeting-empty-state p { font-size: 12px; margin: 5px 0 0; }
-
-.meeting-controls {
-  align-items: center;
-  background: var(--av-cmp-sidebar-background-solid);
-  border-top: 1px solid var(--av-sys-color-border-default);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  padding: 0 20px;
-}
-
-.meeting-control-status {
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  min-width: 0;
-}
-.meeting-control-status > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.meeting-control-status > [role='alert'] { color: var(--av-sys-color-danger-base); }
-.meeting-control-warning { color: var(--av-sys-color-warning-base); }
-.meeting-permission-settings {
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-subtle);
-  cursor: pointer;
-  font: inherit;
-  margin-left: 8px;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.meeting-permission-settings:hover { color: var(--av-sys-color-text-default); }
-.meeting-controls .meeting-start-button,
-.meeting-controls .meeting-pause-button,
-.meeting-controls .meeting-stop-button {
-  border-radius: var(--av-sys-size-radius-pill);
-  font-weight: 570;
-  min-height: 40px;
-  padding: 7px 18px;
-}
-.meeting-recording-actions { display: flex; gap: 8px; }
-.meeting-controls .meeting-start-button { background: var(--av-sys-color-text-default); color: var(--av-sys-color-text-on-inverse); }
-.meeting-controls .meeting-start-button:hover { background: var(--av-sys-color-surface-inverse-hover); color: var(--av-sys-color-text-on-inverse); }
-.meeting-controls .meeting-pause-button { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-subtle); }
-.meeting-controls .meeting-stop-button { background: var(--av-sys-color-danger-tint); border-color: var(--av-sys-color-danger-tint-strong); color: var(--av-sys-color-danger-soft); }
-
-@media (max-width: 860px) {
-  .meeting-layout { padding: 20px 18px 16px; }
-  .meeting-titlebar { padding-right: 18px; }
-  .meeting-titlebar > p { display: none; }
-  .meeting-controls { gap: 12px; grid-template-columns: minmax(0, 1fr) auto; }
-  .meeting-controls > :last-child { display: none; }
-  .meeting-control-status > span { display: block; line-height: 1.3; white-space: normal; }
-}
-
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
   .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px 18px; }
@@ -6433,10 +5979,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 100%;
 }
 
-.workstream-screen .composer-queue {
-  background: var(--av-cmp-composer-background);
-  border-color: var(--av-cmp-composer-border-color);
-}
+
 
 /* The field is three quarters of the widest a turn is ever drawn, centred over
    the same column. Full width said nothing about the conversation above it: the
@@ -7574,3 +7117,67 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   font-size: 13px;
 }
 .inference-delay-notice > svg { flex-shrink: 0; }
+
+.session-import-link-form { display: grid; gap: 10px; }
+.background-agent-count {
+  color: var(--av-sys-color-text-muted);
+  display: grid;
+  font-size: 12px;
+  grid-template-rows: 0fr;
+  padding: 0;
+  pointer-events: none;
+  transition: grid-template-rows 320ms cubic-bezier(.22, 1, .36, 1);
+}
+.background-agent-count[data-active="true"] { grid-template-rows: 1fr; }
+.background-agent-reveal { min-height: 0; overflow: hidden; }
+.background-agent-label {
+  align-items: baseline;
+  display: flex;
+  gap: .3em;
+  line-height: 18px;
+  opacity: 0;
+  padding: 0 12px 6px;
+  transform: translateY(24px);
+  transition: transform 320ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease;
+}
+.background-agent-count[data-active="true"] .background-agent-label { opacity: 1; transform: translateY(0); }
+@starting-style {
+  .background-agent-count[data-active="true"] { grid-template-rows: 0fr; }
+  .background-agent-count[data-active="true"] .background-agent-label { opacity: 0; transform: translateY(24px); }
+}
+.background-agent-shimmer {
+  animation: background-agent-shimmer 2.8s linear infinite;
+  background: linear-gradient(105deg, var(--av-sys-color-text-muted) 35%, var(--av-sys-color-text-default) 50%, var(--av-sys-color-text-muted) 65%) 100% 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+}
+.background-agent-count[data-active="false"] .background-agent-shimmer { animation-play-state: paused; }
+.background-agent-wheel {
+  --wheel-travel: 100%;
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  perspective: 80px;
+  vertical-align: bottom;
+}
+.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
+.background-agent-digit { grid-area: 1 / 1; text-align: center; }
+.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+@keyframes background-agent-shimmer { to { background-position: -100% 0; } }
+@keyframes background-agent-digit-in {
+  from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+@keyframes background-agent-digit-out {
+  from { opacity: 1; transform: translateY(0) rotateX(0); }
+  to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-agent-count, .background-agent-label { transition: none; }
+  .background-agent-shimmer, .background-agent-digit { animation: none; }
+  .background-agent-digit-out { display: none; }
+}
+@media (forced-colors: active) {
+  .background-agent-shimmer { background: none; color: CanvasText; }
+}

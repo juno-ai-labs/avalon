@@ -113,7 +113,7 @@ socket answers defines a third:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
-| `directory` | `directory` | `directory` | The work-stream list as the sidebar holds it, the automation list, the note list, and the active and archived project directories. |
+| `directory` | `directory` | `directory` | The work-stream list as the sidebar holds it, the automation list and the active and archived project directories. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 
 The store is best-effort by construction, like the draft cache beside it: every
@@ -127,7 +127,7 @@ before the cache existed, waiting for the socket.
 dials. If the work-stream list is still empty, the cached lists go straight
 into the query-cache entries the sidebar, the landing route, and the project
 space read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
-`['notes']`, `['projects']`, and `['projects-inactive']`. They go in directly,
+`['projects']`, and `['projects-inactive']`. They go in directly,
 not through the versioned receivers, because a seed has no waterline and must
 not move a ledger; the ledgers stay at their empty state, which is what lets
 the socket's first subscribe answer apply over the seed whatever version it

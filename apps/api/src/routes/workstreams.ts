@@ -1,3 +1,7 @@
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
+import { prepareSessionImport, resolveSessionImportFiles } from "../services/session-import-files";
+import { SessionImportPreviewSchema, SessionImportPreviewRequestSchema, SessionImportRequestSchema } from "@rally/contracts";
+import { previewSessionImport, sessionShareUrl } from "../services/session-import";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
@@ -144,6 +148,23 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   return c.json(WorkstreamPageSchema.parse(await service.list(
     query.limit, query.before, query.includeSystem === "true",
   )));
+});
+workstreamRoutes.post("/import/preview", zValidator("json", SessionImportPreviewRequestSchema), async (c) => {
+  return c.json(SessionImportPreviewSchema.parse(await resolveSessionImportFiles(c.env, await previewSessionImport(c.req.valid("json"), c.env))));
+});
+workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  if (body.source.url && sessionShareUrl(body.source.url).provider !== body.source.provider) {
+    throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
+  }
+  const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
+  const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
+    objective: body.title,
+    clientMessageId: body.clientMessageId,
+    participantUserIds: [],
+    scope: "personal",
+  }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(body) });
+  return c.json(CreatedWorkstreamSchema.parse(result), 201);
 });
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {

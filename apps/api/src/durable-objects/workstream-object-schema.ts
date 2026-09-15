@@ -22,7 +22,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 57;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 60;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3038,6 +3038,78 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         error_code TEXT
       ) STRICT`,
     ],
+  },
+  {
+    version: 58,
+    description: "remove built-in meeting resource snapshots and attachments",
+    statements: [
+      `CREATE TABLE retired_meeting_attachment_ids (resource_id TEXT PRIMARY KEY) STRICT`,
+      `INSERT INTO retired_meeting_attachment_ids(resource_id)
+         SELECT resource_id FROM workstream_resource_links
+         WHERE json_extract(resource_json, '$.provider') = 'avalon_note'`,
+      `INSERT OR IGNORE INTO retired_meeting_attachment_ids(resource_id)
+         SELECT resource_id FROM participant_transcript_attachments
+         WHERE json_extract(attachment_json, '$.provider') = 'avalon_note'`,
+      `DELETE FROM participant_transcript_attachments
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `DELETE FROM attachment_tool_receipts
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `DELETE FROM pending_attachment_reservation_recovery
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `DELETE FROM workstream_resource_links
+         WHERE resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)`,
+      `UPDATE resource_inventory_revision SET revision = revision + 1
+         WHERE EXISTS (SELECT 1 FROM retired_meeting_attachment_ids)`,
+      `CREATE TRIGGER meeting_resource_links_retired BEFORE INSERT ON workstream_resource_links
+         WHEN json_extract(NEW.resource_json, '$.provider') = 'avalon_note'
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+      `CREATE TRIGGER meeting_resource_link_updates_retired BEFORE UPDATE ON workstream_resource_links
+         WHEN json_extract(NEW.resource_json, '$.provider') = 'avalon_note'
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+      `CREATE TRIGGER meeting_transcript_attachments_retired BEFORE INSERT ON participant_transcript_attachments
+         WHEN json_extract(NEW.attachment_json, '$.provider') = 'avalon_note'
+           OR NEW.resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+      `CREATE TRIGGER meeting_transcript_attachment_updates_retired BEFORE UPDATE ON participant_transcript_attachments
+         WHEN json_extract(NEW.attachment_json, '$.provider') = 'avalon_note'
+           OR NEW.resource_id IN (SELECT resource_id FROM retired_meeting_attachment_ids)
+         BEGIN SELECT RAISE(ABORT, 'meeting_notes_retired'); END`,
+
+    ],
+  },
+  { version: 59, description: "receipt prepared conversation materialization", statements: [
+    `CREATE TABLE prepared_conversation_receipts (
+      operation_id TEXT PRIMARY KEY, content_hash TEXT NOT NULL,
+      first_turn_id TEXT NOT NULL, content_json TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('preparing', 'committed', 'failed')),
+      created_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TABLE prepared_attachment_recovery (
+      input_id TEXT NOT NULL CHECK(length(input_id) = 36),
+      resource_id TEXT NOT NULL CHECK(length(resource_id) = 36),
+      workspace_id TEXT NOT NULL CHECK(length(workspace_id) = 36),
+      workstream_id TEXT NOT NULL CHECK(length(workstream_id) = 36),
+      release_authority TEXT NOT NULL CHECK(release_authority IN ('preparation', 'projection')),
+      created_at INTEGER NOT NULL,
+      preparation_id TEXT REFERENCES prepared_conversation_receipts(operation_id),
+      mailbox_input_id TEXT GENERATED ALWAYS AS (CASE WHEN preparation_id IS NULL THEN input_id ELSE NULL END) VIRTUAL
+        REFERENCES pending_loop_input_mailbox(input_id) ON DELETE RESTRICT,
+      PRIMARY KEY(input_id, resource_id)
+    ) STRICT`,
+    `INSERT INTO prepared_attachment_recovery(input_id, resource_id, workspace_id, workstream_id, release_authority, created_at)
+      SELECT input_id, resource_id, workspace_id, workstream_id, release_authority, created_at FROM pending_attachment_reservation_recovery`,
+    `DROP TABLE pending_attachment_reservation_recovery`,
+    `ALTER TABLE prepared_attachment_recovery RENAME TO pending_attachment_reservation_recovery`,
+    `CREATE INDEX pending_attachment_reservation_recovery_input_idx ON pending_attachment_reservation_recovery(input_id, resource_id)`,
+  ] },
+  {
+    version: 60,
+    description: "retain a background agent's inherited execution principal",
+    statements: [`CREATE TABLE background_agent (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      execution_principal_json TEXT NOT NULL CHECK (json_valid(execution_principal_json)),
+      stopped_at INTEGER
+    ) STRICT`],
   },
 ];
 

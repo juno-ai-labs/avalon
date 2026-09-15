@@ -58,6 +58,9 @@ function fixture() {
       const value = objects.get(key);
       return value === undefined ? null : { text: async () => value };
     },
+    async head(key: string) {
+      return objects.has(key) ? { key } : null;
+    },
     async delete(key: string) {
       objects.delete(key);
     },

@@ -96,8 +96,12 @@ identity instead of destroying a fence an already-dispatched derived run holds.
 A normal later run loads the latest eligible row for that principal and compares
 its recorded inventory revision. When the authorized resource set changed, it ignores the checkpoint
 and replays the uncompacted transcript instead of exposing a stale summary. That
-fallback is capped at 2,000 messages and 4 MiB of serialized protocol content;
-larger history fails with `context_limit_exceeded` before a provider request.
+fallback reads the complete authorized history, as does a first continuation of
+imported content. There is no additional message-count or serialized-byte ceiling.
+The first request must fit the selected model: automatic compaction depends on
+returned usage, and the summarizer itself receives the current transcript. It
+cannot rescue a first request that already exceeds the model window. Canonical
+history is never silently truncated to make it fit.
 With an exact match it regenerates the current-version message from the raw
 summary and fresh inventory, pages
 the durable transcript backward from its trigger's sequence number down to
@@ -234,7 +238,7 @@ activity indicator. Scheduling, receipts, and everything else about the run stay
 | Summary truncated by the provider's output cap | Retried once with a terser instruction appended. If that is truncated too, the run fails with `context_limit_exceeded` rather than checkpointing a partial record. Both attempts' tokens and cost are accounted. |
 | Summary would exceed an explicitly bounded caller's run cost ceiling | `run_cost_limit_exceeded` before the checkpoint is adopted. Ordinary work-stream runs do not configure this ceiling. |
 | Repeated compactions in one long work stream | Each checkpoint summarizes the previous one, but explicitly omits its generated inventory appendix. The prompt asks for the remaining checkpoint content to be carried forward, which slows but does not eliminate decay. |
-| Authorization invalidates a checkpoint and fallback history exceeds 2,000 messages or 4 MiB serialized | `context_limit_exceeded` before provider dispatch rather than building an unbounded request. |
+| Initial or authorization-invalidated replay exceeds the selected model window | The provider can reject the first request; no returned usage exists to trigger automatic compaction. The canonical transcript remains intact. |
 
 Numbers: threshold 0.8 of the window; catalog TTL one hour, fetch timeout five
 seconds; default window 200,000 tokens; one latest stored checkpoint per work
@@ -265,7 +269,7 @@ label.
 `apps/api/test/workstream-resource-inventory.test.ts` covers zero and all-kind
 rendering, bounded metadata, principal-and-visibility-scoped persistence, and
 fail-closed replay after visibility changes. API protocol tests cover the
-bounded no-checkpoint fallback and reauthorization of replayed attachment tool
+complete no-checkpoint fallback and reauthorization of replayed attachment tool
 results.
 
 ## Open questions
@@ -291,6 +295,20 @@ results.
   than giving it a budget it can measure against. Setting an explicit cap would
   make the instruction concrete, at the cost of a number that has to be right for
   every routed model.
+
+## Changelog
+
+### 2026-09-15 — Keep canonical replay separate from model capacity
+
+**What changed:** Removed the independent message-count and serialized-byte replay
+preflight. Initial and authorization-invalidated checkpoint replay retain the
+complete authorized transcript.
+
+**Why:** Prepared conversations can contain valid history beyond those arbitrary
+transport bounds. Byte counts do not establish model capacity. Silent truncation
+and a second import-only summarizer were rejected; the selected provider still
+owns its context window, and oversized first requests can fail before the existing
+usage-driven compactor can run.
 
 ### 2026-09-09 — Resident context moves into the prefix at the compaction, and out of the summary
 

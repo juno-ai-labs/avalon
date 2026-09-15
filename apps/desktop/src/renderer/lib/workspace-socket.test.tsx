@@ -499,14 +499,14 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:01:00.000Z',
-      changedFlag: 'meeting-recording-enabled',
+      changedFlag: 'suggested-work-enabled',
       flags: {
         developerSettings: false,
-        meetingRecordingEnabled: true,
+        suggestedWorkEnabled: true,
         controlTowerRefreshSeconds: 60,
       },
     }));
-    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ meetingRecordingEnabled: true });
+    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ suggestedWorkEnabled: true });
   });
 
   it('reports how deep a workspace reconnect had to go, and stops reporting at teardown', async () => {
@@ -811,7 +811,7 @@ describe('WorkspaceSocketProvider', () => {
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
-        meetingRecordingEnabled: false,
+        suggestedWorkEnabled: false,
         controlTowerRefreshSeconds: 60,
       },
       sidebar: {
@@ -900,9 +900,9 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
     expect(queryClient.getQueryData(['notes']))
-      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' })]);
+      .toBeUndefined();
     expect(queryClient.getQueryData(['feature-flags']))
-      .toMatchObject({ meetingRecordingEnabled: false });
+      .toMatchObject({ suggestedWorkEnabled: false });
 
     // The point of the payload: the only thing the client said was where it
     // had got to. A directory request here would be the round trip this frame
@@ -911,7 +911,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
-    const keys = ['workstreams', 'automations', 'notes', 'projects', 'projects-inactive', 'feature-flags',
+    const keys = ['workstreams', 'automations', 'projects', 'projects-inactive', 'feature-flags',
       'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
     const snapshot = keys.map((key) => queryClient.getQueryData(key));
     expect(snapshot.every((value) => value !== undefined)).toBe(true);
@@ -1612,7 +1612,6 @@ describe('the workspace socket over the local cache', () => {
     await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, {
       workstreams: [summary({ id: remembered, title: 'Remembered row' }), summary({ id: forgotten, title: 'Archived elsewhere' })],
       automations: [],
-      notes: [],
       projects: { waterline: 2, items: [] },
       inactiveProjects: { waterline: 2, items: [] },
     });

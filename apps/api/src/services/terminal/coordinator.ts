@@ -2,11 +2,33 @@ import { refreshTerminalProviderObservation } from "./observation";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { newId } from "@rally/db";
 
+import { asWorkspaceId } from "@rally/contracts";
+import { workspaceDOName } from "../../durable-objects/names";
+import {
+  WorkspaceTerminalNetworkSettingsSchema,
+  type WorkspaceTerminalNetworkPolicy,
+} from "../../durable-objects/workspace-terminal-network-protocol";
+import type {
+  TerminalObjectPort,
+} from "../../durable-objects/workstream-terminal-protocol";
+import {
+  TERMINAL_OPERATION_LEASE_MS,
+  type TerminalSandboxRecord,
+} from "../../durable-objects/workstream-terminal-storage";
+import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
+import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import { logStructuredEvent } from "../../observability/logger";
+import type { ResourcePortFactory } from "../../runtime/resource-port";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
+import { TERMINAL_OUTPUT_ROOT } from "./contract";
+import {
+  compileTerminalNetworkPolicy,
+  TERMINAL_NETWORK_MANIFEST_VERSION,
+} from "./network-policy";
+import type { TerminalPortFactory } from "./object-port";
 import {
   isTerminalProviderNotFound,
   deleteTerminalSandbox,
@@ -17,30 +39,7 @@ import {
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
 } from "./provider-contract";
-import {
-  compileTerminalNetworkPolicy,
-  TERMINAL_NETWORK_MANIFEST_VERSION,
-} from "./network-policy";
-import type { ResourcePortFactory } from "../../runtime/resource-port";
-import { TERMINAL_OUTPUT_ROOT } from "./contract";
-import type { TerminalPortFactory } from "./object-port";
-import {
-  TERMINAL_OPERATION_LEASE_MS,
-  type TerminalSandboxRecord,
-} from "../../durable-objects/workstream-terminal-storage";
-import type {
-  TerminalObjectPort,
-} from "../../durable-objects/workstream-terminal-protocol";
 import { TerminalToolError } from "./tools";
-import { asWorkspaceId } from "@rally/contracts";
-import type { Env } from "../../env";
-import { workspaceDOName } from "../../durable-objects/names";
-import { WorkspaceNoteVisibilityResultSchema } from "../../durable-objects/workspace-notes-protocol";
-import {
-  WorkspaceTerminalNetworkSettingsSchema,
-  type WorkspaceTerminalNetworkPolicy,
-} from "../../durable-objects/workspace-terminal-network-protocol";
-import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
 const WARM_STOP_MINUTES = 5;
 const ARCHIVE_MINUTES = 60;
@@ -533,7 +532,6 @@ export class TerminalSandboxCoordinator {
   }
 
   private async hasRevokedImportedResource(context: HarnessToolContext, row: TerminalSandboxRecord): Promise<boolean> {
-    const principalUserId = context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null;
     const links = await this.terminal(context).importedResources(row.generation);
     if (links.length === 0) return false;
     if (links.some((candidate) => candidate.state !== "completed")) return true;
@@ -552,25 +550,7 @@ export class TerminalSandboxCoordinator {
     ).bind(context.workspaceId, ...links.map((candidate) => candidate.resourceId))
       .all<{ id: string; provider: string }>();
     if (resources.results.length !== links.length) return true;
-    const noteIds = resources.results.filter((candidate) => candidate.provider === "avalon_note")
-      .map((candidate) => candidate.id);
-    if (noteIds.length === 0) return false;
-    // Note visibility is the owning object's decision, asked as a typed
-    // method; a null principal sees only workspace-scoped notes.
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      asWorkspaceId(context.workspaceId),
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(context.workspaceId)),
-    );
-    const visible = WorkspaceNoteVisibilityResultSchema.parse(
-      await workspace.visibleNoteResourceIds({
-        workspaceId: context.workspaceId,
-        userId: principalUserId,
-        resourceIds: noteIds,
-      }),
-    );
-    return new Set(visible.resourceIds).size !== noteIds.length;
+    return resources.results.some((candidate) => candidate.provider === "avalon_note");
   }
 
   private async reserveFirstGeneration(

@@ -289,34 +289,6 @@ export class TelemetryReporter {
     return this.captureProduct('content_copied', 'desktop-renderer', properties, undefined, windowContext);
   }
 
-  noteOpened(
-    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'note_opened' }>, 'kind'>,
-    windowContext?: TelemetryWindowContext,
-  ): Promise<void> {
-    return this.captureProduct('note_opened', 'desktop-renderer', properties, undefined, windowContext);
-  }
-
-  noteCreated(
-    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'note_created' }>, 'kind'>,
-    windowContext?: TelemetryWindowContext,
-  ): Promise<void> {
-    return this.captureProduct('note_created', 'desktop-renderer', properties, undefined, windowContext);
-  }
-
-  noteActionCompleted(
-    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'note_action_completed' }>, 'kind'>,
-    windowContext?: TelemetryWindowContext,
-  ): Promise<void> {
-    return this.captureProduct('note_action_completed', 'desktop-renderer', properties, undefined, windowContext);
-  }
-
-  transcriptionStateChanged(
-    properties: Omit<Extract<DesktopTelemetryProductIntent, { kind: 'transcription_state_changed' }>, 'kind'>,
-    windowContext?: TelemetryWindowContext,
-  ): Promise<void> {
-    return this.captureProduct('transcription_state_changed', 'desktop-renderer', properties, undefined, windowContext);
-  }
-
   onboardingRegionSelected(
     selectedRegion: Region,
     entrypoint: TelemetryEntrypoint,

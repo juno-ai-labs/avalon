@@ -499,15 +499,10 @@ describe("work-stream attachment tools", () => {
     expect(output.text.charCodeAt(output.text.length - 1)).not.toBeGreaterThanOrEqual(0xd800);
   });
 
-  it("searches one authorized derivative, returns bounded ranked passages, and hides private notes from workspace principals", async () => {
+  it("searches one authorized derivative, returns bounded ranked passages, and refuses deleted resources for workspace principals", async () => {
     const { database, objectStore, bucket, env } = fixture();
     const resourceId = insertReadyResource(database, objectStore, bucket, 2);
-    const privateResourceId = insertReadyResource(database, objectStore, bucket, 3, { title: "Private note" });
-    database.prepare("UPDATE resources SET provider = 'avalon_note', resource_type = 'note' WHERE id = ?").run(privateResourceId);
-    database.prepare(`INSERT INTO notes
-      (id, workspace_id, owner_user_id, resource_id, scope, title, last_activity_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'personal', 'Private note', '2026-08-12', '2026-08-12', '2026-08-12')
-    `).run("20000000-0000-4000-8000-000000000003", WORKSPACE_ID, USER_ID, privateResourceId);
+    const privateResourceId = "20000000-0000-4000-8000-000000000003";
 
     const userSearch = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "search_resource")!;
     await expect(userSearch.execute({ resourceId, query: "needle evidence" }, context())).resolves.toMatchObject({

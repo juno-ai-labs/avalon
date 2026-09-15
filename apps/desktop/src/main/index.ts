@@ -1,9 +1,3 @@
-import { DesktopPushNotifications } from "./push-notifications";
-import { workstreamHttpsDeepLink } from "./deep-links";
-import { regions } from "@rally/contracts/regions";
-import type { Region } from "@rally/contracts/regions";
-import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -20,26 +14,17 @@ import {
   type Session as WireSession,
   type WorkspaceAttention,
   type WorkspaceDeparture,
+  AccountOnboardingSchema,
+  UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
 import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
-import { execFile } from 'node:child_process';
-import { existsSync, renameSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
-import { basename, dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-import { WorkspaceChangeGuard } from './workspace-change-guard';
-import { conversationDetailsGeometry } from './conversation-details-geometry';
-import { revalidateWorkspaceActivation } from './workspace-activation';
-import { claimActiveWorkspace } from './workspace-selection';
-import {
-  acceptedDeepLink,
-  shouldDeliverConnectorResultToSettings,
-} from './deep-links';
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import type { Region } from "@rally/contracts/regions";
+import { regions } from "@rally/contracts/regions";
+import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import {
   app,
   BrowserWindow,
@@ -56,23 +41,22 @@ import {
   screen as electronScreen,
   session as electronSession,
   shell,
-  systemPreferences,
   Tray,
   WebContentsView,
 } from 'electron';
-import type { IpcMainInvokeEvent, WebContents } from 'electron';
-import { desktopWorkspaceIdentityKey } from '../common/desktop';
+import { execFile } from 'node:child_process';
+import { existsSync, renameSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { basename, dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import {
-  ArtifactPreviewController,
-  ArtifactUserActivation,
-  applyGlobalNavigationPolicy,
-  artifactWebPreferences,
-  confineToArtifactOrigin,
-  isArtifactUrl,
-  loadArtifactInitialUrl,
-  type ArtifactLinkHandoff,
-  type ArtifactViewHandle,
-} from './artifact-viewers';
+  applicationIconArtworkFileName,
+  automaticApplicationIcon,
+  type ApplicationIconId,
+  type DesktopApplicationIconState,
+} from '../common/application-icons';
 import type {
   RallyRegion,
   DesktopApplicationSettings,
@@ -88,22 +72,14 @@ import type {
   DesktopPendingWorkspaceInvitation,
   DesktopWorkspaceOnboardingState,
   DesktopWorkspaceSummary,
-  MeetingAudioPermissionKind,
   RuntimeConfig,
   DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
-import {
-  applicationIconArtworkFileName,
-  automaticApplicationIcon,
-  type ApplicationIconId,
-  type DesktopApplicationIconState,
-} from '../common/application-icons';
 import { logError, logWarn } from '../common/logger';
-import { parseDesktopSettingsSection } from '../common/settings';
-import { parseSidekicksWindowTarget } from '../common/sidekicks';
-import type { SidekicksWindowTarget } from '../common/sidekicks';
 import type { DesktopSettingsSection } from '../common/settings';
-import { SettingsWindowController } from './settings-window-controller';
+import { parseDesktopSettingsSection } from '../common/settings';
+import type { SidekicksWindowTarget } from '../common/sidekicks';
+import { parseSidekicksWindowTarget } from '../common/sidekicks';
 import { fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -121,8 +97,6 @@ import {
   responseError,
   UnusableCredentialError,
 } from './api-response-error';
-import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
-import { parseTelemetryProductIntent, UUID_V7_PATTERN } from './telemetry-intent';
 import {
   applicationIconPath,
   applicationIconPreferenceDirectoryForLaunch,
@@ -131,31 +105,55 @@ import {
   writeStoredApplicationIcon,
 } from './application-icon';
 import { ApplicationIconController } from './application-icon-controller';
+import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
+import { applicationMenuTemplate } from './application-menu';
+import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import {
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
 } from './application-settings';
-import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
 import {
   acknowledgeApplicationVersionTransition,
   applicationVersionTransition,
 } from './application-version-telemetry';
-import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
-import { applicationMenuTemplate } from './application-menu';
+import {
+  ArtifactPreviewController,
+  ArtifactUserActivation,
+  applyGlobalNavigationPolicy,
+  artifactWebPreferences,
+  confineToArtifactOrigin,
+  isArtifactUrl,
+  loadArtifactInitialUrl,
+  type ArtifactLinkHandoff,
+  type ArtifactViewHandle,
+} from './artifact-viewers';
+import { conversationDetailsGeometry } from './conversation-details-geometry';
+import { CredentialRefreshRegistry } from './credential-refresh';
 import { DebugSettingsController } from './debug-settings';
+import {
+  acceptedDeepLink,
+  shouldDeliverConnectorResultToSettings,
+  workstreamHttpsDeepLink,
+} from "./deep-links";
+import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
-import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import {
   javascriptErrorProcessHealthState,
   normalizeJavascriptErrorCandidate,
 } from './javascript-error-candidate';
+import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import { LockdownModeController } from './lockdown-mode';
-import { MenuBarController, type MenuBarTray } from './menu-bar';
 import {
-  ThemeFontCache,
-  themeFontSchemes,
-} from './theme-assets';
+  allowsTrustedAudioCapture,
+} from './media-permission';
+import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
+import {
+  MENU_BAR_PINNED_LIMIT,
+  MENU_BAR_RECENT_LIMIT,
+  supportsSectionHeaders,
+} from './menu-bar-menu';
+import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   isMessageExportUrl,
   MESSAGE_EXPORT_CONTENT_SECURITY_POLICY,
@@ -164,58 +162,32 @@ import {
   parseMessageExportRequest,
   type MessageExportWindow,
 } from './message-export';
-import { MenuBarOpenObserver } from './menu-bar-open-observer';
-import {
-  RealtimeSocketBroker,
-  createNodeRealtimeSocketFactory,
-} from './realtime-socket-broker';
-import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
-import { ProductAnalyticsSettingsController } from './product-analytics-settings';
-import {
-  readTelemetryIdentityState,
-  rotateTelemetryEpochs,
-  type TelemetryIdentity,
-  uuidV7,
-} from './telemetry-identity';
-import {
-  TelemetryReporter,
-  type ApplicationSettingsTelemetryState,
-  type TelemetryWindowContext,
-} from './telemetry-reporter';
-import {
-  refreshTelemetryCapability,
-  resolveTelemetryRoute,
-  type ResolvedTelemetryRoute,
-} from './telemetry-route';
-import { TelemetrySpool } from './telemetry-spool';
-import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
-import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
-import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
-import {
-  MENU_BAR_PINNED_LIMIT,
-  MENU_BAR_RECENT_LIMIT,
-  supportsSectionHeaders,
-} from './menu-bar-menu';
-import {
-  allowsTrustedAudioCapture,
-} from './media-permission';
-import {
-  meetingAudioPermissions,
-  meetingAudioSettingsUrl,
-  prepareMeetingAudioPermissions,
-} from './meeting-audio-permission';
-import {
-  nativeSystemAudioAddonPath,
-  NativeSystemAudioController,
-  type NativeSystemAudioBinding,
-} from './native-system-audio';
 import {
   NativePerformanceLog,
   nativeUnifiedLogAddonPath,
   type NativeUnifiedLogBinding,
 } from './native-performance-log';
+import {
+  nativeSystemAudioAddonPath,
+  NativeSystemAudioController,
+  type NativeSystemAudioBinding,
+} from './native-system-audio';
+import { requestWithOnboardingIdentity } from './onboarding-identity-request';
+import { ProductAnalyticsSettingsController } from './product-analytics-settings';
+import { DesktopPushNotifications } from "./push-notifications";
+import {
+  RealtimeSocketBroker,
+  createNodeRealtimeSocketFactory,
+} from './realtime-socket-broker';
+import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
+import {
+  decryptSessionValue,
+  encryptSessionValue,
+  migrateStoredSessionEncryption,
+  type SessionEncryptionMode,
+} from './session-encryption';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -232,6 +204,7 @@ import {
   writeStoredProfileFile,
   writeStoredSessionFile,
 } from './session-file';
+import { SettingsWindowController } from './settings-window-controller';
 import {
   activeStoredCredential,
   activeStoredWorkspaceCredential,
@@ -248,20 +221,32 @@ import {
   type StoredAuthSet,
   type StoredProfileSet,
 } from './stored-auth';
-import { requestWithOnboardingIdentity } from './onboarding-identity-request';
-import { CredentialRefreshRegistry } from './credential-refresh';
-import {
-  endedStoredWorkspaces,
-  mergeWorkspaceDirectory,
-  storedWorkspaceSummaries,
-} from './workspace-directory';
 import { parseLegacyStoredSession } from './stored-session';
+import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
 import {
-  decryptSessionValue,
-  encryptSessionValue,
-  migrateStoredSessionEncryption,
-  type SessionEncryptionMode,
-} from './session-encryption';
+  readTelemetryIdentityState,
+  rotateTelemetryEpochs,
+  type TelemetryIdentity,
+  uuidV7,
+} from './telemetry-identity';
+import { parseTelemetryProductIntent, UUID_V7_PATTERN } from './telemetry-intent';
+import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
+import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
+import {
+  TelemetryReporter,
+  type ApplicationSettingsTelemetryState,
+  type TelemetryWindowContext,
+} from './telemetry-reporter';
+import {
+  refreshTelemetryCapability,
+  resolveTelemetryRoute,
+  type ResolvedTelemetryRoute,
+} from './telemetry-route';
+import { TelemetrySpool } from './telemetry-spool';
+import {
+  ThemeFontCache,
+  themeFontSchemes,
+} from './theme-assets';
 import {
   initializeAutoUpdate,
   type AutoUpdateController,
@@ -271,6 +256,13 @@ import {
   supersededUserDataDirectories,
   userDataDirectoryForLaunch,
 } from './user-data-path';
+import { revalidateWorkspaceActivation } from './workspace-activation';
+import {
+  endedStoredWorkspaces,
+  mergeWorkspaceDirectory,
+  storedWorkspaceSummaries,
+} from './workspace-directory';
+import { claimActiveWorkspace } from './workspace-selection';
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const requireNativeModule = createRequire(import.meta.url);
 const executeFile = promisify(execFile);
@@ -315,11 +307,6 @@ const MENU_BAR_REQUEST_TIMEOUT_MS = 8_000;
 /** How long the menu's cached content is served before the pointer arriving at
  * the status item asks for it again. */
 const MENU_BAR_CONTENT_MAX_AGE_MS = 15_000;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-function isUuid(value: string): boolean {
-  return UUID_PATTERN.test(value);
-}
 
 const telemetryScreens = new Set<DesktopTelemetryScreen>([
   'onboarding_welcome', 'onboarding_region', 'onboarding_workspace',
@@ -454,22 +441,6 @@ async function reportTelemetryProductIntent(
       await telemetryReporter.contentCopied(telemetryIntentProperties(intent), windowContext);
       return;
     }
-    case 'note_opened': {
-      await telemetryReporter.noteOpened(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
-    case 'note_created': {
-      await telemetryReporter.noteCreated(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
-    case 'note_action_completed': {
-      await telemetryReporter.noteActionCompleted(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
-    case 'transcription_state_changed': {
-      await telemetryReporter.transcriptionStateChanged(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
     default:
       await telemetryReporter.semanticProductIntent(intent, windowContext);
       return;
@@ -514,11 +485,7 @@ let deepLinkErrorWindow: BrowserWindow | null = null;
 // `deep-link-error:dismiss`.
 let deepLinkErrorNotice: DesktopDeepLinkErrorNotice | null = null;
 let deepLinkErrorNoticesShown = 0;
-const meetingWindows = new Set<BrowserWindow>();
-const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
-const workspaceChangeGuard = new WorkspaceChangeGuard();
 let rendererReady = false;
-let quitting = false;
 let inMemoryAuthSet: StoredAuthSet | null = null;
 let inMemoryProfileSet: StoredProfileSet | null = null;
 let inMemorySession: WireSession | null = null;
@@ -697,29 +664,8 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return [mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, ...meetingWindows]
+  return [mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow]
     .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
-}
-
-function isMeetingWindowContents(contents: WebContents | null): boolean {
-  if (!contents) return false;
-  return [...meetingWindows].some((window) => !window.isDestroyed() && window.webContents === contents);
-}
-
-function forceCloseMeetingWindow(window: BrowserWindow): void {
-  if (window.isDestroyed()) return;
-  meetingWindowsAllowedToClose.add(window);
-  window.close();
-}
-
-function beginWorkspaceChange(target?: { region: RallyRegion; workspaceId: string }): number | null {
-  const currentWorkspace = inMemorySession?.workspace;
-  return workspaceChangeGuard.beginChange(
-    currentWorkspace
-      ? desktopWorkspaceIdentityKey(currentWorkspace.region, currentWorkspace.id)
-      : null,
-    target ? desktopWorkspaceIdentityKey(target.region, target.workspaceId) : undefined,
-  );
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -2412,8 +2358,7 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   ) {
     throw new Error('Invalid workspace departure request');
   }
-  const changeId = beginWorkspaceChange();
-  try {
+  {
     const authSet = await loadStoredAuthSet();
     let credential = authSet
       ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
@@ -2437,8 +2382,6 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
     const departure = WorkspaceDepartureSchema.parse(await readJsonBody(response));
     await withSessionMutation(() => removeStoredCredentialUnlocked(credential));
     return departure;
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
   }
 }
 
@@ -2521,8 +2464,6 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
     throw new Error('Invalid workspace activation operation ID');
   }
   return revalidateWorkspaceActivation(parsed.data, operationId as string | undefined, {
-    beginChange: beginWorkspaceChange,
-    finishChange: (changeId) => workspaceChangeGuard.finishChange(changeId),
     nextSelectionIntent: () => ++workspaceSelectionIntent,
     request: (request) => requestOnboardingSession(
       request.path,
@@ -2569,13 +2510,10 @@ async function createWorkspace(input: unknown): Promise<DesktopSession> {
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace creation operation ID');
   }
-  const changeId = beginWorkspaceChange();
-  try {
+  {
     return await requestOnboardingSession(
       '/onboarding/workspace', parsed.data, parsed.data.region, undefined, operationId as string | undefined,
     );
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
   }
 }
 
@@ -2605,8 +2543,7 @@ function parseInvitationAction(input: unknown): {
 
 async function acceptInvitation(input: unknown): Promise<DesktopSession> {
   const parsed = parseInvitationAction(input);
-  const changeId = beginWorkspaceChange();
-  try {
+  {
     return await requestOnboardingSession(
       `/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/accept`,
       { region: parsed.region },
@@ -2614,8 +2551,6 @@ async function acceptInvitation(input: unknown): Promise<DesktopSession> {
       undefined,
       parsed.operationId,
     );
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
   }
 }
 
@@ -2749,7 +2684,6 @@ async function logout(): Promise<void> {
     }
     settingsWindow?.close();
     sidekicksWindow?.close();
-    for (const window of meetingWindows) forceCloseMeetingWindow(window);
     if (stored) {
       const credentials = [
         ...(stored.account ? [stored.account] : []),
@@ -2852,40 +2786,6 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
   mainWindow.webContents.send('auth:deep-link', navigation);
   const targetWindow = connectorSettingsWindow ?? mainWindow;
   revealWindow(targetWindow);
-}
-
-/**
- * Takes the main window to one note and raises it, for the meeting window that
- * is about to close behind it.
- *
- * It travels as a deep link on the channel every other navigation uses, so the
- * renderer needs no second dispatcher — but it is sent only to the main window,
- * unlike `sendDeepLink`. A note is a main-window destination, and the settings
- * renderer has no business navigating because a meeting ended.
- *
- * Every path through this ends with a window in front of the person, because the
- * caller closes the meeting window whether or not this could deliver. A window
- * that is not listening yet gets the link queued for `consumePendingDeepLinks`,
- * and is still raised — leaving the meeting window to vanish onto whatever was
- * behind it is the exact "go find the note yourself" step this removes.
- */
-function revealNoteInMainWindow(noteId: string): void {
-  const target = `${customProtocol}://notes/${noteId}`;
-  const navigation: DesktopDeepLinkNavigation = { url: target, entrypoint: 'in_app_link' };
-  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
-    if (!pendingDeepLinks.some((pending) => pending.url === target)) pendingDeepLinks.push(navigation);
-    // Gone: a new window opens on the queued link and raises itself. Present but
-    // still loading — a reload, a slow cold start — is the case that would
-    // otherwise queue the link and raise nothing at all.
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      if (app.isReady()) void createMainWindow();
-    } else {
-      revealWindow(mainWindow);
-    }
-    return;
-  }
-  mainWindow.webContents.send('auth:deep-link', navigation);
-  revealWindow(mainWindow);
 }
 
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
@@ -3095,17 +2995,9 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
     || sender === sidekicksWindow?.webContents
-    || sender === deepLinkErrorWindow?.webContents
-    || isMeetingWindowContents(sender);
+    || sender === deepLinkErrorWindow?.webContents;
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
-  }
-}
-
-function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
-  assertTrustedIpcSender(event);
-  if (!isMeetingWindowContents(event.sender)) {
-    throw new Error('Only a meeting-notes window can request recording permissions');
   }
 }
 
@@ -3128,13 +3020,6 @@ function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
     throw new Error('Only the main Rally window can open realtime sockets');
   }
-}
-
-function meetingAudioPermissionDependencies() {
-  return {
-    askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
-    getMicrophoneAccessStatus: () => systemPreferences.getMediaAccessStatus('microphone'),
-  };
 }
 
 function registerIpc(): void {
@@ -3541,73 +3426,13 @@ function registerIpc(): void {
     if (deepLinkErrorNotice?.id !== rawNoticeId) return;
     deepLinkErrorWindow?.close();
   });
-  ipcMain.handle('system:open-meeting-notes', async (event, rawNoteId: unknown) => {
-    assertTrustedIpcSender(event);
-    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
-      throw new Error('Invalid note ID');
-    }
-    await createMeetingWindow(rawNoteId as string | undefined, rawNoteId === undefined ? 'sidebar' : 'unknown');
-  });
-  ipcMain.handle('meeting-audio:get-permissions', (event) => {
-    assertMeetingIpcSender(event);
-    return meetingAudioPermissions(meetingAudioPermissionDependencies());
-  });
-  ipcMain.handle('meeting:set-recording-state', (event, input: unknown) => {
-    assertMeetingIpcSender(event);
-    if (!input || typeof input !== 'object') throw new Error('Invalid meeting recording state');
-    const candidate = input as Record<string, unknown>;
-    const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
-    const region = RegionSchema.safeParse(candidate['region']);
-    if (
-      !workspaceId.success
-      || !region.success
-      || typeof candidate['recording'] !== 'boolean'
-      || Object.keys(candidate).some((key) => !['workspaceId', 'region', 'recording'].includes(key))
-    ) throw new Error('Invalid meeting recording state');
-    if (candidate['recording'] && (
-      inMemorySession?.workspace?.id !== workspaceId.data
-      || inMemorySession.workspace.region !== region.data
-    )) {
-      throw new Error('The meeting no longer belongs to the active workspace');
-    }
-    workspaceChangeGuard.recordingChanged(
-      event.sender.id,
-      desktopWorkspaceIdentityKey(region.data, workspaceId.data),
-      candidate['recording'],
-    );
-  });
-  ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
-    assertMeetingIpcSender(event);
-    return prepareMeetingAudioPermissions(meetingAudioPermissionDependencies());
-  });
-  ipcMain.handle('meeting-audio:start-system-capture', (event) => {
-    assertMeetingIpcSender(event);
+  ipcMain.handle('transcription-audio:start-system-capture', (event) => {
+    assertMainWindowIpcSender(event);
     return nativeSystemAudioController.start(event.sender);
   });
-  ipcMain.handle('meeting-audio:stop-system-capture', (event) => {
-    assertMeetingIpcSender(event);
+  ipcMain.handle('transcription-audio:stop-system-capture', (event) => {
+    assertMainWindowIpcSender(event);
     return nativeSystemAudioController.stop(event.sender);
-  });
-  ipcMain.handle('meeting-audio:open-settings', async (event, rawPermission: unknown) => {
-    assertMeetingIpcSender(event);
-    if (rawPermission !== 'microphone' && rawPermission !== 'system-audio') {
-      throw new Error('Invalid meeting audio permission');
-    }
-    const url = meetingAudioSettingsUrl(rawPermission as MeetingAudioPermissionKind, process.platform);
-    if (!url) throw new Error('Open this platform’s privacy settings to change recording access.');
-    await shell.openExternal(url);
-  });
-  ipcMain.handle('system:close-meeting-notes', (event, rawNoteId: unknown) => {
-    assertTrustedIpcSender(event);
-    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
-      throw new Error('Invalid note ID');
-    }
-    const meetingWindow = [...meetingWindows].find((window) => window.webContents === event.sender);
-    if (!meetingWindow) throw new Error('Only a meeting-notes window can close itself');
-    // Raise the note before the window goes, so the person is handed to it
-    // rather than left looking at whatever the meeting window was covering.
-    if (typeof rawNoteId === 'string') revealNoteInMainWindow(rawNoteId);
-    forceCloseMeetingWindow(meetingWindow);
   });
 }
 
@@ -3995,7 +3820,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -4056,7 +3881,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
 ): Promise<void> {
   try {
     await window.loadURL(url);
@@ -4068,10 +3893,8 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
+  surface?: 'settings' | 'sidekicks' | 'deep-link-error',
   settingsSection?: DesktopSettingsSection,
-  noteId?: string,
-  meetingEntrypoint?: 'sidebar' | 'menu_bar' | 'unknown',
 ): string {
   const target = rendererDevelopmentUrl
     ? new URL(rendererDevelopmentUrl)
@@ -4081,11 +3904,7 @@ function rendererUrl(
   if (surface === 'settings') target.hash = '/settings';
   if (surface === 'sidekicks') target.hash = '/sidekicks';
   if (surface === 'deep-link-error') target.hash = '/deep-link-error';
-  if (surface === 'meeting') {
-    if (noteId) target.searchParams.set('noteId', noteId);
-    if (meetingEntrypoint) target.searchParams.set('meetingEntrypoint', meetingEntrypoint);
-    target.hash = '/meeting';
-  }
+
   return target.toString();
 }
 
@@ -4335,74 +4154,6 @@ async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): P
   await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
 }
 
-async function createMeetingWindow(
-  requestedNoteId?: string,
-  entrypoint: 'sidebar' | 'menu_bar' | 'unknown' = 'unknown',
-): Promise<void> {
-  const noteId = requestedNoteId ?? crypto.randomUUID();
-  const meetingWindow = new BrowserWindow({
-    width: 720,
-    height: 860,
-    minWidth: 540,
-    minHeight: 640,
-    show: false,
-    backgroundColor: windowBackgroundColor(),
-    title: 'Meeting notes — Rally',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
-    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  });
-  // BrowserWindow.webContents throws after Electron emits `closed`. Retain the
-  // WebContents object while the window is alive so native audio cleanup can
-  // still identify its owner during teardown.
-  const meetingContents = meetingWindow.webContents;
-  meetingWindows.add(meetingWindow);
-  installWindowDiagnostics(meetingWindow, 'meeting');
-  meetingWindow.setMenuBarVisibility(false);
-  meetingWindow.once('ready-to-show', () => meetingWindow.show());
-  meetingWindow.on('close', (event) => {
-    if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
-    event.preventDefault();
-    // The screen finalizes the recording and closes the window itself. It may
-    // also stop and ask first, but only for a close the person performed on
-    // this window: during a quit, a window that waits for an answer is a
-    // window that never shuts, and the quit dies with it.
-    meetingContents.send('meeting:close-requested', quitting ? 'quit' : 'user');
-  });
-  meetingWindow.on('closed', () => {
-    void nativeSystemAudioController.stop(meetingContents).catch((error) => {
-      logWarn('meeting', 'Failed to stop native computer audio after window close', error);
-    });
-    meetingWindows.delete(meetingWindow);
-    workspaceChangeGuard.windowClosed(meetingContents.id);
-    // A meeting window is the only thing that vetoes a quit, so while one is
-    // still open the quit it abandoned is still the close every other meeting
-    // window is answering. Once the last has gone, Rally is staying up, and
-    // the next close is the person's again.
-    if (meetingWindows.size === 0) quitting = false;
-  });
-  try {
-    await loadRenderer(
-      meetingWindow,
-      rendererUrl('meeting', undefined, noteId, requestedNoteId === undefined ? entrypoint : undefined),
-      'meeting',
-    );
-  } catch (error) {
-    forceCloseMeetingWindow(meetingWindow);
-    throw error;
-  }
-}
-
 function installApplicationMenu(): void {
   const template = applicationMenuTemplate({
     appName: app.name,
@@ -4540,7 +4291,7 @@ function installContentSecurityPolicy(): void {
   electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const trustedRenderer = rendererNavigationAllowed(details.requestingUrl);
     callback(allowsTrustedAudioCapture({
-      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
+      isAudioCaptureWindow: webContents === mainWindow?.webContents,
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
       trustedRenderer,
@@ -4549,7 +4300,7 @@ function installContentSecurityPolicy(): void {
   electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     const trustedRenderer = rendererNavigationAllowed(requestingOrigin);
     return allowsTrustedAudioCapture({
-      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
+      isAudioCaptureWindow: webContents === mainWindow?.webContents,
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
       trustedRenderer,
@@ -4808,19 +4559,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// A quit asks every window to close, and this is what tells a meeting window
-// that the close it is answering is a quit rather than the person closing that
-// window — the difference between finalizing and asking first.
-//
-// The flag says "a quit was requested and has not finished", not "a quit was
-// requested this tick", because the cascade is not reliably synchronous: on
-// macOS a window mid-fullscreen-transition defers its close until the
-// transition ends, and a close arriving after a timed reset would be read as
-// the person's and answered with a dialog — vetoing the quit silently, which is
-// the one outcome this flag exists to rule out. It is cleared where the quit is
-// known to be over instead, as the last meeting window goes.
 app.on('before-quit', (event) => {
-  quitting = true;
   if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault();
 });
 

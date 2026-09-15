@@ -631,14 +631,14 @@ const ROOT_COMPOSITION_KEYWORDS = ["anyOf", "oneOf", "allOf"] as const;
  * a shape it starts reporting is one Bind stopped repairing, which this rule
  * alone cannot tell apart from a schema that was always authored that way.
  *
- * Stated over the schema **as authored**, which is the one difference from
- * every other rule in this module and the one that matters. Those are stated
- * over `sanitizeToolSchema`'s output; this repository's own transports do not
- * run it before serializing a tool, and the archived Azure request that failed
- * on 2026-09-02 carried `workstream_list_resources` with the bare root `anyOf`
- * exactly as `z.toJSONSchema` emitted it. Judging a sanitized copy would let
- * through any schema the sanitizer repairs and the wire does not — a root with
- * no `type` that gains one only in a form nobody sends is still a 400.
+ * Stated over the schema **as authored**, unlike the checks above that inspect
+ * `sanitizeToolSchema`'s output. First-party definitions must start with a safe
+ * root instead of depending on a lossy dependency rewrite. The actual request
+ * path runs Bind's `toolWireDefinition` sanitizer first (including for
+ * `rawJsonSchema`), then our `repairRootSchemaForProviders` in
+ * `toModelToolDefinitions`. An authored-schema check cannot prove that later
+ * transformations preserve a tool's constraints; test the serialized request
+ * when that equivalence matters.
  */
 export function nonObjectRootSchema(schema: Record<string, unknown>): string[] {
   const root = schema;

@@ -1,3 +1,4 @@
+import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
@@ -372,6 +373,7 @@ export function orderedTranscriptMessages(
         };
         if (block.type === 'text') {
           const structured = block.structuredContent ?? {};
+          const imported = ImportedMessageProvenanceSchema.safeParse(structured);
           const elicitation = ElicitationSchema.safeParse(
             'elicitation' in structured ? structured['elicitation'] : structured,
           );
@@ -420,6 +422,7 @@ export function orderedTranscriptMessages(
             ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
               ? { contextLabel: structured['label'] }
               : {}),
+            ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
             ...automationActivationFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),

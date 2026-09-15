@@ -403,6 +403,27 @@ export async function applyDemoSeedAction(
   const clientMessageId = demoSeedClientMessageId(session.operationId, action.actionId);
   switch (action.kind) {
     case "create_workstream": {
+      if (action.execution === "history") {
+        if (action.seed.assistant?.kind !== "say") throw new Error("prepared_demo_requires_text");
+        const conversation = { messages: [
+          { role: "user" as const, text: action.openingMessage },
+          { role: "assistant" as const, text: action.seed.assistant.text },
+        ] };
+        const created = await new WorkstreamObjectCreationService(env, auth).createPrepared({
+          title: action.title, clientMessageId, participantUserIds: action.participantUserIds,
+          descriptionSource: "authored", scope: action.scope,
+        }, conversation, { reason: DEMO_SEED_REASON, notifyParticipants: false });
+        const boot = await new WorkstreamObjectClient(env, auth, created.workstream.id).boot();
+        const turns = boot.transcript.ranges.flatMap((range) => range.turns);
+        if (turns.length !== conversation.messages.length || turns.some((turn, index) =>
+          turn.actor !== (conversation.messages[index]?.role === "user" ? "human" : "assistant")
+          || turn.blocks.filter((block) => block.type === "text").map((block) => block.text).join("") !== conversation.messages[index]?.text)) {
+          throw new Error("prepared_demo_transcript_mismatch");
+        }
+        return { state: "confirmed", receipt: await confirm(env, session, action, {
+          workstreamId: created.workstream.id, substreamId: "0", turnId: created.turnId,
+        }) };
+      }
       const created = await new WorkstreamObjectCreationService(env, auth).create({
         title: action.title,
         openingMessage: action.openingMessage,

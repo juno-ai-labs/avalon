@@ -1787,25 +1787,6 @@ describe('single-platform desktop identity routing', () => {
     expect(client.getQueryData(['members'])).toBeUndefined();
   });
 
-  it('opens the note a closing meeting window hands back', async () => {
-    bridge.getSession.mockResolvedValueOnce({
-      ...globalIdentitySession,
-      workspace: {
-        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
-        name: 'Juno Labs',
-        region: 'global',
-        role: 'owner',
-      },
-    });
-    renderProvider();
-    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
-
-    await dispatchDeepLink('rallywithai://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
-
-    await waitFor(() => expect(window.location.hash).toBe('#/notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'));
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
-  });
-
   it('tells a signed-in person a note link is unreadable rather than telling them to sign in', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
@@ -1828,7 +1809,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).toBe(before);
   });
 
-  it('asks a signed-out person to sign in before opening a note', async () => {
+  it('rejects retired note links for signed-out users', async () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
     const before = window.location.hash;
@@ -1836,7 +1817,7 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
 
     await waitFor(() => expect(screen.getByTestId('deep-link-error'))
-      .toHaveTextContent('Sign in before opening this note.'));
+      .toHaveTextContent('Rally could not open that note link.'));
     expect(window.location.hash).toBe(before);
   });
 

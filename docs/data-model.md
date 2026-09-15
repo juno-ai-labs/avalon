@@ -32,6 +32,14 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+## Agent communication relationships
+
+WorkspaceDO migration 59 adds `agent_teams`, `agent_team_members`,
+`agent_delegations`, and `agent_message_routes`. These hold implicit communication
+scope, additive membership, separate execution ownership, and immutable reply
+addresses. They contain no message bodies or task state. The typed host RPCs and
+their invariants are described in [Agent communication](agent-communication.md).
+
 ## Personal work-stream access history
 
 WorkspaceDO migration 37 adds `workspace_workstream_access`, keyed by user and
@@ -1013,6 +1021,10 @@ one workspace intent and device. Notification content remains in WorkspaceDO,
 read through typed RPC. See [Apple push](push-notifications.md).
 
 ## Changelog
+
+### 2026-09-14 — Retire built-in meeting data
+
+Workspace migration 57 purges built-in note rows and captures content-free resource deletion addresses. Conversation migration 58 removes meeting attachment snapshots. The old tables remain empty until external deletion is verified; shipped migration history remains immutable. Dictation and connector resources remain independent. See [meeting retirement](meeting-notes.md) for rollout and verification.
 
 ### 2026-09-13 — Rebuilding a referenced parent empties its dependents first
 
