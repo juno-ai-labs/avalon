@@ -82,6 +82,7 @@ function fixture() {
       state: "running" as const,
       domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
     })),
+    recoverSandbox: vi.fn(async () => undefined),
     startSandbox: vi.fn(async () => undefined),
     stopSandbox: vi.fn(async () => undefined),
     archiveSandbox: vi.fn(async () => undefined),
@@ -275,7 +276,64 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
-  it("replaces a sandbox the provider no longer has instead of failing every later run", async () => {
+  it.each([true, false, undefined])("honors provider recoverability %s before replacing an errored sandbox", async (recoverable) => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    vi.mocked(provider.getSandbox).mockResolvedValue({
+      id: "sandbox-1", name: "sandbox-1", state: "failed", recoverable, domainAllowList: [],
+    });
+    if (recoverable === undefined) {
+      await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+      expect(provider.recoverSandbox).not.toHaveBeenCalled();
+    } else {
+      await expect(coordinator.acquire(context())).resolves.toMatchObject({
+        providerSandboxId: recoverable ? "sandbox-1" : "sandbox-2",
+        generation: recoverable ? 1 : 2,
+      });
+      expect(provider.recoverSandbox).toHaveBeenCalledTimes(recoverable ? 1 : 0);
+      expect(provider.runUtilityCommand).toHaveBeenCalledTimes(recoverable ? 1 : 0);
+      expect(provider.readFile).toHaveBeenCalledTimes(recoverable ? 1 : 0);
+    }
+    expect(provider.deleteSandbox).toHaveBeenCalledTimes(recoverable === false ? 1 : 0);
+    expect(provider.createSandbox).toHaveBeenCalledTimes(recoverable === false ? 2 : 1);
+    expect(workstreamObjectGet(objectStore, "SELECT sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ sandbox_id: recoverable === false ? "sandbox-2" : "sandbox-1" });
+  });
+
+  it("retains a recoverable sandbox after recovery times out, then adopts its completed restore", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    vi.mocked(provider.getSandbox).mockResolvedValueOnce({
+      id: "sandbox-1", name: "sandbox-1", state: "failed", recoverable: true, domainAllowList: [],
+    }).mockResolvedValueOnce({
+      id: "sandbox-1", name: "sandbox-1", state: "starting", domainAllowList: [],
+    });
+    vi.mocked(provider.recoverSandbox).mockRejectedValueOnce(new Error("recovery timed out"));
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    observeProviderState(provider, "sandbox-1", "running");
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.recoverSandbox).toHaveBeenCalledOnce();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the old generation when deletion of an unrecoverable sandbox is unconfirmed", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    vi.mocked(provider.getSandbox).mockResolvedValue({
+      id: "sandbox-1", name: "sandbox-1", state: "failed", recoverable: false, domainAllowList: [],
+    });
+    vi.mocked(provider.deleteSandbox).mockRejectedValue(new Error("delete unavailable"));
+    await expect(coordinator.acquire(context())).rejects.toThrow("delete unavailable");
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+  });
+
+  it("preserves an unexpected metadata 404 and restores the same identity when it reappears", async () => {
     const { objectStore, env, provider, clock, advance } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider,
@@ -289,23 +347,21 @@ describe("Terminal sandbox coordinator", () => {
       objectStore,
       "UPDATE terminal_workspace SET lifecycle_state = 'archived' WHERE id = 1",
     );
-    const missing = new Error("Sandbox with ID sandbox-1 does not have a runner") as Error & { status: number };
+    const missing = new Error("Sandbox with ID sandbox-1 not found") as Error & { status: number };
     missing.status = 404;
     vi.mocked(provider.getSandbox).mockRejectedValue(missing);
     advance(70);
 
-    const acquired = await coordinator.acquire(context());
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
 
-    expect(acquired).toMatchObject({ providerSandboxId: "sandbox-2", generation: 2, state: "running" });
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
-    expect(acquisitionObserved).toHaveBeenLastCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ action: "start_fresh", localFilesRetained: false }),
-    );
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-2" });
+    observeProviderState(provider, "sandbox-1", "archived");
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
   it("waits out a sandbox mid-transition instead of discarding its files", async () => {
@@ -329,7 +385,7 @@ describe("Terminal sandbox coordinator", () => {
     )).toEqual({ sandbox_id: "sandbox-1" });
   });
 
-  it("replaces a lost sandbox before running the provider mutations its row would order", async () => {
+  it("preserves missing metadata before applying a changed network policy", async () => {
     const { objectStore, env, provider, clock, advance } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
@@ -349,10 +405,41 @@ describe("Terminal sandbox coordinator", () => {
     advance(20);
 
     await expect(coordinator.acquire(context()))
-      .resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2, state: "running" });
+      .rejects.toMatchObject({ code: "sandbox_unavailable" });
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(provider.updateNetworkPolicy).not.toHaveBeenCalled();
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it.each([400, 404])("keeps a restored sandbox unavailable until file readiness succeeds after HTTP %s", async (status) => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    observeProviderState(provider, "sandbox-1", "archived");
+    vi.mocked(provider.readFile).mockRejectedValueOnce(Object.assign(new Error("runner unavailable"), { status }));
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+    observeProviderState(provider, "sandbox-1", "running");
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.readFile).toHaveBeenLastCalledWith("sandbox-1", "/etc/hostname");
+    expect(provider.startSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("does not probe a healthy acquisition before the first real operation", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not ready" });
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(provider.runUtilityCommand).not.toHaveBeenCalled();
+    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
   it("keeps a sandbox the provider still holds when one start attempt fails", async () => {

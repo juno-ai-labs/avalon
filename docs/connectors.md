@@ -1115,6 +1115,51 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
+
+**What changed:** `SummaryRowSchema.summary.keywords` accepts a string or an
+array of strings, and `meetingSummaryOutput` joins a list into the bounded
+string the tool has always returned. The test fixture is corrected to the shape
+a real workspace returns, and a case covers both.
+
+**Why:** Every workspace `get_meeting_summary` call failed. Fireflies answered
+HTTP 200 and this rejected the body, so the call surfaced as
+`unexpected_error` — a `ZodError` is not a `ConnectorError` — and a Sidekick that
+had finally received its `meeting.summarized` event ran, could not read the
+meeting, and sent no recap.
+
+Read against a real workspace key on 2026-09-15, `keywords` came back as six
+strings. [Fireflies' schema page](https://docs.fireflies.ai/schema/summary)
+declares it `String` and `topics_discussed` `[String]`. Both shapes are real:
+the same page says a summary's fields are produced by "AI apps" an account can
+customize, so this is configuration rather than a provider bug, and rejecting
+either shape fails somebody's workspace.
+
+The fixture is the reason this was invisible. It encoded `keywords` as a string
+— the documented shape, never the returned one — so the suite was green while
+every live call was rejected. That is the failure mode
+[`testing.md`](testing.md#prove-the-test-can-fail) describes as asserting on a
+fixture: the test proved the adapter agreed with the fixture, and the fixture
+was written from the same wrong source as the schema.
+
+**How it is proved:** `packages/connectors/src/fireflies.test.ts` drives
+`get_meeting_summary` with each shape and asserts the same joined output.
+Restoring `keywords: z.string().nullish()` fails both with
+`ZodError: Invalid input: expected string, received array` — the production
+rejection exactly.
+
+**What a future change has to respect:** the output stays a bounded string.
+Which shape arrives is the account's configuration, and a caller should not have
+to branch on it; `topicsDiscussed` is already the field that carries a list.
+
+**Considered and rejected:** changing `keywords` to `z.array(z.string())` to
+match what was observed. That trades one account's configuration for another's
+and would have failed for anyone whose summary app returns the documented
+`String`. Also rejected: surfacing the list as a list, which changes the tool
+output shape the model reads for a fix whose whole job is to stop a rejection.
+
+Shipped in the pull request for this change.
+
 ### 2026-09-14 — A refused webhook delivery names the event it refused
 
 **What changed:** All four `unsupported_webhook_event` refusals — Fireflies'

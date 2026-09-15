@@ -1,3 +1,4 @@
+import { daytonaWebhookRoutes } from "./routes/daytona";
 import { Hono } from "hono";
 import type { HonoAppEnv } from "./env";
 import {
@@ -128,6 +129,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
   app.route("/ingest/resend", resendInboundRoutes);
+  app.route("/ingest/daytona", daytonaWebhookRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
   app.route("/telemetry", publicTelemetryRoutes);

@@ -70,6 +70,7 @@ export interface TerminalProviderRpcSession {
     idOrName: string,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<TerminalSandboxSnapshot>>;
+  recoverSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   startSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   stopSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   archiveSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
