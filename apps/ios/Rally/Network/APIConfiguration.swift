@@ -13,6 +13,9 @@ enum APIConfiguration {
     static let operationHeader = "x-rally-operation-id"
     static let draftHeader = "x-rally-draft-id"
     static let socketTicketSubprotocol = "rally.ticket.v1"
+    /// Same origin desktop sends on the handshake. URLSession omits `Origin`
+    /// unless we set it; the Worker refuses a missing one before it reads the ticket.
+    static let socketOrigin = "app://rallywithai"
 
     static func globalURL() -> URL {
         if let override = ProcessInfo.processInfo.environment["RALLY_API_GLOBAL_URL"],
@@ -40,13 +43,17 @@ enum APIConfiguration {
 }
 
 enum JSONCoding {
+    static func date(from raw: String) -> Date? {
+        (try? Date(raw, strategy: Date.ISO8601FormatStyle()))
+            ?? (try? Date(raw, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+    }
+
     static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let raw = try container.decode(String.self)
-            if let date = ISO8601DateFormatter.full.date(from: raw)
-                ?? ISO8601DateFormatter.fractional.date(from: raw) {
+            if let date = JSONCoding.date(from: raw) {
                 return date
             }
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid date \(raw)")
@@ -58,19 +65,5 @@ enum JSONCoding {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder
-    }()
-}
-
-extension ISO8601DateFormatter {
-    static let full: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
-    static let fractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
     }()
 }

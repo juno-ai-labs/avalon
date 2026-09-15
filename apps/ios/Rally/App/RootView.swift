@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -12,9 +13,9 @@ struct RootView: View {
                 ZStack {
                     colors.canvas.ignoresSafeArea()
                     RallyMark()
-                        .stroke(colors.textPrimary, lineWidth: 1.5)
                         .frame(width: 48, height: 48)
                         .accessibilityLabel("Rally")
+                        .accessibilityAddTraits(.isImage)
                 }
             case .signedOut:
                 SignInView()
@@ -24,7 +25,7 @@ struct RootView: View {
                 MainShell()
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: model.phase)
+        .animation(reduceMotion ? nil : RallyMotion.screenSpring, value: model.phase)
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }

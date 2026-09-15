@@ -12,9 +12,7 @@ enum FeedProjection {
     }
 
     static func rows(from turn: TranscriptTurn) -> [RallyChatMessage] {
-        let created = turn.createdAtUtc.flatMap {
-            ISO8601DateFormatter.fractional.date(from: $0) ?? ISO8601DateFormatter.full.date(from: $0)
-        } ?? Date()
+        let created = turn.createdAtUtc.flatMap(JSONCoding.date(from:)) ?? Date()
         let role = role(for: turn.actor)
         let id = turn.turnId ?? UUID().uuidString
         if turn.blocksOmitted == true {
@@ -275,5 +273,31 @@ enum FeedProjection {
             }
         }
         return RallyElicitation(id: id, prompt: prompt, responseType: responseType, options: options, status: status, answer: nil)
+    }
+}
+
+/// Which feed chrome to show while a substream is opening.
+enum RallyFeedChrome: Equatable {
+    case launch
+    case skeleton
+    case emptyGreeting
+    case messages
+
+    static func resolve(isLaunch: Bool, isConnecting: Bool, hasMessages: Bool) -> RallyFeedChrome {
+        if isLaunch { return .launch }
+        if hasMessages { return .messages }
+        if isConnecting { return .skeleton }
+        return .emptyGreeting
+    }
+}
+
+/// Substream-list chrome. Main and New substream paint immediately; children
+/// wait on the parent directory rather than covering the whole list.
+enum RallySubstreamListChrome: Equatable {
+    case awaitingChildren
+    case directory
+
+    static func resolve(hasChildDirectory: Bool) -> RallySubstreamListChrome {
+        hasChildDirectory ? .directory : .awaitingChildren
     }
 }

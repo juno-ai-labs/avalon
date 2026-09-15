@@ -14,7 +14,6 @@ struct SignInView: View {
             VStack(spacing: 28) {
                 Spacer()
                 RallyMark()
-                    .stroke(colors.textPrimary, lineWidth: 1.6)
                     .frame(width: 64, height: 64)
                     .accessibilityHidden(true)
                 Text("Rally")
@@ -33,14 +32,27 @@ struct SignInView: View {
                 } label: {
                     Text("Continue with Google")
                         .font(RallyType.button())
-                        .foregroundStyle(colors.sendGlyphEnabled)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(colors.sendFillEnabled, in: Capsule())
+                        .padding(.vertical, 6)
                 }
-                .buttonStyle(RallyPressableStyle())
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
                 .padding(.horizontal, 24)
                 .accessibilityHint("Opens Google in a secure browser sheet.")
+#if RALLY_DEBUG
+                Button {
+                    Task { await model.startLocalDevelopmentSession() }
+                } label: {
+                    Text("Use local development account")
+                        .font(RallyType.button())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .padding(.horizontal, 24)
+                .accessibilityHint("Signs in to the local Worker without Google.")
+#endif
                 HStack(spacing: 16) {
                     Link("Privacy", destination: APIConfiguration.privacyURL)
                     Link("Terms", destination: APIConfiguration.termsURL)
@@ -84,15 +96,11 @@ struct IntroScreens: View {
             Button(page == 2 ? "Get started" : "Next") {
                 if page == 2 { onDone() } else { page += 1 }
             }
-            .font(RallyType.button())
-            .foregroundStyle(colors.sendGlyphEnabled)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(colors.sendFillEnabled, in: Capsule())
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
             .padding(24)
             .accessibilityLabel(page == 2 ? "Get started" : "Next intro screen")
         }
-        .background(colors.canvas.ignoresSafeArea())
         .presentationDetents([.large])
     }
 

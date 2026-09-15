@@ -7,19 +7,14 @@ struct MainShell: View {
     var body: some View {
         @Bindable var model = model
         TabView(selection: $model.selectedTab) {
-            ConversationScreen()
-                .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
-                .tag(AppModel.MainTab.chats)
-            ProjectsScreen()
-                .tabItem { Label("Projects", systemImage: "square.grid.2x2") }
-                .tag(AppModel.MainTab.projects)
-            NotesScreen()
-                .tabItem { Label("Notes", systemImage: "note.text") }
-                .tag(AppModel.MainTab.notes)
-            SidekicksScreen()
-                .tabItem { Label("Sidekicks", systemImage: "sparkles") }
-                .tag(AppModel.MainTab.sidekicks)
+            Tab("Work streams", systemImage: "bubble.left.and.bubble.right", value: AppModel.MainTab.chats) {
+                ConversationScreen()
+            }
+            Tab("Sidekicks", systemImage: "hexagon.fill", value: AppModel.MainTab.sidekicks) {
+                SidekicksScreen()
+            }
         }
+        .tabBarMinimizeBehavior(.onScrollDown)
         .tint(colors.link)
     }
 }

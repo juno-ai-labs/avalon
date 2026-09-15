@@ -51,6 +51,8 @@ struct RallyColors {
     var sendFillEnabled: Color { colorScheme == .dark ? RallyPalette.accentWhite : RallyPalette.textPrimaryLight }
     var sendGlyphEnabled: Color { colorScheme == .dark ? .black : .white }
     var link: Color { RallyPalette.linkBlue }
+    /// In-app Rally mark ink. Same as desktop `--av-sys-color-brand-ink`.
+    var brandInk: Color { colorScheme == .dark ? .white : .black }
 }
 
 private struct RallyColorsKey: EnvironmentKey {
@@ -102,42 +104,42 @@ enum RallyType {
 }
 
 enum RallyMotion {
-    static let sendSpring = Animation.spring(response: 0.25, dampingFraction: 0.7)
-    static let pillSpring = Animation.spring(response: 0.2, dampingFraction: 0.8)
+    static let sendSpring = Animation.spring(response: 0.28, dampingFraction: 0.82)
+    static let pillSpring = Animation.spring(response: 0.22, dampingFraction: 0.86)
+    static let screenSpring = Animation.spring(response: 0.35, dampingFraction: 0.88)
     static let cursorBlink: TimeInterval = 0.53
 }
 
-/// Four-pointed spark used as Rally's in-app glyph (Grok Bot puts a 24pt mark
-/// above the first assistant line). Drawn, not an image, so it tracks Dynamic Type
-/// and Increase Contrast without a raster asset.
-struct RallyMark: Shape {
-    func path(in rect: CGRect) -> Path {
-        let mid = CGPoint(x: rect.midX, y: rect.midY)
-        let outer = min(rect.width, rect.height) / 2
-        let inner = outer * 0.28
-        var path = Path()
-        let points: [CGPoint] = [
-            CGPoint(x: mid.x, y: mid.y - outer),
-            CGPoint(x: mid.x + inner, y: mid.y - inner),
-            CGPoint(x: mid.x + outer, y: mid.y),
-            CGPoint(x: mid.x + inner, y: mid.y + inner),
-            CGPoint(x: mid.x, y: mid.y + outer),
-            CGPoint(x: mid.x - inner, y: mid.y + inner),
-            CGPoint(x: mid.x - outer, y: mid.y),
-            CGPoint(x: mid.x - inner, y: mid.y - inner),
-        ]
-        path.move(to: points[0])
-        for point in points.dropFirst() { path.addLine(to: point) }
-        path.closeSubpath()
-        return path
+/// The shared Rally loop, the same mask desktop paints through `.rally-mark`.
+/// Template rendering so the glyph follows brand ink, not the volt baked into
+/// the PNG. The retired four-pointed spark is gone.
+struct RallyMark: View {
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        Image("RallyMark")
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .foregroundStyle(colors.brandInk)
     }
 }
 
 struct RallyPressableStyle: ButtonStyle {
     var scale: CGFloat = 0.97
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .animation(RallyMotion.sendSpring, value: configuration.isPressed)
+        PressableBody(configuration: configuration, scale: scale)
+    }
+
+    private struct PressableBody: View {
+        var configuration: Configuration
+        var scale: CGFloat
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed && !reduceMotion ? scale : 1)
+                .animation(reduceMotion ? nil : RallyMotion.sendSpring, value: configuration.isPressed)
+        }
     }
 }

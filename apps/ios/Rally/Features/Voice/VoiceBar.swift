@@ -46,18 +46,15 @@ struct VoiceBar: View {
                 } label: {
                     Text("Send")
                         .font(RallyType.button())
-                        .foregroundStyle(colors.sendGlyphEnabled)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(colors.sendFillEnabled))
+                        .padding(.horizontal, 8)
                 }
+                .buttonStyle(.glassProminent)
                 .disabled(capture.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Send spoken message")
             }
             .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity)
-        .background(colors.canvas.ignoresSafeArea())
         .task { await capture.start() }
         .onDisappear { capture.stop() }
     }

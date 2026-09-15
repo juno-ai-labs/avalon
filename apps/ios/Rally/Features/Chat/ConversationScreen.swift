@@ -7,171 +7,176 @@ struct ConversationScreen: View {
 
     var body: some View {
         @Bindable var model = model
-        NavigationStack {
-            ZStack {
-                colors.canvas.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    topBar
-                    if model.canUseSubstreams, model.currentWorkstream != nil {
-                        ConversationSwitcherChip()
-                            .padding(.bottom, 8)
+        NavigationStack(path: $model.chatPath) {
+            WorkstreamListScreen()
+                .navigationDestination(for: AppModel.ChatRoute.self) { route in
+                    switch route {
+                    case .substreams:
+                        SubstreamListScreen()
+                    case .conversation, .compose:
+                        ConversationFeedScreen()
                     }
+                }
+        }
+        .onChange(of: model.chatPath) { oldPath, newPath in
+            model.chatPathDidChange(from: oldPath, to: newPath)
+        }
+        .sheet(isPresented: $model.isSettingsPresented) {
+            SettingsScreen()
+        }
+        .sheet(isPresented: $model.isVoicePresented) {
+            VoiceBar { transcript in
+                model.composerText = transcript
+                model.isVoicePresented = false
+                Task {
                     if model.substreamLaunch != nil {
-                        SubstreamLaunchView()
-                    } else if model.messages.isEmpty {
-                        EmptyGreeting(name: model.greetingName, opportunities: model.opportunities) { prompt in
-                            model.composerText = prompt
-                            Task { await model.send() }
-                        }
+                        await model.submitSubstreamLaunch()
                     } else {
-                        MessageList(
-                            messages: model.messages,
-                            isConnecting: model.isConnectingConversation,
-                            firstUnreadSequence: model.firstUnreadSequence,
-                            hasOlder: model.hasOlderTranscript,
-                            jumpToken: model.jumpToLatestToken
-                        )
-                    }
-                    if model.substreamLaunch == nil, model.messages.contains(where: { $0.statusKind == "assistant_turn_failed" }) {
-                        Button("Retry") { Task { await model.retryHarness() } }
-                            .font(RallyType.button())
-                            .padding(.bottom, 4)
-                    }
-                    if model.substreamLaunch == nil {
-                        ComposerBar(
-                            text: $model.composerText,
-                            isStreaming: model.isStreaming,
-                            attachments: model.pendingAttachments,
-                            onSend: { Task { await model.send() } },
-                            onStop: { Task { await model.stopGeneration() } },
-                            onAttach: { data, name, mime in model.attach(data: data, fileName: name, mimeType: mime) },
-                            onRemoveAttachment: { model.removeAttachment($0) },
-                            onVoice: { model.isVoicePresented = true }
-                        )
+                        await model.send()
                     }
                 }
             }
-            .toolbar(.hidden, for: .navigationBar)
-            .sheet(isPresented: $model.isHistoryPresented) {
-                HistoryPanel()
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $model.isSettingsPresented) {
-                SettingsScreen()
-            }
-            .sheet(isPresented: $model.isVoicePresented) {
-                VoiceBar { transcript in
-                    model.composerText = transcript
-                    model.isVoicePresented = false
-                    Task {
-                        if model.substreamLaunch != nil {
-                            await model.submitSubstreamLaunch()
-                        } else {
-                            await model.send()
-                        }
-                    }
-                }
-                .presentationDetents([.height(220)])
-            }
-            .sheet(isPresented: $model.isSearchPresented) {
-                SearchSheet()
-            }
-            .sheet(isPresented: $model.isInspectorPresented) {
-                InspectorSheet()
-            }
-            .sheet(isPresented: $model.isSubstreamSwitcherPresented) {
-                SubstreamSwitcherSheet()
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if model.substreamLaunch == nil, model.messages.count > 6 {
-                    Button {
-                        model.jumpToLatest()
-                    } label: {
-                        Label("Jump to latest", systemImage: "arrow.down")
-                            .labelStyle(.iconOnly)
-                            .frame(width: 44, height: 44)
-                            .rallyGlass(in: Circle())
-                    }
-                    .accessibilityLabel("Jump to latest")
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 88)
-                }
-            }
+            .presentationDetents([.height(220)])
         }
-    }
-
-    private var topBar: some View {
-        HStack(spacing: 8) {
-            Button {
-                model.isHistoryPresented = true
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(colors.textPrimary)
-                    .frame(width: 44, height: 44)
-                    .rallyGlass(in: Circle())
-            }
-            .accessibilityLabel("History")
-            Button {
-                model.isSearchPresented = true
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(colors.textPrimary)
-                    .frame(width: 36, height: 36)
-            }
-            .accessibilityLabel("Search")
-            Spacer()
-            WorkspacePill()
-            Spacer()
-            Button {
-                model.isInspectorPresented = true
-            } label: {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(colors.textPrimary)
-                    .frame(width: 36, height: 36)
-            }
-            .accessibilityLabel("Details")
-            .disabled(model.currentWorkstream == nil)
-            Button {
-                model.openNewChat()
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(colors.textPrimary)
-                    .frame(width: 44, height: 44)
-                    .rallyGlass(in: Circle())
-            }
-            .accessibilityLabel("New chat")
+        .sheet(isPresented: $model.isSearchPresented) {
+            SearchSheet()
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
+        .inspector(isPresented: $model.isInspectorPresented) {
+            InspectorSheet()
+        }
     }
 }
 
-struct WorkspacePill: View {
+struct ConversationFeedScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
 
     var body: some View {
-        Button {
-            model.isSettingsPresented = true
-        } label: {
-            Text(model.workspaceSession?.workspace?.name ?? "Rally")
-                .font(RallyType.pill())
-                .foregroundStyle(colors.sendGlyphEnabled)
-                .padding(.vertical, 7)
-                .padding(.horizontal, 14)
-                .background(Capsule().fill(colors.sendFillEnabled))
-                .lineLimit(1)
+        @Bindable var model = model
+        ZStack {
+            colors.canvas.ignoresSafeArea()
+            VStack(spacing: 0) {
+                switch RallyFeedChrome.resolve(
+                    isLaunch: model.substreamLaunch != nil,
+                    isConnecting: model.isConnectingConversation,
+                    hasMessages: !model.messages.isEmpty
+                ) {
+                case .launch:
+                    SubstreamLaunchView()
+                case .skeleton:
+                    ConversationSkeleton()
+                case .emptyGreeting:
+                    EmptyGreeting(name: model.greetingName, opportunities: model.opportunities) { prompt in
+                        model.composerText = prompt
+                        Task { await model.send() }
+                    }
+                case .messages:
+                    MessageList(
+                        messages: model.messages,
+                        isConnecting: model.isConnectingConversation,
+                        firstUnreadSequence: model.firstUnreadSequence,
+                        hasOlder: model.hasOlderTranscript,
+                        jumpToken: model.jumpToLatestToken
+                    )
+                    .id("\(model.currentWorkstream?.id ?? "")/\(model.currentSubstreamId)")
+                }
+                if model.substreamLaunch == nil, model.messages.contains(where: { $0.statusKind == "assistant_turn_failed" }) {
+                    Button("Retry", systemImage: "arrow.clockwise") { Task { await model.retryHarness() } }
+                        .buttonStyle(.glass)
+                        .padding(.bottom, 4)
+                }
+            }
         }
-        .buttonStyle(RallyPressableStyle(scale: 0.96))
-        .accessibilityLabel("Workspace and settings")
-        .sensoryFeedback(.selection, trigger: model.isSettingsPresented)
+        .navigationTitle(model.substreamLaunch != nil ? "New substream" : (model.currentWorkstream == nil ? "New chat" : model.conversationTitle))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Details", systemImage: "info.circle") {
+                    model.isInspectorPresented = true
+                }
+                .disabled(model.currentWorkstream == nil)
+                .accessibilityLabel("Details")
+            }
+        }
+        .safeAreaBar(edge: .bottom) {
+            if model.substreamLaunch == nil {
+                ComposerBar(
+                    text: $model.composerText,
+                    isStreaming: model.isStreaming,
+                    attachments: model.pendingAttachments,
+                    onSend: { Task { await model.send() } },
+                    onStop: { Task { await model.stopGeneration() } },
+                    onAttach: { data, name, mime in model.attach(data: data, fileName: name, mimeType: mime) },
+                    onRemoveAttachment: { model.removeAttachment($0) },
+                    onVoice: { model.isVoicePresented = true }
+                )
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if model.substreamLaunch == nil, !model.isConnectingConversation, model.messages.count > 6 {
+                Button {
+                    model.jumpToLatest()
+                } label: {
+                    Image(systemName: "arrow.down")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.glass)
+                .accessibilityLabel("Jump to latest")
+                .padding(.trailing, 20)
+                .padding(.bottom, 12)
+            }
+        }
+    }
+}
+
+struct ConversationSkeleton: View {
+    @Environment(\.rallyColors) private var colors
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Spacer(minLength: 48)
+                pill(height: 44, trailing: true)
+                    .frame(maxWidth: 200)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                pill(height: 14, trailing: false)
+                pill(height: 14, trailing: false)
+                    .padding(.trailing, 48)
+                pill(height: 14, trailing: false)
+                    .padding(.trailing, 120)
+            }
+            HStack {
+                Spacer(minLength: 48)
+                pill(height: 44, trailing: true)
+                    .frame(maxWidth: 160)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                pill(height: 14, trailing: false)
+                    .padding(.trailing, 32)
+                pill(height: 14, trailing: false)
+                    .padding(.trailing, 80)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .redacted(reason: .placeholder)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading conversation")
+    }
+
+    private func pill(height: CGFloat, trailing: Bool) -> some View {
+        UnevenRoundedRectangle(
+            cornerRadii: trailing
+                ? .init(topLeading: 20, bottomLeading: 20, bottomTrailing: 6, topTrailing: 20)
+                : .init(topLeading: 6, bottomLeading: 6, bottomTrailing: 6, topTrailing: 6)
+        )
+        .fill(colors.surface1)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
     }
 }
 
@@ -234,14 +239,7 @@ struct FlexibleChips: View {
                         .foregroundStyle(colors.textPrimary)
                         .padding(.vertical, 10)
                         .padding(.horizontal, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(colors.surface1)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .strokeBorder(colors.divider, lineWidth: 1)
-                        )
+                        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(RallyPressableStyle())
             }
@@ -258,26 +256,21 @@ struct MessageList: View {
     var jumpToken: Int
     @Environment(AppModel.self) private var model
     @Environment(\.rallyColors) private var colors
+    @State private var edge = RallyScrollEdge(
+        offsetY: 0, containerHeight: 0, contentHeight: 0, topInset: 0, bottomInset: 0
+    )
+    @State private var settledAtBottom = false
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
-                    if hasOlder {
-                        Button("Load earlier messages") {
-                            Task { await model.loadOlder() }
-                        }
-                        .font(RallyType.caption())
-                        .foregroundStyle(colors.link)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 8)
-                    }
-                    if isConnecting {
+                    if model.isLoadingOlder {
                         ProgressView()
                             .tint(colors.textSecondary)
                             .frame(maxWidth: .infinity)
-                            .padding(.top, 24)
-                            .accessibilityLabel("Loading conversation")
+                            .padding(.top, 8)
+                            .accessibilityLabel("Loading earlier messages")
                     }
                     ForEach(Array(messages.enumerated()), id: \.element.id) { _, message in
                         if let unread = firstUnreadSequence, message.sequence == unread {
@@ -290,14 +283,40 @@ struct MessageList: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
+            .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .onScrollGeometryChange(for: RallyScrollEdge.self) { geometry in
+                RallyScrollEdge(
+                    offsetY: geometry.contentOffset.y,
+                    containerHeight: geometry.containerSize.height,
+                    contentHeight: geometry.contentSize.height,
+                    topInset: geometry.contentInsets.top,
+                    bottomInset: geometry.contentInsets.bottom
+                )
+            } action: { _, newEdge in
+                edge = newEdge
+                if !settledAtBottom {
+                    if newEdge.nearBottom { settledAtBottom = true }
+                    return
+                }
+                requestOlderIfNeeded()
+            }
+            .onChange(of: model.isLoadingOlder) { _, loading in
+                if !loading { requestOlderIfNeeded() }
+            }
             .onChange(of: messages.last?.text) { _, _ in
+                guard edge.nearBottom else { return }
                 scrollToLatest(proxy)
             }
             .onChange(of: jumpToken) { _, _ in
                 scrollToLatest(proxy)
             }
         }
+    }
+
+    private func requestOlderIfNeeded() {
+        guard settledAtBottom, edge.atTop, hasOlder, !model.isLoadingOlder, !isConnecting else { return }
+        Task { await model.loadOlder() }
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy) {
@@ -426,7 +445,6 @@ struct AssistantResponse: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             RallyMark()
-                .stroke(colors.textPrimary, lineWidth: 1.4)
                 .frame(width: 24, height: 24)
                 .accessibilityHidden(true)
             if let authorOverride {
