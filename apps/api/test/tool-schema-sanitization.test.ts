@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import { asUserId } from "@rally/contracts";
 
 import {
@@ -49,51 +50,74 @@ import { everyAuthoredToolSchema } from "./helpers/authored-tool-schemas";
  * `pnpm test` rather than three days later in a payload log.
  */
 describe("tool schema sanitization", () => {
-  it("preserves Gmail declared-field constraints through the actual model request", async () => {
+  it.each(["OpenRouter", "Azure"])("preserves the complete Gmail argument contract through the actual %s request", async (provider) => {
     const adapter = createTestConnectorRegistry().get("google");
     const content = { to: ["recipient@example.com"], body: "Hello." };
     const newMessage = { kind: "new", ...content, subject: "A new conversation" };
     const reply = { kind: "reply", ...content, messageId: "18f0a2c4d5e6f702" };
-    const cases: Array<{ label: string; message: unknown; accepted: boolean; wireAccepted?: boolean }> = [
-      { label: "new", message: newMessage, accepted: true },
-      { label: "new with null cc", message: { ...newMessage, cc: null }, accepted: true },
-      { label: "new with cc", message: { ...newMessage, cc: ["copied@example.com"] }, accepted: true },
-      { label: "reply", message: reply, accepted: true },
-      { label: "reply with null cc", message: { ...reply, cc: null }, accepted: true },
-      { label: "no kind", message: content, accepted: false },
-      { label: "unknown kind", message: { ...newMessage, kind: "forward" }, accepted: false },
-      { label: "empty subject", message: { ...newMessage, subject: "" }, accepted: false },
-      { label: "long subject", message: { ...newMessage, subject: "a".repeat(999) }, accepted: false },
-      { label: "long body", message: { ...newMessage, body: "a".repeat(500_001) }, accepted: false },
-      { label: "no recipients", message: { ...newMessage, to: [] }, accepted: false },
-      { label: "invalid address", message: { ...newMessage, to: ["recipient"] }, accepted: false },
-      { label: "new with messageId", message: { ...newMessage, messageId: "." }, accepted: false, wireAccepted: true },
-      { label: "reply with subject", message: { ...reply, subject: "Unrelated subject" }, accepted: false, wireAccepted: true },
-      { label: "reply with empty messageId", message: { ...reply, messageId: "" }, accepted: false },
-      { label: "reply without messageId", message: { kind: "reply", ...content }, accepted: false },
-      ...["threadId", "inReplyTo", "references"].flatMap((field) => [
-        { label: `new with stray ${field}`, message: { ...newMessage, [field]: field === "references" ? ["."] : "." }, accepted: false, wireAccepted: true },
-        { label: `reply with supplied ${field}`, message: { ...reply, [field]: field === "references" ? [] : "." }, accepted: false, wireAccepted: true },
+    const cases: Array<{ label: string; args: unknown; accepted: boolean }> = [
+      ...[newMessage, reply].flatMap((message) => [
+        { label: `${message.kind} without cc`, args: { message }, accepted: true },
+        ...[null, [], ["copied@example.com"]].map((cc) => ({
+          label: `${message.kind} with cc=${JSON.stringify(cc)}`, args: { message: { ...message, cc } }, accepted: true,
+        })),
       ]),
+      { label: "no kind", args: { message: content }, accepted: false },
+      { label: "unknown kind", args: { message: { ...newMessage, kind: "forward" } }, accepted: false },
+      { label: "empty subject", args: { message: { ...newMessage, subject: "" } }, accepted: false },
+      { label: "long subject", args: { message: { ...newMessage, subject: "a".repeat(999) } }, accepted: false },
+      { label: "Unicode subject at character limit", args: { message: { ...newMessage, subject: "😀".repeat(998) } }, accepted: true },
+      { label: "Unicode subject over character limit", args: { message: { ...newMessage, subject: "😀".repeat(999) } }, accepted: false },
+      { label: "long body", args: { message: { ...newMessage, body: "a".repeat(500_001) } }, accepted: false },
+      { label: "no recipients", args: { message: { ...newMessage, to: [] } }, accepted: false },
+      { label: "invalid address", args: { message: { ...newMessage, to: ["recipient"] } }, accepted: false },
+      { label: "invalid cc", args: { message: { ...newMessage, cc: ["recipient"] } }, accepted: false },
+      { label: "new with messageId", args: { message: { ...newMessage, messageId: "." } }, accepted: false },
+      { label: "reply with subject", args: { message: { ...reply, subject: "Unrelated subject" } }, accepted: false },
+      { label: "reply with empty messageId", args: { message: { ...reply, messageId: "" } }, accepted: false },
+      { label: "reply without messageId", args: { message: { kind: "reply", ...content } }, accepted: false },
+      // The old production shape, with nonempty reply placeholders.
+      { label: "old flat arguments", args: { ...content, subject: "Hello", threadId: ".", inReplyTo: ".", references: [] }, accepted: false },
     ];
+    for (const message of [newMessage, reply]) {
+      for (const cc of [undefined, null, [], ["copied@example.com"]]) {
+        const withCc = cc === undefined ? message : { ...message, cc };
+        for (const [field, value] of Object.entries({ preview: true, threadId: ".", inReplyTo: ".", references: [], arbitrary: "undeclared" })) {
+          const label = `${message.kind}, cc=${JSON.stringify(cc)}, undeclared ${field}`;
+          cases.push(
+            { label: `${label} at root`, args: { message: withCc, [field]: value }, accepted: false },
+            { label: `${label} in message`, args: { message: { ...withCc, [field]: value } }, accepted: false },
+          );
+        }
+      }
+    }
     const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft"].includes(tool.name));
     expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send"]);
-    const requests: Array<{ tools: Array<{ function: { name: string; parameters: Record<string, unknown> } }> }> = [];
+    const requests: Array<{ tools: Array<{ function: { name: string; parameters: Record<string, unknown>; strict?: boolean } }> }> = [];
+    const urls: string[] = [];
+    const usesAzure = provider === "Azure";
     // Only the remote model is doubled. The real harness builds the plugin,
     // runs Bind's sanitizer and root repair, then serializes the HTTP request.
     const outcome = await runHarness({
       config: {
-        apiKey: "test-key", primaryModel: "test/schema-contract", maxIterations: 1, maxToolCalls: 1,
+        apiKey: "test-key", primaryModel: usesAzure ? "openai/gpt-5.6-sol" : "test/schema-contract",
+        maxIterations: 1, maxToolCalls: 1,
+        ...(usesAzure ? { azure: { endpoint: "https://schema-probe.openai.azure.com", apiKey: "test-azure-key" } } : {}),
         // Ambient budgets, not the subject of this test.
         maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 1,
-        fetch: async (_input, init) => {
+        fetch: async (input, init) => {
+          urls.push(String(input));
           requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
-          return new Response('data: {"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+          return new Response('data: {"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\ndata: [DONE]\n\n', {
             headers: { "content-type": "text/event-stream" },
           });
         },
       },
-      workspaceId: "schema-contract-workspace", workstreamId: "schema-contract-workstream",
+      resolveAzureModelPricing: async () => new Map([["openai/gpt-5.6-sol", {
+        inputUsdPerM: 5, cachedInputUsdPerM: 0.5, outputUsdPerM: 25,
+        overrides: [], sourceFingerprint: "schema-contract-test",
+      }]]),
+      workspaceId: `schema-contract-${provider}`, workstreamId: "schema-contract-workstream",
       loopId: "schema-contract-run", harnessRunId: "schema-contract-run",
       executionPrincipal: { type: "user", userId: asUserId("00000000-0000-4000-8000-000000000001") },
       systemPrompt: "Describe the available tools without calling them.",
@@ -110,36 +134,32 @@ describe("tool schema sanitization", () => {
       onStepSettled: () => ({ transitions: [], stop: false }),
       onEvent: () => {},
     });
-    expect(outcome.status).toBe("completed");
+    expect(outcome.status, JSON.stringify(outcome)).toBe("completed");
+    expect(urls).toEqual([usesAzure
+      ? "https://schema-probe.openai.azure.com/openai/v1/chat/completions"
+      : "https://openrouter.ai/api/v1/chat/completions"]);
     expect(requests).toHaveLength(1);
+    // Zod's fromJSONSchema ignores maxProperties. A JSON Schema validator must
+    // judge the actual payload, or a closure regression can pass unnoticed.
+    const ajv = new Ajv2020({ strict: true, allErrors: true });
+    addFormats(ajv);
     for (const tool of mailWrites) {
-      const authored = tool.inputSchema;
-      const authoredSchema = z.fromJSONSchema(authored);
-      const wire = requests[0]!.tools.find((candidate) => candidate.function.name === `google_${tool.name.replaceAll(".", "_")}`)!.function.parameters;
-      const wireSchema = z.fromJSONSchema(wire);
-      for (const { label, message, accepted, wireAccepted = accepted } of cases) {
-        const args = { message };
+      const authoredSchema = ajv.compile(tool.inputSchema);
+      const wireTool = requests[0]!.tools.find((candidate) => candidate.function.name === `google_${tool.name.replaceAll(".", "_")}`)!.function;
+      // These are ordinary Chat Completions tools, not strict structured output.
+      expect(wireTool.strict).toBeUndefined();
+      const wireSchema = ajv.compile(wireTool.parameters);
+      for (const { label, args, accepted } of cases) {
         expect(adapter.validateToolInput?.(tool.name, args) === null, `${tool.name}: ${label}, executor`).toBe(accepted);
-        expect(authoredSchema.safeParse(args).success, `${tool.name}: ${label}, authored`).toBe(accepted);
-        // Bind intentionally removes additionalProperties:false for xAI
-        // compatibility. The executor remains strict; only declared-field
-        // constraints can promise equality on every supported provider. The
-        // explicit exceptions pin this known limitation rather than hiding it
-        // behind a test that never exercised the compatibility pass.
-        expect(wireSchema.safeParse(args).success, `${tool.name}: ${label}, HTTP payload`).toBe(wireAccepted);
+        expect(authoredSchema(args), `${tool.name}: ${label}, authored`).toBe(accepted);
+        expect(wireSchema(args), `${tool.name}: ${label}, ${provider} HTTP payload`).toBe(accepted);
       }
-      const messageSchema = wire.properties as { message: { description: string; oneOf: Array<{ description: string }> } };
+      const messageSchema = wireTool.parameters.properties as { message: { description: string; oneOf: Array<{ description: string }> } };
       expect(messageSchema.message.description).toContain("Do not supply threadId, inReplyTo, or references");
       expect(messageSchema.message.oneOf.map((branch) => branch.description)).toEqual([
         "Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field.",
         "Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field.",
       ]);
-      // The old production failure shape must fail on both sides, including
-      // when it carries the nonempty placeholders the old JSON schema allowed.
-      const legacy = { ...content, subject: "A new conversation", threadId: ".", inReplyTo: ".", references: [] };
-      expect(adapter.validateToolInput?.(tool.name, legacy)).not.toBeNull();
-      expect(authoredSchema.safeParse(legacy).success).toBe(false);
-      expect(wireSchema.safeParse(legacy).success).toBe(false);
     }
   });
 
