@@ -17,25 +17,37 @@ function renderSection(props: React.ComponentProps<typeof SidekickSection>) {
 }
 
 describe('SidekickSection', () => {
-  it('opens a row, notes what is true of it, and separates removal', () => {
+  it('explains the recommendation through the circular carambola marker', async () => {
+    renderSection({ items: [{ id: 'one', name: 'Editor', description: 'Review wording', recommended: true }] });
+    const marker = screen.getByRole('img', { name: 'Recommended Sidekick' });
+    expect(marker.querySelector('.tabler-icon-carambola')).not.toBeNull();
+    expect(screen.queryByText('Recommended')).toBeNull();
+    fireEvent.pointerMove(marker, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every substream in this workstream');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('isn’t automatically loaded');
+  });
+  it('opens a row and keeps removal in its right-click menu', () => {
     const remove = vi.fn();
     renderSection({ items: [
       { id: 'one', name: 'Editor', description: 'Review wording', note: 'Unavailable', onRemove: remove },
     ] });
     expect(screen.getByText('Unavailable · Review wording')).toBeVisible();
     const row = screen.getByRole('button', { name: 'Editor' });
-    expect(row).not.toHaveClass('sidekick-section-remove');
+    expect(screen.queryByRole('button', { name: 'Remove Editor' })).toBeNull();
     // Compact drops every title in this rail, so the row has to carry a mark.
     expect(row.querySelector('.workstream-context-mark .automation-glyph')).not.toBeNull();
     fireEvent.click(row);
     expect(openSidekicks).toHaveBeenCalledWith('one');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Editor' }));
+    fireEvent.contextMenu(row);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
     expect(remove).toHaveBeenCalledOnce();
   });
 
   it('keeps a row that cannot be detached free of a remove control', () => {
     renderSection({ items: [{ id: 'one', name: 'Editor', description: 'Review wording' }] });
     expect(screen.queryByRole('button', { name: 'Remove Editor' })).toBeNull();
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
+    expect(screen.queryByRole('menuitem', { name: 'Remove' })).toBeNull();
   });
 
   it('leaves no heading behind for an empty answer or a pending one, and surfaces read failures', () => {
@@ -61,6 +73,17 @@ describe('SidekickSection', () => {
 });
 
 describe('workstreamSidekickRows', () => {
+  it('merges a recommendation with a local attachment and keeps one removal action', () => {
+    const remove = vi.fn();
+    const attachment = { id: 'shared', name: 'Editor', description: 'Writing guidance', available: true };
+    const localRemove = vi.fn();
+    const rows = workstreamSidekickRows({ owned: [], attached: [attachment], recommended: [attachment], onRemoveAttachment: localRemove, onRemoveRecommendation: remove });
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0]?.recommended).toBe(true);
+    rows?.[0]?.onRemove?.();
+    expect(remove).toHaveBeenCalledWith('shared');
+    expect(localRemove).not.toHaveBeenCalled();
+  });
   it('waits for both answers before claiming the room has any', () => {
     expect(workstreamSidekickRows({ owned: undefined, attached: [] })).toBeUndefined();
     expect(workstreamSidekickRows({ owned: [], attached: undefined })).toBeUndefined();
