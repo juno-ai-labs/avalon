@@ -263,7 +263,9 @@ Scheduled lifecycle work also reads metadata before preservation or mutation.
 If Daytona already archived the sandbox, Rally records `archived` without
 attempting a toolbox command. Daytona SDK `archive()` only accepts the operation;
 Rally retains the due archive deadline on its last stable `stopped` intent
-and uses the existing scheduled retry until metadata confirms completion. SDK
+and uses the existing scheduled retry until metadata confirms completion, even
+when an accepted archive request still reads back as stopped. Expiry recovers
+a recoverable failed sandbox before attempting final-diff preservation. SDK
 `start()` and `recover()` wait for provider lifecycle state, which is insufficient
 proof of toolbox availability. Restore and recovery run a no-op command and
 download `/etc/hostname` before admitting work. Both read-only probes must
@@ -783,7 +785,9 @@ archival and confirms asynchronous archival before recording completion.
 Provider observation now has its own persisted ordering and freshness, shared by
 acquisition, signed webhook readback, and periodic workspace scheduling. The setup
 command provisions Svix through Daytona API-key authentication and seeds refresh
-for existing provider sandboxes.
+for existing provider sandboxes. Endpoint upserts explicitly carry their UID
+and subsequent secret/readback calls use the returned endpoint ID; Svix does
+not assign a path UID to an omitted body field.
 
 **Why:** PR #740 restored archived sandboxes correctly but equated every error
 with permanent loss. Its replacement path could delete a recoverable filesystem

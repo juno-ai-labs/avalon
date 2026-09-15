@@ -2,7 +2,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { z } from "zod";
 
-const EndpointSchema = z.object({ id: z.string(), url: z.string(), disabled: z.boolean(), filterTypes: z.array(z.string()).nullish() });
+const EndpointSchema = z.object({ id: z.string(), uid: z.string().nullish(), url: z.string(), disabled: z.boolean(), filterTypes: z.array(z.string()).nullish() });
 const EVENTS = ["sandbox.created", "sandbox.state.updated"];
 
 export function signedDaytonaHeaders(secret: string, body: string): Record<string, string> {
@@ -56,12 +56,15 @@ export async function provisionDaytonaWebhook(input: {
   } while (iterator !== null);
   if (matches.length > 1) throw new Error("Multiple Svix endpoints already target this URL; reconcile the duplicate registrations first");
   // Adopt a manually registered endpoint too, preserving its signing secret.
-  const endpointPath = `${collectionPath}/${encodeURIComponent(matches[0]?.id ?? uid)}`;
+  let endpointPath = `${collectionPath}/${encodeURIComponent(matches[0]?.id ?? uid)}`;
   const svix = (suffix: string, method = "GET", body?: unknown) => request(svixApiUrl, portal.token, `${endpointPath}${suffix}`, method, body);
   const endpoint = EndpointSchema.parse(await svix("", "PUT", {
-    url: input.webhookUrl, version: 1, disabled: true,
+    uid: matches[0]?.uid ?? uid, url: input.webhookUrl, version: 1, disabled: true,
     description: "Rally Terminal provider state reconciliation", filterTypes: EVENTS,
   }));
+  // Svix PUT is an upsert, but its path UID is not assigned to the created body.
+  // Carry the UID explicitly above, then address readback by the returned ID.
+  endpointPath = `${collectionPath}/${encodeURIComponent(endpoint.id)}`;
   const { key: secret } = z.object({ key: z.string().startsWith("whsec_") }).parse(await svix("/secret"));
   await input.installSecrets({ DAYTONA_WEBHOOK_SECRET: secret, DAYTONA_ORGANIZATION_ID: input.organizationId });
   const probe = JSON.stringify({ event: "rally.receiver.probe", id: randomUUID(), organizationId: input.organizationId });
