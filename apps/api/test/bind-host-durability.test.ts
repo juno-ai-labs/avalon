@@ -961,15 +961,16 @@ describe("Bind host durability boundaries", () => {
   });
 
   it("reads a run a tool ended as completed even when the model wrote nothing after it", () => {
-    // Carry Bind's explicit completion fact through the host; terminalization
-    // requires its durable receipt instead of treating missing text as success.
+    // This tests only the adapter's generic tool-ended outcome. Conversation
+    // terminalization still requires a final turn; Sidekick authoring now
+    // returns to the model for a reply, as the workerd regression proves.
     expect(__integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "completed", completedByTool: true },
       streamedText: "",
       finalTurnId: null,
       ambiguousToolOutcome: false,
       stoppedByUser: false,
-    })).toEqual({ status: "completed", completedByTool: true });
+    })).toEqual({ status: "completed" });
     expect(__integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "completed" },
       streamedText: "",

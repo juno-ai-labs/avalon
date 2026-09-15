@@ -65,10 +65,9 @@ pending input. Ordinary transcript promotion commits the links with the message,
 so refused admission leaves no attachments behind. Context rebuilding uses normal
 attachment manifests and current-turn image projection. Resource IDs alone are
 not a substitute for those durable message attachments. Model-facing tools keep
-composed-input limits; internal admission carries generated final responses and
-all their attachments in full, without applying the composer ceilings to output.
+the existing composed-message and attachment limits, also enforced at admission.
 
-Conversation migration 57 stores the background principal and a stop timestamp.
+Conversation migration 58 stores the background principal and a stop timestamp.
 Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it in
 the same transaction that admits the message.
@@ -81,17 +80,15 @@ stop request to owned conversations; independently owned Sidekicks continue.
 Liveness renewals allow Bind to finish the in-flight step and settle its stop,
 while authority checks still precede every new model and tool call.
 
-Textless `needs_input` outcomes send their recorded reason to the coordinator
-through an ordinary reply; non-inspectable workers must not need input silently.
-Completed responses use existing external settlement to send an ordinary reply
-to the originating exchange. The reply identity is stable for that execution,
-so settlement recovery uses normal message replay. Stopped work does not publish
-partial text as success. An archived destination ends delivery with the existing
-refusal instead of retrying a permanently closed conversation. The proposed
-`end_turn` tool uses Bind's explicit `complete` outcome to suppress an automatic
-reply. The host records this explicit outcome in its existing durable receipt
-and verifies it before terminalization and after recovery. Empty-completion
-checks remain enabled; no response text is fabricated.
+All agent-to-agent communication is explicit through `send_message` or `reply`,
+including final results, questions, and updates. Standard assistant messages stay
+in the sender's own transcript. Completion, failure, and needs-input settlement
+never synthesize or forward a message to the parent, a sibling, or a Sidekick.
+The model sends any needed reply before finishing through Bind's ordinary final
+response. No `end_turn` tool or separate silent-completion receipt is required.
+Explicit sends use durable tool effect identities and ordinary admission replay;
+replaying a send after lost confirmation and a recipient crash must not duplicate input or inference.
+An archived destination refuses the send through the normal tool result.
 
 Background identity travels in the existing child common-state projection.
 The conversation parent counts running background substreams, including nested
@@ -173,3 +170,9 @@ and messages; a second scheduler or task lifecycle would duplicate their recover
 Sender/reply content must survive both admission and context rebuilding. Attachment
 links follow the same pending-input promotion: linking before admission allowed
 an archive race to retain resources from a refused message.
+
+Communication is explicitly model-directed through send/reply tools. Automatically
+forwarding final assistant responses introduced a second delivery path and an
+acknowledgment loop, then required a completion-suppression tool. Removing that
+path keeps ordinary completion in Bind and makes every inter-agent message an
+intentional tool call.

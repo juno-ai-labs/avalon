@@ -289,7 +289,6 @@ const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
 const TOOL_TRANSCRIPT_REPLAY_BUDGET_MS = 5_000;
 export type WorkstreamHarnessResult = {
   status: "completed" | "needs_input" | "failed" | "stopped";
-  completedByTool?: true;
   finalTurnId?: string;
   error?: { code: string; message: string };
   metrics?: HarnessRunMetrics;
@@ -418,10 +417,11 @@ function workstreamHarnessTerminalResult(input: {
     };
   }
   if (stoppedByUser) return { status: "stopped", ...durableTurn };
-  if (outcome.status === "completed" && outcome.completedByTool) {
-    return { status: "completed", completedByTool: true, ...durableTurn };
-  }
   if (outcome.status === "completed" && streamedText && finalTurnId) return { status: "completed", finalTurnId };
+  // Preserve the harness's tool-ended outcome here. The conversation
+  // terminalizer separately requires a durable final turn; Sidekick submission
+  // returns to the model for that reply rather than taking this path.
+  if (outcome.status === "completed" && outcome.completedByTool) return { status: "completed", ...durableTurn };
   if (outcome.status === "completed") {
     return {
       status: "failed",
@@ -2550,7 +2550,6 @@ export async function runWorkstreamHarness(
   if (persistedHostOutcome) {
     return {
       status: persistedHostOutcome.status,
-      ...(persistedHostOutcome.completedByTool ? { completedByTool: true as const } : {}),
       ...(persistedHostOutcome.finalTurnId
         ? { finalTurnId: persistedHostOutcome.finalTurnId }
         : {}),
@@ -4222,7 +4221,6 @@ export async function runWorkstreamHarness(
       : null,
     {
       status: terminalResult.status,
-      ...(terminalResult.completedByTool ? { completedByTool: true as const } : {}),
       ...(terminalResult.error ? { error: terminalResult.error } : {}),
     },
   );
@@ -4543,7 +4541,7 @@ async function loadRunPromptContext(
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.agentExchange && (input.backgroundAgent || input.parentKind === "automation")
-      ? "\nYour nonempty final response is automatically delivered as a reply to the message that started this execution. Use it for your result or a question. Use explicit send_message/reply for other exchanges or intermediate updates; do not repeat those messages in your final response. Use rally_agents end_turn when no response is needed or you have already sent all necessary replies. Do not return an empty completion or exchange acknowledgment-only replies. Ask the coordinating agent for missing information; this conversation has no participant-facing question form."
+      ? "\nUse send_message or reply for every message to another agent, including results, questions, and updates. Your standard assistant responses remain only in this conversation and are not forwarded. Finish normally when done; no special completion tool is needed. Ask the coordinating agent for missing information; this conversation has no participant-facing question form."
       : "") + "\nStay available to participants. Use rally_agents to delegate substantial or blocking work when useful; continue prior agents through messages. Coordinate through send_message and reply, and bring useful findings back. For Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream; otherwise create one there by default, then send its authoring agent instructions. Sidekick drafting belongs to that authoring agent.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,

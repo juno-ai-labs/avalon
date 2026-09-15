@@ -1,7 +1,6 @@
 import { parseRpcInput } from "../lib/rpc-input";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
-import { AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
@@ -102,7 +101,6 @@ import {
   reapStaleHarnessRuns,
   RunOwnershipLostError,
   terminalizeHarnessAttempt,
-  loadPersistedHarnessHostOutcome,
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -374,7 +372,6 @@ const RuntimeBootstrapRequestSchema = z.strictObject({
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.strictObject({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
-  completedByTool: z.literal(true).optional(),
   finalTurnId: TranscriptTurnIdSchema.optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
   metrics: HarnessRunMetricsSchema.optional(),
@@ -3973,7 +3970,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       claim.lease,
       {
         status: outcome.status,
-        ...(outcome.completedByTool ? { completedByTool: true as const } : {}),
         ...(outcome.finalTurnId ? { finalTurnId: outcome.finalTurnId } : {}),
         ...(outcome.error ? { error: outcome.error } : {}),
         memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
@@ -4593,12 +4589,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // and the canonical final turn remain authoritative.
       }
     }
-    const hostOutcome = await loadPersistedHarnessHostOutcome(
-      createHarnessRunObjectPort(executionEnv, input.workspaceId, input.parentId), input,
-    );
     return AgentTerminalOutcomeSchema.parse({
       status,
-      ...(hostOutcome?.completedByTool ? { completedByTool: true } : {}),
       ...(row.final_turn_id ? { finalTurnId: row.final_turn_id } : {}),
       ...(error ? { error } : {}),
       // Receipt cancellation is provenance only. It can explain a terminal
@@ -4676,6 +4668,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         final_turn_id: outcome.finalTurnId,
       });
     }
+    // Hidden workers publish only through explicit messaging tools. Their
+    // local final response must not be projected into the parent's Slack room.
+    if (input.backgroundAgent) return settlementDiagnosticCode;
     const elicitationMessage = outcome.status === "needs_input"
       ? await this.product.elicitationMessageForRunForRuntime(input.harnessRunId)
       : null;
@@ -4684,31 +4679,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // cleanup may still run without a final turn, but no adapter may invent or
     // stream response prose that the canonical transcript does not contain.
     const text = canonicalExternalResultText(message);
-    if (!outcome.completedByTool && input.agentExchange && (input.backgroundAgent
-      || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))) {
-      const response = outcome.status === "completed" ? text
-        : outcome.status === "needs_input"
-          ? text ?? `The agent needs input before continuing (${outcome.error?.code ?? "agent_needs_input"}). ${outcome.error?.message ?? "Ask it what information is needed."}`
-        : outcome.status === "failed"
-          ? `The agent could not complete this execution (${outcome.error?.code ?? "agent_execution_failed"}).` : null;
-      if (response) {
-        try {
-          await new AgentCommunicationService(this.env, input).send({
-            messageId: input.agentExchange.messageId, message: response,
-            attachmentIds: message?.attachments.map((attachment) => attachment.id) ?? [],
-          }, {
-            workspaceId: input.workspaceId, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
-            toolCallId: `final:${input.harnessRunId}`, effectIntentId: `final:${input.harnessRunId}`,
-            executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
-          });
-        } catch (error) {
-          if (error instanceof Error && "code" in error && error.code === "workstream_archived") {
-            return "agent_reply_destination_archived";
-          }
-          throw error;
-        }
-      }
-    }
 
     if (input.digestDeliveryId) {
       await settleDigestRun(

@@ -60,7 +60,7 @@ Background agents use the same agent harness as workstream agents and inherit th
 
 Agents use the same start and message primitives recursively. A child can delegate when useful. Retain only the lineage needed for authorization, reporting, and stopping owned execution; do not introduce tree scheduling or aggregate task state.
 
-An agent’s final response returns through the originating message exchange. Follow-up instructions continue the same substream with its existing context. Reuse message references for returning answers rather than creating separate return-destination machinery.
+Agents send results and questions through `send_message` or `reply`. Standard assistant responses remain in their own conversation and are never automatically forwarded to another agent; this applies equally to parents, siblings, and Sidekick authoring agents. Completion, failure, and needs-input states do not synthesize inter-agent messages. Follow-up instructions continue the same substream with its existing context. Reuse message references for returning answers rather than creating separate return-destination machinery.
 
 ### Minimal participant visibility
 
@@ -137,7 +137,7 @@ None yet.
 1. **Substreams and messages are the primitives.** They already provide identity, context, and continuation. Separate tasks, requirement revisions, and return-routing records duplicate them.
 2. **Teams are small and active internally.** Workspace-scoped membership replaces special messaging rules for parents, siblings, introductions, and Sidekicks. Additive membership and deferred management surfaces keep the mechanism small.
 3. **Trust model judgment.** Use frontier-model reasoning for collaboration, changed instructions, multi-team context, and delegation choices. Add mechanisms in response to observed failures, not anticipated ones.
-4. **Reuse execution behavior.** Stop and message-based continuation, ordinary final responses, existing status, and durable delivery replace bespoke lifecycle and progress machinery.
+4. **Reuse execution behavior.** Stop and message-based continuation, local final responses, explicit messaging tools, existing status, and durable delivery replace bespoke lifecycle and progress machinery.
 5. **Sidekicks own setup.** Their authoring agents use domain tools locally; other agents request outcomes through the common messaging interface.
 6. **Cut over directly.** With zero users, a simple operational cutover is preferable to a parallel compatibility system or migration of live agent work.
 
@@ -170,7 +170,7 @@ Retain existing resource-level write controls and safe handling of uncertain ext
 | Stop agent | Stop the addressed agent and its owned descendants using existing host controls. Continue later with a message. |
 | Initialize or locate Sidekick | Discover accessible Sidekicks with ownership scope, presenting current-workstream entries first. Prefer suitable existing workstream Sidekicks; default new Sidekicks to current-workstream ownership. Establish the authorized authoring destination and implicit team membership; setup itself happens through messages. |
 
-Final responses and failures use the existing execution host and message exchange. There is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
+Final responses and failures settle locally through the existing execution host. Inter-agent messages require explicit send_message or reply calls; there is no completion tool. Discovery supplies identifiers; models do not invent recipients. Existing replay and authorization behavior applies to mutating calls.
 
 ### Agreed wire shapes
 
