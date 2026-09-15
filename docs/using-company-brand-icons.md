@@ -138,9 +138,11 @@ to update.
 
 If the catalog has no slug — Ashby and Fireflies today — a local component in
 `apps/desktop/src/renderer/lib/brand-marks/` draws the company's own mark the
-same way: `currentColor`, through `ConnectorMark`, one file per brand. A Lucide
-or Tabler stand-in is not a company mark and is not the fallback. The generic
-plug is only for a connector that has not been named in the table yet.
+same way: `currentColor`, through `ConnectorMark`, one file per brand. Ashby's
+is the product icon (a serif A punched from the rounded square at
+`ashbyhq.com/favicon.png`), not the stacked marketing lockup. A Lucide or Tabler
+stand-in is not a company mark and is not the fallback. The generic plug is only
+for a connector that has not been named in the table yet.
 
 Not every glyph is a company. The two virtual groups, the public web, and an
 inbound webhook are shapes no brand owns and keep their Tabler line icons; an
