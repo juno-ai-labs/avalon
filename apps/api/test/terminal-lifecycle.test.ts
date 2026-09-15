@@ -648,6 +648,23 @@ describe("Terminal scheduled lifecycle", () => {
     )).toEqual({ count: 0 });
   });
 
+  it("retains an unexpected metadata absence until the lifecycle retry can observe the archive", async () => {
+    const { objectStore, provider } = fixture("running", {
+      warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
+    });
+    vi.mocked(provider.getSandbox).mockRejectedValue(Object.assign(new Error("missing metadata"), { status: 404 }));
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .rejects.toThrow("terminal_lifecycle_metadata_missing");
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id, lifecycle_state, lifecycle_claim_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "provider-1", lifecycle_state: "running", lifecycle_claim_id: null });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    vi.mocked(provider.getSandbox).mockResolvedValue({ id: "provider-1", name: "sandbox-lifecycle", state: "archived", domainAllowList: [] });
+    await expect(reconcileDueTerminalSandbox(testHarnessRunPortFactory(objectStore), testTerminalPortFactory(objectStore), provider, W, S, NOW))
+      .resolves.toEqual({ transition: "archived" });
+    expect(workstreamObjectGet(objectStore, "SELECT sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ sandbox_id: "provider-1" });
+  });
+
   it("restores a stable due state after a transient provider failure so the scheduler can retry", async () => {
     const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",

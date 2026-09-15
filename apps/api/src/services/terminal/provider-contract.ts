@@ -137,8 +137,8 @@ export async function observeTerminalSandbox(
 
 /** Missing recovery metadata is uncertainty, never permission to discard files. */
 export function isTerminalSandboxLost(snapshot: TerminalSandboxSnapshot | null): boolean {
-  return snapshot === null || snapshot.state === "expired"
-    || (snapshot.state === "failed" && snapshot.recoverable === false);
+  return snapshot !== null && (snapshot.state === "expired"
+    || (snapshot.state === "failed" && snapshot.recoverable === false));
 }
 
 /** A failed operation is reconciled through metadata, never its HTTP status. */
@@ -160,10 +160,25 @@ export async function stopTerminalSandbox(
     return "stopped";
   } catch (error) {
     const observed = await observeTerminalSandbox(provider, id);
-    if (!observed || observed.state === "expired") return "absent";
-    if (observed.state === "stopped" || observed.state === "archived") return "stopped";
+    if (observed?.state === "expired") return "absent";
+    if (observed?.state === "stopped" || observed?.state === "archived") return "stopped";
     throw error;
   }
+}
+
+/** A lifecycle state is not proof that either toolbox surface is serving requests. */
+export async function assertTerminalSandboxReady(
+  provider: Pick<TerminalSandboxProvider, "runUtilityCommand" | "readFile">,
+  id: string,
+): Promise<void> {
+  // Read-only probes, using the existing provider request budget. Never replay
+  // user work to establish readiness, and never infer deletion from this failure.
+  const command = await provider.runUtilityCommand(id, {
+    operation: "sandbox.readiness", command: ":", cwd: "/",
+    timeoutMs: DAYTONA_REQUEST_TIMEOUT_MS,
+  });
+  if (command.exitCode !== 0 || command.timedOut) throw new Error("terminal_runner_not_ready");
+  await provider.readFile(id, "/etc/hostname");
 }
 
 export function terminalShellQuote(value: string): string {

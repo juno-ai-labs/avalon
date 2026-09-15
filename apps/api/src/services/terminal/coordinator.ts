@@ -12,6 +12,7 @@ import {
   deleteTerminalSandbox,
   stopTerminalSandbox,
   isTerminalSandboxLost,
+  assertTerminalSandboxReady,
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
@@ -241,6 +242,7 @@ export class TerminalSandboxCoordinator {
     // provider error one branch earlier than the recovery below, and repeated
     // it on every later run. One read answers for all three.
     let observed = row.sandboxId ? await this.observeProviderSandbox(context, row) : null;
+    if (row.sandboxId && !observed) throw providerStateError("unknown");
     if (row.sandboxId && isTerminalSandboxLost(observed)) {
       // A replacement carries this run's authority and policy revision, and
       // bumps the generation — which is everything the two steps below would
@@ -290,6 +292,17 @@ export class TerminalSandboxCoordinator {
       }
     }
 
+    try {
+      await assertTerminalSandboxReady(this.provider, row.sandboxId!);
+    } catch {
+      // Metadata and runner availability are separate facts. A subsequent
+      // acquisition probes again even when metadata still reports running.
+      throw new TerminalToolError(
+        "sandbox_unavailable",
+        "The Terminal sandbox is retained, but its command or file service is not ready. Retry the tool.",
+        { reason: "Retry when Daytona can serve both commands and files." },
+      );
+    }
     const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
     if (currentPolicy.verificationState !== "verified" || currentPolicy.revision !== policy.revision) {
       if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
@@ -705,7 +718,8 @@ export class TerminalSandboxCoordinator {
       action: "start_fresh",
     });
     const observed = observation ?? await this.observeProviderSandbox(context, row);
-    if (!observed || isTerminalSandboxLost(observed)) return replaceLost();
+    if (!observed) throw providerStateError("unknown");
+    if (isTerminalSandboxLost(observed)) return replaceLost();
     if (observed.state === "running") {
       if (row.lifecycleState === "running") {
         await this.refreshDeadlines(context, row, now);
@@ -749,10 +763,10 @@ export class TerminalSandboxCoordinator {
   }
 
   /**
-   * What the provider says this sandbox is, or `null` when it no longer has one.
+   * What the provider reports, or `null` when its metadata lookup returns 404.
    *
    * A provider that cannot be reached is not a lost sandbox and must not be
-   * treated as one: the caller replaces what this reports absent.
+   * treated as one. Unexpected absence preserves the binding for reconciliation.
    */
   private async observeProviderSandbox(
     context: HarnessToolContext,

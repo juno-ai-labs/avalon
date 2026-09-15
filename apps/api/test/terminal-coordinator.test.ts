@@ -331,7 +331,7 @@ describe("Terminal sandbox coordinator", () => {
       .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
   });
 
-  it("replaces a sandbox the provider no longer has instead of failing every later run", async () => {
+  it("preserves an unexpected metadata 404 and restores the same identity when it reappears", async () => {
     const { objectStore, env, provider, clock, advance } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider,
@@ -350,18 +350,16 @@ describe("Terminal sandbox coordinator", () => {
     vi.mocked(provider.getSandbox).mockRejectedValue(missing);
     advance(70);
 
-    const acquired = await coordinator.acquire(context());
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
 
-    expect(acquired).toMatchObject({ providerSandboxId: "sandbox-2", generation: 2, state: "running" });
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
-    expect(acquisitionObserved).toHaveBeenLastCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ action: "start_fresh", localFilesRetained: false }),
-    );
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-2" });
+    observeProviderState(provider, "sandbox-1", "archived");
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
   it("waits out a sandbox mid-transition instead of discarding its files", async () => {
@@ -385,7 +383,7 @@ describe("Terminal sandbox coordinator", () => {
     )).toEqual({ sandbox_id: "sandbox-1" });
   });
 
-  it("replaces a lost sandbox before running the provider mutations its row would order", async () => {
+  it("preserves missing metadata before applying a changed network policy", async () => {
     const { objectStore, env, provider, clock, advance } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
@@ -405,10 +403,39 @@ describe("Terminal sandbox coordinator", () => {
     advance(20);
 
     await expect(coordinator.acquire(context()))
-      .resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2, state: "running" });
+      .rejects.toMatchObject({ code: "sandbox_unavailable" });
     expect(provider.stopSandbox).not.toHaveBeenCalled();
     expect(provider.updateNetworkPolicy).not.toHaveBeenCalled();
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it.each([400, 404])("keeps a restored sandbox unavailable until file readiness succeeds after HTTP %s", async (status) => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    observeProviderState(provider, "sandbox-1", "archived");
+    vi.mocked(provider.readFile).mockRejectedValueOnce(Object.assign(new Error("runner unavailable"), { status }));
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-1");
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+    observeProviderState(provider, "sandbox-1", "running");
+    await expect(coordinator.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.readFile).toHaveBeenLastCalledWith("sandbox-1", "/etc/hostname");
+    expect(provider.startSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("rejects acquisition when metadata is running but the command probe fails", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not ready" });
+    await expect(coordinator.acquire(context())).rejects.toMatchObject({ code: "sandbox_unavailable" });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
   it("keeps a sandbox the provider still holds when one start attempt fails", async () => {
