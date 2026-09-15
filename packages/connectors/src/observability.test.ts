@@ -42,6 +42,11 @@ describe("connector observability", () => {
     const code = connectorObservationErrorCode(rejection.error);
     expect(code).not.toBe("unexpected_error");
     expect(code).toContain("summary.topics_discussed.0");
+    // Not `response_invalid`. This classifies every adapter operation, and
+    // `executeTool` parses the model's own arguments through the same `.parse`,
+    // so naming the provider would pin a model's malformed input on it.
+    expect(code).not.toContain("response");
+    expect(code).toContain("schema_invalid");
   });
 
   it("never logs a health-check message, which an adapter may fill from a provider's own error", async () => {

@@ -35,8 +35,16 @@ export const DIAGNOSTIC_CODE_MAX_LENGTH = 120;
 /** How many issues a description names before it stops. */
 const REPORTED_ISSUES = 3;
 
-/** The whole value, when the rejection is about its shape rather than a field. */
-const ROOT_PATH = "_root_";
+/**
+ * The whole value, when the rejection is about its shape rather than a field.
+ *
+ * Hyphenated so it cannot be confused with a field: a declared name is a
+ * JavaScript identifier and so never contains one, and a key that did would be
+ * withheld as `_key_` before it reached this comparison. A marker spelled
+ * `_root_` is itself a legal object key, and the point of the marker is to say
+ * that there was no key at all.
+ */
+const ROOT_PATH = "-root-";
 
 /**
  * A path segment withheld because it is not a declared field name.
