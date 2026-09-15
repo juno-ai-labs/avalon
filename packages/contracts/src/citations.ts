@@ -20,10 +20,11 @@
  * - **`embeddedResourceCitations`** — the image-syntax announcements the
  *   desktop auto-opens the inspector onto. Link-syntax chips, footnotes, and
  *   anything inside code are not announcements.
- * - **`rewriteCitationsAsPlainText`** — what Rally's two non-renderer delivery
- *   surfaces, outbound email and Slack, send instead. Both render agent Markdown
- *   with no renderer of ours in the path, so without this an announcement
- *   arrives as a broken image and a grounded answer as a page of `[^1]` markers.
+ * - **`rewriteCitationsAsPlainText`** and
+ *   **`rewriteMessageAsPlainText`** — what Rally's non-renderer
+ *   delivery surfaces send instead. Email, Slack, and Apple alerts have no
+ *   Rally renderer in the path, so without this an internal target arrives as
+ *   literal syntax.
  */
 
 import remarkGfm from "remark-gfm";
@@ -577,6 +578,88 @@ export function rewriteCitationsAsPlainText(markdown: string, options: CitationR
     return `${number}. ${source}${citation.text ? ` ${citation.text}` : ""}`;
   });
   return `${body}\n\n${plain ? "Sources" : "**Sources**"}\n\n${sources.join("\n")}`;
+}
+
+/**
+ * A message, written for a surface without Rally's renderer.
+ *
+ * Citation, person-mention, and general Markdown reduction are one outbound
+ * boundary: a client that cannot draw Rally's rich text must receive the words
+ * and useful structure, never the syntax behind them. Keeping the composition
+ * here prevents email, Slack, and push from disagreeing about the same stored
+ * message.
+ */
+export function rewriteMessageAsPlainText(
+  markdown: string,
+  options: CitationRewriteOptions = {},
+): string {
+  const references = rewriteCitationsAsPlainText(markdown, options).replace(
+    personMentionMarkdownPattern(),
+    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
+  );
+  return markdownFormattingAsPlainText(references);
+}
+
+/** Markdown structure reduced to readable plain text without flattening it. */
+function markdownFormattingAsPlainText(markdown: string): string {
+  const lines: string[] = [];
+  const source = markdown.replace(/\r\n/gu, "\n").split("\n");
+  const kinds = markdownLineKinds(source);
+  for (const [index, raw] of source.entries()) {
+    const kind = kinds[index]!;
+    if (kind === "fence-open" || kind === "fence-close") continue;
+    if (kind === "fence-content") {
+      lines.push(`    ${raw.trimEnd()}`);
+      continue;
+    }
+    let line = raw.trimEnd();
+    if (/^\s{0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
+      lines.push("-".repeat(24));
+      continue;
+    }
+    line = line.replace(/^\s{0,3}(?:>\s*)+/u, "");
+    const heading = /^(#{1,6})\s+(.*?)(?:\s+#+)?$/u.exec(line);
+    if (heading) {
+      lines.push(stripInlineMarkdown(heading[2]!));
+      continue;
+    }
+    const bullet = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/u.exec(line);
+    if (bullet) {
+      const indent = markdownIndentWidth(bullet[1]!) >= 2 ? "    " : "  ";
+      const marker = /\d/u.test(bullet[2]!) ? bullet[2]! : "-";
+      const item = bullet[3]!.replace(/^\[([ xX])\]\s*/u, (_match, checked: string) =>
+        (checked === " " ? "☐ " : "☑ "));
+      lines.push(`${indent}${marker} ${stripInlineMarkdown(item)}`);
+      continue;
+    }
+    lines.push(stripInlineMarkdown(line));
+  }
+  return lines.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
+}
+
+function markdownIndentWidth(value: string): number {
+  return [...value].reduce((width, character) => width + (character === "\t" ? 4 : 1), 0);
+}
+
+function stripInlineMarkdown(value: string): string {
+  const spans: string[] = [];
+  const parked = value.split(SPAN_PLACEHOLDER).join("").replace(INLINE_CODE_SPAN, (span) => {
+    spans.push(span.slice(1, -1));
+    return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
+  });
+  return parked
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) => alt || href)
+    .replace(/\[([^\][]+)\]\(([^)]*)\)/gu, "$1")
+    .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/giu, "$1")
+    .replace(/(\*\*|__)([^*_]+)\1/gu, "$2")
+    .replace(/(^|[\s(])([*_])([^\s*_][^*_]*[^\s*_]|[^\s*_])\2(?=[\s.,;:)!?]|$)/gu, "$1$3")
+    .replace(/~~([^~]+)~~/gu, "$1")
+    .replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, "$1")
+    .replace(
+      new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
+      (_match, index: string) => spans[Number(index)] ?? "",
+    )
+    .trimEnd();
 }
 
 /**
