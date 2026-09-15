@@ -751,14 +751,20 @@ later either names its tools with a recognized verb or declares its own prose.
 
 ### Child agents
 
-Inline child Bind execution inside a parent `SubstreamAgent` is disabled. It
-would create a second logical loop inside the parent's authority while hiding it
-behind the parent's identity, which breaks the one-loop-per-substream invariant.
-A future child must receive its own stable child substream and `SubstreamAgent`;
-the parent loop ID plus tool-call ID may address that distinct child, but may
-never identify a loop executing inside the parent object. Until that durable
-routing exists, `workstream_run_subagent` is absent from production tool
-surfaces.
+Background agents have their own stable child substream and `SubstreamAgent`.
+The `rally_agents` plugin starts them through durable admission and returns
+without waiting for their execution. Each uses the same Bind harness, inherited
+model and execution principal, explicit opening context, and independent tool
+discovery. Normal authorized writes and recursive delegation are available.
+The obsolete inline child integration and `workstream_run_subagent` surface
+are removed. [Agent communication](agent-communication.md) owns the tools,
+teams, reply references, Sidekick discovery and separate stop ownership.
+
+Bind remains the core owner of each feed's loop. Independent substreams provide
+responsiveness while preserving Bind's ordered input acceptance, tool receipts,
+suspension, checkpoint and completion protections. Rally routes and persists
+messages through existing harness ports. Missing loop capabilities belong in
+the Bind runtime library, not a parallel loop or a runtime patch in Rally.
 
 ### Scoped durable memory
 
@@ -1238,7 +1244,7 @@ configuration and isolated resource/tool state. Reexporting checkpoint functions
 alone left evals to reconstruct a different agent; a second loop was rejected.
 Canonical bootstrap no longer rejects complete history by an unrelated message/byte
 ceiling before Bind can apply its context preparation policy.
-### 2026-09-14 — Advisory hints for substantial tool work
+### 2026-09-14 — Independent background conversations keep Rally available
 
 Tool definitions can flag long-running work without making that flag a dispatch
 rule. Image generation and editing supply the initial hints. The common Bind
@@ -1246,6 +1252,14 @@ registration path carries the hint into loading results and provider-visible
 descriptions, so plugins do not each invent delegation prompts. This supports
 the uninterrupted-workstreams design while leaving execution, authorization,
 and model judgment unchanged; a worker must not be forced to delegate again.
+
+Background agents now use ordinary independent substreams, with team messaging
+and separate ownership for stops. The obsolete inline child integration is
+removed because it tied delegation to the parent's execution and imposed a
+different read-only, non-recursive harness. Sidekick drafting is restricted to
+its own authoring conversation; other agents contact it through messages.
+Responsiveness must preserve Bind's ownership of every feed's loop and its
+protocol, tool and completion protections; missing capabilities belong in Bind.
 
 ### 2026-09-14 — Explain a slow first response before timing it out
 

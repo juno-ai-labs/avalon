@@ -16,6 +16,9 @@ and UI work is tracked in the [implementation plan](PRDs/2026-09-14_uninterrupte
 | `apps/api/src/services/agent-communication-plugin.ts` | Model tools and coordination guidance. |
 | `apps/api/src/services/agent-message-content.ts` | Durable sender/reply content, rendered consistently on admission and context rebuild. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Independent execution, durable message admission and background stop gate. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Owned archive stops and aggregate background count from child projections. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Ephemeral count updates and clearing unavailable state. |
+| `apps/desktop/src/renderer/components/workstream-composer.tsx` | Ordinary message entry and a noninteractive background count. |
 | `apps/api/test-workers/agent-teams.test.ts` | Real workerd migration and RPC coverage. |
 | `apps/api/test-workers/automation-post-result.test.ts` | Real creation, admission, continuation, reply and Sidekick contact coverage. |
 
@@ -64,6 +67,21 @@ pending work when the loop is idle; a newly accepted continuation clears it.
 Replaying an old message does not clear a later stop. Recursive stops traverse
 ownership, while foreground stop remains local.
 
+Completed responses use existing external settlement to send an ordinary reply
+to the originating exchange. The reply identity is stable for that execution,
+so settlement recovery uses normal message replay. Stopped work does not publish
+partial text as success. An archived destination ends delivery with the existing
+refusal instead of retrying a permanently closed conversation. Deliberate
+completion without a response remains an implementation decision in the plan;
+empty-completion checks are not disabled.
+
+Background identity travels in the existing child common-state projection.
+The conversation parent counts running background substreams, including nested
+workers under that parent, and sends the count with control metadata. The
+desktop holds it only while that connection is available and renders a singular
+or plural line above the composer. It exposes no worker inspection or direct
+chat. Participant messages use the ordinary safe-boundary admission path.
+
 Sidekick discovery uses the existing authorized directory and ranks the current
 workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
 setup travels through messages. First authorized contact joins the authoring
@@ -91,6 +109,14 @@ check execution and Sidekick domain authority before adding contacts. Membership
 grants no credentials, transcript access, resource access, or control over peers.
 SubstreamAgent owns content and execution. Conversation parents retain archive
 and viewer authority; SidekickDO owns setup, definitions, and schedules.
+
+Bind remains the core owner of the model/tool loop inside every conversation.
+SubstreamAgent supplies durable admission, leases, and persistence through the
+existing harness ports. The background stop timestamp only holds future
+execution admission: an active lease still recovers and settles through Bind's
+existing fenced stop path. Messaging and responsiveness must preserve protocol
+ordering, tool receipts, suspensions, checkpoints, and completion checks. Add a
+missing loop capability to Bind itself rather than bypassing it in Rally.
 
 ## Failure modes and limits
 

@@ -103,7 +103,9 @@ const DEFINITION: AutomationDraft = {
  * A run that holds the tool calls it once with the result and then ends; the
  * room's own loop, which does not hold it, acknowledges what it was woken with.
  */
-const provider = useOpenRouterDouble((call) => {
+let heldBackgroundModel: Promise<void> | null = null;
+const provider = useOpenRouterDouble(async (call) => {
+  if (heldBackgroundModel && JSON.stringify(call.messages).includes("HOLD_BACKGROUND")) await heldBackgroundModel;
   const tool = call.toolNames.find((name) => name.endsWith("sidekick_post_result"));
   const toolAnswered = call.messages.some((message) => message.role === "tool");
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { text: RESULT_TEXT } } };
@@ -282,6 +284,7 @@ async function activationTurns(): Promise<{ client_message_id: string }[]> {
 }
 
 beforeEach(async () => {
+  heldBackgroundModel = null;
   ordinal += 1;
   const suffix = String(ordinal).padStart(4, "0");
   ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}0000ad11`);
@@ -294,6 +297,102 @@ beforeEach(async () => {
 });
 
 describe("sidekick_post_result", () => {
+  it("lets Bind settle an owned stop after the in-flight model step returns", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    try {
+      const started = await service.start({ name: "Researcher", description: "Finish one model step",
+        message: "HOLD_BACKGROUND: compare the alternatives", attachmentIds: [] }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+      });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")),
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      await service.stop(started.agentId);
+      const active = await runInDurableObject(child, (_instance, state) => state.storage.sql.exec<RunRow>(
+        "SELECT run_id, status, error_json, terminalized_at FROM runs ORDER BY created_at, run_id",
+      ).toArray());
+      expect(active).toMatchObject([{ status: "running", terminalized_at: null }]);
+      release();
+      expect(await settledRun(child)).toMatchObject([{ status: "cancelled" }]);
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+      expect(provider.calls.filter((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND"))).toHaveLength(1);
+    } finally {
+      release();
+      heldBackgroundModel = null;
+    }
+  });
+
+  it("answers a participant while a worker is blocked and publishes only its running count", async () => {
+    let release = () => {};
+    heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    let socket: WebSocket | undefined;
+    try {
+      const started = await service.start({ name: "Slow researcher", description: "Research in the background",
+        message: "HOLD_BACKGROUND: research the alternatives", attachmentIds: [] }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+        executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+      });
+      const address = agentAddressForId(started.agentId);
+      const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+      ));
+      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("HOLD_BACKGROUND")),
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      const foreground = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "Rally, are you still available?", clientMessageId: crypto.randomUUID(),
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(foreground.status).toBe(200);
+      expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
+      await deliverChildEffects(TEST_ENV, roomConversation());
+      await deliverChildEffects(TEST_ENV, child);
+      const response = await roomParent().fetch("https://workstream.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": ROOM_ID,
+        "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      } });
+      expect(response.status).toBe(101);
+      socket = response.webSocket!;
+      socket.accept();
+      const metadata = new Promise<MessageEvent>((resolve) => socket!.addEventListener("message", resolve, { once: true }));
+      socket.send(JSON.stringify({ type: "subscribe" }));
+      const frame = JSON.parse(String((await metadata).data));
+      expect(frame.metadata.backgroundAgentCount).toBe(1);
+      expect(frame.metadata.privateChildren).toEqual([]);
+      release();
+      await settledRun(child);
+      let latestCount = 1;
+      socket.addEventListener("message", (event) => {
+        const update = JSON.parse(String(event.data));
+        if (update.type === "workstream_metadata") latestCount = update.metadata.backgroundAgentCount;
+      });
+      await deliverChildEffects(TEST_ENV, child);
+      await expect.poll(() => latestCount, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
+    } finally {
+      release();
+      heldBackgroundModel = null;
+      socket?.close();
+    }
+  });
+
   it("starts a hidden independent agent idempotently and lists its name and description", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({
       region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: ROOM_ID,
@@ -316,6 +415,8 @@ describe("sidekick_post_result", () => {
     const [run] = await settledRun(child);
     expect(run).toMatchObject({ status: "completed", error_json: null });
     expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(args.message))).toBe(true);
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes(started.agentId)
+      && JSON.stringify(call.messages).includes("Acknowledged.")), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await service.list()).toMatchObject({ agents: [{ agentId: started.agentId, name: args.name, description: args.description }] });
     expect(await child.agentRuntimeInfo()).toMatchObject({ background: true, executionPrincipal: input.executionPrincipal });
     expect(await roomParent().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
@@ -337,8 +438,8 @@ describe("sidekick_post_result", () => {
     const answer = "Static deployments cost less at this workload.";
     await new AgentCommunicationService(TEST_ENV, childInput).send({ messageId: childInput.agentExchange!.messageId,
       message: answer, attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
-    await settledRun(roomConversation());
-    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(answer))).toBe(true);
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes(answer)),
+      { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     const sidekicks = await service.sidekicks();
     expect(sidekicks.sidekicks[0]).toMatchObject({ sidekickId: AUTOMATION_ID, scope: "workstream", owningWorkstreamId: ROOM_ID });
     await service.send({ agentId: sidekicks.sidekicks[0]!.agentId, message: "Explain your current configuration.", attachmentIds: [] },
@@ -347,6 +448,24 @@ describe("sidekick_post_result", () => {
     await settledRun(authoring);
     expect((await service.list()).agents.some((agent) => agent.agentId === sidekicks.sidekicks[0]!.agentId)).toBe(true);
     expect((await workspaceStub().ownedAgentDescendants({ workspaceId: WORKSPACE_ID, agentId: service.senderId })).agentIds).not.toContain(sidekicks.sidekicks[0]!.agentId);
+    const nested = await new AgentCommunicationService(TEST_ENV, childInput).start({ name: "Nested researcher",
+      description: "Check one detail", message: "Check the cost assumption.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    const nestedAddress = agentAddressForId(nested.agentId);
+    const grandchild = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, nestedAddress.substreamId),
+    ));
+    await settledRun(grandchild);
+    await service.stop(started.agentId);
+    expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    expect(await authoring.agentRuntimeInfo()).toMatchObject({ background: false });
+    const archived = await post(roomConversation(), "/internal/product", { operation: "update", auth: AUTH, input: { archived: true } });
+    expect(archived.status).toBe(200);
+    await deliverEffectsToWorkspace(TEST_ENV, roomConversation());
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    await expect(service.send({ agentId: started.agentId, message: "Continue", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("archived");
+
 
   });
 

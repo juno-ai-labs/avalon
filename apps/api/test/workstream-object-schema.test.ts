@@ -74,6 +74,7 @@ const EXPECTED_TABLES = [
   "assistant_turn_reservations",
   "attachment_tool_receipts",
   "authorization_projection_outbox",
+  "background_agent",
   "bind_activation_inputs",
   "bind_loop_heads",
   "bind_loop_state_messages",

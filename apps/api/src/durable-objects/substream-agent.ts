@@ -1,6 +1,7 @@
 import { parseRpcInput } from "../lib/rpc-input";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
@@ -2011,16 +2012,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /** Ownership is resolved by the host's workspace team authority before this RPC. */
   async stopOwnedAgent() {
     await this.initialized;
-    this.state.storage.sql.exec("UPDATE background_agent SET stopped_at = COALESCE(stopped_at, ?) WHERE id = 1", Date.now());
-    const loop = this.loop.loop();
-    if (loop?.status === "executing" && loop.active_execution_id !== null
-      && loop.active_execution_epoch !== null && loop.lease_owner !== null) {
-      this.loop.requestStopInTransaction({
-        executionId: loop.active_execution_id,
-        executionEpoch: loop.active_execution_epoch, leaseOwner: loop.lease_owner,
-        expectedLoopRevision: loop.revision, reason: "stopped_by_parent", now: Date.now(),
-      });
-    }
+    this.state.storage.transactionSync(() => {
+      const now = Date.now();
+      // Hold future admissions; never terminate or settle an active Bind step
+      // here. Active execution observes the same fenced stop as foreground work.
+      this.state.storage.sql.exec("UPDATE background_agent SET stopped_at = COALESCE(stopped_at, ?) WHERE id = 1", now);
+      const loop = this.loop.loop();
+      if (loop?.status === "executing" && loop.active_execution_id !== null
+        && loop.active_execution_epoch !== null && loop.lease_owner !== null) {
+        this.loop.requestStopInTransaction({
+          executionId: loop.active_execution_id,
+          executionEpoch: loop.active_execution_epoch, leaseOwner: loop.lease_owner,
+          expectedLoopRevision: loop.revision, reason: "stopped_by_parent", now,
+        });
+      }
+    });
     return { stopped: true as const };
   }
 
@@ -3436,6 +3442,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       "SELECT stopped_at FROM background_agent WHERE id = 1",
     ).toArray()[0]?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
+    // A stopped agent can still recover its active lease to let Bind settle
+    // the stop and any tool receipts. Only a new execution is held here.
     if (backgroundStopped && loop.status !== "executing") return null;
     if (loop.status === "executing") {
       if (loop.lease_expires_at === null || loop.active_execution_id === null
@@ -3494,6 +3502,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         activityId: null,
         executionPrincipal: authorization.executionPrincipal,
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
+        backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -4669,6 +4678,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // cleanup may still run without a final turn, but no adapter may invent or
     // stream response prose that the canonical transcript does not contain.
     const text = canonicalExternalResultText(message);
+    if (input.agentExchange && (input.backgroundAgent
+      || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))) {
+      const response = outcome.status === "completed" || outcome.status === "needs_input" ? text
+        : outcome.status === "failed"
+          ? `The agent could not complete this execution (${outcome.error?.code ?? "agent_execution_failed"}).` : null;
+      if (response) {
+        try {
+          await new AgentCommunicationService(this.env, input).send({
+            messageId: input.agentExchange.messageId, message: response,
+            attachmentIds: message?.attachments.map((attachment) => attachment.id) ?? [],
+          }, {
+            workspaceId: input.workspaceId, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
+            toolCallId: `final:${input.harnessRunId}`, effectIntentId: `final:${input.harnessRunId}`,
+            executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+          });
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "workstream_archived") {
+            return "agent_reply_destination_archived";
+          }
+          throw error;
+        }
+      }
+    }
+
     if (input.digestDeliveryId) {
       await settleDigestRun(
         this.env,

@@ -12,6 +12,8 @@ Participants keep talking with Rally while substantial work runs in background s
 
 Teams supply a simple communication scope. Sidekicks participate through their own authoring substreams, where their setup tools live. The design reuses persistent substreams, existing execution behavior, and normal tool authorization rather than adding a task-management system.
 
+Bind remains the core owner of the agent loop in every message feed, including background substreams. Responsiveness comes from independent execution and supported input boundaries, while preserving Bind's ordering, checkpoint, tool-execution, suspension, and completion protections. If the design needs a new loop capability, change the Bind runtime library directly rather than bypassing it or building a competing loop in Rally.
+
 ## Motivation
 
 In the workstream interaction reported during this PRD’s creation, three participants were having a fluid conversation until Rally began a long-running task. Messages accumulated behind the execution, exposing queue defects. Repeated steering also felt wrong for ordinary human conversation.
