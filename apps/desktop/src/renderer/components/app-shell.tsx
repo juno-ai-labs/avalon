@@ -493,14 +493,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 // since taken over, has nothing left to say about that row.
                 if (error instanceof AccountSignInSupersededError || switchAttemptRef.current !== attempt) return false;
                 const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
-                const message = error instanceof Error ? error.message : '';
                 const activationFailure = workspaceActivationFailureCode(error);
                 setWorkspaceErrors((current) => ({
                   ...current,
                   [targetKey]: error instanceof AccountSignInFailedError
                     ? error.message
-                    : message === 'Finish or stop the recording before switching workspaces'
-                    ? message
                     : code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied'
                     ? 'You are no longer a member of this workspace'
                     : 'Rally could not open this workspace',

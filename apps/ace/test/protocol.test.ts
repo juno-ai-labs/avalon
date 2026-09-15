@@ -101,7 +101,6 @@ describe('Ace managed flag protocol', () => {
   it('keeps every application boolean explicit about its enabled state', () => {
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual([
       'suggested-work-enabled',
-      'suggested-work-enabled',
       'multiple-workspaces-enabled',
       'digests-enabled',
       'push-notifications-enabled',
@@ -175,11 +174,10 @@ describe('Ace managed model protocol', () => {
       { role: 'inline_child', key: 'agent-model-inline-child' },
       { role: 'workstream_description', key: 'agent-model-workstream-description' },
       { role: 'workstream_naming', key: 'agent-model-workstream-naming' },
-      { role: 'meeting_notes', key: 'agent-model-meeting-notes' },
       { role: 'work_opportunity_admission', key: 'agent-model-work-opportunity-admission' },
       { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
     ]);
-    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);

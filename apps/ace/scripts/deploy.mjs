@@ -133,6 +133,9 @@ function run(command, args, options = {}) {
 
 const audience = await ensureAccessApplication();
 await Promise.all([
+  retireFlag('meeting-recording-enabled'),
+  retireFlag('control-tower-refresh-seconds'),
+  retireFlag('agent-model-meeting-notes'),
   retireFlag('hypersight-enabled'),
   retireFlag('agent-model-block-dashboard'),
   retireFlag('automation-workspace-templates-enabled'),
