@@ -120,7 +120,7 @@ export class AgentCommunicationService {
     if (!owner.agentId) return;
     try {
       await this.deliver({ agentId: owner.agentId, message: `Agent failed due to ${reason}. Id: ${this.senderId}`, attachmentIds: [] },
-        await this.messageId({ effectIntentId: `failure:${this.input.harnessRunId}` }));
+        await this.messageId({ effectIntentId: `failure:${this.input.harnessRunId}` }), false);
     } catch (error) {
       // Archival closes admission; it must not prevent the failed run settling.
       if (error instanceof AgentCommunicationError && error.code === "workstream_archived") return;
@@ -128,7 +128,7 @@ export class AgentCommunicationService {
     }
   }
 
-  private async deliver(args: SendAgentMessageInput | ReplyToAgentMessageInput, messageId: string) {
+  private async deliver(args: SendAgentMessageInput | ReplyToAgentMessageInput, messageId: string, resumeStopped = true) {
     const route = await (await this.workspace()).resolveAgentMessage({
       workspaceId: this.input.workspaceId, messageId, senderAgentId: this.senderId,
       ...("agentId" in args ? { recipientAgentId: args.agentId, preferredTeamId: await this.team() }
@@ -136,6 +136,7 @@ export class AgentCommunicationService {
     });
     if (!route.ok) throw new AgentCommunicationError(route.code);
     const target = route.value;
+    if ("messageId" in args) await this.authorizeSidekick(target.recipientAgentId);
     const address = agentAddressForId(target.recipientAgentId);
     const parent = await conversationParentStub(this.env, { workspaceId: this.input.workspaceId, ...address });
     const authority = await parent.authority({ workspaceId: this.input.workspaceId, parentId: address.parentId });
@@ -146,7 +147,7 @@ export class AgentCommunicationService {
     const attachmentIds = await this.validateAttachments(args.attachmentIds);
     const result = await recipient.admitAgentMessage({ workspaceId: this.input.workspaceId,
       workstreamId: asWorkstreamId(address.parentId), messageId, clientMessageId: `agent-message:${messageId}`,
-      recipientAgentId: target.recipientAgentId, text: args.message, attachmentIds,
+      recipientAgentId: target.recipientAgentId, resumeStopped, text: args.message, attachmentIds,
       agentExchange: { teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId },
       executionPrincipal: runtime.executionPrincipal ?? this.input.executionPrincipal,
       origin: "agent_message", now: Date.now() });
@@ -157,12 +158,18 @@ export class AgentCommunicationService {
   private async contactSidekick(agentId: AgentId) {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
+    await this.authorizeSidekick(agentId);
+    await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId: await this.team(), agentId });
+  }
+
+  private async authorizeSidekick(agentId: AgentId) {
+    const address = agentAddressForId(agentId);
+    if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
     const parent = await conversationParentStub(this.env, { workspaceId: this.input.workspaceId, ...address });
     const access = await parent.authorizeViewer({ workspaceId: this.input.workspaceId, parentId: address.parentId,
       substreamId: address.substreamId, userId: this.input.executionPrincipal.userId });
     if (!access.authorized || access.archived) throw new AgentCommunicationError("sidekick_contact_forbidden");
-    await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId: await this.team(), agentId });
   }
 
   async sidekicks() {

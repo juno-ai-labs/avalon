@@ -555,6 +555,72 @@ describe("sidekick_post_result", () => {
     ).one().n)).toBe(status === "failed" ? 1 : 0);
   });
 
+  it("keeps a recursively stopped owner stopped when its child reports failure", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const owner = await service.start({ name: "Owner", description: "Coordinate work", message: "Finish locally.", attachmentIds: [] }, context);
+    const conversation = (agentId: typeof owner.agentId) => {
+      const address = agentAddressForId(agentId);
+      return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, address.parentId, address.substreamId)));
+    };
+    const ownerConversation = conversation(owner.agentId);
+    await settledRun(ownerConversation);
+    const readInput = (stub: ReturnType<typeof conversation>) => runInDurableObject(stub, (_instance, state) =>
+      WorkstreamWorkflowInputSchema.parse(JSON.parse(state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs ORDER BY created_at DESC LIMIT 1",
+      ).one().execution_context_json)));
+    const ownerService = new AgentCommunicationService(TEST_ENV, await readInput(ownerConversation));
+    const child = await ownerService.start({ name: "Child", description: "Do the work", message: "Finish locally.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    const childConversation = conversation(child.agentId);
+    await settledRun(childConversation);
+    await service.stop(owner.agentId);
+    await new AgentCommunicationService(TEST_ENV, await readInput(childConversation)).notifyFailure("provider_unavailable");
+    expect(await ownerConversation.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM runs",
+    ).one().n)).toBe(1);
+    expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
+    ).one().n)).toBe(1);
+    await service.send({ agentId: owner.agentId, message: "Continue your work.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    await settledRun(ownerConversation, 2);
+    expect(await ownerConversation.agentRuntimeInfo()).not.toMatchObject({ status: "stopped" });
+  });
+
+  it("reauthorizes a Sidekick reply after workstream access is revoked", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const created = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID,
+      authorUserId: "00000000-0000-7000-8000-00000000ad99", scope: "workstream", owningWorkstreamId: ROOM_ID });
+    const agentId = agentIdForAddress({ parentKind: "automation", parentId: created.automationId, substreamId: asSubstreamId("0") });
+    await service.send({ agentId, message: "EXPLICIT_REPLY: send back a question.", attachmentIds: [] }, context);
+    await settledRun(roomConversation());
+    const received = await runInDurableObject(roomConversation(), (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs LIMIT 1").one().execution_context_json,
+    )));
+    // Sidekick contact authority reads this current membership projection, not team membership.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE workspace_workstream_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
+    });
+    expect(await workspaceStub().workstreamParticipant({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID })).toEqual({ participant: false });
+    await expect(service.send({ messageId: received.agentExchange!.messageId, message: "Try another edit.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("Choose a Sidekick you can access");
+  });
+
   it("fences an owner before reading descendants during recursive stop", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
