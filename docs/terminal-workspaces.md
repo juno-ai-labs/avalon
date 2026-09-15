@@ -789,6 +789,8 @@ even when no lifecycle transition is due; webhooks add two GETs (routing then
 ordered readback). We accept this simple polling cost to recover missed events
 without introducing a routing index or a second state machine.
 
+Pull request: [#774](https://github.com/juno-ai-labs/avalon/pull/774).
+
 ### 2026-09-13 — Acquisition asks Daytona what the sandbox is, and replaces one it has lost
 
 **What changed:** `TerminalSandboxCoordinator.acquire` no longer branches on
