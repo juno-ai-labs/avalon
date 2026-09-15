@@ -547,10 +547,10 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
   "After submit_draft succeeds, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
-  "Ask which scope before you submit, because it cannot be changed afterwards:",
+  "This authoring conversation belongs to an existing Sidekick. Use the scope already selected for it. Do not ask participants to choose it again. Workstream ownership is fixed at creation. A personal or workspace draft can adopt an explicitly requested personal or workspace scope before first publication; a published scope cannot be changed afterwards.",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",
-  "and \"workstream\" belongs to this work stream — everyone in the room can manage it,",
+  "and \"workstream\" belongs to its owning work stream — everyone in that room can manage it,",
   "Rally posts its results here, and it outlives whoever asked for it.",
   "Nothing else is delivered for a Sidekick: if its result should reach an inbox, a channel, a DM, or a document,",
   "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
@@ -561,17 +561,10 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
 ].join(" ");
 
 /**
- * The drafting tools, as a plugin any work-stream agent can load.
- *
- * Deferred rather than preloaded: discovered through `list_plugins` and loaded
- * with `load_plugin`, the way `rally:terminal` is. Loading it starts,
- * authorizes and persists nothing — it puts the drafting tools in the catalog,
- * and the first thing that durably exists is the draft a person is asked to
- * accept, in the feed where the conversation happened.
- *
- * Withheld from an automation occurrence, and that is the host's call to make:
- * an occurrence that could draft automations from the email it just read is a
- * spam engine with a human approval step in front of it.
+ * Drafting tools for a Sidekick's own authoring conversation. The host controls
+ * eligibility and supplies the existing Sidekick identity. Loading tools does
+ * not create another Sidekick; a ready submission saves through normal domain
+ * validation. Occurrences and coordinating workstreams use their own surfaces.
  */
 export function createAutomationsPlugin(
   host: AutomationCreatorToolHost,
@@ -598,7 +591,7 @@ export function createAutomationsPlugin(
       "every week", "when this happens", "watch for", "remind",
     ],
     description:
-      "Create or teach a Sidekick to provide reusable knowledge or carry out delegated work, for a person, the workspace, or this work stream.",
+      "Configure this Sidekick to provide reusable knowledge or carry out delegated work within its existing scope.",
     systemMessage,
     tools: createAutomationCreatorTools(host),
     preload: false,

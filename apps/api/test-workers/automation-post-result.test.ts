@@ -119,6 +119,23 @@ const provider = useOpenRouterDouble(async (call) => {
     if (!load) throw new Error("agent_plugin_loader_missing");
     return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
   }
+  if (JSON.stringify(latestInput?.content ?? "").includes("CONFIGURE_SIDEKICK")) {
+    const current = call.messages.slice(call.messages.lastIndexOf(latestInput!));
+    const results = current.filter((message) => message.role === "tool")
+      .map((message) => typeof message.content === "string" ? message.content : JSON.stringify(message.content)).join("\n");
+    if (/"accepted"\s*:\s*true/u.test(results)) return { say: "The Sidekick configuration is saved." };
+    if (!results.includes("currentDefinition")) {
+      const list = call.toolNames.find((name) => name.endsWith("sidekicks_list"));
+      if (!list) throw new Error("sidekick_directory_tool_missing");
+      return { callTool: { name: list, arguments: {} } };
+    }
+    const submit = call.toolNames.find((name) => name.endsWith("submit_draft"));
+    if (!submit) throw new Error("sidekick_authoring_tool_missing");
+    const revised = JSON.stringify(latestInput?.content ?? "").includes("REVISE");
+    return { callTool: { name: submit, arguments: { ...DEFINITION, sidekickId: null,
+      name: revised ? "Revised research guide" : "Research guide", triggers: [],
+      instructions: revised ? "Compare the options and include their costs." : "Compare the available options." } } };
+  }
   if (JSON.stringify(latestInput?.content ?? "").includes("NO_REPLY_REQUIRED")) {
     const endTurn = call.toolNames.find((name) => name.endsWith("end_turn"));
     if (endTurn) return { callTool: { name: endTurn, arguments: {}, text: "No further response is needed." } };
@@ -356,6 +373,44 @@ describe("sidekick_post_result", () => {
       release();
       heldBackgroundModel = null;
     }
+  });
+
+  it("configures and revises a workstream Sidekick through its own Bind tools and replies", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const created = await service.createSidekick("workstream", context);
+    const sidekickId = asAutomationId(created.sidekickId);
+    const sidekick = env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
+      automationDOName("global", WORKSPACE_ID, sidekickId),
+    ));
+    const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, sidekickId),
+    ));
+    await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK: save this research guide.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledRun(authoring))[0]).toMatchObject({ status: "completed", error_json: null });
+    const detail = () => sidekick.readDetail({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: manager() });
+    expect(await detail()).toMatchObject({ name: "Research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    await deliverParentEffects(TEST_ENV, sidekick);
+    const discovered = await service.sidekicks();
+    expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId)).toMatchObject({ agentId: created.agentId, scope: "workstream" });
+    await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
+    expect(await detail()).toMatchObject({ name: "Revised research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
+    await deliverParentEffects(TEST_ENV, sidekick);
+    expect((await service.sidekicks()).sidekicks.map((item) => item.sidekickId).sort())
+      .toEqual(discovered.sidekicks.map((item) => item.sidekickId).sort());
+    const setupCall = provider.calls.find((call) => call.toolNames.some((name) => name.endsWith("submit_draft")));
+    expect(JSON.stringify(setupCall?.messages.filter((message) => message.role === "system")))
+      .toContain(`This conversation configures Sidekick ${sidekickId}`);
   });
 
   it("ends through Bind without an automatic reply and continues on a later message", async () => {

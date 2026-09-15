@@ -3056,7 +3056,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "submit_draft",
-    description: "Save the best current Sidekick draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
+    description: "Save the best current Sidekick draft. Set ready=false when blocking input remains, then ask for the missing information in the conversation. For an agent exchange, reply to the coordinating agent. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
     capability: "rally.sidekick.submit",
     mode: "write",
     idempotency: "record_before_execute",

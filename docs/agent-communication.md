@@ -95,6 +95,9 @@ workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
 setup travels through messages. First authorized contact joins the authoring
 conversation to the team. Drafting tools are available only on a Sidekick's main
 authoring conversation, not ordinary workstreams, workers or scheduled runs.
+Authoring guidance identifies its own Sidekick, reads the current definition,
+and preserves the scope already selected under existing publication rules.
+Questions from agent exchanges use replies instead of participant forms.
 
 
 ## Invariants
