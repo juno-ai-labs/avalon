@@ -45,6 +45,7 @@ import {
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
@@ -297,6 +298,72 @@ beforeEach(async () => {
 });
 
 describe("sidekick_post_result", () => {
+  it("forwards an existing attachment into the worker's canonical message and reply", async () => {
+    const resourceId = crypto.randomUUID();
+    const imageId = crypto.randomUUID();
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const imageRef = `global/${WORKSPACE_ID}/agent-test/${imageId}.png`;
+    await env.PAYLOADS.put(imageRef, Uint8Array.from(atob(png), (character) => character.charCodeAt(0)));
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'avalon_upload', 'research.txt', 'text/plain',
+          NULL, '{"size":12}', ?, 'attached', ?, ?)`,
+        resourceId, WORKSPACE_ID, AUTHOR_ID, NOW, NOW);
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at,
+         model_content_ref, model_mime_type, model_content_status)
+        VALUES (?, ?, 'document', 'avalon_upload', 'diagram.png', 'image/png', ?,
+          '{"size":68}', ?, 'attached', ?, ?, ?, 'image/png', 'ready')`,
+        imageId, WORKSPACE_ID, imageRef, AUTHOR_ID, NOW, NOW, imageRef);
+    });
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: imageId, attachedByUserId: AUTHOR_ID });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Attachment researcher", description: "Read the supplied resource",
+      message: "Read the attached research.", attachmentIds: [resourceId, imageId] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => {
+      expect(state.storage.sql.exec<{ resource_id: string }>(
+        "SELECT resource_id FROM participant_transcript_attachments ORDER BY position",
+      ).toArray()).toEqual([{ resource_id: resourceId }, { resource_id: imageId }]);
+      return WorkstreamWorkflowInputSchema.parse(JSON.parse(state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id,
+      ).one().execution_context_json));
+    });
+    const reply = await new AgentCommunicationService(TEST_ENV, childInput).send({
+      messageId: childInput.agentExchange!.messageId, message: "Here is the research.", attachmentIds: [resourceId, imageId],
+    }, { ...context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => runInDurableObject(roomConversation(), (_instance, state) =>
+      state.storage.sql.exec<{ resource_id: string }>(
+        "SELECT resource_id FROM participant_transcript_attachments WHERE turn_id = ? ORDER BY position", reply.messageId,
+      ).toArray()), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([{ resource_id: resourceId }, { resource_id: imageId }]);
+    expect(provider.calls.some((call) => JSON.stringify(call.messages).includes(resourceId))).toBe(true);
+    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
+      && JSON.stringify(message.content).includes("Read the attached research.")
+      && JSON.stringify(message.content).includes("ATTACHMENT MANIFEST")
+      && JSON.stringify(message.content).includes("research.txt")))).toBe(true);
+    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
+      && JSON.stringify(message.content).includes(`data:image/png;base64,${png}`)))).toBe(true);
+    await expect(service.send({ agentId: started.agentId, message: "Read this too", attachmentIds: [crypto.randomUUID()] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toThrow("Attach the resource");
+  });
+
   it("lets Bind settle an owned stop after the in-flight model step returns", async () => {
     let release = () => {};
     heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
