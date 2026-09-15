@@ -478,11 +478,26 @@ describe("Daytona Terminal provider", () => {
     expect(sandbox.delete).toHaveBeenCalledWith(60, true);
   });
 
-  it("reports a sandbox mid-transition as startable, never as lost", async () => {
-    // Acquisition replaces a sandbox this mapping calls `expired` or `failed`,
-    // and replacement discards its files. Daytona publishes twenty-two states
-    // to this union's seven, and it auto-stops and auto-archives on its own
-    // schedule — so a tool call landing inside one of those transitions must
+  it("exposes recovery metadata and invokes Daytona recovery on the same sandbox", async () => {
+    const sandbox = {
+      id: "sandbox-1", name: "retained", state: "error", recoverable: true,
+      recover: vi.fn(async () => { sandbox.state = "started"; }),
+    };
+    const create = vi.fn();
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create, get: vi.fn(async () => sandbox) }));
+    await expect(provider.getSandbox("sandbox-1")).resolves.toMatchObject({ state: "failed", recoverable: true });
+    await provider.recoverSandbox("sandbox-1");
+    expect(sandbox.recover).toHaveBeenCalledWith(60);
+    await expect(provider.getSandbox("sandbox-1")).resolves.toMatchObject({ id: "sandbox-1", state: "running" });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("reports transitional states without turning them into failure verdicts", async () => {
+    // Daytona auto-stops and auto-archives on its own schedule.
+    // A tool call landing inside one of those transitions must
     // not read as a verdict that the workspace is gone.
     const observed = [
       ["stopping", "starting"],
@@ -495,7 +510,7 @@ describe("Daytona Terminal provider", () => {
       ["pulling_snapshot", "starting"],
       ["resuming", "starting"],
       ["paused", "stopped"],
-      // Verdicts, and only these two.
+      // Failure state is separate from the recovery verdict.
       ["error", "failed"],
       ["build_failed", "failed"],
       ["destroyed", "expired"],
