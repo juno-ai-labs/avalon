@@ -781,13 +781,14 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('paints the whole sidebar from the subscribe answer, without asking for it', async () => {
+    vi.useFakeTimers();
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
-    render(
+    const owner = render(
       <QueryClientProvider client={queryClient}>
         <WorkspaceSocketProvider
           api={{ getWorkspaceSocketTicket }}
@@ -899,6 +900,22 @@ describe('WorkspaceSocketProvider', () => {
     // exists to remove.
     const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
+    // No screen observes these entries. The workspace subscription owns the
+    // directory and its ordering ledgers even when their screens are absent.
+    const keys = ['workstreams', 'automations', 'notes', 'feature-flags',
+      'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
+    const snapshot = keys.map((key) => queryClient.getQueryData(key));
+    expect(snapshot.every((value) => value !== undefined)).toBe(true);
+    socket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(snapshot);
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+    owner.unmount();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(keys.map(() => undefined));
+    queryClient.clear();
   });
 
   it('does not ask for the directory it was just handed', async () => {
