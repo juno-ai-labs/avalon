@@ -188,6 +188,12 @@ importers:
       '@types/upng-js':
         specifier: 2.1.5
         version: 2.1.5
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
