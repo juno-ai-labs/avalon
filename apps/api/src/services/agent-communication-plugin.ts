@@ -6,7 +6,7 @@ import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 import type { AgentCommunicationService } from "./agent-communication-service";
 
-export function createAgentCommunicationPlugin(service: AgentCommunicationService): HarnessPlugin {
+export function createAgentCommunicationPlugin(service: AgentCommunicationService, roleGuidance: string): HarnessPlugin {
   function tool<T>(name: string, description: string, schema: z.ZodType<T>,
     execute: (input: T, context: Parameters<HarnessTool["execute"]>[1]) => Promise<unknown>): HarnessTool {
     return {
@@ -26,7 +26,7 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationServic
     canonicalId: "avalon:agents", modelId: "rally_agents", shortWireName: "agents",
     displayName: "Background agents", description: "Delegate work to background agents and communicate with teammates.",
     searchAliases: ["background", "delegate", "teammate", "send message", "reply", "subagent"],
-    systemMessage: "Keep the participant conversation available. Delegate substantial research, blocking tools, and independent work, then return to the conversation. Give explicit context and attachments: a new agent does not receive your transcript. Agents use the same model and eligible tools and may delegate recursively when useful. Send messages to coordinate and ask for status. A sent message wakes an idle agent and reaches a running agent at a safe boundary. Stop only agents you own. Explicitly send final results, questions, and updates to the intended agent; standard assistant messages stay in this conversation and are never forwarded. Finish with an ordinary final response when done. Names and descriptions identify teammates without inspecting their transcripts. Before Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream. Reuse it by messaging its authoring agent. Otherwise create a workstream-owned Sidekick and send its authoring agent setup instructions. Use personal or workspace scope when explicitly requested or clearly appropriate. The Sidekick drafts its own configuration and responds with questions or the saved result.",
+    systemMessage: `${roleGuidance} Give explicit context and attachments: a new agent does not receive your transcript. Agents use the same model and eligible tools and may delegate recursively when useful. Send messages to coordinate and ask for status. A sent message wakes an idle agent and reaches a running agent at a safe boundary. Stop only agents you own. Explicitly send final results, questions, and updates to the intended agent; standard assistant messages stay in this conversation and are never forwarded. Finish with an ordinary final response when done. Names and descriptions identify teammates without inspecting their transcripts. Before Sidekick setup, discover and prefer a suitable Sidekick owned by the current workstream. Reuse it by messaging its authoring agent. Otherwise create a workstream-owned Sidekick and send its authoring agent setup instructions. Use personal or workspace scope when explicitly requested or clearly appropriate. The Sidekick drafts its own configuration and responds with questions or the saved result.`,
     preload: false,
     tools: [
       tool("sidekicks_list", "Find accessible Sidekicks, with current-workstream Sidekicks first, and their authoring agent IDs.", z.strictObject({}), () => service.sidekicks()),

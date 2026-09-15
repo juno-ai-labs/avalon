@@ -133,7 +133,11 @@ Questions from agent exchanges use replies instead of participant forms.
 
 System prompts describe coordination behavior without naming tools. Exact tool
 names belong in tool definitions, so prompt guidance stays independent of the
-available tool inventory and wire names.
+available tool inventory and wire names. Background agents are explicitly told
+to execute their assignment directly and delegate further only when splitting
+work would materially help. Participant-responsiveness guidance belongs only to
+the foreground workstream role. The base prompt and loaded coordination plugin
+share the same role selection, including workers spawned by Sidekicks.
 
 These are internal host RPCs, not model-callable team-management tools. Callers
 check execution and Sidekick domain authority before adding contacts. Membership
