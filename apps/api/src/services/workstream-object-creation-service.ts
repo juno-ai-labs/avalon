@@ -227,7 +227,7 @@ export class WorkstreamObjectCreationService {
     conversation: PreparedConversation,
     options: Omit<CreateOptions, "initialization" | "seed" | "openingStructuredContent"> = {},
   ) {
-    return this.create({ ...input, openingMessage: "", attachmentIds: [] }, {
+    return this.create({ ...input, objective: input.objective ?? input.title, openingMessage: "", attachmentIds: [] }, {
       ...options, initialization: { kind: "history", conversation, ...(options.contentIdentityHash ? { identityHash: options.contentIdentityHash } : {}) },
     });
   }

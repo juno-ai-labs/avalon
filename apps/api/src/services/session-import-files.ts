@@ -1,7 +1,7 @@
 import type { ConversationFile, PreparedConversation, SessionImportPreview } from '@rally/contracts';
 import type { AuthContext, Env } from '../env';
 import { numericEnv } from '../env';
-import { sha256Hex } from '../lib/crypto';
+import { stableUuid } from '../lib/stable-uuid';
 import { ApiError } from '../lib/api-error';
 import { ResourceService } from './resource-service';
 
@@ -87,9 +87,8 @@ export async function prepareSessionImport(env: Env, auth: AuthContext, preview:
         missing.push(`Unavailable ${file.kind}: ${file.name} — ${file.source.kind === 'unavailable' ? file.source.reason : 'Read the conversation again to retrieve this file.'}`);
         continue;
       }
-      const identity = { operationId, sourceRole: message.role, fileIndex: `${messageIndex}:${fileIndex}` };
-      const hash = await sha256Hex(new TextEncoder().encode(JSON.stringify([auth.workspaceId, auth.userId, identity])));
-      const id = `${hash.slice(0,8)}-${hash.slice(8,12)}-7${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`;
+      const identity = { operationId, sourceRole: message.role, sourceKind: file.kind, fileIndex: `${messageIndex}:${fileIndex}` };
+      const id = await stableUuid(['session-import-file', auth.workspaceId, auth.userId, operationId, String(messageIndex), String(fileIndex)]);
       try {
         let bytes: Uint8Array<ArrayBuffer>;
         try {

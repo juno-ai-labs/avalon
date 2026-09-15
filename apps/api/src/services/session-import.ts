@@ -1,5 +1,6 @@
-import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, SubstreamContentSchema, type SubstreamContent, type ConversationFile } from "@rally/contracts";
+import { SessionImportPreviewSchema, type SessionImportPreviewRequestSchema, type SessionImportPreview, type SubstreamContent, type ConversationFile } from "@rally/contracts";
 import { z } from "zod";
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { ApiError } from "../lib/api-error";
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -206,13 +207,13 @@ export function parseSessionExport(provider: "chatgpt" | "claude", input: string
     }
     const data = object(value);
     const messages = provider === "chatgpt" ? chatGptMessages(value) : claudeMessages(value);
-    SubstreamContentSchema.parse({ messages });
     return SessionImportPreviewSchema.parse({
       title: text(data['title']) || text(data['snapshot_name']) || text(data['name']) || `Imported ${provider === "chatgpt" ? "ChatGPT" : "Claude"} conversation`,
       source: { provider, url: sourceUrl }, content: { messages },
     });
   } catch (error) {
-    const detail = error instanceof Error && !(error instanceof SyntaxError) && !(error instanceof z.ZodError) ? error.message : "Malformed conversation data";
+    const detail = error instanceof z.ZodError ? `Invalid conversation fields: ${describeZodIssues(error)}`
+      : error instanceof Error && !(error instanceof SyntaxError) ? error.message : "Malformed conversation data";
     throw new ApiError(422, "invalid_session_export", `${detail}. Import one conversation as JSON or a Claude Code JSONL export.`);
   }
 }
@@ -223,8 +224,14 @@ export async function previewSessionImport(input: z.infer<typeof SessionImportPr
   const endpoint = provider === "claude"
     ? `https://claude.ai/api/chat_snapshots/${url.pathname.split('/').at(-1)}?rendering_mode=messages&render_all_tools=true`
     : url.href;
-  const response = await fetcher(endpoint, { redirect: "manual" });
-  const body = await response.text();
+  let response: Response;
+  let body: string;
+  try {
+    response = await fetcher(endpoint, { redirect: "manual" });
+    body = await response.text();
+  } catch {
+    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Import its JSON export instead.");
+  }
   if (!response.ok || (provider === "claude" && body.trimStart().startsWith("<"))) {
     throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Import its JSON export instead.");
   }
