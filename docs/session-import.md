@@ -21,7 +21,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 ## How it works
 
 The plus menu offers **start new work stream** and **import from ChatGPT or
-Claude**. The dialog accepts a shared conversation URL and imports it in one action.
+Claude**. The dialog accepts a shared conversation URL; **Create a new work stream** imports it in one action.
 It does not display an export picker, editable title, or transcript preview.
 Available attachments and artifact files are resolved automatically; missing file
 references remain visible in the imported conversation. The source roles stay
