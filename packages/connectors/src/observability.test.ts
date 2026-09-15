@@ -1,5 +1,6 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   authorizedConnection,
   ConnectorError,
@@ -28,6 +29,54 @@ function connection() {
 }
 
 describe("connector observability", () => {
+  it("names the failing field when a provider's response does not match the adapter's schema", () => {
+    // The real failure this exists for: Fireflies answered `get_meeting_summary`
+    // with HTTP 200 and a body whose shape had drifted. A `ZodError` is not a
+    // `ConnectorError`, so it landed as `unexpected_error` — twice, identically,
+    // naming nothing. The Sidekick had no summary to write and sent no email.
+    const rejection = z.looseObject({
+      summary: z.looseObject({ topics_discussed: z.array(z.string()).nullish() }).nullish(),
+    }).safeParse({ summary: { topics_discussed: [{ name: "pricing" }] } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    const code = connectorObservationErrorCode(rejection.error);
+    expect(code).not.toBe("unexpected_error");
+    expect(code).toContain("summary.topics_discussed.0");
+    // Not `response_invalid`. This classifies every adapter operation, and
+    // `executeTool` parses the model's own arguments through the same `.parse`,
+    // so naming the provider would pin a model's malformed input on it.
+    expect(code).not.toContain("response");
+    expect(code).toContain("schema_invalid");
+  });
+
+  it("never logs a health-check message, which an adapter may fill from a provider's own error", async () => {
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      healthCheck: () => Promise.resolve({
+        ok: false,
+        // What `x.ts` does: return a caught provider error's own text, which is
+        // the provider's body and may carry anything it chose to put there.
+        message: "Upstream rejected token sk-live-4f9a for alex@juno-labs.com",
+        reasonCode: "provider_refused",
+      }),
+    }, observer);
+
+    await adapter.healthCheck(connection());
+
+    const recorded = JSON.stringify(observations);
+    expect(recorded).toContain("provider_refused");
+    expect(recorded).not.toContain("sk-live-4f9a");
+    expect(recorded).not.toContain("alex@juno-labs.com");
+  });
+
+  it("keeps its own vocabulary for the errors that already had one", () => {
+    expect(connectorObservationErrorCode(new ConnectorError("unauthorized", "no"))).toBe("unauthorized");
+    expect(connectorObservationErrorCode(new Error("something else"))).toBe("unexpected_error");
+  });
+
+
   it("logs provider request starts and terminal outcomes at useful levels without URL content", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
