@@ -267,7 +267,7 @@ describe("connector observability", () => {
     const degraded = instrumentConnectorAdapter({
       ...base,
       async healthCheck() {
-        return { ok: true, message: "usable", warning: "provider content omitted" };
+        return { ok: true, message: "usable", warning: "provider content omitted", reasonCode: "delivery_stopped" };
       },
     }, observer);
     const unhealthy = instrumentConnectorAdapter({
@@ -293,6 +293,9 @@ describe("connector observability", () => {
         operation: "health_check",
         outcome: "degraded",
         warning_present: true,
+        // The code crosses for a degraded result as it does for a failed one;
+        // the warning it explains is prose and stays out of the log.
+        reason_code: "delivery_stopped",
       }),
     ]);
     expect(observations).toContainEqual([

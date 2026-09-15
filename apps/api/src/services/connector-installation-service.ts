@@ -4,7 +4,7 @@ import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { uuidV7 } from "../lib/uuid-v7";
 import { workspaceDOName } from "../durable-objects/names";
 import { asWorkspaceId, ConnectorInstallationSchema, type ConnectorInstallation, type InstallationRegistration } from "@rally/contracts";
-import { type ConnectorConnectionContext } from "@rally/connectors";
+import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import { z } from "zod";
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -142,8 +142,18 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
       }
     } catch (error) {
       if (isRetirementRefusal(error)) throw error;
-      result = { ...result, ...(registration.action === "rotate" && writeDispatched ? { rotation: "unknown" as const } : {}), state: writeDispatched ? "unknown" : "failed",
-        error: !writeDispatched ? "Provider inspection failed. Check credentials and test again." : "The provider operation may have completed. Inspect the exact recorded webhook before retrying." };
+      // A create the provider answered with a 4xx was refused: nothing was
+      // registered, so there is nothing to inspect and Test may retry it. Only
+      // an outcome the provider did not answer — a timeout, a 5xx, a response
+      // that could not be read — is unknown, because a registration may exist
+      // that a blind retry would duplicate. `writeDispatched` is set on the
+      // line before `management.create`, so requiring it keeps the validation
+      // read that precedes the create out of this: a key refused there is a
+      // failed inspection, not a refused registration, and says so.
+      const refusal = registration.action === "create" && writeDispatched ? providerRefusal(error) : null;
+      result = { ...result, ...(registration.action === "rotate" && writeDispatched ? { rotation: "unknown" as const } : {}),
+        state: refusal || !writeDispatched ? "failed" : "unknown",
+        error: refusal ?? (!writeDispatched ? "Provider inspection failed. Check credentials and test again." : "The provider operation may have completed. Inspect the exact recorded webhook before retrying.") };
     }
     installation = await object.settleConnectorInstallationStep({ ...request, registration: result, ...(replacement ? { credentials: replacement } : {}) });
     await publishWorkspaceSync(localEnv, workspaceId, ["connector_connections"]);
@@ -156,3 +166,24 @@ export async function enqueueConnectorInstallation(env: Env, installation: Conne
 }
 
 export function installationView(value: unknown) { return ConnectorInstallationSchema.parse(value); }
+
+const PROVIDER_REFUSAL_STATUSES = new Set([400, 401, 403, 404, 422]);
+
+/**
+ * The text a refused create leaves on its registration, or null when the
+ * failure says nothing about whether the provider acted.
+ *
+ * `ConnectorError.details.status` is set only from a provider's own response,
+ * so one of these statuses is the provider declining the request before doing
+ * anything: a body its schema does not admit, a key without the permission, an
+ * API the workspace's plan does not include. The provider's sentence is kept,
+ * bounded: it is the one diagnosis an administrator can act on, and it is
+ * shown in Settings rather than written to a log.
+ */
+function providerRefusal(error: unknown): string | null {
+  if (!(error instanceof ConnectorError) || typeof error.details !== "object" || error.details === null) return null;
+  const status = Number((error.details as { status?: unknown }).status);
+  if (!PROVIDER_REFUSAL_STATUSES.has(status)) return null;
+  const detail = error.message.replace(/\s+/gu, " ").trim().slice(0, 200);
+  return `The provider refused the webhook registration (HTTP ${status}${detail ? `: ${detail}` : ""}). Fix the cause, then test again.`;
+}
