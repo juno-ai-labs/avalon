@@ -323,15 +323,27 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 
 ## Apple universal links
 
-Both Rally hosts serve `/.well-known/apple-app-site-association`, claiming only
-`/app/workspaces/*` and `/app/workstreams/*` for `7ZLT6A8W25.ai.rallywith.desktop`.
+Both Rally hosts serve `/.well-known/apple-app-site-association`, claiming
+`/app/workspaces/*` and `/app/workstreams/*` for
+`7ZLT6A8W25.ai.rallywith.desktop` and `7ZLT6A8W25.ai.rallywith.ios`.
 The main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
-uses existing scheme navigation. Legacy origins and other path families remain
+uses existing scheme navigation. The iPhone opens the same paths into the
+native client. Legacy origins and other path families remain
 in the browser. The site must deploy first; `scripts/check-apple-app-association.mjs`
 checks both hosts after site deployment and before desktop release. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-09-15 — Claim the iPhone on the same association file
+
+**What changed:** The Apple association file now lists `7ZLT6A8W25.ai.rallywith.ios` next to the Mac bundle, on the same work-stream paths.
+
+**Why:** The iOS client already claimed `applinks:` entitlements. Without the iPhone in the association file, those links stay in Safari. A second association document would have been two files for one path family.
+
+**Considered and rejected:** Dropping the iOS applinks entitlement until a later site deploy. The phone is shipping in the same change that needs the claim.
+
+**Consequences:** Site must deploy this file before a signed iPhone will accept HTTPS work-stream links. The live-host check runs after site deploy, not on pull-request CI.
 
 ### 2026-09-14 — Adapt HTTPS links into desktop navigation
 

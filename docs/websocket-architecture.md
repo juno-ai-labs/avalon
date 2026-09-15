@@ -13,6 +13,14 @@ substream `0` under the automation, dialled through the same broker and the
 same `/socket/conversations/:parentId/:substreamId` route, opened on demand
 by that page rather than proactively, and with no control socket beside it.
 
+The native iOS client is a fourth deployment surface on the same ticketed
+routes, not a mode of this Electron topology. It has no Node broker. Its retain
+set is the navigation stack — workspace, the parent on the stack, the visible
+feed, and Main of that parent — plus presence-free feeds for directory rows
+that stayed on screen for one second, documented in
+[`ios-client.md`](ios-client.md). It does not open the pin/recent/running swarm
+or keep sockets across suspend.
+
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
 short-lived ticket, subprotocol, and server admission contract;
@@ -42,6 +50,8 @@ protocol inside each Durable Object.
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket through the hibernation API. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
+| `apps/ios/Rally/Network/RallySocketPolicy.swift` | iOS retain set: navigation-shaped, not the desktop swarm. |
+| `apps/ios/Rally/Network/RallySocketPool.swift` | Opens and closes iOS `URLSessionWebSocketTask` owners to match that set. |
 
 ## Sidekick library synchronization
 
@@ -472,6 +482,66 @@ each initial connection, reconnect, wake, and delivered application frame still
 uses platform resources. The selection policy bounds recency to five unpinned
 rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
+
+## Changelog
+
+### 2026-09-14 — iOS retains a navigation-shaped set, not the desktop swarm
+
+**What changed:** The native iOS client now owns a retain set: one workspace
+socket, one control socket for the parent on the stack, the visible feed, and
+Main of that parent while a child or the substream list is showing, plus
+presence-free feeds for directory rows that stayed on screen for one second
+(the same delay as desktop hover). Child rows on the substream list warm as
+soon as they appear. Sidekick chats stay on-demand until their
+row warms. Tickets stay single-use; send reuses a live connection;
+foreground remints only dropped sockets in that set. Later directory pages
+are `list_workstreams` on the workspace socket; subscribe overlays page one
+instead of truncating a scrolled list. Every iOS live connection is one
+`RallyTicketedSocket`: the ticket is a subprotocol, the handshake Origin is
+`app://rallywithai`, `subscribe` waits for
+open, and a retain pass does not cancel that handshake. Directory pages and
+the conversation snapshot arrive on those sockets, not as REST boots. A
+dropped control stream without metadata still delivers an empty child list
+once. Older history is a fenced `load_transcript_range` (snapshot id, half-open
+sequence range, event waterline). The iOS feed asks only after the
+bottom-anchored list has settled and the reader is on the oldest edge. A ticket already minted for a feed that is
+still in the retain set is used, even when a later retain pass asked for
+presence.
+
+**Why:** Switching chats on a phone is popping and pushing the stack, not
+hovering a sidebar of pins. Copying Electron's pin/recent/running swarm would
+hold sockets `URLSessionWebSocketTask` cannot keep across suspend, for rows
+the phone does not show at once. Reminting on every send was spending a
+one-use ticket to re-handshake an open feed. Replacing the directory with
+subscribe's first page threw away rows already paged; a button to load older
+messages was a second paging control next to the terminal row. Applying the
+retain set once per directory-row disappear cancelled the control socket
+before metadata. Sending `subscribe` before the handshake completed dropped
+the frame, then marked the socket connected so the next retain pass skipped
+it, and the child list never left its wait. A REST work-stream list or Main
+boot next to the same subscribe payload is two producers for one field.
+`URLSession` omits `Origin` on the upgrade; without `app://rallywithai` the
+Worker refuses the handshake before it reads the ticket, and the directory
+never paints. A `load_transcript_range` that named only `beforeSequence`
+never matched the room's fenced request, so older history never arrived.
+Asking that range because the first layout reported offset 0, then scrolling
+to the newest row on every tail change, emptied the LazyVStack between jumps.
+Throwing away a ticket because a tap upgraded presence during mint made the
+first open a second handshake.
+
+**Considered and rejected:** Porting the five-minute retain TTL, the
+pin/recent/running selection, or a guessed extra-socket ceiling. The
+navigation stack plus the visible row already names the set. A defensive cap
+would be a number this change does not own. Also rejected: a REST directory
+page or Main transcript boot beside the same subscribe payload, including as
+a fallback when the handshake 403s for a missing Origin. Also rejected:
+dropping a minted conversation ticket because a later retain pass asked for
+presence on the same feed. Also rejected: paging older transcript from a
+LazyVStack index-0 sentinel on a bottom-anchored iOS feed.
+
+**Consequences:** Desktop pool policy is unchanged. An iOS change to "keep
+more feeds" has to go through the same proactive-coverage tests in this
+document: name the interaction, select from memory, no guessed swarm.
 
 ### 2026-09-10 — The feed hook paints from the local cache and treats a seed as no opening
 
