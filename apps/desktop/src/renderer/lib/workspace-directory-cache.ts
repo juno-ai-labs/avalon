@@ -2,7 +2,7 @@ import { NoteSummarySchema, ProjectDirectorySchema, type ProjectDirectory } from
 import { notifyManager, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
-import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY } from './sidebar-list-store';
 import type { AutomationSummary, NoteSummary, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
@@ -22,8 +22,6 @@ export interface CachedWorkspaceDirectory {
 }
 
 export const DIRECTORY_CACHE_KEY = 'directory';
-const PROJECTS_QUERY_KEY = ['projects'] as const;
-const INACTIVE_PROJECTS_QUERY_KEY = ['projects-inactive'] as const;
 
 const HARNESS_STATUSES = new Set(['scheduled', 'running', 'needs_input', 'completed', 'failed', 'stopped']);
 const SCOPES = new Set(['personal', 'workspace']);

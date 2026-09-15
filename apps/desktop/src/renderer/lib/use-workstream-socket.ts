@@ -21,6 +21,7 @@ import {
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { retainQueryData } from './retain-query-data';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
@@ -875,6 +876,10 @@ export function useWorkstreamSocket(
     const contextQueryKey = substreamInitialContextQueryKey(parentId, substreamId);
     const overlaysQueryKey = transcriptOverlaysQueryKey(parentId, substreamId);
     const feedSourceQueryKey = workstreamFeedSourceQueryKey(parentId, substreamId);
+    const releaseData = retainQueryData(queryClient, [
+      detailQueryKey, transcriptQueryKey, contextQueryKey, overlaysQueryKey, feedSourceQueryKey,
+      workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
+    ]);
     const localCacheKeys: ConversationCacheKeys = {
       detail: detailQueryKey,
       transcript: transcriptQueryKey,
@@ -2325,6 +2330,7 @@ export function useWorkstreamSocket(
     return () => {
       closedByEffect = true;
       localCacheMirror?.stop();
+      releaseData();
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
       markOpenedRef.current = () => undefined;
