@@ -568,19 +568,22 @@ const emailContentFields = {
 // A nested union keeps the tool's root an object for every provider. Both the
 // advertised schema and the executor use this definition: a second handwritten
 // schema previously accepted reply placeholders that execution then rejected.
+// Bind removes additionalProperties:false for xAI compatibility, so describe
+// the closed shapes as well. Execution stays strict: ignoring an unknown write
+// parameter (such as preview:true) could silently change what was requested.
 const EmailArgsSchema = z.strictObject({
   message: z.discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("new").describe("Start a new email conversation."),
       ...emailContentFields,
       subject: z.string().min(1).max(998).describe("The subject line for the new conversation, as plain text on one line."),
-    }),
+    }).describe("Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field."),
     z.strictObject({
       kind: z.literal("reply").describe("Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."),
       ...emailContentFields,
       messageId: z.string().min(1).describe("The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."),
-    }),
-  ]).describe("Choose kind new with a subject, or kind reply with an existing messageId. Supply the recipients and body in either case. Reply threading is resolved by Rally."),
+    }).describe("Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field."),
+  ]).describe("Choose kind new with a subject, or kind reply with an existing messageId. Supply the recipients and body in either case. Reply threading is resolved by Rally. Do not supply threadId, inReplyTo, or references, including empty or placeholder values. Supply only the keys listed for the chosen kind."),
 });
 
 export const googleTools: ToolDefinition[] = [
@@ -1167,6 +1170,11 @@ const EMAIL_HEADER_LINE_MAX_BYTES = 998;
 const EMAIL_HEADER_FOLD_TARGET_BYTES = 78;
 const EMAIL_MESSAGE_ID_MAX_BYTES = EMAIL_HEADER_LINE_MAX_BYTES - 1;
 const emailHeaderEncoder = new TextEncoder();
+// RFC 2047 §2, checked 2026-09-15: an encoded-word is at most 75 characters,
+// and a physical header line containing encoded-words is at most 76.
+// https://www.rfc-editor.org/rfc/rfc2047.html#section-2
+const EMAIL_ENCODED_WORD_MAX_LENGTH = 75;
+const EMAIL_ENCODED_HEADER_LINE_MAX_LENGTH = 76;
 
 const RfcMessageIdSchema = z.string().min(3).refine(
   (value) => !/[\r\n]/u.test(value) && /^<[^<>\s]+>$/u.test(value),
@@ -5368,7 +5376,7 @@ function serializeEmail(input: EmailToSerialize): string {
   const headers = [
     `To: ${input.to.join(", ")}`,
     ...(input.cc.length > 0 ? [`Cc: ${input.cc.join(", ")}`] : []),
-    `Subject: ${encodeHeader(input.subject)}`,
+    serializeSubjectHeader(input.subject),
     ...replyHeaders,
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
@@ -5377,10 +5385,37 @@ function serializeEmail(input: EmailToSerialize): string {
   return `${headers.join("\r\n")}\r\n\r\n${input.body}`;
 }
 
-function encodeHeader(value: string): string {
-  return /^[\x20-\x7E]*$/.test(value)
-    ? value.replace(/[\r\n]/g, " ")
-    : `=?UTF-8?B?${bytesToBase64(new TextEncoder().encode(value.replace(/[\r\n]/g, " ")))}?=`;
+function serializeSubjectHeader(value: string): string {
+  const subject = value.replace(/[\r\n]/gu, " ");
+  let prefix = "Subject: ";
+  if (/^[\x20-\x7E]*$/u.test(subject) && prefix.length + subject.length <= EMAIL_HEADER_FOLD_TARGET_BYTES) {
+    return prefix + subject;
+  }
+
+  // Encoding the whole long value also handles an unbroken ASCII word and
+  // preserves its original whitespace. Whitespace between adjacent encoded
+  // words is ignored by readers (RFC 2047 §6.2); it is only MIME folding.
+  const lines: string[] = [];
+  let chunk = "";
+  let chunkBytes = 0;
+  const chunkByteLimit = () => Math.floor((Math.min(
+    EMAIL_ENCODED_WORD_MAX_LENGTH,
+    EMAIL_ENCODED_HEADER_LINE_MAX_LENGTH - prefix.length,
+  ) - "=?UTF-8?B??=".length) / 4) * 3;
+  const flush = () => {
+    lines.push(`${prefix}=?UTF-8?B?${bytesToBase64(emailHeaderEncoder.encode(chunk))}?=`);
+    prefix = " ";
+    chunk = "";
+    chunkBytes = 0;
+  };
+  for (const character of subject) {
+    const bytes = emailHeaderEncoder.encode(character).byteLength;
+    if (chunkBytes + bytes > chunkByteLimit()) flush();
+    chunk += character;
+    chunkBytes += bytes;
+  }
+  flush();
+  return lines.join("\r\n");
 }
 
 function base64Url(value: string): string {
