@@ -216,7 +216,9 @@ jittered backoff. A failure in one does not delay the other's ticket request or
 handshake. Snapshot waterlines and replay rules decide whether a reconnected
 frame advances cached state; transport warmth is never treated as authority.
 
-Normal route changes do not destroy a retained owner. A full main-frame
+Normal route changes do not destroy a retained owner. Each socket owner also
+retains its query entries while mounted, independently of screen observers. The [local-cache contract](local-cache.md#a-live-subscription-owns-its-in-memory-state)
+owns those lifetimes and explicit eviction. A full main-frame
 navigation, reload, or window close calls `closeOwner` with the renderer's
 `webContents` ID and terminates every Node socket belonging to it. A renderer
 crash performs the same owner teardown. An ordinary socket close removes that

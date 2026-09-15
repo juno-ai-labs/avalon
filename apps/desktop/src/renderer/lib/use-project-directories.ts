@@ -1,8 +1,9 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { ProjectDirectory } from '@rally/contracts';
+import { PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY } from './sidebar-list-store';
 
 function useSocketOwnedProjectDirectory(
-  queryKey: readonly ['projects'] | readonly ['projects-inactive'],
+  queryKey: typeof PROJECTS_QUERY_KEY | typeof INACTIVE_PROJECTS_QUERY_KEY,
 ): UseQueryResult<ProjectDirectory> {
   return useQuery<ProjectDirectory>({
     queryKey,
@@ -20,7 +21,7 @@ export function useProjectDirectories(): {
   inactive: UseQueryResult<ProjectDirectory>;
 } {
   return {
-    active: useSocketOwnedProjectDirectory(['projects']),
-    inactive: useSocketOwnedProjectDirectory(['projects-inactive']),
+    active: useSocketOwnedProjectDirectory(PROJECTS_QUERY_KEY),
+    inactive: useSocketOwnedProjectDirectory(INACTIVE_PROJECTS_QUERY_KEY),
   };
 }

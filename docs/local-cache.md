@@ -20,6 +20,7 @@ socket hooks' first frame.
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/desktop/src/renderer/lib/retain-query-data.ts` | Producer-owned in-memory query retention: keeps pushed state resident for its socket owner's lifetime, without fetching or defeating explicit eviction. |
 | `apps/desktop/src/renderer/lib/indexeddb-store.ts` | `createIndexedDbStore`: the best-effort IndexedDB database with an epoch fence that this cache and the draft cache are both built on. The only file that opens IndexedDB. |
 | `apps/desktop/src/renderer/lib/local-cache.ts` | The `rally-local-cache` database on that store: rows keyed by `[scope, kind, key]`, the version stamp, `defineLocalCacheSlice`, `clearAllLocalCache`, `clearWorkspaceLocalCache`. |
 | `apps/desktop/src/renderer/lib/local-cache-mirror.ts` | `mirrorQueriesToLocalCache`: keep a slice equal to a family of query-cache entries, coalescing a burst of writes into one; `LOCAL_CACHE_WRITE_COALESCE_MS`. |
@@ -38,6 +39,47 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
 | `apps/desktop/src/renderer/screens/project-space.tsx` | Shows the card over a project painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
+
+## How it works
+
+### A live subscription owns its in-memory state
+
+A socket's state lives at least as long as the subscription that supplies it.
+Screens only read that state; navigating away does not make a retained
+subscription's state disposable. `retainQueryData` holds disabled query
+observers for the producer's entries, including entries first created after
+retention starts. It does not create empty entries, fetch, change values, or
+change their garbage-collection duration. On release, the ordinary cache
+collection rules resume. Multiple producers can hold the same entry.
+
+The workspace socket holds its directories, feature flags and work-stream
+ordering ledgers. The work-stream control socket holds its private-child
+roster and the version stored with it. Each conversation socket holds its
+detail, transcript, inherited context, streaming overlays, feed source and
+snapshot generation. These leases follow the socket-owning effects, including
+background retention and reconnects, rather than the visible route.
+
+The existing sidebar-list waterline ledger is the exception: its receiver pins
+it for the entire query-client lifetime, independently of the workspace socket.
+That older invariant protects all list writes through the receiver, including
+ones made without a mounted socket. New socket-owned entries use the lease;
+the sidebar ledger's explicit eviction still applies.
+
+`retainQueryData` holds in-memory entries. The adjacent
+`retainConversationParents` / `retainConversationChildren` calls instead prune
+the persisted cache to a keep-set; they do not supply these in-memory leases.
+
+Explicit removal still wins: the lease releases the removed entry without
+recreating it or restoring its old data. If the producer later writes a new
+entry under that key, the lease holds the replacement. This matters both for
+access revocation and for inherited context, which is removed while a new
+chunked snapshot is assembled. Owner cleanup releases every observer and its
+cache listener. A newly mounted socket obtains its initial snapshot through
+the existing subscribe protocol; returning to a retained socket reads the
+state that subscription kept resident.
+
+Disk persistence below is separate. It seeds a new subscription; it is not the
+recovery mechanism for an active subscription whose data was discarded.
 
 ### The store and its slices
 
@@ -253,6 +295,13 @@ Nothing else evicts, and nothing expires.
 
 ## Invariants
 
+- **Subscription state outlives its screens.** A retained socket also retains
+  the values and version markers it supplies. Break this and a quiet socket can
+  remain connected after its cache is collected: returning shows no children or
+  transcript until a later push or reload supplies another snapshot.
+- **Retention never overrides explicit eviction.** Removal releases the old
+  entry and restores nothing; otherwise lost access could leave private state
+  reachable. Recreated entries acquire a new hold, not the removed value.
 - **A seed never completes an opening.** `canonicalCachesAvailable()` is false
   while the feed source is `local_cache`. Break it and a socket that never
   answers is read as recovered from the seed, the deadline stops counting
@@ -297,7 +346,8 @@ Nothing else evicts, and nothing expires.
 
 ## Boundary
 
-This module owns the on-device store, its slices, the mirrors, the seed marker
+This module owns producer-held in-memory query retention, the on-device store,
+its slices, the mirrors, the seed marker
 and everything that keys on it, the connecting card, and the composer's send
 gate. It does not own:
 
@@ -362,6 +412,15 @@ lifetimes.
 
 ## Testing
 
+`retain-query-data.test.ts` exercises actual React Query collection with a fake
+clock: existing and future entries, multiple owners, no fetching, release,
+explicit removal, replacement and whole-cache clearing. The control-socket,
+conversation-socket and workspace-socket suites keep their real receivers and
+cache, double transport and time, and verify ten minutes without a screen or
+new snapshot followed by release. The control case also checks that a stale
+roster cannot overwrite the retained one. Real Electron acceptance creates a
+child, navigates away and back, and repeats after the ordinary collection window.
+
 `fake-indexeddb` backs the renderer's jsdom environment (`test/setup.ts`), the
 same way it backs the draft cache. Two traps, both already paid for once:
 
@@ -421,6 +480,37 @@ however many frames a run delivers, and a structured clone of an opening window
 is small. The cost that would grow is the persisted transcript, and
 `openingTranscriptSnapshot` is what keeps it from growing with a reader's
 scrolling.
+
+## Changelog
+
+### 2026-09-15 — Live socket owners retain the state they supply
+
+**What changed:** All three socket owners hold the query entries they supply
+until their effects end, through one shared retention primitive. Holds follow
+replacement entries and yield immediately to explicit removal.
+
+**Why:** A work stream's private-child list was observed only by its screen,
+while the socket pool could keep its control socket connected indefinitely.
+Five minutes off screen collected the list without disconnecting its producer;
+returning sent no subscribe and left the sidebar empty until another metadata
+push or Reload. The same ownership mismatch existed for background transcripts,
+workspace lists and their version markers.
+
+**Considered and rejected:** A longer or infinite child-list TTL only changes
+when the ownership mismatch surfaces or keeps every visited room forever.
+Refetching on every navigation duplicates a snapshot already supplied by a live
+subscription. Retention belongs to the producer, so the shared mechanism applies
+to each socket family rather than adding a special case to the child sidebar.
+
+**Consequences:** Warm subscriptions retain their product state as well as their
+transport. The warm set has no ceiling on pinned or running work streams, so
+those streams retain their full loaded transcript range and inherited context
+until the owner releases them. The persisted snapshot's range bound does not
+bound this in-memory state. Releasing the owner restores ordinary collection; access revocation,
+sign-out and snapshot-context removal still remove entries immediately. Adding
+a socket-owned entry requires adding it to that owner's retained family.
+
+PR: [#775](https://github.com/juno-ai-labs/avalon/pull/775).
 
 ### 2026-09-10 — A space, a stream, and a substream open from what the device last saw
 
