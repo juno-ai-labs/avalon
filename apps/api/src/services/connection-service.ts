@@ -335,14 +335,16 @@ async function attemptConnectorRepair(
     const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
     if (repair.repaired) return repair.message ?? "Repaired the connection";
     // A repair that could not complete has said why, and a connection whose
-    // delivery is still broken must not read the same as one just fixed — the
-    // reason reaches the Test result and the log the way a thrown one's does.
-    // A repair with nothing to say found nothing to repair.
+    // delivery is still broken must not read the same as one just fixed: the
+    // sentence reaches the Test result, which is written for a person. The log
+    // row says only that the repair was incomplete — a returned failure owes
+    // the log a code, and a repair result carries none, so the message, which
+    // an adapter may fill from a caught provider error, stays off the row. A
+    // repair with nothing to say found nothing to repair.
     if (!repair.message) return null;
     logWarn(env, "connector_repair_incomplete", {
       connection_id: identity.connectionId,
       connector_type: identity.connectorType,
-      reason: repair.message,
     });
     return repair.message;
   } catch (error) {

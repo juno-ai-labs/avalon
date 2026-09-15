@@ -602,20 +602,22 @@ describe("repairing a connection under test", () => {
       .resolves.toBeNull();
   });
 
-  it("reports a repair that could not complete, with the adapter's own reason", async () => {
+  it("reports a repair that could not complete to the Test result, and logs that it was incomplete without its message", async () => {
     // Granola's shared installation runner answers the Test button's repair
     // with `repaired: false` and a sentence saying what still needs attention.
     // That sentence used to be dropped on the floor — no log, and the Test
-    // result read the same as one where nothing needed repairing.
+    // result read the same as one where nothing needed repairing. The sentence
+    // is for the person; the row gets the event and never the message, which
+    // an adapter may fill from a caught provider error.
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const adapter = { repair: async () => ({ repaired: false, message: "Webhook repair needs attention; inspect installation details" }) };
+    const adapter = { repair: async () => ({ repaired: false, message: "Webhook repair needs attention; token sk-live-4f9a" }) };
     await expect(__connectionServiceTesting.attemptConnectorRepair({ LOG_LEVEL: "warn" } as never, adapter, connection, identity))
-      .resolves.toBe("Webhook repair needs attention; inspect installation details");
+      .resolves.toBe("Webhook repair needs attention; token sk-live-4f9a");
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
       event: "connector_repair_incomplete",
       connection_id: "connection",
-      reason: "Webhook repair needs attention; inspect installation details",
     }));
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("sk-live-4f9a");
     warning.mockRestore();
   });
 

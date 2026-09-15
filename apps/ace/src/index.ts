@@ -1,5 +1,6 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { DemoOperationStartRequestSchema, ProductFeatureFlagKeySchema, zodDiagnosticCode } from '@rally/contracts';
+import { DemoOperationStartRequestSchema, ProductFeatureFlagKeySchema } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { accessFailureMessage, readAccessConfiguration, verifyAccessRequest, type AccessPrincipal } from './access';

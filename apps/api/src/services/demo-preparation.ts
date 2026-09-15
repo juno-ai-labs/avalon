@@ -23,7 +23,8 @@
  * inside one, which is what lets the whole sequence be proved on real objects
  * without a Workflow binding. `docs/demo-workspaces.md` owns the feature.
  */
-import { DEMO_PREPARATION_PHASES, DemoOperationStatusSchema, asWorkspaceId, type DemoOperationPhaseStatus, type DemoOperationStatus, type DemoPreparationPhase, zodDiagnosticCode } from "@rally/contracts";
+import { DEMO_PREPARATION_PHASES, DemoOperationStatusSchema, asWorkspaceId, type DemoOperationPhaseStatus, type DemoOperationStatus, type DemoPreparationPhase } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import type { Env } from "../env";

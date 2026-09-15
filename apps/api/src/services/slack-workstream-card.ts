@@ -1,4 +1,4 @@
-import { codeShaped, describeZodIssues } from "@rally/contracts";
+import { codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { ConnectorError, slackApi } from "@rally/connectors";
 import { z } from "zod";
 

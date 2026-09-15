@@ -1,6 +1,7 @@
 import { personMentionMarkdownPattern, rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
-import { workstreamCanonicalUrl, codeShaped, describeZodIssues } from "@rally/contracts";
+import { workstreamCanonicalUrl } from "@rally/contracts";
+import { codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { nowIso } from "@rally/db";
 import { z } from "zod";
 

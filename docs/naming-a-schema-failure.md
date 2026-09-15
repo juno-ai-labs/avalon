@@ -128,7 +128,7 @@ its own is a boundary that drifts.
 | `apps/api/src/services/slack-agent-service.ts`, `slack-notification-service.ts`, `slack-workstream-card.ts` | the three Slack reason helpers answer a `ZodError` with `invalid_slack_data:<path>:<code>` — the reason persisted on an ingress job and written to the connection's `error_json` |
 | `apps/api/src/services/workstream-description-service.ts` | a model whose answer failed the decision schema records `description_decision_invalid:<path>:<code>` as the rejection code, where it recorded `model_unavailable` |
 | `apps/api/src/routes/telemetry.ts` | the four catch sites rethrow a `ZodError` as itself, so `request_failed` logs the route and the failing paths behind the same `internal_error` |
-| `apps/api/src/services/connection-service.ts` | `attemptConnectorRepair` returns and logs the reason of a repair that could not complete, where it returned `null` |
+| `apps/api/src/services/connection-service.ts` | `attemptConnectorRepair` returns a repair's own sentence to the Test result where it returned `null`, and logs that the repair was incomplete — never the message, which a repair result carries no code beside |
 | `apps/api/src/services/connector-installation-service.ts`, `connector-maintenance-service.ts` | a step that failed logs `connector_installation_step_failed` with `diagnosticErrorCode`; a maintenance target that stopped logs `connector_maintenance_target_failed`, and its `reason` is the receipt's own sentence when the receipt has one |
 | `apps/api/src/services/integrations.ts` | `inline_child_failed` carries `failure_code` beside the class name |
 | `apps/api/src/durable-objects/workspace-do.ts` | `connector_event_authority_terminal` carries the settler's `error` as `error_code` when it is code-shaped |
@@ -201,8 +201,8 @@ they computed. The three Slack reason helpers answer
 `description_decision_invalid:<path>:<code>` where it recorded
 `model_unavailable`; the telemetry routes rethrow a `ZodError` so the error
 handler logs its paths behind the same `internal_error`; a repair that could
-not complete reaches the Test result and a log row with the adapter's own
-sentence; an installation step that failed and a maintenance target that
+not complete reaches the Test result with the adapter's own sentence and the
+log with the event alone; an installation step that failed and a maintenance target that
 stopped each log a code, and the maintenance target's `reason` is the
 receipt's own sentence when it has one; `inline_child_failed` carries
 `failure_code`; the event settlement row carries a code-shaped `error_code`;

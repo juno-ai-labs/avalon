@@ -1,4 +1,4 @@
-import { zodDiagnosticCode } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { regional, relayRegionalError } from './regional-api';
 import { ACCESS_PAGE_SIZE, AccessPageQuerySchema, AccessRecoverySchema, AccessRecoveryResultSchema, DownloadGrantInputSchema } from '@rally/contracts/private-access';
 import { downloadGrantUrl, issueDownloadGrant, listAccessRequests, listDownloadGrants, revokeDownloadGrant } from '@rally/db/private-access';

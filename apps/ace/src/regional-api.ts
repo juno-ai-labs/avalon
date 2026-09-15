@@ -1,6 +1,7 @@
 import { regionConfiguration } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts/regions";
-import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult, zodDiagnosticCode } from '@rally/contracts';
+import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { z } from 'zod';
 import type { Env } from './env';
 

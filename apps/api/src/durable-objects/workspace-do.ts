@@ -9,7 +9,8 @@ import { prepareInstallationRotation } from "./connector-installation-storage";
 import { InstallationCreateSchema, InstallationReadSchema, InstallationClaimSchema, InstallationDeliverySchema, InstallationSettleSchema, InstallationChangeSchema,
   type InstallationCreate, type InstallationClaim, type InstallationDelivery, type InstallationSettle, type InstallationChange } from "./connector-installation-protocol";
 import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation } from "./connector-installation-storage";
-import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema, isCodeShaped } from "@rally/contracts";
+import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
+import { isCodeShaped } from "@rally/contracts/zod-diagnostics";
 
 import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';

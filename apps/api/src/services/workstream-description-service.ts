@@ -35,7 +35,8 @@ import {
 } from "@rally/agent-harness";
 import { z } from "zod";
 
-import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS, zodDiagnosticCode } from "@rally/contracts";
+import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";

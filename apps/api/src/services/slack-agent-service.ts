@@ -24,7 +24,8 @@ import {
   type SlackAgentSessionOrigin,
   type SlackIngressEnvelope,
 } from "@rally/connectors";
-import { AutomationSummarySchema, ExternalActorSchema, SlackIngressQueueMessageSchema, LEGACY_WORKSTREAM_LINK_ORIGINS, SlackOriginContextSchema, SlackSearchAuthorizationSchema, asUserId, asWorkspaceId, addWorkspaceTarget, isWorkstreamId, parseWorkstreamLinkTarget, workstreamCanonicalUrl, type ExternalActor, type SlackOriginAttachment, type SlackOriginContext, type SlackOriginNearbyMessage, type SlackSearchAuthorization, codeShaped, describeZodIssues } from "@rally/contracts";
+import { AutomationSummarySchema, ExternalActorSchema, SlackIngressQueueMessageSchema, LEGACY_WORKSTREAM_LINK_ORIGINS, SlackOriginContextSchema, SlackSearchAuthorizationSchema, asUserId, asWorkspaceId, addWorkspaceTarget, isWorkstreamId, parseWorkstreamLinkTarget, workstreamCanonicalUrl, type ExternalActor, type SlackOriginAttachment, type SlackOriginContext, type SlackOriginNearbyMessage, type SlackSearchAuthorization } from "@rally/contracts";
+import { codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { HttpsUrlSchema, httpsUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
 import {
