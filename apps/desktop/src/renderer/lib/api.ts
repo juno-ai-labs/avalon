@@ -83,6 +83,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { logDebug } from '../../common/logger';
+import { requestSocketTicket } from './socket-ticket-request';
 import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
@@ -1807,21 +1808,38 @@ export class RallyApi {
     if (speculative) queryParams.set('speculative', 'true');
     const encodedQuery = queryParams.toString();
     const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
-    return this.request(
-      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
-      { schema: socketTicketSchema, signal, ...(requestId ? { requestId } : {}) },
+    return requestSocketTicket(
+      (attemptSignal) => this.request(
+        `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
+        { schema: socketTicketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
+      ),
+      signal,
     );
   }
 
-  getWorkspaceSocketTicket(): Promise<SocketTicket> {
-    return this.request('/workspace/socket', { schema: socketTicketSchema });
+  getWorkspaceSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
+    return requestSocketTicket(
+      (attemptSignal) => this.request('/workspace/socket', {
+        schema: socketTicketSchema,
+        signal: attemptSignal,
+      }),
+      signal,
+    );
   }
 
-  getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
-      schema: socketTicketSchema,
-      ...(requestId ? { requestId } : {}),
-    });
+  getWorkstreamControlSocketTicket(
+    id: string,
+    requestId?: string,
+    signal?: AbortSignal,
+  ): Promise<SocketTicket> {
+    return requestSocketTicket(
+      (attemptSignal) => this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
+        schema: socketTicketSchema,
+        signal: attemptSignal,
+        ...(requestId ? { requestId } : {}),
+      }),
+      signal,
+    );
   }
 
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {

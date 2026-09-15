@@ -215,6 +215,13 @@ The control and feed state machines reconnect independently with their existing
 jittered backoff. A failure in one does not delay the other's ticket request or
 handshake. Snapshot waterlines and replay rules decide whether a reconnected
 frame advances cached state; transport warmth is never treated as authority.
+Every workspace, control, and feed attempt acquires its ticket through the same
+10-second request boundary. The boundary rejects its caller and aborts the
+underlying fetch independently: shared credential renewal or a transport that
+does not settle after cancellation therefore cannot leave the loop's in-flight
+guard set forever. Timeout is a retryable `ticket_timeout`, distinct from a
+ticket response that fails normally and from an offline transition. Owner
+teardown and an explicit offline transition abort the same attempt immediately.
 
 Normal route changes do not destroy a retained owner. Each socket owner also
 retains its query entries while mounted, independently of screen observers. The [local-cache contract](local-cache.md#a-live-subscription-owns-its-in-memory-state)
@@ -486,6 +493,39 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-15 — Socket ticket acquisition cannot strand reconnect loops
+
+**What changed:** Workspace, WorkstreamDO control, and SubstreamAgent feed
+connections now acquire tickets through one attempt-scoped request boundary.
+It settles the caller after the existing 10-second first-opening budget even if
+the underlying fetch or shared credential renewal remains pending, aborts on
+offline and owner teardown, and reports `ticket_timeout` separately before the
+ordinary jittered retry begins.
+
+**Why:** An API deployment closed the live socket swarm while several ticket
+requests were starting. A feed that had opened previously did not arm the
+bounded cold-opening timer, and workspace and control tickets had no deadline
+at all. Their raw promises never settled, so each loop kept its `connecting` or
+`ticketRequestInFlight` guard forever. The active transcript then could not use
+its live feed to page beyond the latest opening range even though every
+canonical turn remained stored.
+
+**Considered and rejected:** Extending only the feed's cold-opening timer would
+leave workspace and control vulnerable and would still couple ticket recovery
+to whether a transcript had opened before. Relying only on `AbortController`
+was also rejected because credential renewal can outlive fetch cancellation;
+the owning caller must settle independently. A new timeout value was
+unnecessary: the first work-stream opening already established ten seconds as
+the request-and-connection budget.
+
+**Consequences:** Every ticket API accepts cancellation, every socket owner
+aborts its pending ticket on offline and teardown, and telemetry can distinguish
+a hung request from an ordinary rejected ticket. Adding another persistent
+socket kind requires using the same bounded acquisition primitive rather than
+awaiting its ticket API directly.
+
+Shipped in the pull request for this change.
 
 ### 2026-09-14 — iOS retains a navigation-shaped set, not the desktop swarm
 

@@ -87,6 +87,10 @@ import {
   type ConversationCacheKeys,
 } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import {
+  isSocketTicketRequestTimeoutError,
+  SOCKET_TICKET_REQUEST_TIMEOUT_MS,
+} from './socket-ticket-request';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
@@ -162,7 +166,7 @@ const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
 const TRANSCRIPT_RANGE_TIMEOUT_MS = 15_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
-export const WORKSTREAM_OPEN_TIMEOUT_BASE_MS = 10_000;
+export const WORKSTREAM_OPEN_TIMEOUT_BASE_MS = SOCKET_TICKET_REQUEST_TIMEOUT_MS;
 export const WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS = 3;
 
 export function workstreamOpenTimeoutMs(timedOutAttempts: number): number {
@@ -2251,7 +2255,7 @@ export function useWorkstreamSocket(
             scheduleReconnect();
           }
         });
-      } catch {
+      } catch (error) {
         if (closedByEffect || generation !== connectGeneration) return;
         clearOpeningTimer();
         trace.end({ outcome: 'failed' });
@@ -2260,7 +2264,7 @@ export function useWorkstreamSocket(
           socketTelemetry.disconnected({
             attempts: attempts.current,
             retrying: !isOffline(),
-            cause: 'ticket_failed',
+            cause: isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
         }
         scheduleReconnect();

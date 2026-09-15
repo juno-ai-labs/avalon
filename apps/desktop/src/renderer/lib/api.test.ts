@@ -5,6 +5,7 @@ import "../../../../../tests/isolated-region";
 import type { DesktopSession } from '../../common/desktop';
 import type { ApiError } from './api';
 import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
+import { SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 
 const reportJavascriptError = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
@@ -188,6 +189,7 @@ function json(value: unknown, init: ResponseInit = {}): Response {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   reportJavascriptError.mockReset();
   reportTelemetryProductIntent.mockReset();
@@ -1013,6 +1015,31 @@ describe('message mention resolution', () => {
 });
 
 describe('socket ticket transport', () => {
+  it('bounds every persistent-socket ticket even when fetch ignores cancellation', async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>(() => undefined);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+    const tickets = [
+      api.getWorkspaceSocketTicket(),
+      api.getWorkstreamControlSocketTicket(workstreamId),
+      api.getSocketTicket(workstreamId),
+    ];
+    const rejections = tickets.map((ticket) => expect(ticket).rejects.toMatchObject({
+      code: 'socket_ticket_timeout',
+      name: 'SocketTicketRequestTimeoutError',
+    }));
+
+    await vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS);
+
+    await Promise.all(rejections);
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
   it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
     // The server keeps `?ticket=` in the URL for desktop builds released before
     // the subprotocol scheme. Nothing here may open a socket with it, because

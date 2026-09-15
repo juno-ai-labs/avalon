@@ -54,6 +54,7 @@ import {
 } from './workstream-state-store';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { retainQueryData } from './retain-query-data';
+import { isSocketTicketRequestTimeoutError } from './socket-ticket-request';
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
@@ -229,6 +230,7 @@ export function WorkspaceSocketProvider({
     let stopped = false;
     let permanentlyClosed = false;
     let socket: WebSocket | null = null;
+    let activeTicketAbort: AbortController | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -395,8 +397,10 @@ export function WorkspaceSocketProvider({
       connecting = true;
       clearReconnect();
       setState(attempt === 0 ? 'connecting' : 'reconnecting');
+      const ticketAbort = new AbortController();
+      activeTicketAbort = ticketAbort;
       try {
-        const ticket = await api.getWorkspaceSocketTicket();
+        const ticket = await api.getWorkspaceSocketTicket(ticketAbort.signal);
         if (stopped) return;
         // Going offline while the ticket was in flight left the offline handler
         // nothing to close, so this is where that transition is noticed at all.
@@ -616,16 +620,19 @@ export function WorkspaceSocketProvider({
           socketTelemetry.willClose('transport_error');
           next.close();
         });
-      } catch {
+      } catch (error) {
         if (!stopped) {
           socketTelemetry.disconnected({
             attempts: attempt,
             retrying: !isOffline(),
-            cause: 'ticket_failed',
+            cause: isOffline()
+              ? 'offline'
+              : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
         }
         scheduleReconnect();
       } finally {
+        if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
         connecting = false;
       }
     };
@@ -659,6 +666,8 @@ export function WorkspaceSocketProvider({
     const offline = (): void => {
       clearReconnect();
       clearHeartbeat();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       if (socket) socketTelemetry.willClose('offline');
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
@@ -703,6 +712,8 @@ export function WorkspaceSocketProvider({
       subscribed = false;
       clearReconnect();
       clearHeartbeat();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       socket?.close();
     };
   }, [api, localCacheScope, onAccessRevoked, queryClient, workspaceId]);
