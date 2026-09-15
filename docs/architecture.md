@@ -1,10 +1,11 @@
 # Architecture
 
-Rally is a pnpm TypeScript monorepo with an Electron desktop client, a Hono API
-Worker deployed twice as configured deployments, internal operator Workers, and shared
-packages that hold every contract and rule the surfaces agree on. This document
-is the map of how those surfaces fit together: what runs where, what crosses
-which boundary, and which document owns each subsystem in detail.
+Rally is a pnpm TypeScript monorepo with an Electron desktop client, a native
+SwiftUI iOS client, a Hono API Worker deployed twice as configured deployments,
+internal operator Workers, and shared packages that hold every contract and rule
+the surfaces agree on. This document is the map of how those surfaces fit
+together: what runs where, what crosses which boundary, and which document owns
+each subsystem in detail.
 
 Read it before a change that spans more than one surface, before adding a
 deployment surface or a package, and before assuming where a rule is enforced.
@@ -16,6 +17,7 @@ and the map points at it rather than absorbing it.
 ```text
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
+  ios/                     Native SwiftUI iOS client (TestFlight). See ios-client.md
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
   ace/                     Access-protected internal administration Worker
 packages/
@@ -29,6 +31,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for work-stream socket swarms. |
+| `apps/ios` | Native SwiftUI iPhone/iPad client: Keychain sessions, Google PKCE through `ASWebAuthenticationSession`, conversation feed and workspace directory sockets, TestFlight archive. Owned by [`ios-client.md`](ios-client.md). |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so a space, a stream, and a substream paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
@@ -47,7 +50,10 @@ docs/                      Product, architecture, security, setup, runbooks
 
 ### Core surfaces
 
-1. **`apps/desktop`** is the Electron application. Its main process owns main and
+1. **`apps/ios`** is the native SwiftUI application. It is a conversation client
+   on the same HTTP and socket contracts as desktop, with Keychain sessions and
+   no renderer to isolate. [`ios-client.md`](ios-client.md) owns it.
+2. **`apps/desktop`** is the Electron application. Its main process owns main and
    Settings window lifecycle, custom-protocol login completion, encrypted session
    storage, file selection, and a minimal validated IPC bridge. Both sandboxed
    React surfaces use a packaged CommonJS preload and talk only to the configured
@@ -73,7 +79,7 @@ docs/                      Product, architecture, security, setup, runbooks
    over that bridge. A renderer combines them with its own window focus and
    active work-stream route before reporting ephemeral presence to WorkspaceDO;
    pooled work-stream sockets are never treated as attention.
-2. **`apps/api`** is a Hono application deployed as three statically imported
+3. **`apps/api`** is a Hono application deployed as three statically imported
    Cloudflare Worker graphs in each of configured deployments: the regional API plus
    private document-processing and Terminal-provider services reached through
    typed Service Bindings. Global adds a private telemetry-delivery graph and a
@@ -82,10 +88,10 @@ docs/                      Product, architecture, security, setup, runbooks
    production and consumption, Workflows, scheduling, connector execution, and
    the OpenRouter harness. The private services isolate heavyweight stateless
    SDKs without request-time module loading or another product authority.
-3. **Shared packages** contain runtime-validated contracts, database schema and
+4. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
-4. **Internal operator Workers** sit behind Cloudflare Access and verify the
+5. **Internal operator Workers** sit behind Cloudflare Access and verify the
    signed Access assertion again in application code. Ace manages product flags;
    the migration tracker manages Durable Object schema state. Neither is a
    privileged route inside the customer API.
@@ -684,6 +690,27 @@ Telemetry IPC is a closed named surface, local files are owner-only and bounded,
 and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
 access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
+
+### 2026-09-11 — Native iOS is a fourth deployment surface
+
+**What changed:** The map now includes `apps/ios`, a native SwiftUI client that
+signs in with the desktop Google PKCE exchange, holds sessions in the Keychain,
+speaks the existing regional HTTP and conversation-feed contracts, and
+registers Apple push on the same device registry as the Mac. Electron
+remains the desktop surface; iOS is not a mode of it.
+
+**Why:** A phone client that wrapped the renderer would have imported a second
+UI toolkit and a WebView trust story into a repo that already isolates one
+renderer. Native SwiftUI reuses Worker contracts and keeps iOS secrets in the
+Keychain. The alternative — Expo or React Native — was rejected because it
+would be a second product pipeline for the same API.
+
+**Consequences:** Architecture changes that assume "the client" is Electron
+(preload, CSP, `safeStorage`, IPC) do not apply to iOS. New client-visible
+contracts still land in `packages/contracts` and must be implementable from
+Swift without a Node process. Details live in [`ios-client.md`](ios-client.md).
+
+Shipped in #725.
 
 ### 2026-09-10 — Escape closes the Sidekicks window, through a gesture Settings no longer owns
 

@@ -49,4 +49,23 @@ describe('push device registry', () => {
     expect(await livePushDevices(env, auth.userId)).toEqual([]);
     expect(db.prepare('SELECT * FROM user_push_device_sessions').all()).toEqual([]);
   });
+  it('keeps an iPhone sandbox registration live and replaces its environment on re-register', async () => {
+    const { env, auth } = fixture();
+    const ios = {
+      platform: 'ios' as const,
+      transport: 'apns' as const,
+      topic: APNS_TOPICS.ios,
+      apnsEnvironment: 'sandbox' as const,
+      token: '11'.repeat(32),
+      appVersion: '1.0.0',
+    };
+    await registerPushDevice(env, auth, 'phone', ios);
+    expect(await livePushDevices(env, auth.userId)).toEqual([
+      expect.objectContaining({ token: '11'.repeat(32), topic: APNS_TOPICS.ios, apns_environment: 'sandbox' }),
+    ]);
+    await registerPushDevice(env, auth, 'phone', { ...ios, apnsEnvironment: 'production', token: '22'.repeat(32) });
+    expect(await livePushDevices(env, auth.userId)).toEqual([
+      expect.objectContaining({ token: '22'.repeat(32), apns_environment: 'production' }),
+    ]);
+  });
 });
