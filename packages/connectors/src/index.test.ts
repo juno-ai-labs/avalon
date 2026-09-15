@@ -356,7 +356,7 @@ describe("connectors", () => {
     }, connection, neverAborts());
 
     expect(result.streamErrors).toEqual([
-      expect.objectContaining({ streamId: "calendar", code: "response_invalid:items.0.start:invalid_type" }),
+      expect.objectContaining({ streamId: "calendar", code: "schema_invalid:items.0.start:invalid_type" }),
       expect.objectContaining({ streamId: "mail", code: "poll_failed" }),
     ]);
     expect(result.streamErrors![0]!.message).not.toContain("member content must remain absent");
