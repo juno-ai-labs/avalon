@@ -12,11 +12,23 @@ const FiniteNumberSchema = z.number().finite();
 const FiniteNumberArraySchema = z.array(FiniteNumberSchema).min(1);
 const PersonIdSchema = IdSchema.brand<"PersonId">();
 
+/**
+ * Every connector whose activity a rule may name.
+ *
+ * Kept in step with the connector registry by a test in `@rally/connectors`,
+ * which is where the manifests are and which can see both. Nothing else links
+ * them: this list is a second spelling of the registry's own membership, and
+ * it silently drifted once — `fireflies` was added as a connector and not
+ * here, so every Fireflies Sidekick was accepted, showed as published, and
+ * then had its registration projection rejected at this field on a hop where
+ * the rejection was unreadable. It never fired, and nothing said why.
+ */
 export const ConnectorTypeSchema = z.enum([
   "google",
   "generic_webhook",
   "github",
   "ashby",
+  "fireflies",
   "granola",
   "linear",
   "notion",
