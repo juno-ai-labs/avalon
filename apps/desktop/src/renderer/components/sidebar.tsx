@@ -1853,13 +1853,11 @@ export function Sidebar({
                 projects and automations above load from the same answer, so a
                 live region in either of those sections would say the same thing
                 twice. It is tied to the wait rather than to this section's own
-                placeholder because they end at different moments — a person who
-                has notes but no work streams yet sees this section's list while
-                the sections above are still filling in, and an announcement
-                nested in the branch below would already be gone. */}
+                placeholder because cached work streams may already be visible
+                while the sections above are still filling in. */}
             {loading && (
               <div role="status">
-                <span className="sr-only">Loading your projects, work streams</span>
+                <span className="sr-only">Loading your projects and work streams</span>
               </div>
             )}
             {loading && visibleWorkstreams.length === 0 ? (

@@ -11,8 +11,8 @@ clears note content and linked resources, retaining only IDs and object referenc
 in `retired_meeting_resources`. Inserts and updates cannot recreate built-in note
 resources. Existing migration definitions remain unchanged.
 
-`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`, and
-`purgeMeetingNoteObjects` are internal RPCs, with no
+`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
+`purgeMeetingNoteObjects`, and `finalizeMeetingRetirement` are internal RPCs, with no
 public route. All are permitted on retired workspaces so an inactive or closed
 workspace cannot escape the purge. One purge call deletes one resource's page of
 R2 objects; failures retain the address and another call resumes. Resource IDs
@@ -20,14 +20,17 @@ remain until downstream attachments and archives have been checked.
 
 Search cleanup drains an already admitted KV publication, deletes the external
 key, then removes its SQLite decision and dependencies. A failure retains the
-key for retry. Registration and publication both reject retired resource IDs.
+key for retry. Registration validates the complete batch before allocating any
+generations, so a retired ID cannot leave unrelated resources partly registered.
+Registration and publication both reject retired resource IDs.
 The search index is independently inventoried by exact source ID before deleting
 its revision metadata; queued indexing revalidates canonical authority.
 
 Some adopted schemas lack the obsolete `automation_resources` table. Migration
 57 had already shipped when this was discovered, so its hash stays unchanged.
-An outer transaction supplies an empty temporary relation for that migration's
-DELETE and removes it before committing. The real workerd upgrade test covers
+A transaction around migration 57 alone supplies an empty temporary relation
+for its DELETE and removes it before committing. Earlier and later migrations
+run outside that shim. The real workerd upgrade test covers
 this historical shape as well as a complete populated schema.
 
 Conversation schema migration 58 removes identifiable note attachment snapshots
@@ -43,6 +46,11 @@ attributable search documents and raw inference records, and delete analytical
 copies through the Iceberg catalog. Never delete shared Parquet objects directly.
 Workspace migration 58 drops the five empty feature tables after a guard verifies
 that R2 deletion is complete and attributable search authorization keys are gone.
+Initialization commits migration 57 separately and defers 58 while either guard
+condition is pending. This keeps older populated snapshots reachable for cleanup,
+including after eviction or interruption. Once external cleanup is verified, call
+`finalizeMeetingRetirement`; it applies the unchanged guarded migration and is
+safe to repeat. A later cold start also advances when the guard is clear.
 It also removes the note sidebar state and search revision rows. Content-free
 resource IDs remain as provenance and stale-writer fences; they contain no notes.
 Historical provider retention is tracked separately from current serving storage.
@@ -50,6 +58,10 @@ Historical provider retention is tracked separately from current serving storage
 The inference consumer writes a content-free tombstone before deleting a queued
 meeting inference record. Replays acknowledge that tombstone instead of restoring
 the record to the analytical store.
+
+Desktop spool maintenance deletes retired event files and their deadline files
+without reporting them as corrupt or moving them into quarantine. Unrelated
+telemetry remains deliverable.
 
 Local verification is separate from production completion. The workerd retirement
 test covers populated archived notes, resource preservation, historical R2 files,
@@ -114,7 +126,11 @@ operation can resume. Shared dictation and external meeting integrations remain;
 removing either would exceed the requested feature boundary. Empty legacy wire
 fields remain temporarily for already-installed clients, and final schema removal
 follows verified current-storage cleanup. Search authorization cleanup also fences
-delayed publications before removing cache metadata.
+delayed publications before removing cache metadata. Populated cold starts commit
+retirement before guarded finalization, keeping cleanup reachable; batching both
+migrations together was rejected because the final guard rolls retirement back.
+The adopted-schema shim brackets only migration 57 so it cannot change how later
+migrations execute.
 
 ### 2026-09-01 — The note list pages instead of stopping at 250
 

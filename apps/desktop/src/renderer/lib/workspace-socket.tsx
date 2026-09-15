@@ -76,7 +76,6 @@ export interface WorkstreamPage {
 export interface SidebarConnect {
   generation: number;
   nextCursor: string | null;
-  /** The note list's own next page, tracked separately: two lists, two cursors. */
 }
 
 /**

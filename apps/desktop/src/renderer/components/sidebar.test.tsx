@@ -71,14 +71,11 @@ const workspace: Workspace = {
 };
 
 const defaultActions = {
-  onArchiveNote: async (): Promise<void> => undefined,
   onArchiveWorkstream: async (): Promise<void> => undefined,
   onApplyWorkstreamBatch: async (): Promise<{ enqueuedCount: number; archivedNoteCount: number }> =>
     ({ enqueuedCount: 0, archivedNoteCount: 0 }),
-  onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
-  onOpenMeetingNotes: async (): Promise<void> => undefined,
   onPreviewWorkstreamBatch: async (): Promise<{ matchedCount: number; matchedNoteCount: number }> =>
     ({ matchedCount: 0, matchedNoteCount: 0 }),
   onPinWorkstream: async (): Promise<boolean> => true,
@@ -744,7 +741,7 @@ describe('Sidebar work-stream markers', () => {
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your projects, work streams')).toBeInTheDocument();
+    expect(screen.getByText('Loading your projects and work streams')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
     expect(screen.queryByText('No work streams yet')).not.toBeInTheDocument();

@@ -1,13 +1,13 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
-import { runInDurableObject } from 'cloudflare:test';
+import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { deliverInferenceLakehousePointer, retiredMeetingInferenceKey } from '../src/queues/inference-lakehouse-consumer';
 import { sha256 } from '../src/lib/crypto';
 import type { InferenceLakehouseRecord } from '../src/services/inference-lakehouse';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
-import { purgeRetiredMeetingObjects, withMeetingRetirementPrerequisites } from '../src/durable-objects/meeting-notes-retirement';
+import { purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from '../src/durable-objects/meeting-notes-retirement';
 
 const workspaceId = '00000000-0000-7000-8000-000000000da0';
 const resourceId = '00000000-0000-7000-8000-000000000cb1';
@@ -47,7 +47,8 @@ describe('meeting notes retirement', () => {
         start_offset_ms, end_offset_ms, captured_at, speaker_label, text_content, created_at)
         VALUES (?, ?, 1, 'segment', 0, 1000, ?, NULL, 'private transcript', ?)`,
         '00000000-0000-7000-8000-000000000cb3', noteId, at, at);
-      migrate(WORKSPACE_DO_SCHEMA_MIGRATIONS.filter(m => m.version <= 57));
+      applyMeetingRetirementMigrations({ storage: state.storage, component: 'workspace_do',
+        workerVersionId: 'test-meeting-retirement', migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS });
       const count = (table: string) => sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
       expect(count('notes')).toBe(0);
       expect(count('note_transcript_segments')).toBe(0);
@@ -181,10 +182,10 @@ it('upgrades adopted workspaces that already retired the Sidekick resource join 
       applyDurableObjectSqliteMigrations({ storage: state.storage, component: 'workspace_do', workerVersionId: 'adopted', migrations });
     apply(WORKSPACE_DO_SCHEMA_MIGRATIONS.filter(m => m.version < 57));
     state.storage.sql.exec('DROP TABLE automation_resources');
-    withMeetingRetirementPrerequisites(state.storage, () => apply(WORKSPACE_DO_SCHEMA_MIGRATIONS));
+    applyMeetingRetirementMigrations({ storage: state.storage, component: 'workspace_do', workerVersionId: 'adopted', migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS });
     expect(state.storage.sql.exec('SELECT version FROM _sql_schema_migrations WHERE version = 57').toArray()).toEqual([{ version: 57 }]);
     expect(state.storage.sql.exec("SELECT name FROM sqlite_schema WHERE name = 'automation_resources'").toArray()).toEqual([]);
-    withMeetingRetirementPrerequisites(state.storage, () => apply(WORKSPACE_DO_SCHEMA_MIGRATIONS));
+    applyMeetingRetirementMigrations({ storage: state.storage, component: 'workspace_do', workerVersionId: 'adopted', migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS });
   });
 });
 
@@ -216,11 +217,70 @@ it('purges attributable search decisions and fences stale registrations while pr
   await runInDurableObject(stub, async (instance) => {
     await expect(instance.registerSearchAuthorization({
       subject: { workspaceId, userId: ownerId, delegation: null },
-      resources: [{ kind: 'resource', workspaceId, resourceId }],
+      resources: [{ kind: 'resource', workspaceId, resourceId: '00000000-0000-7000-8000-000000000cb9' }, { kind: 'resource', workspaceId, resourceId }],
     })).rejects.toThrow('meeting_notes_retired');
   });
   await runInDurableObject(stub, async (_instance, state) => {
     expect(state.storage.sql.exec('SELECT cache_key FROM authorization_snapshots').toArray()).toEqual([{ cache_key: 'unrelated-test-key' }]);
     expect(state.storage.sql.exec('SELECT cache_key FROM search_authorization_keys').toArray()).toEqual([{ cache_key: 'unrelated-test-key' }]);
+  });
+});
+
+
+it('keeps populated pre-retirement workspaces reachable across cold starts and finalizes through operator RPC', async () => {
+  const stub = env.WORKSPACE_DOS.getByName('meeting-retirement-cold-upgrade');
+  await stub.retiredMeetingInventory();
+  await runInDurableObject(stub, async (_instance, state) => {
+    await state.storage.deleteAll();
+    applyDurableObjectSqliteMigrations({ storage: state.storage, component: 'workspace_do', workerVersionId: 'old',
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter(m => m.version < 57) });
+    state.storage.sql.exec(`INSERT INTO workspace_identity VALUES (1, ?, 'global', 'wnam', 1, 1)`, workspaceId);
+    state.storage.sql.exec(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, content_ref, metadata_json, attachment_status, created_at, updated_at)
+      VALUES (?, ?, 'note', 'avalon_note', 'retired', NULL, '{}', 'attached', ?, ?)`, resourceId, workspaceId, at, at);
+    state.storage.sql.exec(`INSERT INTO search_authorization_keys(cache_key, generation, resource_id)
+      VALUES ('cold-retired-key', 1, ?)`, resourceId);
+    state.storage.sql.exec(`INSERT INTO authorization_snapshots VALUES ('cold-retired-key', '{}', 0)`);
+  });
+  await env.PAYLOADS.put(current, 'old meeting');
+  await env.AUTHORIZATION_CACHE!.put('cold-retired-key', 'old decision');
+  await evictDurableObject(stub);
+  let inventory = await stub.retiredMeetingInventory();
+  expect(inventory.schemaVersion).toBe(57);
+  expect(inventory.resources).toEqual([{ resource_id: resourceId, note_id: null, objects_deleted: 0 }]);
+  await runInDurableObject(stub, async (instance) => {
+    await expect(instance.finalizeMeetingRetirement()).rejects.toThrow('CHECK constraint failed');
+  });
+  await evictDurableObject(stub);
+  expect((await stub.retiredMeetingInventory()).schemaVersion).toBe(57);
+  expect(await stub.purgeMeetingNoteObjects()).toEqual({ remaining: 0, deletedObjects: 1 });
+  await runInDurableObject(stub, async (instance) => {
+    await expect(instance.finalizeMeetingRetirement()).rejects.toThrow('CHECK constraint failed');
+  });
+  expect(await stub.purgeMeetingSearchAuthorization()).toEqual({ deletedKeys: 1 });
+  expect(await env.PAYLOADS.head(current)).toBeNull();
+  expect(await env.AUTHORIZATION_CACHE!.get('cold-retired-key')).toBeNull();
+  expect(await stub.finalizeMeetingRetirement()).toEqual({ schemaVersion: 58 });
+  expect(await stub.finalizeMeetingRetirement()).toEqual({ schemaVersion: 58 });
+  await evictDurableObject(stub);
+  inventory = await stub.retiredMeetingInventory();
+  expect(inventory.schemaVersion).toBe(58);
+  expect(inventory.featureTables).toEqual([]);
+});
+
+it('removes the adopted-schema shim before running later migrations', async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName('meeting-retirement-shim-boundary');
+  await stub.ping();
+  await runInDurableObject(stub, async (_instance, state) => {
+    const options = { storage: state.storage, component: 'workspace_do', workerVersionId: 'test' };
+    applyDurableObjectSqliteMigrations({ ...options, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter(m => m.version < 57) });
+    state.storage.sql.exec('DROP TABLE automation_resources');
+    applyMeetingRetirementMigrations({ ...options, migrations: [...WORKSPACE_DO_SCHEMA_MIGRATIONS, {
+      version: 59, description: 'test later migration observes original adopted schema', statements: [
+        'CREATE TABLE test_shim_guard (remaining INTEGER CHECK (remaining = 0)) STRICT',
+        "INSERT INTO test_shim_guard SELECT COUNT(*) FROM sqlite_schema WHERE name = 'automation_resources'",
+      ],
+    }] });
+    expect(state.storage.sql.exec('SELECT MAX(version) AS version FROM _sql_schema_migrations').one()).toEqual({ version: 59 });
   });
 });

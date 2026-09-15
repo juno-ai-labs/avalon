@@ -176,12 +176,6 @@ export function applyPinnedWorkstreamsIfCurrent(
  * `undefined` from an accidentally enabled query would look like an empty
  * sidebar rather than a bug. Invalidating one of these keys does nothing by
  * design — the socket is the only *authority* for the contents.
- *
- * `onChangeNoteScope` below patches `['notes']` directly, which is the single
- * exception and not a second authority: it holds no waterline, cannot advance
- * the ledger, and is overwritten by the push the same write earns. It is a
- * latency hedge against one visible reorder, and the push behind it is what
- * makes the row correct.
  */
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;

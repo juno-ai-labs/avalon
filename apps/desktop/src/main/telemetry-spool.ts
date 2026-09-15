@@ -134,7 +134,7 @@ export class TelemetrySpool {
       assertEventId(eventId);
       if (!Number.isFinite(sentAt.getTime())) throw new Error('Invalid telemetry send time');
       const row = await this.readRow(this.rowPath(eventId));
-      if (!row) throw new Error('Telemetry row is unavailable');
+      if (!row || row === 'retired') throw new Error('Telemetry row is unavailable');
       if (row.firstSentAt !== null) return row;
       const firstSentAt = sentAt.toISOString();
       const updated = StoredRowSchema.parse({
@@ -160,7 +160,7 @@ export class TelemetrySpool {
       assertEventId(eventId);
       if (!Number.isFinite(nextAttemptAt.getTime())) throw new Error('Invalid telemetry retry time');
       const row = await this.readRow(this.rowPath(eventId));
-      if (!row) throw new Error('Telemetry row is unavailable');
+      if (!row || row === 'retired') throw new Error('Telemetry row is unavailable');
       if (nextAttemptAt.getTime() >= Date.parse(row.deleteAfter)) {
         await Promise.all([rm(this.rowPath(eventId), { force: true }), rm(this.deadlinePath(eventId), { force: true })]);
         return;
@@ -210,6 +210,7 @@ export class TelemetrySpool {
       const path = join(this.rowsDirectory, name);
       const eventId = name.slice(0, -'.json'.length);
       const row = await this.readRow(path);
+      if (row === 'retired') continue;
       if (!row || row.event.eventId !== eventId) {
         await this.quarantine(eventId, now);
         result.quarantined += 1;
@@ -241,17 +242,20 @@ export class TelemetrySpool {
     const rows: TelemetrySpoolRow[] = [];
     for (const name of (await readdir(this.rowsDirectory)).filter((candidate) => candidate.endsWith('.json')).sort()) {
       const row = await this.readRow(join(this.rowsDirectory, name));
-      if (row && (!enforceTime || Date.parse(row.deleteAfter) > now.getTime())) rows.push(row);
+      if (row && row !== 'retired' && (!enforceTime || Date.parse(row.deleteAfter) > now.getTime())) rows.push(row);
     }
     return rows;
   }
 
-  private async readRow(path: string): Promise<TelemetrySpoolRow | null> {
+  private async readRow(path: string): Promise<TelemetrySpoolRow | 'retired' | null> {
     try {
       const parsed = StoredRowSchema.safeParse(JSON.parse(await readFile(path, 'utf8')) as unknown);
       if (parsed.success && isRetiredMeetingTelemetry(parsed.data.event)) {
-        await rm(path, { force: true });
-        return null;
+        await Promise.all([
+          rm(path, { force: true }),
+          rm(path.replace(/\.json$/u, '.deadline'), { force: true }),
+        ]);
+        return 'retired';
       }
       return parsed.success ? parsed.data : null;
     } catch (error) {
