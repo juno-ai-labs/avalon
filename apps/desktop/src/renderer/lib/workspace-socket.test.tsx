@@ -911,7 +911,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
     // No screen observes these entries. The workspace subscription owns the
     // directory and its ordering ledgers even when their screens are absent.
-    const keys = ['workstreams', 'automations', 'notes', 'projects', 'projects-inactive', 'feature-flags',
+    const keys = ['workstreams', 'automations', 'projects', 'projects-inactive', 'feature-flags',
       'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
     const snapshot = keys.map((key) => queryClient.getQueryData(key));
     expect(snapshot.every((value) => value !== undefined)).toBe(true);

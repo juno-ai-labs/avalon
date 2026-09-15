@@ -128,9 +128,6 @@ export type DesktopTelemetrySemanticEventName =
   | 'automation_builder_started'
   | 'automation_opened'
   | 'workstream_resource_action_completed'
-  | 'recording_start_completed'
-  | 'recording_terminal'
-  | 'note_opened_v2'
   | 'realtime_socket_state';
 
 export type DesktopTelemetrySemanticIntent = {

@@ -2262,7 +2262,7 @@ export const UpdateProductAnalyticsPreferenceSchema = deferredZodSchema(() => z.
 
 /** Shipped clients may replay these events after the built-in feature is retired. */
 export function isRetiredMeetingTelemetry(event: { name: string; properties: unknown }): boolean {
-  if (['note_opened', 'note_created', 'note_action_completed', 'note_opened_v2', 'transcription_state_changed'].includes(event.name)) return true;
+  if (['note_opened', 'note_created', 'note_action_completed', 'note_opened_v2', 'transcription_state_changed', 'recording_start_completed', 'recording_terminal', 'note_summary_generation_completed'].includes(event.name)) return true;
   if (!event.properties || typeof event.properties !== 'object') return false;
   const properties = event.properties as Record<string, unknown>;
   return properties['resourceType'] === 'note'
