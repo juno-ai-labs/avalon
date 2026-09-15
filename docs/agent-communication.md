@@ -131,6 +131,10 @@ Questions from agent exchanges use replies instead of participant forms.
 
 ## Boundary
 
+System prompts describe coordination behavior without naming tools. Exact tool
+names belong in tool definitions, so prompt guidance stays independent of the
+available tool inventory and wire names.
+
 These are internal host RPCs, not model-callable team-management tools. Callers
 check execution and Sidekick domain authority before adding contacts. Membership
 grants no credentials, transcript access, resource access, or control over peers.

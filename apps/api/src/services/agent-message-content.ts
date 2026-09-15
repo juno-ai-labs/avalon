@@ -10,7 +10,7 @@ export const AgentMessageContentSchema = AgentExchangeSchema.extend({
 export function renderAgentMessage(content: z.infer<typeof AgentMessageContentSchema>, text: string): string {
   return [
     `Message from agent ${content.senderAgentId}.`,
-    `Message ID: ${content.messageId}. Use reply with this message ID to answer.`,
+    `Message ID: ${content.messageId}. Use this message ID when responding to the sender.`,
     `Team: ${content.teamId}.`,
     text,
     ...(content.attachmentIds.length
