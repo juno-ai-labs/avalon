@@ -16,15 +16,18 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Shared materialization, preparation receipts, file reservations, root/child publication. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
-| `apps/desktop/src/renderer/components/session-import-dialog.tsx` | URL/export preview and original-file replacement. |
+| `apps/desktop/src/renderer/components/session-import-dialog.tsx` | URL-only import dialog. |
 
 ## How it works
 
 The plus menu offers **start new work stream** and **import from ChatGPT or
-Claude**. Import reads a public link or JSON/JSONL export, previews the extracted
-messages and files, and creates a personal work stream. Missing file references
-remain visible. A person can supply the original file for any reference before
-importing. The source roles stay intact; the byline says who imported them.
+Claude**. The dialog accepts a shared conversation URL and imports it in one action.
+It does not display an export picker, editable title, or transcript preview.
+Available attachments and artifact files are resolved automatically; missing file
+references remain visible in the imported conversation. The source roles stay
+intact; the byline says who imported them. After creation, the standard background
+LLM naming path reads the prepared history and names the work stream. The source
+title provides its objective and provisional fallback.
 
 There are three separate boundaries:
 
@@ -100,8 +103,9 @@ conversation installation is an internal coordinator operation; the private-chil
 receipt and conversation creator authorize it. Existing active conversations are
 not bulk-import targets.
 
-The preview title and file controls freeze during submission so an uncertain
-response can retry the same request identity and content.
+The URL freezes during submission. Resolved content and request identity are retained
+for retries after an uncertain response; editing the URL starts a new request.
+The decoding API continues to support JSON/JSONL exports for programmatic callers.
 
 Source files are inline UTF-8/base64, recognized HTTPS downloads, or explicitly
 unavailable references. Known Claude image/document blocks (including plain-text
@@ -114,9 +118,9 @@ references. Source sandbox links without bytes remain unavailable.
 
 Provider share formats are not stable APIs. Public Claude snapshots can challenge
 server HTTP clients; Claude Code URLs require login in the tested browser. These
-cases direct the person to an export rather than copying browser credentials.
+cases cannot be imported through the URL-only dialog.
 Expired/private file URLs, absent export bytes and unsupported download origins
-remain unavailable, with an original-file replacement control.
+remain unavailable and are recorded in the imported transcript.
 
 Downloads refuse redirects and use the existing workspace `MAX_ATTACHMENT_BYTES`
 policy while streaming. File uploads retain the same policy. Prepared histories
@@ -145,7 +149,7 @@ cannot reconstruct original files automatically.
 - `packages/agent-harness/src/evaluation.test.ts`: production runtime from an initial
   scenario and serialized tool-settled checkpoint, with no repeated write after fork.
 - Desktop menu/launcher/transcript tests cover navigation and attribution. Real
-  Electron visual QA covers file preview, missing-file replacement and submission
+  Electron visual QA covers the URL-only dialog and submission
   using a fixture API; backend lifecycle tests provide storage/execution evidence.
 
 ## Changelog
@@ -154,6 +158,8 @@ cannot reconstruct original files automatically.
 
 **What changed:** Root/private creation and text-only demos share authority-owned
 materialization. Imports preserve available files and explicit unavailable references.
+The URL-only dialog imports directly and reuses background naming from canonical
+history, avoiding an additional preview or manual naming step.
 Prepared receipts own content and draft reservations. Evals reuse Rally's production
 Bind runtime and capture both Bind state and Rally projection/activation bindings.
 

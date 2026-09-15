@@ -291,6 +291,15 @@ changes: an answer kept in state would be the previous work stream's until an
 effect corrected it after paint, which is a frame of one work stream's request
 text under another's header.
 
+
+### Prepared history
+
+An unnamed prepared conversation uses the same first naming pass after its history
+is committed. The creation service requests canonical conversation context, reusing
+the existing transcript reader and context bounds. Imports use the source title as
+the objective and provisional fallback, leaving the final title and icon to this
+standard background path. Explicitly titled prepared scenarios retain their names.
+
 ## Invariants
 
 - **`title_status = 'naming'` is a promise that something will settle it.** Any
@@ -458,6 +467,20 @@ ordinary work-stream update and belongs to the object's product service.
   the current clock, and the past-the-grace tests take fake timers, set the system
   clock to the creation instant, and advance past it. A naming fixture left on the
   file's hard-coded date asserts nothing.
+
+## Changelog
+
+### 2026-09-15 — Name prepared conversations from canonical history
+
+**What changed:** The first background naming pass can read committed conversation
+context, using the existing transcript reader, prompt and title transition.
+
+**Why:** Imported conversations have no new opening prompt, and should receive an
+automatic name without asking the importer to choose one. A separate import naming
+pipeline would duplicate the naming policy and publication behavior.
+
+**Consequences:** Source titles remain provisional fallbacks. Explicitly titled
+prepared scenarios stay settled, and history installation never launches a run.
 
 ### 2026-09-10 — Substreams are named, and every address carries the substream
 

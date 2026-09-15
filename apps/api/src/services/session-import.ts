@@ -18,7 +18,7 @@ export function sessionShareUrl(value: string) {
   const provider: "chatgpt" | "claude" | null = url.hostname === "chatgpt.com" ? "chatgpt" : url.hostname === "claude.ai" ? "claude" : null;
   if (!provider || !new RegExp(`^/share/${id}/?$`).test(url.pathname)) {
     if (url.hostname === "claude.ai" && /^\/code\/session_[a-zA-Z0-9]+$/.test(url.pathname)) {
-      throw new ApiError(422, "session_login_required", "Claude Code sessions require signed-in access. Export the session as JSONL and import the file instead.");
+      throw new ApiError(422, "session_login_required", "Claude Code sessions require signed-in access and cannot be imported from a URL.");
     }
     throw new ApiError(422, "invalid_session_link", "Use a ChatGPT or Claude public share link");
   }
@@ -93,7 +93,7 @@ function visibleMessage(role: "user" | "assistant", body: string, files: Convers
   });
   for (const match of rendered.matchAll(/\[([^\]]+)\]\((sandbox:\/[^)]+)\)/g)) {
     files.push({ name: match[1]!, mimeType: "application/octet-stream", kind: role === "assistant" ? "artifact" : "attachment",
-      source: { kind: "unavailable", reference: match[2]!, reason: "This sandbox file is not included in the export. Add the original file to import it." } });
+      source: { kind: "unavailable", reference: match[2]!, reason: "This sandbox file is not included in the source conversation." } });
   }
   return rendered.trim() || files.length ? [{ role, text: rendered, ...(files.length ? { files } : {}) }] : [];
 }
@@ -230,10 +230,10 @@ export async function previewSessionImport(input: z.infer<typeof SessionImportPr
     response = await fetcher(endpoint, { redirect: "manual" });
     body = await response.text();
   } catch {
-    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Import its JSON export instead.");
+    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Check that the link is public and try again.");
   }
   if (!response.ok || (provider === "claude" && body.trimStart().startsWith("<"))) {
-    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Import its JSON export instead.");
+    throw new ApiError(422, "session_unavailable", "The provider could not return this shared conversation. Check that the link is public and try again.");
   }
   return parseSessionExport(provider, body, url.href);
 }
