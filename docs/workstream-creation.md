@@ -58,6 +58,11 @@ those things: it is the same message capsule at the same width on both sides of
 the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
+The launcher starts with focus in the opening-message text input, including
+when opened from a project. The sidebar lists existing work streams without a
+placeholder row for the unsent draft. Recipient selection remains available
+when the person chooses the recipient field.
+
 ### What moves
 
 Two things animate, and they are the whole transition:
