@@ -59,9 +59,10 @@ IDs when context is rebuilt. Admission puts messages at safe execution boundarie
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
 Attachments must already be attached to the sender. The host normalizes repeated
-IDs and validates the whole list before creating a worker or linking any resource to the recipient
-through existing runtime resource attachment operations. Admission retains their
-ordered canonical attachment descriptors, and context rebuilding uses normal
+IDs and validates the whole list before creating a worker. The recipient prepares
+canonical descriptors without linking resources, then stores them with the admitted
+pending input. Ordinary transcript promotion commits the links with the message,
+so refused admission leaves no attachments behind. Context rebuilding uses normal
 attachment manifests and current-turn image projection. Resource IDs alone are
 not a substitute for those durable message attachments. Model-facing tools keep
 composed-input limits; internal admission carries generated final responses and
@@ -87,7 +88,7 @@ to the originating exchange. The reply identity is stable for that execution,
 so settlement recovery uses normal message replay. Stopped work does not publish
 partial text as success. An archived destination ends delivery with the existing
 refusal instead of retrying a permanently closed conversation. The proposed
-`end_turn` tool uses Bind's native tool-ended completion to suppress an automatic
+`end_turn` tool uses Bind's explicit `complete` outcome to suppress an automatic
 reply. The host records this explicit outcome in its existing durable receipt
 and verifies it before terminalization and after recovery. Empty-completion
 checks remain enabled; no response text is fabricated.
@@ -169,4 +170,6 @@ references replace new agent identities, friendship records, and return-routing
 machinery. Multi-team membership stays additive, with models managing context.
 The same substream harness and durable non-human mailbox now carry execution
 and messages; a second scheduler or task lifecycle would duplicate their recovery.
-Sender/reply content must survive both admission and context rebuilding.
+Sender/reply content must survive both admission and context rebuilding. Attachment
+links follow the same pending-input promotion: linking before admission allowed
+an archive race to retain resources from a refused message.
