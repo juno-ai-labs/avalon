@@ -1179,6 +1179,7 @@ field-named error before any write. Existing flat inputs are deliberately
 rejected, so callers need refreshed tool definitions. The tests use
 synthetic messages and inspect provider requests; they do not send live email.
 
+PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
 
 ### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
 
