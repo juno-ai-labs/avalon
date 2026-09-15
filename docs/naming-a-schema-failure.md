@@ -240,7 +240,7 @@ telemetry routes' 500 bodies say `An unexpected error occurred` rather than
 each route's own sentence for a schema rejection; the code and status are
 unchanged.
 
-Shipped in the pull request for this change.
+Shipped in #770.
 
 ### 2026-09-15 — A connector's returned rejection is named like its thrown one
 
