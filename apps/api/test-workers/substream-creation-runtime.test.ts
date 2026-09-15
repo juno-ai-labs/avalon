@@ -1,3 +1,4 @@
+import { workstreamImportHash } from "../src/durable-objects/workstream-import-hash";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
@@ -124,6 +125,38 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("substream preparation on workerd", () => {
+  it("refuses first history installation after publishing an empty child", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000cf91";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "Empty child", throughTurnId: "source-turn-1" });
+    const created = await service.confirm(WORKSTREAM_ID, operationId);
+    const content = { messages: [{ role: "user" as const, text: "Late history" }] };
+    await expect(service.confirm(WORKSTREAM_ID, operationId, null, null, content)).rejects.toThrow("different content");
+    await expect((async () => await conversation(created.substreamId).installPreparedConversation({
+      workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: created.substreamId,
+      operationId, conversation: content,
+    }))()).rejects.toThrow("private_child_initialization_conflict");
+    const boot = await new WorkstreamObjectClient(TEST_ENV, creatorAuth, WORKSTREAM_ID, created.substreamId).boot();
+    expect(boot.transcript.ranges.flatMap((range) => range.turns)).toEqual([]);
+  });
+
+  it("freezes history intent before another confirmation can publish without it", async () => {
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000cf92";
+    await service.prepare(WORKSTREAM_ID, { operationId, title: "History child", throughTurnId: "source-turn-1" });
+    const content = { messages: [{ role: "user" as const, text: "Required history" }] };
+    const claimed = await parent().claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID,
+      parentId: WORKSTREAM_ID, operationId, actorUserId: CREATOR_ID,
+      preparedConversationHash: workstreamImportHash(content) });
+    await expect(service.confirm(WORKSTREAM_ID, operationId)).rejects.toThrow("different content");
+    expect((await parent().readPrivateChildPreparation({ workspaceId: WORKSPACE_ID,
+      parentId: WORKSTREAM_ID, operationId }))?.status).toBe("confirming");
+    const created = await service.confirm(WORKSTREAM_ID, operationId, null, null, content);
+    expect(created.substreamId).toBe(claimed.substreamId);
+    const boot = await new WorkstreamObjectClient(TEST_ENV, creatorAuth, WORKSTREAM_ID, created.substreamId).boot();
+    expect(JSON.stringify(boot.transcript)).toContain("Required history");
+  });
+
   it("materializes prepared history before publishing a private child and rejects changed replay", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce99";

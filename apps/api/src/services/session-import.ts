@@ -166,9 +166,9 @@ function claudeMessages(value: unknown): SubstreamContent["messages"] {
         parts.push(part['text']);
       } else if (part['type'] === 'image' || part['type'] === 'document') {
         const source = object(part['source']);
-        files.push(source['type'] === 'base64' && typeof source['data'] === 'string'
+        files.push((source['type'] === 'base64' || (part['type'] === 'document' && source['type'] === 'text')) && typeof source['data'] === 'string'
           ? { name: text(part['title']) || text(part['name']) || `Imported ${part['type']}`, mimeType: text(source['media_type']) || 'application/octet-stream', kind,
-              source: { kind: 'inline', encoding: 'base64', data: source['data'] } }
+              source: { kind: 'inline', encoding: source['type'] === 'text' ? 'utf8' : 'base64', data: source['data'] } }
           : sourceFile({ ...part, url: source['url'] }, kind));
       } else if (part['type'] === 'artifact') {
         if (typeof part['content'] !== 'string') files.push(sourceFile(part, 'artifact'));

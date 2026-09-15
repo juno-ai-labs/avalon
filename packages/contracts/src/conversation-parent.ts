@@ -114,6 +114,7 @@ export const PrivateChildPreparationOperationSchema = z.strictObject({
   sourceThroughTurnId: z.string().min(1).nullable(),
   recipe: SubstreamContextRecipeSchema,
   status: PrivateChildPreparationStatusSchema,
+  preparedConversationHash: z.string().regex(/^fnv1a64:[a-f0-9]{16}$/).nullable().default(null),
   capture: SubstreamContextCaptureSchema.nullable(),
   completedParts: PreparedSubstreamContextSchema.shape.parts,
   preparedContext: PreparedSubstreamContextSchema.nullable(),
@@ -145,6 +146,7 @@ export const ReadPrivateChildPreparationRequestSchema = z.strictObject(PrivateCh
 export const ClaimPrivateChildConfirmationRequestSchema = z.strictObject({
   ...PrivateChildOperationAddress,
   actorUserId: UserIdSchema,
+  preparedConversationHash: z.string().regex(/^fnv1a64:[a-f0-9]{16}$/).nullable().optional(),
 });
 export const SavePrivateChildCaptureRequestSchema = z.strictObject({
   ...PrivateChildOperationAddress,

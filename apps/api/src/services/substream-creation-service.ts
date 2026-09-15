@@ -1,3 +1,4 @@
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
 import type { PreparedConversation } from "@rally/contracts";
 import { asSubstreamId, asUserId, asWorkstreamId, type AgentModelOverride } from "@rally/contracts";
 import { PrivateChildPreparationOperationSchema, type PrivateChildPreparationOperation } from "@rally/contracts/conversation-parent";
@@ -155,8 +156,12 @@ export class SubstreamCreationService {
     try {
       operation = PrivateChildPreparationOperationSchema.parse(await parent.claimPrivateChildConfirmation({
         ...address, actorUserId: this.auth.userId,
+        preparedConversationHash: preparedConversation ? workstreamImportHash(preparedConversation) : null,
       }));
     } catch (error) {
+      if (error instanceof Error && error.message.includes("private_child_initialization_conflict")) {
+        throw new ApiError(409, "private_child_initialization_conflict", "This preparation already has different content");
+      }
       if (error instanceof Error && error.message.includes("private_child_preparation_failed")) {
         throw new ApiError(409, "substream_creation_cancelled", "This creation request was cancelled.");
       }
