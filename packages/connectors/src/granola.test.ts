@@ -115,7 +115,7 @@ describe("Granola connector", () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         url: "https://api.example.test/ingest/granola/connection-id",
         scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        events: ["note.access_granted", "note.edited", "note.generated"],
       });
       return jsonResponse({
         id: "whe_1234567890abcd",
@@ -165,6 +165,50 @@ describe("Granola connector", () => {
       webhookSignature: `v1,${signature}`,
       now: timestamp * 1_000,
     })).rejects.toThrow(/signature is invalid/u);
+  });
+
+  it("verifies a delivery whose event it does not model and refuses it by name in normalize", async () => {
+    // As a schema enum, an unknown name was a `ZodError` the ingress did not
+    // catch: a 500, which Standard Webhooks retries for four days before
+    // Granola disables the endpoint. The signature check stays a signature
+    // check; `normalize` answers `null`, which the host turns into a 400
+    // naming the event.
+    const event = {
+      event_id: "22222222-2222-4222-8222-222222222222",
+      event_type: "note.regenerated",
+      note_id: "not_1234567890abcd",
+      occurred_at: "2026-08-07T20:00:00.000Z",
+    } as const;
+    const rawBody = JSON.stringify(event);
+    const timestamp = 1_775_763_600;
+    const secretBytes = new Uint8Array(32).fill(9);
+    const signature = await hmacBase64(secretBytes, `${event.event_id}.${timestamp}.${rawBody}`);
+    const verified = await verifyGranolaWebhook({
+      signingSecret: `whsec_${base64(secretBytes)}`,
+      rawBody: new TextEncoder().encode(rawBody),
+      webhookId: event.event_id,
+      webhookTimestamp: String(timestamp),
+      webhookSignature: `v1,${signature}`,
+      now: timestamp * 1_000,
+    });
+    expect(verified).toMatchObject(event);
+    const adapter = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+    });
+    const envelope = {
+      deliveryId: event.event_id,
+      eventType: event.event_type,
+      providerAccountId: null,
+      bodyHash: "body-hash",
+      receiptKey: verified.signatureHash,
+      event: verified,
+    };
+    expect(adapter.webhookActivity!.normalize(workspaceConnection(), envelope, null)).toBeNull();
+    expect(adapter.webhookActivity!.normalize(
+      workspaceConnection(),
+      { ...envelope, eventType: "note.edited", event: { ...verified, event_type: "note.edited" } },
+      null,
+    )).toMatchObject({ eventType: "note.edited", title: "Granola note edited" });
   });
 
   it("accepts ISO offsets and rejects replayed, missing, or header-mismatched webhook identities", async () => {

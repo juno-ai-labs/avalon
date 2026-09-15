@@ -85,9 +85,12 @@ verbatim. `redact` keys on field names, so nothing downstream would catch that.
 
 So `healthCheck` results carry an optional `reasonCode`: a literal the adapter
 writes, naming a condition it already distinguishes, and that is what the
-instrumentation logs. An adapter that sets none logs nothing new. Granola sets
-`webhook_endpoint_identity_missing` and `webhook_endpoint_absent`, which are the
-two conditions that made its connection unusable while the log said `unhealthy`.
+instrumentation logs, for a failed result and for a degraded `ok` one alike. An
+adapter that sets none logs nothing new. Granola sets
+`webhook_endpoint_identity_missing`, `webhook_endpoint_absent` and
+`webhook_endpoint_disabled`; the first two were the conditions that made its
+connection unusable while the log said `unhealthy`, and all three now travel
+with the warning the check reports instead of failing.
 
 ## The primitive
 

@@ -16,7 +16,7 @@ beforeEach(async () => { await reset(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const envelopeKey = 'installation-recovery-test-key';
-const granolaEvents = ['note.access_granted', 'note.edited', 'note.generated', 'note.regenerated'];
+const granolaEvents = ['note.access_granted', 'note.edited', 'note.generated'];
 
 function barrier() {
   let release!: () => void;

@@ -602,6 +602,14 @@ describe("repairing a connection under test", () => {
       .resolves.toBeNull();
   });
 
+  it("reports why a repair could not be made", async () => {
+    // The managed lifecycle's repair returns its reason rather than throwing;
+    // dropping it left Test showing only the health check's sentence.
+    const adapter = { repair: async () => ({ repaired: false, message: "Webhook repair needs attention; inspect installation details" }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBe("Webhook repair needs attention; inspect installation details");
+  });
+
   it("reports a failed repair without failing the test", async () => {
     // The health check that follows is still the answer being asked for, so
     // this must not throw — but a connection whose delivery is still broken
@@ -638,12 +646,56 @@ describe("provider writes", () => {
     // Reported, not repaired, and not failed: reads still work, so the
     // connection stays loadable while the condition is visible.
     await expect(adapter.healthCheck(connection, AbortSignal.timeout(5_000)))
-      .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled") });
+      .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled"), reasonCode: "webhook_endpoint_disabled" });
     expect(methods.some((call) => call.startsWith("PATCH"))).toBe(false);
 
     // Provider writes are covered by the generation-fenced installation runner.
     expect(adapter.repair).toBeUndefined();
     expect(adapter.revoke).toBeUndefined();
+  });
+
+  it("reports a webhook endpoint that was never registered as degraded, not unhealthy", async () => {
+    // The key has just read notes, so every read tool works. Failing here
+    // reached the host as an authorization it could not verify, and a Sidekick
+    // was told to retry after the authorization service recovered — for a
+    // webhook that had never been registered.
+    const calls: string[] = [];
+    const registry = createConnectorRegistry({
+      granola: {
+        redirectUri: "https://api.example.com/connections/granola/callback",
+        fetch: (async (input: RequestInfo | URL) => {
+          calls.push(new URL(String(input)).pathname);
+          return Response.json({ notes: [] });
+        }) as typeof fetch,
+      },
+    });
+    const connection = authorizedConnection(connectionContext({ apiKey: "grn_workspace-key" }, "workspace"));
+    await expect(registry.get("granola").healthCheck(connection, AbortSignal.timeout(5_000))).resolves.toMatchObject({
+      ok: true,
+      message: expect.stringContaining("no webhook endpoint is registered"),
+      warning: expect.stringContaining("no webhook endpoint is registered"),
+      reasonCode: "webhook_endpoint_identity_missing",
+    });
+    expect(calls).toEqual(["/v1/notes"]);
+  });
+
+  it("reports a webhook endpoint Granola no longer lists as degraded, not unhealthy", async () => {
+    const registry = createConnectorRegistry({
+      granola: {
+        redirectUri: "https://api.example.com/connections/granola/callback",
+        fetch: (async () => Response.json({ notes: [], webhook_endpoints: [] })) as typeof fetch,
+      },
+    });
+    const connection = authorizedConnection(connectionContext(
+      { apiKey: "grn_workspace-key", webhookEndpointId: "whe_00000000000000" },
+      "workspace",
+    ));
+    await expect(registry.get("granola").healthCheck(connection, AbortSignal.timeout(5_000))).resolves.toMatchObject({
+      ok: true,
+      message: expect.stringContaining("no longer exists"),
+      warning: expect.stringContaining("no longer exists"),
+      reasonCode: "webhook_endpoint_absent",
+    });
   });
 });
 

@@ -196,11 +196,11 @@ describe('workspace event controls', () => {
   it('uses readable Granola event names in registration headings and recovery choices', async () => {
     const api = new RallyApi('https://api.example.test', null);
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'granola', registrations:
-      [{ ...registration('notes', 'unknown'), events: ['note.access_granted', 'note.edited', 'note.generated', 'note.regenerated'] }] } });
+      [{ ...registration('notes', 'unknown'), events: ['note.access_granted', 'note.edited', 'note.generated'] }] } });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
     fireEvent.click(screen.getByText('Subscription details'));
-    const fullLabel = 'Note access granted, Note edited, Note generated, Note regenerated';
+    const fullLabel = 'Note access granted, Note edited, Note generated';
     expect(await screen.findByRole('heading', { name: fullLabel })).toBeVisible();
     expect(screen.getByRole('option', { name: 'Granola note events' })).toHaveAttribute('title', fullLabel);
   });
