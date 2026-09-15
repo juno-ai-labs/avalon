@@ -17,6 +17,7 @@ import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
+import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 
 import type * as TelemetryModule from './telemetry';
@@ -549,6 +550,52 @@ describe('WorkspaceSocketProvider', () => {
     unmount();
     await flushPromises();
     expect(socketTelemetry()).toEqual([]);
+  });
+
+  it('times out a stranded reconnect ticket and starts another workspace attempt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const queryClient = new QueryClient();
+    const ticket = {
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    };
+    let requestCount = 0;
+    const getWorkspaceSocketTicket = vi.fn(() => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        return requestSocketTicket(() => new Promise<typeof ticket>(() => undefined));
+      }
+      return Promise.resolve(ticket);
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>connected surface</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    act(() => FakeWebSocket.instances[0]!.open());
+    act(() => FakeWebSocket.instances[0]!.close(1012));
+
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS));
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'workspace',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'one',
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('calls an offline transition during the ticket request what it is', async () => {
