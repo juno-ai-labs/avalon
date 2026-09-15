@@ -5565,9 +5565,18 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 30px;
 }
 .workstream-row-status {
+  /* `display: block` and an explicit box, so the overlay is the hole and
+     not a line box. This is an inline span inside a 54px row; the row's
+     leading (~19px) would otherwise size the absolutely-positioned
+     wrapper, sitting a 14px indicator ~5px above the square the mask
+     punches at `bottom: 0`. */
   bottom: var(--workstream-status-hole-bottom);
+  display: block;
+  height: var(--workstream-status-hole);
+  line-height: 0;
   position: absolute;
   right: var(--workstream-status-hole-right);
+  width: var(--workstream-status-hole);
 }
 .workstream-row-status .status-indicator {
   height: var(--workstream-status-hole);

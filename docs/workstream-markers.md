@@ -347,7 +347,11 @@ paints its own `surface-default` disc at the top-right) is a second mask, not
 a second disc. Changing the badge's size or inset without restating the
 custom properties on the icon slot is how the hole and the marker come
 apart. The compact tick's missing pill override is load-bearing; putting
-one back turns the badge into a circle inside a square hole.
+one back turns the badge into a circle inside a square hole. The overlay
+span is `display: block` with the hole's own height and `line-height: 0`
+because it is an inline element in a 54px row: the row's leading otherwise
+sizes the wrapper and sits the 14px indicator ~5px above the square the
+mask punches at `bottom: 0`.
 
 ### 2026-09-10 — Needs attention is retired, and the rule it carried is unhoused
 
