@@ -17,6 +17,7 @@
   ],
   "tokens": {
     "ref.color.neutral.1": "#fcfcfc",
+    "ref.color.neutral.2": "#f7f7f7",
     "ref.color.neutral.3": "#f3f3f3",
     "ref.color.neutral.4": "#eeeeee",
     "ref.color.neutral.5": "#e4e4e4",
@@ -38,7 +39,7 @@
     "sys.backdrop.color": "{sys.color.surface.canvas}",
     "sys.color.surface.canvas": "#fcfcfc",
     "sys.color.surface.default": "#fcfcfc",
-    "sys.color.surface.subtle": "#f7f7f7",
+    "sys.color.surface.subtle": "{ref.color.neutral.2}",
     "sys.color.surface.sunken": "#f3f3f3",
     "sys.color.surface.raised": "#fcfcfc",
     "sys.color.surface.raised-hover": "rgba(119, 119, 119, 0.17)",
