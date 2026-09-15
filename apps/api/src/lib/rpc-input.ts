@@ -1,5 +1,7 @@
 import type { z } from "zod";
 
+import { codeShaped } from "../durable-objects/scheduled-alarm-report";
+
 /**
  * How many issues a rejection names before it stops.
  *
@@ -20,25 +22,17 @@ const ROOT_PATH = "_root_";
 
 /** Issue paths and codes, before the message is reduced to a code shape. */
 function describeIssues(error: z.ZodError): string {
-  const described = error.issues.slice(0, REPORTED_ISSUES).map((issue) => (
-    `${issue.path.length === 0 ? ROOT_PATH : issue.path.join(".")}:${issue.code}`
-  ));
+  const described = error.issues.slice(0, REPORTED_ISSUES).map((issue) => {
+    const path = issue.path.length === 0 ? ROOT_PATH : issue.path.join(".");
+    // `unrecognized_keys` is the one issue whose subject is not on its path:
+    // Zod reports the offending names in `keys` and leaves `path` empty. That
+    // is precisely the version-skew shape — a caller sending a field the
+    // running binary does not know — so dropping them would leave the case
+    // this exists for naming neither the field nor a usable path.
+    const keys = issue.code === "unrecognized_keys" ? `:${issue.keys.join(".")}` : "";
+    return `${path}:${issue.code}${keys}`;
+  });
   return described.join(":") || "no_issues";
-}
-
-/**
- * Everything `scheduledAlarmErrorCode` will pass through, and nothing else.
- *
- * Applied once to the finished message rather than to each part, because a
- * per-part sanitizer is one branch away from being bypassed — the first version
- * of this file spelled the root path `(root)`, sanitized only the other branch,
- * and so degraded exactly the whole-value shape mismatch a version skew
- * produces back to `handler_error`. `:` survives because it is the separator;
- * a path segment carrying one reads as an extra field, which is a worse message
- * than a substituted character and not a lost one.
- */
-function codeShaped(message: string): string {
-  return message.replace(/[^A-Za-z0-9_:.-]/gu, "_");
 }
 
 /**
@@ -60,9 +54,9 @@ function codeShaped(message: string): string {
  * line `request_failed` already draws when it records `validation_issues` — so
  * they are safe to carry across. Values are not, and are left behind.
  *
- * The message stays within the character class `scheduledAlarmErrorCode`
- * requires, so an alarm failure reported this way reaches the operator notice
- * as a code rather than as `handler_error`.
+ * The message is reduced by `codeShaped`, which is `scheduled-alarm-report.ts`'s
+ * own statement of what it will carry, so an alarm failure reported this way
+ * reaches the operator notice as a code rather than as `handler_error`.
  */
 export function parseRpcInput<Schema extends z.ZodType>(
   schema: Schema,
@@ -71,5 +65,11 @@ export function parseRpcInput<Schema extends z.ZodType>(
 ): z.infer<Schema> {
   const result = schema.safeParse(input);
   if (result.success) return result.data;
-  throw new Error(codeShaped(`${schemaName}_invalid:${describeIssues(result.error)}`).slice(0, 120));
+  // Shaped once, over the finished message, rather than per part: a per-part
+  // sanitizer is one branch away from being bypassed, and the first version of
+  // this file proved it — the root path was spelled `(root)` in the branch the
+  // sanitizer did not cover, degrading exactly the whole-value mismatch a
+  // version skew produces back to `handler_error`. The bound and the class are
+  // `scheduled-alarm-report.ts`'s to state, not this file's to restate.
+  throw new Error(codeShaped(`${schemaName}_invalid:${describeIssues(result.error)}`));
 }
