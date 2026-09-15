@@ -80,6 +80,8 @@ The workstream’s stop control targets the foreground response. Participants di
 
 Archiving a workstream stops its active agents and their owned descendants through the same execution-stop behavior. Independently owned Sidekicks remain intact, and their scheduled runs are unaffected; team membership alone does not make an agent part of the archive’s stop scope.
 
+Messages cannot restart agents in an archived workstream. Send and reply refuse the archived destination while retaining additive team membership.
+
 ### Send and reply
 
 An agent sends an ordinary message to an authorized teammate. The recipient receives the sender identity and message ID. Reply references a received message; the host resolves the recipient and retains the exchange’s team scope. Neither agent opens a directional channel or establishes a friendship object.
@@ -173,23 +175,23 @@ Final responses and failures use the existing execution host and message exchang
 Use these canonical tools, before the plugin wire prefix. Shapes below describe successful payloads within the existing tool-result envelope:
 
 ```text
-start_agent({ name: string, description: string, message: string })
+start_agent({ name: string, description: string, message: string, attachmentIds?: string[] })
   → { agentId: string }
 
 list_agents({})
   → { agents: [{ agentId: string, name: string, description: string, status: existingExecutionStatus }] }
 
-send_message({ agentId: string, message: string })
+send_message({ agentId: string, message: string, attachmentIds?: string[] })
   → { messageId: string }
 
-reply({ messageId: string, message: string })
+reply({ messageId: string, message: string, attachmentIds?: string[] })
   → { messageId: string }
 
 stop_agent({ agentId: string })
   → existing host stop-result semantics
 ```
 
-All shown input fields are required. `agentId` is the existing substream identity returned by creation or listing, not a new agent entity. The input `messageId` for `reply` identifies a received message; the returned `messageId` identifies the newly accepted reply. Start returns after durable creation/admission, and send/reply return after durable acceptance, not after the recipient finishes processing.
+All shown input fields except `attachmentIds` are required. Attachments default to an empty array and reuse existing attachment identifiers and validation. `agentId` addresses an existing substream within its parent, not a new agent entity; it must distinguish different parents' main substreams, all locally named `0`. The input `messageId` for `reply` identifies a received message; the returned `messageId` identifies the newly accepted reply. Start returns after durable creation/admission, and send/reply return after durable acceptance, not after the recipient finishes processing.
 
 The host supplies sender identity, team scope, permissions, inherited model selection, and reply routing. `send_message` has no reply-to field, and `reply` has no recipient field. `list_agents` takes no model-selected team parameter. There is no `read_agent` or transcript cursor contract. Exact validation, failure envelopes, and the mapping of existing status/stop results remain to be specified using repository conventions.
 

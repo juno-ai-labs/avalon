@@ -285,6 +285,14 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 
 ### Connection plugins and authority narrowing
 
+Tool definitions may carry optional `longRunning` metadata. Bind registration
+renders a light advisory sentence in the tool description, preserving it in
+`load_plugin` results and provider tool definitions. False or omission adds
+nothing. This does not change execution policy or require delegation; image
+generation and editing are the first producers. The parameterized harness
+test in `index.test.ts` covers deferred activation and direct execution for
+true, false, and omitted hints.
+
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
 
 - Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
@@ -1230,6 +1238,14 @@ configuration and isolated resource/tool state. Reexporting checkpoint functions
 alone left evals to reconstruct a different agent; a second loop was rejected.
 Canonical bootstrap no longer rejects complete history by an unrelated message/byte
 ceiling before Bind can apply its context preparation policy.
+### 2026-09-14 — Advisory hints for substantial tool work
+
+Tool definitions can flag long-running work without making that flag a dispatch
+rule. Image generation and editing supply the initial hints. The common Bind
+registration path carries the hint into loading results and provider-visible
+descriptions, so plugins do not each invent delegation prompts. This supports
+the uninterrupted-workstreams design while leaving execution, authorization,
+and model judgment unchanged; a worker must not be forced to delegate again.
 
 ### 2026-09-14 — Explain a slow first response before timing it out
 

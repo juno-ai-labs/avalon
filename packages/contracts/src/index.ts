@@ -5,6 +5,7 @@ import { AutomationLifecycleStateSchema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
+export * from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { DemoSeedSchema } from "./demo-seed";
 import {
@@ -3004,6 +3005,8 @@ export const ToolDefinitionSchema = z.object({
   capability: z.string().min(1),
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
+  /** Advisory only: consider background execution; does not change dispatch or authority. */
+  longRunning: z.boolean().optional(),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
   timeoutMs: z.number().int().positive().max(1_050_000).optional()
 });

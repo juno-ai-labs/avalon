@@ -48,6 +48,7 @@ with an executor:
   mode: "read",                        // read | write
   idempotency: "safe",                 // safe | provider_key | record_before_execute
   timeoutMs: 30_000,                   // optional per-tool ceiling
+  longRunning: true,                  // optional advisory background-execution hint
 }
 ```
 
@@ -63,6 +64,14 @@ Canonical names are **local to their owning plugin** and must not repeat the
 plugin prefix: Bind prepends the plugin's short wire name when it renders the
 model-facing name, so a tool called `github_list_issues` inside the GitHub
 plugin reaches the model as `github_github_list_issues`.
+
+`longRunning` is optional tool-definition metadata, not an input argument.
+True adds a short background-execution hint to the model-visible description
+when tools are loaded and advertised; false or omission leaves it unchanged.
+It does not alter routing, permissions, serialization, deadlines, or retries.
+The model may call an already-asynchronous tool directly, and a background
+agent may execute it without delegating again. Image generation and editing
+are the initial annotated tools.
 
 `core_get_connector_connection_state` and `core_show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog

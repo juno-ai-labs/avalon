@@ -2226,6 +2226,7 @@ export interface AutomationCreatorPluginCatalogEntry {
     mode: "read" | "write";
     idempotency?: "safe" | "provider_key" | "record_before_execute";
     timeoutMs?: number;
+    longRunning?: boolean;
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
@@ -2403,7 +2404,7 @@ export function executeAutomationCreatorDiscoveryTool(
         description: plugin.description,
         scope: plugin.scope,
         aliases: plugin.searchAliases,
-        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode })),
+        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
         activityTriggerCount: plugin.activityTriggers.length,
       })),
     };
@@ -2431,6 +2432,7 @@ export function executeAutomationCreatorDiscoveryTool(
           description: tool.description,
           capability: tool.capability,
           mode: tool.mode,
+          ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
         })),
       })),
     };
@@ -2452,6 +2454,7 @@ export function executeAutomationCreatorDiscoveryTool(
           capability: tool.capability,
           mode: tool.mode,
           idempotency: tool.idempotency ?? "safe",
+          ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
           inputSchema: tool.inputSchema,
         })),
         // Projected rather than returned whole, like `plugins_search` above.
