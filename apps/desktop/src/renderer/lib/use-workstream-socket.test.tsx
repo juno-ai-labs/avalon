@@ -394,6 +394,44 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('keeps the canonical feed resident without a screen while the socket owner is retained', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000731';
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`, ticket: 'feed-ticket',
+      protocols: socketTicketProtocols('feed-ticket'),
+    })) });
+    const owner = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => socket.rawMessage('pong'));
+    });
+    act(() => {
+      socket.open();
+      socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId, title: 'Retained feed' } }));
+    });
+    const keys = [
+      ['workstream', workstreamId], ['ordered-transcript', workstreamId],
+      substreamInitialContextQueryKey(workstreamId, '0'), transcriptOverlaysQueryKey(workstreamId),
+      workstreamFeedSourceQueryKey(workstreamId), workstreamSocketSnapshotGenerationQueryKey(workstreamId),
+    ];
+    const snapshot = keys.map((key) => queryClient.getQueryData(key));
+    expect(snapshot.every((value) => value !== undefined)).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(snapshot);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(owner.result.current.state).toBe('connected');
+    owner.unmount();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(keys.map(() => undefined));
+    queryClient.clear();
+  });
+
   it('keeps the connection object stable when none of its fields changed', () => {
     const api = socketApiWith({});
     const { result, rerender } = renderHook(
