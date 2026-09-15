@@ -579,8 +579,8 @@ function planWorstCaseMs(plan: RoutePlan, config: RunHarnessInput["config"]): nu
  * Whether waiting `delayMs` and replaying the whole plan can still fit in what
  * the run has left.
  *
- * A bounded caller — the inline child at 90s, the meeting-notes final pass at
- * 120s — can otherwise have the retry *manufacture* the deadline it defers to:
+ * A bounded caller, such as an inline child, can otherwise have the retry
+ * *manufacture* the deadline it defers to:
  * the run sleeps, re-requests, crosses its wall clock mid-attempt, and
  * `timedOut` outranks the provider arm, so an outage is reported as
  * `run_wall_time_limit_exceeded`. That points the reader at Avalon's ceiling

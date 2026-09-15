@@ -78,3 +78,43 @@ export async function purgeRetiredMeetingObjects(
     deletedObjects,
   };
 }
+
+
+/**
+ * Older adopted workspaces omitted this already-retired Sidekick join table.
+ * Migration 57 has shipped, so preserve its hash and supply an empty relation
+ * only while its DELETE runs. The outer transaction never exposes the shim.
+ */
+export function withMeetingRetirementPrerequisites<T>(storage: DurableObjectStorage, migrate: () => T): T {
+  const sql = storage.sql;
+  const tables = new Set(sql.exec<{ name: string }>("SELECT name FROM sqlite_schema WHERE type = 'table'").toArray().map(row => row.name));
+  if (!tables.has('_sql_schema_migrations') || tables.has('automation_resources')
+    || sql.exec('SELECT version FROM _sql_schema_migrations WHERE version = 57').toArray().length) return migrate();
+  return storage.transactionSync(() => {
+    sql.exec('CREATE TABLE automation_resources (resource_id TEXT) STRICT');
+    const result = migrate();
+    sql.exec('DROP TABLE automation_resources');
+    return result;
+  });
+}
+
+/** Apply only after external cleanup; a failed guard leaves the old schema intact. */
+export const MEETING_NOTES_FINALIZATION_MIGRATION: DurableObjectSqliteMigration = {
+  version: 58,
+  description: 'drop retired meeting tables after verified external cleanup',
+  statements: [
+    `CREATE TABLE meeting_retirement_cleanup_guard (remaining INTEGER CHECK (remaining = 0)) STRICT`,
+    `INSERT INTO meeting_retirement_cleanup_guard SELECT
+      (SELECT COUNT(*) FROM retired_meeting_resources WHERE objects_deleted = 0) +
+      (SELECT COUNT(*) FROM search_authorization_keys WHERE resource_id IN
+        (SELECT resource_id FROM retired_meeting_resources))`,
+    `DROP TABLE meeting_retirement_cleanup_guard`,
+    `DELETE FROM resource_search_versions WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`,
+    `DELETE FROM workspace_sidebar_list_state WHERE list = 'notes'`,
+    `DROP TABLE note_transcript_segments`,
+    `DROP TABLE note_privacy_change_outbox`,
+    `DROP TABLE note_resource_deletion_outbox`,
+    `DROP TABLE workspace_batch_dispatch_note_targets`,
+    `DROP TABLE notes`,
+  ],
+};

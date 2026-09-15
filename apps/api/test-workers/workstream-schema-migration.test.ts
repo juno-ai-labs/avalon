@@ -621,11 +621,10 @@ describe("workspace schema migration in workerd", () => {
         target_count: 2,
         archived_note_count: 0,
       }]);
-      // And it froze no notes for it, so even a caller that ignored the receipt
-      // would find nothing to take.
+      // The later retirement removes the obsolete note-target relation entirely.
       expect(state.storage.sql.exec(
-        `SELECT COUNT(*) AS count FROM workspace_batch_dispatch_note_targets`,
-      ).one()).toEqual({ count: 0 });
+        `SELECT name FROM sqlite_schema WHERE name = 'workspace_batch_dispatch_note_targets'`,
+      ).toArray()).toEqual([]);
       // The pending target is what a resumed dispatch re-sends; losing it would
       // silently drop half the operation across the deploy.
       expect(state.storage.sql.exec<{ workstream_id: string; dispatched_at: number | null }>(
