@@ -545,7 +545,7 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
-  "After submit_draft succeeds, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
+  "After saving a draft, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
   "This authoring conversation belongs to an existing Sidekick. Use the scope already selected for it. Do not ask participants to choose it again. Workstream ownership is fixed at creation. A personal or workspace draft can adopt an explicitly requested personal or workspace scope before first publication; a published scope cannot be changed afterwards.",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
@@ -556,7 +556,7 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
   "and a result the instructions do not send goes nowhere.",
   "A Sidekick can never deliver into a different work stream, so do not offer to send results to one.",
-  "To change a Sidekick that already exists, call sidekicks_list, start from its current definition,",
+  "To change a Sidekick that already exists, discover it and start from its current definition,",
   "and submit the whole revised draft with its sidekickId; ready changes save immediately.",
 ].join(" ");
 
