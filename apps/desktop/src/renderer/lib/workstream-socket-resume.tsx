@@ -1,3 +1,4 @@
+import type { InferenceDelayState } from '@rally/contracts';
 import { createContext, useContext, useRef, type PropsWithChildren } from 'react';
 
 export interface StreamCursor {
@@ -38,6 +39,7 @@ export interface StreamCursor {
 
 export interface WorkstreamSocketResumeState {
   lastSequence: number;
+  activeInferenceDelays: InferenceDelayState[];
   readonly streamCursors: Map<string, StreamCursor>;
 }
 
@@ -83,7 +85,7 @@ export function useWorkstreamSocketResumeState(
   const key = `${parentId}:${substreamId}`;
   let resumeState = registry.get(key);
   if (!resumeState) {
-    resumeState = { lastSequence: 0, streamCursors: new Map() };
+    resumeState = { lastSequence: 0, activeInferenceDelays: [], streamCursors: new Map() };
     registry.set(key, resumeState);
   }
   return resumeState;
