@@ -26,6 +26,24 @@ function apply(database: DatabaseSync, through: number): void {
 }
 
 describe("the WorkstreamDO migration ledger", () => {
+  it("preserves claimed private children as no-history when adding initialization intent", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 11);
+    database.exec(`
+      INSERT INTO conversation_children(substream_id, kind, created_by_user_id, created_at)
+        VALUES ('child', 'child', 'creator', 1);
+      INSERT INTO private_child_preparations(operation_id, substream_id, creator_user_id,
+        request_json, status, created_at, updated_at)
+        VALUES ('operation', 'child', 'creator', '{}', 'confirming', 1, 1);
+    `);
+    apply(database, 12);
+    expect(database.prepare(`SELECT operation_id, substream_id, status, prepared_conversation_hash
+      FROM private_child_preparations`).all()).toEqual([
+      { operation_id: 'operation', substream_id: 'child', status: 'confirming', prepared_conversation_hash: null },
+    ]);
+    expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+  });
+
   it("drops pending suggestion feedback while preserving every supported effect", () => {
     const database = new DatabaseSync(":memory:");
     apply(database, 3);

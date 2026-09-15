@@ -52,7 +52,7 @@ export interface DemoRoomExpectation {
   workstreamId: string;
   title: string;
   scope: "workspace" | "personal";
-  harnessStatus: "completed" | "needs_input";
+  harnessStatus: "idle" | "completed" | "needs_input";
   /** Everyone in the room at the end, by user id. */
   participantUserIds: string[];
   /** The creator, by user id: who canonical content is read as. */

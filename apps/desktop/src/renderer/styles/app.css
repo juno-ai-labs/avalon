@@ -7229,3 +7229,5 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   font-size: 13px;
 }
 .inference-delay-notice > svg { flex-shrink: 0; }
+
+.session-import-link-form { display: grid; gap: 10px; }

@@ -1,3 +1,5 @@
+import type { RallyCheckpointPort } from "./evaluation";
+export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
 import type {
   AddressingClassification,
   AutomationPluginActivity,
@@ -3355,6 +3357,8 @@ export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
 export type PluginAuthorizationOccasion = "activation" | "continuation";
 
 export interface RunHarnessInput {
+  /** Optional settled checkpoint capture, using the same runtime and Bind loop as production. */
+  checkpoints?: RallyCheckpointPort;
   config: OpenRouterConfig & {
     /** Optional iteration ceiling; callers that intend an unlimited loop omit it. */
     maxIterations?: number;
@@ -3795,3 +3799,5 @@ export const __testing = {
   normalizeAutomationDraft,
   automationResearchToolPresentation: AUTOMATION_RESEARCH_TOOL_PRESENTATION,
 };
+
+export * from "./prepared-content";

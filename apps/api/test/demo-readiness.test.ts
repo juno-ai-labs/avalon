@@ -129,7 +129,7 @@ describe("the readiness manifest", () => {
     });
     expect(view?.rooms[2]).toMatchObject({
       workstreamId: MEMO_ID,
-      harnessStatus: "completed",
+      harnessStatus: "idle",
       resourceIds: ["resource-memo-attach"],
       participantUserIds: [CAST.priya!.userId, CAST.marcus!.userId],
       mentioned: false,
