@@ -195,6 +195,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_directory_state",
   "workspace_external_event_registrations",
   "external_registration_generations", // Owned by typed registration RPC only.
+  "retired_meeting_resources", // Operator-only cleanup manifest.
   "workspace_identity",
   "workspace_project_order",
   "workspace_project_state",
