@@ -164,10 +164,13 @@ its empty message as `""`, `handler_error:Error`, or the caller's fallback.
 
 Known and not yet converted:
 
-- `packages/agent-harness/src/index.ts` — `if (error instanceof z.ZodError)
-  return "validation_error"` names the class and discards the path.
 - The Durable Object RPC entry points listed above by object, which still
   open with a bare `Schema.parse(input)`.
+- `packages/agent-harness/src/index.ts` — `if (error instanceof z.ZodError)
+  return "validation_error"` names the class and discards the path, and stays
+  that way on purpose: `failure_kind` is a small vocabulary `integrations.ts`
+  matches on, and the `validate`-stage diagnostic emitted for the same
+  `inferenceRequestId` already carries the paths as `validationIssues`.
 
 ## What it costs
 
