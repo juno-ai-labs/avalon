@@ -2386,6 +2386,65 @@ describe("canonical ordered work-stream transcript", () => {
       WHERE payload_json LIKE '%Before tools%'`).one().count).toBe(1);
   });
 
+  it("promotes active participant links in assistant prose into authoritative mentions", async () => {
+    const activeUserId = "00000000-0000-7000-8000-0000000000a1";
+    const removedUserId = "00000000-0000-7000-8000-0000000000a2";
+    const activeLink = `[@Alex](person://${activeUserId})`;
+    const removedLink = `[@Former member](person://${removedUserId})`;
+    const content = `Please ask ${activeLink}. Ignore ${removedLink}.`;
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, first_opened_at, updated_at)
+       VALUES (?, 'explicit', 'user-1', 'active', 0, ?, NULL, NULL, ?),
+              (?, 'explicit', 'user-1', 'removed', 1, ?, ?, NULL, ?)`,
+      activeUserId,
+      NOW,
+      NOW,
+      removedUserId,
+      NOW,
+      NOW + 1,
+      NOW + 1,
+    );
+    await transcript.commitBindTransition(initialize(), NOW);
+    const reserved = await reserveAssistantFixture({
+      transcript, storage, content, now: NOW + 1,
+    });
+    const deliveries: PendingInputDeliveryEffectInput[] = [];
+    await transcript.commitBindTransition(
+      reserved.transition,
+      NOW + 2,
+      reserved.executionFence,
+      (effects) => deliveries.push(...effects),
+    );
+
+    expect(transcript.participantTurn("run-1:turn:1")).toMatchObject({
+      attentionOrdinal: 1,
+      blocks: [expect.objectContaining({
+        mentions: [expect.objectContaining({
+          type: "person",
+          userId: activeUserId,
+          startOffset: content.indexOf(activeLink),
+          endOffset: content.indexOf(activeLink) + activeLink.length,
+        })],
+      })],
+    });
+    expect(deliveries).toEqual([expect.objectContaining({
+      actor: "assistant",
+      authorUserId: null,
+      mentionedUserIds: [activeUserId],
+      affectedUserIds: [activeUserId],
+    })]);
+    expect(sql.exec(
+      `SELECT latest_mention_attention_ordinal FROM member_attention WHERE user_id = ?`,
+      activeUserId,
+    ).one()).toEqual({ latest_mention_attention_ordinal: 1 });
+    expect(sql.exec(`SELECT next_attention_ordinal FROM workstream WHERE id = 1`).one())
+      .toEqual({ next_attention_ordinal: 2 });
+  });
+
   it("repairs a host reservation whose Bind edge did not commit before settling failure", async () => {
     const { transcript, sql, storage } = open();
     seedPendingInputRoot(sql);

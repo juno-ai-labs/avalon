@@ -91,14 +91,54 @@ export function personIdFromMentionHref(href: string | undefined): string | unde
 
 /**
  * Matches `[@Label](person:<uuid>)` and `[@Label](person://<uuid>)` in agent
- * text. Capture group 1 is the label, with Markdown escapes intact. Fresh each
- * call so a `/g` lastIndex cannot leak across reductions.
+ * text. Capture group 1 is the label, with Markdown escapes intact, and group
+ * 2 is the person id. Fresh each call so a `/g` lastIndex cannot leak across
+ * reductions.
  */
 export function personMentionMarkdownPattern(): RegExp {
   return new RegExp(
-    String.raw`\[@((?:\\.|[^\]])+)\]\(person:(?:\/\/)?${PERSON_UUID}\)`,
+    String.raw`\[@((?:\\.|[^\]])+)\]\(person:(?:\/\/)?(${PERSON_UUID})\)`,
     "giu",
   );
+}
+
+export interface PersonMentionMarkdownRange {
+  readonly personId: string;
+  readonly startOffset: number;
+  readonly endOffset: number;
+}
+
+/**
+ * Identity-bearing person links in rendered Markdown prose, with exact source
+ * offsets. Code examples are not mentions: fenced, indented and inline code
+ * stay outside the result just as they stay outside the rendered link path.
+ *
+ * This only recognizes syntax. A caller that turns a range into authority must
+ * still resolve `personId` against its own current participant set.
+ */
+export function personMentionMarkdownRanges(markdown: string): PersonMentionMarkdownRange[] {
+  const lines = markdown.split("\n");
+  const kinds = markdownLineKinds(lines);
+  const ranges: PersonMentionMarkdownRange[] = [];
+  let documentOffset = 0;
+  for (const [lineIndex, line] of lines.entries()) {
+    if (!isMarkdownCode(kinds[lineIndex]!)) {
+      const codeSpans = [...line.matchAll(new RegExp(INLINE_CODE_SPAN.source, INLINE_CODE_SPAN.flags))]
+        .map((match) => ({ start: match.index, end: match.index + match[0].length }));
+      for (const match of line.matchAll(personMentionMarkdownPattern())) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (codeSpans.some((span) => start < span.end && end > span.start)) continue;
+        ranges.push({
+          personId: match[2]!.toLowerCase(),
+          startOffset: documentOffset + start,
+          endOffset: documentOffset + end,
+        });
+      }
+    }
+    documentOffset += line.length + (lineIndex < lines.length - 1 ? 1 : 0);
+  }
+  return ranges;
 }
 
 /**

@@ -57,7 +57,7 @@ describe("work-stream transcript on workerd SQLite", () => {
     expect(JSON.parse(result.bodyJson)).toMatchObject({ error: "invalid_transcript_operation" });
   });
 
-  it("commits exact projections and repairs an interrupted tool batch before later input", async () => {
+  it("commits exact projections and authoritative assistant mentions before repairing an interrupted tool batch", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -80,6 +80,16 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
     const snapshot = await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, first_opened_at, updated_at)
+         VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, NULL, ?)`,
+        USER_ID,
+        USER_ID,
+        now,
+        now,
+      );
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       await transcript.commitBindTransition({
         kind: "state_initialized",
@@ -175,7 +185,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         transcriptSequence: reservation.reservation.transcript_sequence,
         message: {
           role: "assistant",
-          content: "Before",
+          content: `Before [@Member](person://${USER_ID})`,
           tool_calls: [{
             id: "provider-call",
             type: "function",
@@ -192,6 +202,10 @@ describe("work-stream transcript on workerd SQLite", () => {
       const openingSnapshot = transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
       expect(openingSnapshot.ranges[0]!.turns[0]!.blocks.map((block) => block.type))
         .toEqual(["text", "tool"]);
+      expect(openingSnapshot.ranges[0]!.turns[0]!.attentionOrdinal).toBe(1);
+      expect(openingSnapshot.ranges[0]!.turns[0]!.blocks[0]).toMatchObject({
+        mentions: [expect.objectContaining({ type: "person", userId: USER_ID })],
+      });
       const projection = transcript.readBindProjection(LOOP_ID);
       expect(projection && bindLoopNonSystemMessages(projection).map((message) => message.role))
         .toEqual(["user", "assistant"]);
