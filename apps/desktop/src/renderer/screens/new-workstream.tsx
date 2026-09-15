@@ -201,7 +201,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [recipientQuery, setRecipientQuery] = useState('');
-  const [recipientPickerOpen, setRecipientPickerOpen] = useState(owningProjectId === undefined);
+  const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
