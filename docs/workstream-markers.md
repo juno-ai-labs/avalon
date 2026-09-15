@@ -236,7 +236,8 @@ row** — the numbers above are one platform's font.
   that is not one, and an opaque patch of the default surface sits on a row
   that is painted in a hover fill half the time. A hole shows whatever is
   behind it. The hole is the overlay's own box, not a circle inscribed in it,
-  because the compact tick is already the navigation square.
+  and the compact tick in that hole is a sharp square — not the navigation
+  tick's 2px radius.
 
 ## Boundary
 
@@ -316,10 +317,9 @@ solid layers xor'd, the second the badge's own square at the badge's own
 `right`/`bottom` — and the indicator itself is transparent, so the gap is a
 hole. The three custom properties that size and place the badge
 (`--workstream-status-hole` and the two insets) are declared on the icon
-slot, and both the badge and the mask read them. The compact tick keeps the
-navigation square (`.sidebar-row .status-dot`'s 2px radius); only the glow
-and the row-height stretch are put back, because those are the tick's other
-job, not this badge's.
+slot, and both the badge and the mask read them. The compact tick is a
+sharp square (`border-radius: 0`); `.sidebar-row .status-dot`'s 2px radius,
+glow, and row-height stretch stay on the navigation tick, not this badge.
 
 **Why:** The disc bought separation the same way the Sidekick strip used to:
 a circle of the default surface under a coloured mark. That costs two things
@@ -330,8 +330,8 @@ pointer is on the row. Masking the glyph is the treatment
 [`automation-lifecycle.md`](automation-lifecycle.md) already chose for the
 hexagon's play, for the same two reasons. The hole is a square because that
 is the overlay's box — 12×12, 14×14 in the app shell — and the compact tick
-was already the navigation square; inscribing a circle in that box was the
-disc's shape leaking into the mask.
+is a sharp square in that box; inscribing a circle, or keeping the
+navigation tick's 2px radius, was the disc's shape leaking into the mask.
 
 **Considered and rejected:** Keeping the disc and pointing it at the row's
 hover token instead. That matches one state and misses the rest — selected,
@@ -346,8 +346,9 @@ not share an edge with the square tick it is meant to frame.
 paints its own `surface-default` disc at the top-right) is a second mask, not
 a second disc. Changing the badge's size or inset without restating the
 custom properties on the icon slot is how the hole and the marker come
-apart. The compact tick's missing pill override is load-bearing; putting
-one back turns the badge into a circle inside a square hole. The overlay
+apart. The compact tick's `border-radius: 0` is load-bearing against the
+navigation tick's 2px radius above it; dropping that override rounds the
+badge inside a square hole. The overlay
 span is `display: block` with the hole's own height and `line-height: 0`
 because it is an inline element in a 54px row: the row's leading otherwise
 sizes the wrapper and sits the 14px indicator ~5px above the square the
