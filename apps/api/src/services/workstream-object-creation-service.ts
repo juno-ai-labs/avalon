@@ -537,6 +537,7 @@ export class WorkstreamObjectCreationService {
           objective,
           openingMessage: body.openingMessage,
           provisionalTitle: title,
+          useConversationContext: options.initialization?.kind === "history",
         },
       ).catch((error: unknown) => {
         logWarn(this.env, "workstream_first_naming_failed", {

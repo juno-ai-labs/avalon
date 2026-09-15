@@ -159,7 +159,7 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
   }
   const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
   const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
-    title: body.title,
+    objective: body.title,
     clientMessageId: body.clientMessageId,
     participantUserIds: [],
     scope: "personal",

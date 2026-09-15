@@ -104,6 +104,8 @@ export interface WorkstreamNamingInput {
   substreamId?: string | undefined;
   objective: string;
   openingMessage: string;
+  /** Read already-materialized history for the first naming pass. */
+  useConversationContext?: boolean;
   /** The title creation wrote, and the one that stands if naming produces none. */
   provisionalTitle: string;
   /** The creator, where one exists — a rollout bucketing attribute. */
@@ -128,6 +130,7 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
       userId: input.userId,
       objective: input.objective,
       openingMessage: input.openingMessage,
+      ...(input.useConversationContext ? { recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId, input.substreamId) } : {}),
     });
     // Advanced either way. A work stream whose naming failed keeps its
     // provisional title, and clients waiting on the name are told to stop
