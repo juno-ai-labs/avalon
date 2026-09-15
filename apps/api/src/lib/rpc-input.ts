@@ -25,5 +25,9 @@ export function parseRpcInput<Schema extends z.ZodType>(
 ): z.infer<Schema> {
   const result = schema.safeParse(input);
   if (result.success) return result.data;
-  throw new Error(codeShaped(`${schemaName}_invalid:${describeZodIssues(result.error)}`));
+  // `namesUnknownKeys` is admissible here and nowhere else so far: both sides
+  // of a Durable Object RPC are this deployment's own code, so an unrecognized
+  // key is a field one binary knows and the other does not — the whole
+  // diagnosis of a version skew, and never a caller's data.
+  throw new Error(codeShaped(`${schemaName}_invalid:${describeZodIssues(result.error, { namesUnknownKeys: true })}`));
 }

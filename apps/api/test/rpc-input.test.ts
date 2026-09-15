@@ -75,11 +75,14 @@ describe("parseRpcInput", () => {
     expect(code).toContain("surprise");
   });
 
-  it("keeps a path the schema does not control from breaking the code shape", () => {
-    // An open record's keys are the caller's, not the schema's, so a path
-    // segment can carry anything. One character outside the class costs the
-    // whole message: `scheduledAlarmErrorCode` is all-or-nothing, and answers
-    // `handler_error` for a message that is 99% useful.
+  it("withholds a path the schema does not control, and stays code-shaped anyway", () => {
+    // An open record's keys are the caller's, not the schema's, so a segment can
+    // carry an address or a secret. It is withheld rather than sanitized — this
+    // code reaches an operator notice posted to Slack, where `seat_row_3` would
+    // still be the value with its punctuation moved. The message stays inside
+    // `scheduledAlarmErrorCode`'s class either way, which is the other half:
+    // that check is all-or-nothing and answers `handler_error` for a message
+    // that is 99% useful.
     let thrown: unknown;
     try {
       parseRpcInput(z.record(z.string(), z.number()), { "seat (row 3)": "x" }, "seating");
@@ -89,7 +92,8 @@ describe("parseRpcInput", () => {
     const code = scheduledAlarmErrorCode(thrown);
     expect(code).not.toContain("handler_error");
     expect(code).toContain("seating_invalid");
-    expect(code).toContain("seat_");
+    expect(code).toContain("_key_");
+    expect(code).not.toContain("row");
   });
 
   it("stays code-shaped, so an alarm failure reaches the operator notice as a code", () => {

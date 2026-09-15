@@ -183,10 +183,11 @@ what that cost and holds the catalogue.
   `@rally/contracts`.** They are one implementation deliberately: a boundary
   that writes its own is how the root path shipped spelled `(root)`, outside the
   character class the operator notice required.
-- **Never widen what is reported to the caller.** Paths and issue codes are
-  schema shape and may cross; the rejected _values_ are member or provider data
-  and may not. That is the same line `errorHandler` draws when it records
-  `validation_issues`.
+- **Never widen what is reported to the caller.** Issue codes and _declared_
+  field names are schema shape and may cross. Record keys, `unrecognized_keys`
+  names from an untrusted caller, rejected values, and an adapter's `message` —
+  which may hold a caught provider error's own text — are data and may not.
+  Sanitizing a value to the code's character class is formatting, not redaction.
 - **A generic code is a defect, not a fallback.** `unexpected_error`,
   `handler_error`, `ZodError`, `internal_error` and `unhealthy` on a path that
   had the reason in hand are each a bug to fix in the change that finds one —
