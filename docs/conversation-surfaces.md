@@ -77,7 +77,10 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   parent that is. `screens/workstream.tsx` renders it for a work stream;
   `screens/automation.tsx` renders `components/automation-header.tsx` in a sibling profile pane
   through `SidekickDetailLayout`, with a short conversation heading over the feed with `parentKind: "automation"` and `substreamId:
-  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
+  "0"`. `AddParticipantDialog` stays open after an add or a remove of someone
+  else so more than one membership can be changed in one sitting; it closes on
+  click-outside, Escape, the header close control, or when the current person
+  removes themselves. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
@@ -642,6 +645,25 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-15 — The participant dialog stays open across roster changes
+
+**What changed:** Adding a person no longer closes `AddParticipantDialog`. The
+dialog stays up after each add or remove so another membership can be changed
+without reopening. It still closes on click-outside, Escape, the header close
+control, and when the current person removes themselves (they are leaving the
+room). A click on a portaled `.menu-content` — the Remove control — is not
+treated as outside the dialog.
+
+**Why:** The dialog is the roster, not a single-shot add. Closing it on the
+first successful add made adding two people two trips through the facepile, and
+a Remove click on the portaled menu dismissed it the same way a click on the
+overlay does.
+
+**Considered and rejected:** A Done footer like the new-work-stream picker.
+Click-outside is already the dismissal, and a second confirmation would make
+the live add/remove path look like a draft. Closing only on add and not on
+remove would still interrupt the same sitting.
 
 ### 2026-09-14 — Show slow inference as temporary response status
 

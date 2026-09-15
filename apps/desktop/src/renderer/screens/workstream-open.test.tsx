@@ -752,6 +752,7 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member, New member'));
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
 
@@ -806,7 +807,7 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to substream' }));
     await waitFor(() => expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator, New member'));
-    fireEvent.click(manage);
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'New member participant actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from substream' }));
     await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
@@ -1005,6 +1006,7 @@ describe('socket-first work-stream open', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to work stream' }));
     expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine participant actions' }), {
       button: 0,
@@ -1014,6 +1016,48 @@ describe('socket-first work-stream open', () => {
 
     expect(await screen.findByText('Adam cannot remove Katherine')).toBeInTheDocument();
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
+  });
+
+  it('keeps the participant dialog open after an add so another person can be added', async () => {
+    const adam = {
+      id: '00000000-0000-7000-8000-000000000651',
+      name: 'Adam',
+      email: 'adam@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const katherine = {
+      id: '00000000-0000-7000-8000-000000000652',
+      name: 'Katherine',
+      email: 'katherine@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const jordan = {
+      id: '00000000-0000-7000-8000-000000000653',
+      name: 'Jordan',
+      email: 'jordan@example.test',
+      timezone: 'America/Los_Angeles',
+      status: 'active' as const,
+    };
+    const detail = recoveryBoot({ participants: [adam] });
+    api.getWorkspaceMembers.mockResolvedValue([adam, katherine, jordan]);
+    api.addParticipant
+      .mockResolvedValueOnce({ ...detail, participants: [adam, katherine] })
+      .mockResolvedValueOnce({ ...detail, participants: [adam, katherine, jordan] });
+
+    renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
+    });
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to work stream' }));
+    await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, katherine.id));
+    const dialog = screen.getByRole('dialog', { name: 'Add a participant' });
+    expect(dialog).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add Jordan to work stream' }));
+    await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, jordan.id));
+    expect(api.addParticipant).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
   });
 
   it('retries the authoritative socket after the first attempt fails', async () => {
