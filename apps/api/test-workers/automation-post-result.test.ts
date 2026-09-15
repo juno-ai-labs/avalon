@@ -28,6 +28,7 @@ import {
   agentIdForAddress,
   agentAddressForId,
   WorkstreamWorkflowInputSchema,
+  type WorkstreamWorkflowInput,
   asAutomationId,
   asSubstreamId,
   asUserId,
@@ -504,6 +505,88 @@ describe("sidekick_post_result", () => {
   });
 
 
+  it("notifies the coordinator for a textless needs-input settlement", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    await runInDurableObject(child, async (instance) => {
+      const target = instance as unknown as {
+        deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input"; error: { code: string; message: string } }) => Promise<string | null>;
+      };
+      await target.deliverAgentRunResult(childInput, { status: "needs_input", error: {
+        code: "ambiguous_external_write", message: "An external action's outcome could not be confirmed; do not repeat it.",
+      } });
+    });
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
+    expect(provider.calls.some((call) => call.messages.some((message) => message.role === "user"
+      && JSON.stringify(message.content).includes("ambiguous_external_write")
+      && JSON.stringify(message.content).includes("do not repeat it")))).toBe(true);
+  });
+
+  it("fences an owner before reading descendants during recursive stop", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const started = await service.start({ name: "Quiet teammate", description: "Wait for a useful request",
+      message: "NO_REPLY_REQUIRED: no further action is needed.", attachmentIds: [] }, context);
+    const address = agentAddressForId(started.agentId);
+    const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
+    ));
+    const [run] = await settledRun(child);
+    const childInput = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
+    )));
+    const attempted = { reached: false, created: false };
+    const target = service as unknown as {
+      workspace: () => Promise<{ ownedAgentDescendants: (request: { workspaceId: string; agentId: typeof started.agentId }) => Promise<{ agentIds: typeof started.agentId[] }> }>;
+    };
+    const workspace = target.workspace.bind(target);
+    target.workspace = async () => {
+      const actual = await workspace();
+      return { ownedAgentDescendants: async (request) => {
+        // Read real WorkspaceDO state, then allow a start at precisely the
+        // snapshot/stop boundary. No storage or RPC result is fabricated.
+        const snapshot = await actual.ownedAgentDescendants(request);
+        if (request.agentId === started.agentId && !attempted.reached) {
+          attempted.reached = true;
+          try {
+            await new AgentCommunicationService(TEST_ENV, childInput).start({
+              name: "Late child", description: "Register during a stop", message: "NO_REPLY_REQUIRED", attachmentIds: [],
+            }, { ...context, effectIntentId: crypto.randomUUID() });
+            attempted.created = true;
+          } catch (error) {
+            if (!(error instanceof Error) || !("code" in error) || error.code !== "agent_origin_stopped") throw error;
+          }
+        }
+        return snapshot;
+      } };
+    };
+    await service.stop(started.agentId);
+    expect(attempted).toEqual({ reached: true, created: false });
+    expect(await child.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+  });
+
   it("ends through Bind without an automatic reply and continues on a later message", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
@@ -753,8 +836,22 @@ describe("sidekick_post_result", () => {
       const frame = JSON.parse(String((await metadata).data));
       expect(frame.metadata.backgroundAgentCount).toBe(1);
       expect(frame.metadata.privateChildren).toEqual([]);
+      const heldForeground = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+        input: { text: "HOLD_BACKGROUND: foreground work to stop", clientMessageId: crypto.randomUUID(),
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+      expect(heldForeground.status).toBe(200);
+      await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("foreground work to stop")),
+        { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      await runInDurableObject(roomConversation(), async (instance) => {
+        const target = instance as unknown as {
+          product: { stopForAdmittedSocket: (auth: AuthContext, operationId: string) => Promise<void> };
+        };
+        await target.product.stopForAdmittedSocket(AUTH, crypto.randomUUID());
+      });
+      expect(await child.agentRuntimeInfo()).toMatchObject({ status: "executing" });
       release();
-      await settledRun(child);
+      expect((await settledRun(roomConversation(), 2))[1]).toMatchObject({ status: "cancelled" });
+      expect((await settledRun(child))[0]).toMatchObject({ status: "completed" });
       let latestCount = 1;
       socket.addEventListener("message", (event) => {
         const update = JSON.parse(String(event.data));
@@ -848,6 +945,11 @@ describe("sidekick_post_result", () => {
     ));
     await settledRun(grandchild);
     await service.stop(started.agentId);
+    expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
+    await service.send({ agentId: started.agentId, message: "Continue only your own summary.", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => provider.calls.some((call) => JSON.stringify(call.messages).includes("Continue only your own summary.")),
+      { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await grandchild.agentRuntimeInfo()).toMatchObject({ status: "stopped" });
     expect(await authoring.agentRuntimeInfo()).toMatchObject({ background: false });
     const archived = await post(roomConversation(), "/internal/product", { operation: "update", auth: AUTH, input: { archived: true } });
