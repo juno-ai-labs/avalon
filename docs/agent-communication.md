@@ -78,7 +78,7 @@ the owner again after opening admission, including when confirmation is lost,
 and preserves the child stop before returning. Foreground
 stop remains local. Archive delivers the same
 stop request to owned conversations; independently owned Sidekicks continue.
-Liveness renewals allow Bind to finish the in-flight step and settle its stop,
+As approved on 2026-09-15, liveness renewals allow Bind to finish the in-flight step and settle its stop,
 while authority checks still precede every new model and tool call.
 
 Model-authored agent-to-agent communication is explicit through `send_message` or `reply`,
