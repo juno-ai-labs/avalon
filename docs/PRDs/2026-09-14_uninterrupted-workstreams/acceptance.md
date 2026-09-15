@@ -21,7 +21,7 @@ On 2026-09-15 the user removed automatic forwarding. Results, questions, and upd
 
 The previous full-suite run passed 2,942 desktop tests, 2,916 API Node tests, 925 workerd tests, and the other package suites. That run covered the superseded forwarding design, so it does not prove the new explicit-only contract. Updated scoped validation and mutation evidence are pending below.
 
-The remaining material decisions are in [plan.md](plan.md). Live inference requires a configured development provider; scripted-provider tests prove runtime integration, not model judgment or responsiveness with three real participants.
+Archive settlement and broader-audience attachment forwarding are approved, as recorded in [plan.md](plan.md). Live inference requires a configured development provider; scripted-provider tests prove runtime integration, not model judgment or responsiveness with three real participants.
 
 The explicit reply recovery fixture passes 20 fresh cases after replacing graceful eviction with a targeted recipient crash. Graceful eviction could wait for in-flight requests past the test deadline; aborting all objects also reset Miniflare’s D1 and broke fixture isolation. The final test crashes only the recipient, verifies a new instance, and checks that replay creates one message and one run. Breaking stable delivery identity creates two messages and fails the test. Reinstating automatic forwarding fails the worker and Sidekick local-response regressions.
 
