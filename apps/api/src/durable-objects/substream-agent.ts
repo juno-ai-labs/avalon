@@ -178,7 +178,7 @@ import {
   HarnessRunOperationRequestSchema,
   mutatesRunState,
 } from "./workstream-harness-run-protocol";
-import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
+import { WorkstreamIdentityStorage, type WorkstreamProvisionInput } from "./workstream-identity-storage";
 import {
   type IdentityOperationRequest,
   IdentityOperationRequestSchema,
@@ -2001,6 +2001,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
   }
 
+  /** One host RPC; keep bootstrap, identity projection and principal initialization on their existing paths. */
+  async initializeDelegatedAgent(input: {
+    bootstrap: SubstreamRuntimeBootstrapRequest;
+    provision: WorkstreamProvisionInput;
+    executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
+  }): Promise<DurableObjectRpcResult> {
+    const boot = await this.bootstrapRuntime(input.bootstrap);
+    if (boot.status !== 200) return boot;
+    const provision = await this.executeIdentityOperation({
+      workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
+      substreamId: input.bootstrap.substreamId ?? "0", operation: "provision", args: [input.provision],
+    });
+    if (provision.status !== 200) return provision;
+    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal });
+    return provision;
+  }
+
   async initializeBackgroundAgent(input: { executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"] }) {
     await this.initialized;
     const principal = ExecutionPrincipalSchema.parse(input.executionPrincipal);
@@ -2037,7 +2054,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = AdmitAgentMessageInputSchema.parse(input);
     const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId
+    if (!identity) return { accepted: false, code: "agent_destination_unavailable" };
+    if (identity.workspaceId !== request.workspaceId
       || identity.parentId !== request.workstreamId
       || agentIdForAddress({
         parentKind: identity.parentKind, parentId: identity.parentId,
@@ -2052,7 +2070,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return { accepted: false, code: "workstream_authority_generation_stale" };
     }
     try {
-      const result = await this.product.admitSystemActivation(request);
+      const background = this.state.storage.sql.exec<{ execution_principal_json: string }>(
+        "SELECT execution_principal_json FROM background_agent WHERE id = 1",
+      ).toArray()[0];
+      const result = await this.product.admitSystemActivation({
+        ...request,
+        executionPrincipal: background
+          ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json))
+          : request.executionPrincipal,
+      });
       if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
       if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
       return { accepted: true, messageId: result.turn.turnId };
