@@ -2623,8 +2623,9 @@ pre {
 /* Between the status dot and the name, at the row's own text colour, and sized
    through the row that owns it — a bare class here ties with `.connector-mark`
    and loses on order. The gap above spaces it from both without a rule of its
-   own. */
-.settings-connection-name .connector-mark { height: 14px; width: 14px; }
+   own. `flex: none` because a name long enough to wrap shrinks its flex
+   siblings first: the 7px dot became a 3px sliver beside a two-line name. */
+.settings-connection-name .connector-mark { flex: none; height: 14px; width: 14px; }
 .settings-connection-table td:last-child { text-align: right; }
 .settings-connection-actions { align-items: center; display: inline-flex; justify-content: flex-end; }
 .settings-connection-empty-row td { height: auto; padding: 0; }
@@ -2704,8 +2705,11 @@ pre {
 .webhook-secret-result { display: grid; gap: 10px; padding: 14px; }
 .webhook-secret-result > p { margin: 0; }
 .webhook-secret-result > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); overflow-wrap: anywhere; }
-.connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 7px; width: 7px; }
-.connection-provider-dot.healthy { background: var(--av-sys-color-success-base); }
+.connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; flex: none; height: 7px; width: 7px; }
+/* The one saturated green: `success-base` is tuned for text and fills and at
+   7px read as grey on the dark surface. The halo lifts the dot without growing
+   it, so the row's rhythm and the table's alignment stay as they were. */
+.connection-provider-dot.healthy { background: var(--av-sys-color-success-vivid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--av-sys-color-success-vivid) 28%, transparent); }
 .connection-provider-dot.reconnect_required { background: var(--av-sys-color-warning-base); }
 
 .invite-form {
@@ -4840,6 +4844,23 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   padding: 10px 12px;
 }
 .dialog-callout > p { margin: 0; }
+/* The Test verdict in Manage events: the outcome's colour on the box, the icon
+   and the heading, with the provider's sentence beneath in the body colour. */
+.connection-test-outcome {
+  align-items: flex-start;
+  border: 1px solid;
+  border-radius: var(--av-cmp-control-radius);
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+.connection-test-outcome > svg { flex: none; margin-top: 1px; }
+.connection-test-outcome > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.connection-test-outcome strong { font-size: var(--av-cmp-control-font-size); font-weight: 600; }
+.connection-test-outcome p { color: var(--av-sys-color-text-default); margin: 0; }
+.connection-test-outcome.is-passed { background: var(--av-sys-color-success-wash); border-color: var(--av-sys-color-success-edge); color: var(--av-sys-color-success-base); }
+.connection-test-outcome.is-failed { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); color: var(--av-sys-color-danger-base); }
 .form-field > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 20px; }
 .form-field > select { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); min-height: 36px; min-width: 0; padding: 6px 10px; width: 100%; }
 .form-field > span,

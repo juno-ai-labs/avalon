@@ -86,6 +86,28 @@ describe('workspace event controls', () => {
     expect(change).not.toHaveBeenCalled();
   });
 
+  it('shows the Test verdict as a pass or a failure rather than one more sentence', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), state: 'current',
+      registrations: [registration('applicationSubmit', 'current')] } });
+    const test = vi.spyOn(api, 'testConnection')
+      .mockResolvedValueOnce({ ok: false, message: 'Invalid API key format. Webhook repair needs attention; inspect installation details' })
+      .mockResolvedValueOnce({ ok: true, message: 'Granola authorization is healthy. Approved webhook configuration is verified' });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+    const failed = await screen.findByRole('alert');
+    expect(failed).toHaveClass('is-failed');
+    expect(failed).toHaveTextContent('Connection test failed');
+    expect(failed).toHaveTextContent('Invalid API key format');
+    fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+    const passed = (await screen.findByText('Connection test passed')).closest('.connection-test-outcome');
+    expect(passed).toHaveClass('is-passed');
+    expect(passed).toHaveTextContent('Approved webhook configuration is verified');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(test).toHaveBeenCalledTimes(2);
+  });
+
   it('adopts an enabled legacy connection only after explicit Test', async () => {
     const api = new RallyApi('https://api.example.test', null);
     const read = vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: null });

@@ -1,4 +1,5 @@
 import { AshbyEventLabels, type ConnectorInstallation } from "@rally/contracts";
+import { CircleAlert, CircleCheck } from 'lucide-react';
 import { useState, useSyncExternalStore } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RallyApi } from '../lib/api';
@@ -194,6 +195,28 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
   </Modal>;
 }
 
+/**
+ * The Test result as a verdict first and the details second.
+ *
+ * The result used to be one unstyled sentence under the buttons, the same
+ * weight as the caption above it, so "Granola authorization is healthy.
+ * Approved webhook configuration is verified" read like more instructions, and
+ * an administrator who had just fixed a connection could not tell they were
+ * done. A passed test is green with its own heading and a failed one is red;
+ * both keep the sentence, which is where the provider's own words land.
+ */
+function ConnectionTestOutcome({ ok, message }: { ok: boolean; message: string }) {
+  return (
+    <div className={`connection-test-outcome ${ok ? 'is-passed' : 'is-failed'}`} role={ok ? 'status' : 'alert'}>
+      {ok ? <CircleCheck aria-hidden="true" size={18} /> : <CircleAlert aria-hidden="true" size={18} />}
+      <div>
+        <strong>{ok ? 'Connection test passed' : 'Connection test failed'}</strong>
+        <p>{message}</p>
+      </div>
+    </div>
+  );
+}
+
 export function ConnectorInstallationDetails({ api, connectionId, connectionEnabled = false, onClose }: { api: RallyApi; connectionId: string; connectionEnabled?: boolean; onClose: () => void }) {
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
@@ -246,8 +269,8 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
         && <Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button>}
       {needsHelp && <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button>}
     </>}
-    {test.data && <p role="status">{test.data.message}</p>}
-    {test.error && <InlineError>{test.error.message}</InlineError>}
+    {test.data && <ConnectionTestOutcome ok={test.data.ok} message={test.data.message} />}
+    {test.error && <ConnectionTestOutcome ok={false} message={test.error.message} />}
     {change.error && <InlineError>{change.error.message}</InlineError>}
     {installation && <>
       <div style={{ marginBlockStart: '1rem' }}><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button></div>
