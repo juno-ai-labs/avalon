@@ -358,6 +358,13 @@ export function openFootnoteReferencePattern(): RegExp {
  * parenthesis, or not — so neither can backtrack over a long label or target.
  */
 const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?((?:[^\s()<>]|\([^\s()<>]*\))*)>?(?:\s+"[^"]*"|\s+'[^']*')?\s*\)/gu;
+
+/** A non-footnote link definition, used only by the plain-text boundary. */
+const REFERENCE_LINK_DEFINITION = /^ {0,3}\[((?:\\.|[^\]\\])+)\]\s*:\s*(?:<[^>\n]+>|\S+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/u;
+/** Full and collapsed reference links: `[label][id]`, `[label][]`, and image forms. */
+const FULL_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\]\[([^\]]*)\]/gu;
+/** Shortcut reference links: `[label]` and `![alt]`, when a matching definition exists. */
+const SHORTCUT_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\](?![[(])/gu;
 /**
  * An inline code span, as every read in this module has to agree one looks.
  *
@@ -639,7 +646,7 @@ export function rewriteMessageAsPlainText(
 /** Markdown structure reduced to readable plain text without flattening it. */
 function markdownFormattingAsPlainText(markdown: string): string {
   const lines: string[] = [];
-  const source = markdown.replace(/\r\n/gu, "\n").split("\n");
+  const source = rewriteReferenceLinksAsPlainText(markdown).replace(/\r\n/gu, "\n").split("\n");
   const kinds = markdownLineKinds(source);
   for (const [index, raw] of source.entries()) {
     const kind = kinds[index]!;
@@ -682,6 +689,43 @@ function markdownFormattingAsPlainText(markdown: string): string {
   return lines.join("\n").replace(/\n{3,}/gu, "\n\n").replace(/^\n+|\n+$/gu, "");
 }
 
+/**
+ * Reduces reference-style links after collecting their definitions.
+ *
+ * A reference is syntax only when its normalized label has a definition. This
+ * keeps ordinary bracketed prose intact while giving full, collapsed, and
+ * shortcut links the same label-only result as an inline link. Definitions and
+ * references inside code remain literal.
+ */
+function rewriteReferenceLinksAsPlainText(markdown: string): string {
+  const source = markdown.replace(/\r\n/gu, "\n").split("\n");
+  const kinds = markdownLineKinds(source);
+  const definitions = new Set<string>();
+  const definitionLines = new Set<number>();
+  for (const [index, line] of source.entries()) {
+    if (isMarkdownCode(kinds[index]!)) continue;
+    const definition = REFERENCE_LINK_DEFINITION.exec(line);
+    if (!definition || definition[1]!.startsWith("^")) continue;
+    definitions.add(normalizeReferenceIdentifier(definition[1]!));
+    definitionLines.add(index);
+  }
+  if (definitions.size === 0) return markdown;
+  const withoutDefinitions = source
+    .filter((_line, index) => !definitionLines.has(index))
+    .join("\n");
+  return mapOutsideCode(withoutDefinitions, (prose) => prose
+    .replace(FULL_REFERENCE_LINK, (match, _image: string, label: string, identifier: string) => {
+      const reference = identifier || label;
+      return definitions.has(normalizeReferenceIdentifier(reference)) ? label : match;
+    })
+    .replace(SHORTCUT_REFERENCE_LINK, (match, _image: string, label: string) =>
+      definitions.has(normalizeReferenceIdentifier(label)) ? label : match));
+}
+
+function normalizeReferenceIdentifier(value: string): string {
+  return value.replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, "$1").trim().replace(/\s+/gu, " ").toLowerCase();
+}
+
 function markdownIndentWidth(value: string): number {
   return [...value].reduce((width, character) => width + (character === "\t" ? 4 : 1), 0);
 }
@@ -692,15 +736,18 @@ function stripInlineMarkdown(value: string): string {
     spans.push(content);
     return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
   });
-  return parked
+  const escaped = parked.replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, (_match, character: string) => {
+    spans.push(character);
+    return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
+  });
+  return escaped
     .replace(INLINE_LINK, (match, label: string, href: string) => (match.startsWith("!") ? label || href : label))
     .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/giu, "$1")
     .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/gu, "$1")
-    .replace(/__(?=\S)([\s\S]*?\S)__/gu, "$1")
+    .replace(/(^|[^\p{L}\p{N}])__(?=\S)([\s\S]*?\S)__(?=$|[^\p{L}\p{N}])/gu, "$1$2")
     .replace(/(^|[^\p{L}\p{N}])\*(?=\S)([\s\S]*?\S)\*(?=$|[^\p{L}\p{N}])/gu, "$1$2")
-    .replace(/(^|[^\p{L}\p{N}])_(?=\S)([\s\S]*?\S)_(?=$|[^\p{L}\p{N}])/gu, "$1$2")
+    .replace(/(^|[^\p{L}\p{N}_])_(?=\S)([\s\S]*?\S)_(?=$|[^\p{L}\p{N}_])/gu, "$1$2")
     .replace(/~~([^~]+)~~/gu, "$1")
-    .replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, "$1")
     .replace(
       new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
       (_match, index: string) => spans[Number(index)] ?? "",
