@@ -3098,9 +3098,10 @@ export async function runWorkstreamHarness(
           run_id: input.harnessRunId,
         });
       },
-      onBindLoopTransition: (transition) => runtime?.persistentLoop
-        ? runtime.persistentLoop.commitBindTransition(transition)
-        : orderedTranscript.commitBindTransition(transition),
+      onBindLoopTransition: (transition) => {
+        if (!runtime?.persistentLoop) throw new Error("substream_persistent_loop_required");
+        return runtime.persistentLoop.commitBindTransition(transition);
+      },
       onBindProviderBoundary: (boundary) => orderedTranscript.recordProviderBoundary(boundary),
       onBindCompaction: async (commit) => {
           await liveness.pulse("compaction_persist", true);

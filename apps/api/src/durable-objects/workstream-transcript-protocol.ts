@@ -44,13 +44,15 @@ type LocalOnlyTranscriptOperation =
   // are meaningless to any caller that does not hold the loop.
   | "bindMessagePositionsBySourceKind"
   | "omittedTurnEnvelope"
+  // Accepted assistant turns may enqueue regional effects in the same SQLite
+  // transaction. Function callbacks cannot cross the object-port boundary.
+  | "commitBindTransition"
   | "range";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 
 const DISPATCHED_OPERATIONS = [
   "initialContext",
-  "commitBindTransition",
   "commitBindCompaction",
   "compactionCheckpoint",
   "recordProviderBoundary",

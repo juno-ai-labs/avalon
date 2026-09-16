@@ -11,6 +11,7 @@ import {
   personIdFromMentionHref,
   personMentionHref,
   personMentionMarkdownPattern,
+  personMentionMarkdownRanges,
   rewriteCitationsAsPlainText,
 } from "./citations";
 
@@ -105,6 +106,63 @@ describe("person mention hrefs", () => {
     const legacy = `Ask [@Ada](person:${id}) please.`;
     expect(house.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
     expect(legacy.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+  });
+
+  it("locates person links in prose but not code examples", () => {
+    const house = `[@Ada](person://${id})`;
+    const legacy = `[@Grace](person:${id.toUpperCase()})`;
+    const markdown = [
+      `Ask ${house}.`,
+      `Keep \`${legacy}\` literal.`,
+      "```md",
+      house,
+      "```",
+      `Then ask ${legacy}.`,
+    ].join("\n");
+
+    expect(personMentionMarkdownRanges(markdown)).toEqual([
+      {
+        personId: id,
+        startOffset: markdown.indexOf(house),
+        endOffset: markdown.indexOf(house) + house.length,
+      },
+      {
+        personId: id,
+        startOffset: markdown.lastIndexOf(legacy),
+        endOffset: markdown.lastIndexOf(legacy) + legacy.length,
+      },
+    ]);
+  });
+
+  it("matches the rendered link grammar before granting a person range", () => {
+    const link = `[@Ada](person://${id})`;
+    const nested = `Plan:\n\n1. First\n\n    - Ask ${link}`;
+
+    expect(personMentionMarkdownRanges(`Write \\${link} to show syntax.`)).toEqual([]);
+    expect(personMentionMarkdownRanges(`!${link}`)).toEqual([]);
+    expect(personMentionMarkdownRanges(`Use \`\` ${link} \`\` here.`)).toEqual([]);
+    expect(personMentionMarkdownRanges(nested)).toEqual([{
+      personId: id,
+      startOffset: nested.indexOf(link),
+      endOffset: nested.indexOf(link) + link.length,
+    }]);
+  });
+
+  it("locates a canonical person link whose label wraps a line", () => {
+    const link = `[@Ada\nLovelace](person://${id})`;
+    const markdown = `Ask ${link} please.`;
+
+    expect(personMentionMarkdownRanges(markdown)).toEqual([{
+      personId: id,
+      startOffset: markdown.indexOf(link),
+      endOffset: markdown.indexOf(link) + link.length,
+    }]);
+  });
+
+  it("rejects a backslash-heavy noncanonical label without ambiguous matching", () => {
+    const markdown = `[@${"\\".repeat(42)}[x]](person://${id})`;
+
+    expect(personMentionMarkdownRanges(markdown)).toEqual([]);
   });
 });
 

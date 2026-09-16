@@ -32,7 +32,7 @@ interface TranscriptOperationExecutor {
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
-  it("keeps participant appends off the internal transcript RPC boundary", async () => {
+  it("keeps transaction-local transcript mutations off the internal RPC boundary", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -55,9 +55,19 @@ describe("work-stream transcript on workerd SQLite", () => {
 
     expect(result.status).toBe(400);
     expect(JSON.parse(result.bodyJson)).toMatchObject({ error: "invalid_transcript_operation" });
+
+    const bindResult = await runInDurableObject(stub, (instance) =>
+      (instance as TranscriptOperationExecutor).executeTranscriptOperation({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        operation: "commitBindTransition",
+        args: [],
+      }));
+    expect(bindResult.status).toBe(400);
+    expect(JSON.parse(bindResult.bodyJson)).toMatchObject({ error: "invalid_transcript_operation" });
   });
 
-  it("commits exact projections and repairs an interrupted tool batch before later input", async () => {
+  it("commits exact projections and authoritative assistant mentions before repairing an interrupted tool batch", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -80,6 +90,16 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
     const snapshot = await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, first_opened_at, updated_at)
+         VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, NULL, ?)`,
+        USER_ID,
+        USER_ID,
+        now,
+        now,
+      );
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       await transcript.commitBindTransition({
         kind: "state_initialized",
@@ -151,6 +171,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         now,
       });
       expect(reservation.outcome).toBe("reserved");
+      let deliveredUserIds: readonly string[] | undefined;
       await transcript.commitBindTransition({
         kind: "assistant_reserved",
         loopId: LOOP_ID,
@@ -175,7 +196,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         transcriptSequence: reservation.reservation.transcript_sequence,
         message: {
           role: "assistant",
-          content: "Before",
+          content: `Before [@Member](person://${USER_ID})`,
           tool_calls: [{
             id: "provider-call",
             type: "function",
@@ -187,11 +208,18 @@ describe("work-stream transcript on workerd SQLite", () => {
         executionEpoch: 1,
         leaseOwner: "workerd-test-owner",
         expectedBindStateRevision: 2,
+      }, (effects) => {
+        deliveredUserIds = effects[0]?.mentionedUserIds;
       });
+      expect(deliveredUserIds).toEqual([USER_ID]);
 
       const openingSnapshot = transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
       expect(openingSnapshot.ranges[0]!.turns[0]!.blocks.map((block) => block.type))
         .toEqual(["text", "tool"]);
+      expect(openingSnapshot.ranges[0]!.turns[0]!.attentionOrdinal).toBe(1);
+      expect(openingSnapshot.ranges[0]!.turns[0]!.blocks[0]).toMatchObject({
+        mentions: [expect.objectContaining({ type: "person", userId: USER_ID })],
+      });
       const projection = transcript.readBindProjection(LOOP_ID);
       expect(projection && bindLoopNonSystemMessages(projection).map((message) => message.role))
         .toEqual(["user", "assistant"]);
