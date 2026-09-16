@@ -247,16 +247,17 @@ prose would create navigable destinations the author did not write.
 
 Every HTTP(S) anchor asks the authenticated regional API for the hostname's
 favicon. The renderer never contacts that hostname itself. One `RallyApi`
-coalesces concurrent requests for the same normalized hostname and remembers a
-missing result for up to 30 days; successful requests can fall back to
-Chromium's private HTTP cache after the in-flight request settles. The renderer
-displays returned bytes through a short-lived object URL, marks the image
-presentational, and revokes the URL when the link unmounts. A missing or failed
-favicon changes nothing about the link. Glances remain inert text and
+coalesces concurrent requests for the same normalized hostname. Successful and
+missing responses then use Chromium's private HTTP cache with the server's
+original remaining lifetime; the client adds no second expiry clock. The
+renderer displays returned bytes through a short-lived object URL, marks the
+image presentational, and revokes the URL when the link unmounts. A missing or
+failed favicon changes nothing about the link. Glances remain inert text and
 synchronous still exports do not start asynchronous decoration.
 
 The API resolves a deep hostname and its registrable domain in parallel. The
-exact host wins when both produce an icon; intermediate labels are deliberately
+exact host returns as soon as it produces an icon, without waiting for the
+already-started primary-domain fallback; intermediate labels are deliberately
 not scraped because the product contract asks for the authored subdomain and
 the primary-domain fallback. Each candidate asks the shared Firecrawl client
 for uncached `branding.images.favicon` metadata, accepts only a public HTTPS

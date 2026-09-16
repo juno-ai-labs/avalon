@@ -83,6 +83,33 @@ describe("favicon host resolution", () => {
     }
   });
 
+  it("returns an exact-host icon without waiting for the started fallback", async () => {
+    const { cache, put } = cacheFixture();
+    let releaseFallback: ((value: { faviconUrl: null; url: string; statusCode: number }) => void) | undefined;
+    const fallbackBranding = new Promise<{ faviconUrl: null; url: string; statusCode: number }>((resolve) => {
+      releaseFallback = resolve;
+    });
+    const scrapeBranding = vi.fn(async (url: string) => url === "https://example.com/"
+      ? fallbackBranding
+      : { faviconUrl: "/favicon.png", url, statusCode: 200 });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => response(String(input), png, "image/png"));
+    let settled = false;
+    const resolving = resolveFavicon(
+      cache,
+      "docs.example.com",
+      { scrapeBranding },
+      fetchMock as unknown as typeof fetch,
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1_000 });
+    await expect(resolving).resolves.toMatchObject({ contentType: "image/png" });
+    releaseFallback?.({ faviconUrl: null, url: "https://example.com/", statusCode: 200 });
+    await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+  });
+
   it("rejects image redirects and falls back to the registrable domain", async () => {
     const { cache } = cacheFixture();
     const scrapeBranding = vi.fn(async (url: string) => url.startsWith("https://docs.")

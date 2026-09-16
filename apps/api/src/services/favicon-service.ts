@@ -196,13 +196,28 @@ export async function resolveFavicon(
 ): Promise<ResolvedFavicon | null> {
   const chain = faviconHostChain(hostname);
   if (!chain) return null;
-  const results = await Promise.allSettled(
-    chain.map((candidate) => cachedHostFavicon(cache, candidate, firecrawl, fetcher)),
-  );
-  for (const result of results) {
-    if (result.status === "fulfilled" && result.value) return result.value;
+  const exact = cachedHostFavicon(cache, chain[0]!, firecrawl, fetcher);
+  const fallback = chain[1]
+    ? cachedHostFavicon(cache, chain[1], firecrawl, fetcher)
+    : null;
+  // The fallback has already started, but its failure must not become an
+  // unhandled rejection when the exact-host icon lets this request return.
+  void fallback?.catch(() => undefined);
+  let exactFailure: unknown;
+  try {
+    const result = await exact;
+    if (result) return result;
+  } catch (error) {
+    exactFailure = error;
   }
-  const failure = results.find((result) => result.status === "rejected");
-  if (failure?.status === "rejected") throw failure.reason;
+  if (fallback) {
+    try {
+      const result = await fallback;
+      if (result) return result;
+    } catch (error) {
+      if (exactFailure === undefined) throw error;
+    }
+  }
+  if (exactFailure !== undefined) throw exactFailure;
   return null;
 }

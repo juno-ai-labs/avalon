@@ -964,8 +964,8 @@ duplicates the server's existing public-web acquisition boundary.
 Redirects are treated as absent for that host, the separately resolved primary
 domain may still supply its own mark, and detached still exports do not fetch
 live decoration. Concurrent desktop requests for one normalized hostname share
-one API operation, and missing hosts remain memoized for at most 30 days in
-that API session.
+one API operation; later missing-host requests rely on the server-authored HTTP
+cache lifetime rather than restarting a client-side timer.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 
