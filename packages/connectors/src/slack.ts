@@ -1,4 +1,4 @@
-import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
+import { describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
 import { RegionSchema } from "@rally/contracts/regions";
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
@@ -1567,7 +1567,7 @@ function parseSlackSuccess<T extends z.ZodType>(
   if (!result.success) {
     throw new ConnectorError("provider_error", fallbackMessage, {
       ...result.error.flatten(),
-      responseIssues: describeZodIssues(result.error),
+      responseIssues: codeShaped(describeZodIssues(result.error)),
     });
   }
   return result.data;
@@ -1603,7 +1603,7 @@ async function slackOAuthCallbackStage<T>(
       throw new ConnectorError(
         "provider_error",
         "Slack returned an unexpected OAuth response",
-        { oauthStage, responseInvalid: true, responseIssues: describeZodIssues(error) },
+        { oauthStage, responseInvalid: true, responseIssues: codeShaped(describeZodIssues(error)) },
       );
     }
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {

@@ -372,6 +372,30 @@ describe("connector observability", () => {
     expect(JSON.stringify(observations)).not.toContain("member content must remain absent");
   });
 
+  it("withholds the names of unknown keys a caller sent, which are the caller's data", () => {
+    // A strict tool schema refuses an extra argument by naming the key, and
+    // the key is whatever the model — or the member it was quoting — put
+    // there. The count and the code cross; the name does not.
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      validateToolInput(_name, args) {
+        const result = z.strictObject({ title: z.string() }).safeParse(args);
+        return result.success ? null : result.error;
+      },
+    }, observer);
+
+    adapter.validateToolInput!("create_page", { title: "ok", PRIVATE_customer_alice_example_com: true });
+
+    expect(observations).toContainEqual([
+      "info",
+      "connector_operation_finished",
+      expect.objectContaining({ operation: "tool_input_validate", outcome: "invalid", code: "tool_input_invalid:-root-:unrecognized_keys" }),
+    ]);
+    expect(JSON.stringify(observations)).not.toContain("PRIVATE_customer_alice_example_com");
+  });
+
   it("keeps connector behavior independent from observer failures", async () => {
     const throws: ConnectorObserver = () => { throw new Error("logging unavailable"); };
     const fetcher = instrumentConnectorFetch("x", async () => new Response("ok"), throws);

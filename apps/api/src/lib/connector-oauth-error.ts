@@ -1,5 +1,5 @@
 import { ConnectorError } from "@rally/connectors";
-import { describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
+import { describeZodIssues, isCodeShaped, codeShaped } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 import { ApiError } from "./api-error";
 
@@ -77,7 +77,7 @@ export function classifyConnectorOAuthCallbackFailure(
         error_name: errorName,
         response_invalid: true,
         validation_issue_count: error.issues.length,
-        response_issues: describeZodIssues(error),
+        response_issues: codeShaped(describeZodIssues(error)),
       },
     };
   }
