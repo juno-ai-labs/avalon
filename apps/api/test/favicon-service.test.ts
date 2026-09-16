@@ -93,12 +93,14 @@ describe("favicon host resolution", () => {
       ? fallbackBranding
       : { faviconUrl: "/favicon.png", url, statusCode: 200 });
     const fetchMock = vi.fn(async (input: string | URL | Request) => response(String(input), png, "image/png"));
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
     let settled = false;
     const resolving = resolveFavicon(
       cache,
       "docs.example.com",
       { scrapeBranding },
       fetchMock as unknown as typeof fetch,
+      waitUntil,
     ).then((result) => {
       settled = true;
       return result;
@@ -106,7 +108,9 @@ describe("favicon host resolution", () => {
 
     await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1_000 });
     await expect(resolving).resolves.toMatchObject({ contentType: "image/png" });
+    expect(waitUntil).toHaveBeenCalledTimes(1);
     releaseFallback?.({ faviconUrl: null, url: "https://example.com/", statusCode: 200 });
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeNull();
     await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(2), { timeout: 1_000 });
   });
 

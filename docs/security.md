@@ -949,7 +949,9 @@ sandboxed renderer obtains its bytes through the authenticated Rally API. The
 server accepts public domains only, asks the existing Firecrawl client for
 branding metadata, rejects image redirects, bounds and verifies image bytes,
 and caches the result or confirmed miss for 30 days in dedicated KV. Transient
-provider and image-origin failures are not negative-cached.
+provider and image-origin failures are not negative-cached. A primary-domain
+fallback that outlives an exact-host response is retained through the request
+execution context rather than detached from the Worker lifecycle.
 
 **Why:** Letting an `<img>` point at a model-authored site would notify that site
 when a message merely painted and would move arbitrary network access into the
