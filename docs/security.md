@@ -125,9 +125,10 @@ same as desktop.
   never by the renderer from the model-chosen destination. The service accepts
   public domain names only, uses the existing Firecrawl client to discover a
   public HTTPS favicon URL, rejects image redirects, bounds the body read at
-  Cloudflare KV's value limit, validates image bytes, and keeps only a 30-day
-  platform-wide KV entry. The renderer receives the cached bytes and exposes
-  them through a revocable local object URL.
+  Cloudflare KV's value limit without a second retained chunk copy, validates
+  image bytes, and keeps only a 30-day platform-wide KV entry. The renderer
+  requests only for anchors that enter the viewport, receives the cached bytes,
+  and exposes them through a revocable local object URL.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
@@ -966,8 +967,8 @@ duplicates the server's existing public-web acquisition boundary.
 Redirects are treated as absent for that host, the separately resolved primary
 domain may still supply its own mark, and detached still exports do not fetch
 live decoration. Concurrent desktop requests for one normalized hostname share
-one API operation; later missing-host requests rely on the server-authored HTTP
-cache lifetime rather than restarting a client-side timer.
+one API operation, off-screen anchors start none, and browser responses
+revalidate so the KV entry remains the one 30-day cache clock.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 

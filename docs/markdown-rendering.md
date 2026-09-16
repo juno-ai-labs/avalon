@@ -245,15 +245,18 @@ target. Rally does not rewrite domain-shaped prose such as `docs.example.com`
 without a scheme or `www.` because that is not a GFM autolink and guessing at
 prose would create navigable destinations the author did not write.
 
-Every HTTP(S) anchor asks the authenticated regional API for the hostname's
-favicon. The renderer never contacts that hostname itself. One `RallyApi`
-coalesces concurrent requests for the same normalized hostname. Successful and
-missing responses then use Chromium's private HTTP cache with the server's
-original remaining lifetime; the client adds no second expiry clock. The
-renderer displays returned bytes through a short-lived object URL, marks the
-image presentational, and revokes the URL when the link unmounts. A missing or
-failed favicon changes nothing about the link. Glances remain inert text and
-synchronous still exports do not start asynchronous decoration.
+When an HTTP(S) anchor enters the viewport it asks the authenticated regional
+API for the hostname's favicon. Off-screen links create no provider work, so a
+long model response or imported document cannot turn its total link count into
+unbounded automatic requests. The renderer never contacts the destination
+itself. One `RallyApi` coalesces concurrent requests for the same normalized
+hostname. Successful and missing responses require browser revalidation, which
+keeps the 30-day KV entry as the one cache clock instead of extending a nearly
+expired entry in Chromium. The renderer displays returned bytes through a
+short-lived object URL, marks the image presentational, and revokes the URL when
+the link unmounts. A missing or failed favicon changes nothing about the link.
+Glances remain inert text and synchronous still exports do not start
+asynchronous decoration.
 
 The API resolves a deep hostname and its registrable domain in parallel. The
 exact host returns as soon as it produces an icon, without waiting for the
@@ -264,8 +267,9 @@ the product contract asks for the authored subdomain and the primary-domain
 fallback. Each candidate asks the shared Firecrawl client
 for uncached `branding.images.favicon` metadata, accepts only a public HTTPS
 image URL, rejects image redirects, reads no more than Cloudflare KV's 25 MiB
-value boundary, validates the bytes as an image, and stores either the icon or
-a confirmed miss in the dedicated platform-wide `FAVICON_CACHE`. A transient
+value boundary through a stream limiter without retaining a second chunk copy,
+validates the bytes as an image, and stores either the icon or a confirmed miss
+in the dedicated platform-wide `FAVICON_CACHE`. A transient
 Firecrawl, network, rate-limit, or server failure is not negative-cached, and a
 failure for one candidate cannot discard a valid result from the other. Each KV
 entry expires after 30 days; the next read fetches and overwrites it, so no stale
@@ -813,7 +817,8 @@ share one favicon decoration. The authenticated API asks the existing Firecrawl
 client for the exact hostname's and registrable domain's branding metadata in
 parallel, prefers the exact-host result, validates the returned image, and
 caches icons and confirmed misses in a dedicated Cloudflare KV namespace for 30
-days before replacement. The desktop coalesces concurrent requests by hostname.
+days before replacement. The desktop observes only visible anchors and
+coalesces concurrent requests by hostname.
 
 **Why:** A naked URL and a named link are the same navigation affordance after
 parsing, but only the text distinguished one site from another. Fetching in the
@@ -834,9 +839,9 @@ product contract selected.
 Only public HTTPS image URLs returned by Firecrawl are fetched, and image
 redirects are rejected rather than bounded by an invented product limit.
 Transient failures are not stored as 30-day misses, a missing mark is silent,
-and synchronous saved-message rendering intentionally omits this live
-decoration. The existing GFM autolinker remains the syntax authority and now has
-an explicit regression test for a naked URL.
+browser responses revalidate against KV, and synchronous saved-message rendering
+intentionally omits this live decoration. The existing GFM autolinker remains
+the syntax authority and now has an explicit regression test for a naked URL.
 
 ### 2026-09-10 — A published site gets its own mark
 
