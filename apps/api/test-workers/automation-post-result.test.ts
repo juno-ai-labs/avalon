@@ -37,6 +37,8 @@ import {
   type AutomationDraft,
 } from "@rally/contracts";
 
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import type { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import type { AutomationDO } from "../src/durable-objects/automation-do";
 import {
   automationDOName,
@@ -129,6 +131,16 @@ const provider = useOpenRouterDouble(async (call) => {
   const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
   if (heldBackgroundModel && JSON.stringify(latestInput?.content ?? "").includes("HOLD_BACKGROUND")) await heldBackgroundModel;
   if (JSON.stringify(latestInput?.content ?? "").includes("LARGE_BACKGROUND_RESULT")) return { say: LARGE_RESULT_TEXT };
+  if (JSON.stringify(latestInput?.content ?? "").includes("LIST_SIDEKICKS_FROM_MODEL")) {
+    if (call.messages.some((message) => message.role === "tool")) return { say: "The Sidekick directory is ready." };
+    if (JSON.stringify(latestInput?.content ?? "").includes("REVOKE_BEFORE_TOOL")) {
+      await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")
+        .bind(WORKSPACE_ID, AUTHOR_ID).run();
+    }
+    const list = call.toolNames.find((name) => name === "agents_sidekicks_list");
+    if (!list) throw new Error("agent_directory_not_preloaded");
+    return { callTool: { name: list, arguments: {} } };
+  }
   if (JSON.stringify(latestInput?.content ?? "").includes("DELEGATE_FROM_MODEL")) {
     if (call.messages.some((message) => message.role === "tool" && /"data"\s*:\s*\{\s*"agentId"\s*:/u.test(String(message.content)))) {
       return { say: "Research is running; I am available here." };
@@ -351,6 +363,40 @@ beforeEach(async () => {
 });
 
 describe("sidekick_post_result", () => {
+  it.each([false, true])("reuses command membership for directory reads but refuses revocation before execution (%s)", async (revoked) => {
+    await runInDurableObject(workspaceStub(), (instance) => {
+      const target = instance as unknown as {
+        activeWorkspaceMember: (workspaceId: string, userId: string) => Promise<boolean>;
+        directoryMembershipChecks: number;
+      };
+      const check = target.activeWorkspaceMember.bind(target);
+      target.directoryMembershipChecks = 0;
+      target.activeWorkspaceMember = async (...args) => {
+        target.directoryMembershipChecks++;
+        return check(...args);
+      };
+    });
+    const response = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+      input: { text: `LIST_SIDEKICKS_FROM_MODEL ${revoked ? "REVOKE_BEFORE_TOOL" : ""}`,
+        clientMessageId: crypto.randomUUID(), mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+    expect(response.status).toBe(200);
+    const [run] = await settledRun(roomConversation());
+    expect(run?.status).toBe(revoked ? "failed" : "completed");
+    if (revoked) {
+      expect(await runInDurableObject(roomConversation(), (_instance, state) =>
+        state.storage.sql.exec<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM tool_effects WHERE tool_name = 'agents_sidekicks_list'",
+        ).one().n)).toBe(0);
+    } else expect(provider.calls.some((call) => call.messages.some((message) =>
+      message.role === "tool" && JSON.stringify(message.content).includes("sidekicks")))).toBe(true);
+    expect(await runInDurableObject(workspaceStub(), (instance) =>
+      (instance as unknown as { directoryMembershipChecks: number }).directoryMembershipChecks)).toBe(0);
+    // Ordinary callers must still check membership, including after revocation.
+    if (revoked) await expect(Promise.resolve(workspaceStub().listSidekickDirectory({
+      workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+    }))).rejects.toThrow("cannot list");
+  });
+
   it("delegates through a real Bind tool receipt and answers another message before the worker finishes", async () => {
     let release = () => {};
     heldBackgroundModel = new Promise<void>((resolve) => { release = resolve; });
@@ -360,6 +406,9 @@ describe("sidekick_post_result", () => {
           clientMessageId: crypto.randomUUID(), mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
       expect(response.status).toBe(200);
       expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed", error_json: null });
+      const initialCall = provider.calls.find((call) => JSON.stringify(call.messages).includes("DELEGATE_FROM_MODEL"));
+      expect(initialCall?.toolNames).toContain("agents_start_agent");
+
       const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
         parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
         harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -692,10 +741,16 @@ describe("sidekick_post_result", () => {
       state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id).one().execution_context_json,
     )));
     const nestedService = new AgentCommunicationService(TEST_ENV, childInput);
-    const send = nestedService.send.bind(nestedService);
-    nestedService.send = async (args, deliveryContext) => {
+    // Interleave at delivery, shared by public sends and the initial assignment.
+    // Keep real admission and storage; only schedule the competing stop here.
+    const target = nestedService as unknown as {
+      deliver: (args: Parameters<typeof service.send>[0], messageId: string,
+        resumeStopped?: boolean, teamId?: typeof started.agentId) => Promise<{ messageId: string }>;
+    };
+    const deliver = target.deliver.bind(target);
+    target.deliver = async (...args) => {
       await service.stop(started.agentId);
-      const result = await send(args, deliveryContext);
+      const result = await deliver(...args);
       if (loseConfirmation) throw new Error("opening_confirmation_lost");
       return result;
     };
@@ -1029,6 +1084,36 @@ describe("sidekick_post_result", () => {
     }
   });
 
+  it("preserves the authority refusal when delegated initialization is fenced", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: ROOM_ID,
+      substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`, harnessRunId: crypto.randomUUID(),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
+    });
+    let restore!: () => void;
+    await runInDurableObject(roomParent(), (instance: WorkstreamDO) => {
+      const reserve = instance.reserveAgentChild;
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkstreamDO, "reserveAgentChild")
+        .mockImplementation(async function (this: WorkstreamDO, ...args) {
+          const result = await reserve.apply(this, args);
+          // Simulate a generation changing between reservation and bootstrap.
+          return { ...result, authorityGeneration: result.authorityGeneration + 1 };
+        });
+      restore = () => spy.mockRestore();
+    });
+    try {
+      await expect(new AgentCommunicationService(TEST_ENV, input).start({
+        name: "Researcher", description: "Compare deployments", message: "Compare deployments.", attachmentIds: [],
+      }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
+        signal: new AbortController().signal,
+      })).rejects.toMatchObject({ code: "workstream_runtime_bootstrap_fenced" });
+    } finally {
+      restore();
+    }
+  });
+
   it("starts a hidden independent agent idempotently and lists its name and description", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({
       region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: ROOM_ID,
@@ -1042,8 +1127,48 @@ describe("sidekick_post_result", () => {
       signal: new AbortController().signal,
     };
     const args = { name: "Researcher", description: "Compare the deployment approaches", message: "Compare static and dynamic deployment.", attachmentIds: [] };
-    const started = await service.start(args, context);
+    let releaseTeam!: () => void;
+    const teamPending = new Promise<void>((resolve) => { releaseTeam = resolve; });
+    let restoreTeam!: () => void;
+    let restoreReservation!: () => void;
+    let teamReads = 0;
+    let childReserved = false;
+    await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => {
+      const ensure = instance.ensureAgentTeam;
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkspaceDO, "ensureAgentTeam")
+        .mockImplementation(async function (this: WorkspaceDO, ...args) {
+          teamReads += 1;
+          const result = await ensure.apply(this, args);
+          await teamPending;
+          return result;
+        });
+      restoreTeam = () => spy.mockRestore();
+    });
+    await runInDurableObject(roomParent(), (instance: WorkstreamDO) => {
+      const reserve = instance.reserveAgentChild;
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkstreamDO, "reserveAgentChild")
+        .mockImplementation(async function (this: WorkstreamDO, ...args) {
+          const result = await reserve.apply(this, args);
+          childReserved = true;
+          return result;
+        });
+      restoreReservation = () => spy.mockRestore();
+    });
+    const starting = service.start(args, context);
+    // Reservation must proceed while the independent team RPC is still pending.
+    // Release in finally so a failed assertion cannot strand the object.
+    try {
+      await expect.poll(() => childReserved, { timeout: 2_000 }).toBe(true);
+    } finally {
+      releaseTeam();
+      await starting;
+    }
+    const started = await starting;
     expect(await service.start(args, context)).toEqual(started);
+    expect(teamReads).toBe(1);
+    restoreTeam();
+    restoreReservation();
+
     const address = agentAddressForId(started.agentId);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, ROOM_ID, address.substreamId),
@@ -1154,6 +1279,63 @@ describe("sidekick_post_result", () => {
     });
   });
 
+  it("keeps the receiver's inherited principal when another principal sends a continuation", async () => {
+    const principal = { type: "user" as const, userId: AUTHOR_ID };
+    await roomConversation().initializeBackgroundAgent({ executionPrincipal: principal });
+    const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+    const messageId = crypto.randomUUID();
+    expect(await roomConversation().admitAgentMessage({
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, messageId, clientMessageId: `agent-message:${messageId}`,
+      recipientAgentId, text: "Continue with your existing tools", agentExchange: { teamId: recipientAgentId, senderAgentId, messageId },
+      attachmentIds: [], executionPrincipal: { type: "user", userId: asUserId(crypto.randomUUID()) },
+      origin: "agent_message", now: Date.now(),
+    })).toEqual({ accepted: true, messageId });
+    const [run] = await settledRun(roomConversation());
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    const actual = await runInDurableObject(roomConversation(), (_instance, state) => JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs ORDER BY started_at DESC LIMIT 1",
+      ).one().execution_context_json,
+    ).executionPrincipal);
+    expect(actual).toEqual(principal);
+  });
+
+  it("refuses child reservation after archival without registering the child", async () => {
+    const childId = asSubstreamId(crypto.randomUUID());
+    await runInDurableObject(roomParent(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream_metadata SET archived_at = ?", Date.now());
+    });
+    await expect(Promise.resolve(roomParent().reserveAgentChild({
+      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
+    }))).rejects.toThrow("workstream_archived");
+    await expect(Promise.resolve(roomParent().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
+      kind: "child", authorityGeneration: 1,
+    }))).rejects.toThrow("workstream_archived");
+    const registered = await runInDurableObject(roomParent(), (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM conversation_children WHERE substream_id = ?", childId).one().n);
+    expect(registered).toBe(0);
+  });
+
+  it.each(["deleted", "room_archived"] as const)("refuses child reservation for a %s Sidekick", async (reason) => {
+    const childId = asSubstreamId(crypto.randomUUID());
+    await runInDurableObject(automationStub(), (_instance, state) => {
+      if (reason === "deleted") state.storage.sql.exec("UPDATE automation SET lifecycle = 'deleted'");
+      else state.storage.sql.exec("UPDATE automation SET owning_room_archived_at = ?", Date.now());
+    });
+    await expect(Promise.resolve(automationStub().reserveAgentChild({
+      workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
+    }))).rejects.toThrow("workstream_archived");
+    await expect(Promise.resolve(automationStub().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
+      kind: "child", authorityGeneration: 1,
+    }))).rejects.toThrow("workstream_archived");
+    const registered = await runInDurableObject(automationStub(), (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM conversation_children WHERE substream_id = ?", childId).one().n);
+    expect(registered).toBe(0);
+  });
+
   it("refuses an agent message when the parent is archived even before the child's projection catches up", async () => {
     const recipientAgentId = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
     const senderAgentId = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
@@ -1172,12 +1354,26 @@ describe("sidekick_post_result", () => {
   });
 
   it("posts the run's result into the owning room's main conversation, once, and the room runs on it", async () => {
+    let restoreDefinition!: () => void;
+    let definitionReads = 0;
+    await runInDurableObject(automationStub(), (instance: AutomationDO) => {
+      const read = instance.readRunDefinition;
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as AutomationDO, "readRunDefinition")
+        .mockImplementation(function (this: AutomationDO, ...args) {
+          definitionReads += 1;
+          return read.apply(this, args);
+        });
+      restoreDefinition = () => spy.mockRestore();
+    });
     const started = await automationStub().runNow({ ...addressed(), actor: manager(), idempotencyKey: "post-result-0001" });
 
     // The run child: provisioned by the run alarm, ends after the tool round trip.
     await runDurableObjectAlarm(automationStub());
     const [run] = await settledRun(runChild(started.runId));
     expect(run).toMatchObject({ status: "completed", error_json: null });
+    // One read prepares the child; prompt and tool setup share the execution's read.
+    restoreDefinition();
+    expect(definitionReads).toBe(2);
     const offered = provider.calls.filter((call) => call.toolNames.some((name) => name.endsWith("sidekick_post_result")));
     expect(offered.length).toBeGreaterThanOrEqual(2);
     expect(offered[1]!.messages.some((message) => message.role === "tool")).toBe(true);
