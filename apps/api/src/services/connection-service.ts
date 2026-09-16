@@ -1,7 +1,7 @@
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -73,7 +73,7 @@ import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
 import { NotionRoutingService } from "./notion-routing-service";
@@ -456,7 +456,7 @@ export class ConnectionService {
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
        ORDER BY c.display_name COLLATE NOCASE`,
     ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
-    const rows = result.results ?? [];
+    const rows = await this.listedConnectionRows(auth.workspaceId, result.results ?? []);
     const ownerIds = [...new Set(rows.flatMap((row) =>
       typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
     const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
@@ -474,6 +474,53 @@ export class ConnectionService {
         ? ownerNames.get(row.owner_user_id) ?? null
         : null,
     }, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  /**
+   * The rows the connections list shows: every enabled one, and a disabled one
+   * only while its installation is not settled.
+   *
+   * `disable` marks a row rather than deleting it, and the list returned every
+   * row, so a connection an administrator had just removed stayed in the table
+   * for good — badge reading "disabled", tools reading "—", and a second press
+   * of the trash icon changing nothing. What a disconnected row is still for is
+   * the installation behind it: a provider webhook Rally is about to remove, a
+   * registration whose create outcome was never learned and may be live under
+   * an identity Rally does not hold, or a disconnect that never reached the
+   * object. Manage events is reachable only from the row, so the row stays
+   * until the installation is `disconnected` or the administrator forgets its
+   * cleanup — the one explicit way to say "I have dealt with this". A disabled
+   * row with no installation, or a settled one, leaves.
+   *
+   * One hop, whatever the history: every disconnect leaves a row behind for
+   * ever, so a per-row read would grow with every reconnect. A read that fails
+   * keeps every candidate — an unsettled installation with no row cannot be
+   * recovered from Settings, while a settled one listed once more is a badge.
+   */
+  private async listedConnectionRows(workspaceId: string, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    const candidates = rows.filter((row) => row.status === "disabled" && row.scope === "workspace"
+      && (ConnectorInstallationProviders as readonly string[]).includes(String(row.connector_type)));
+    let retained: ReadonlySet<string>;
+    if (candidates.length === 0) retained = new Set();
+    else {
+      try {
+        const object = await this.workspaceObject(workspaceId);
+        const connectionIds = candidates.map((row) => String(row.id));
+        const installations: ConnectorInstallation[] = [];
+        for (let start = 0; start < connectionIds.length; start += 200) {
+          installations.push(...await object.connectorInstallations({ workspaceId, connectionIds: connectionIds.slice(start, start + 200) }));
+        }
+        retained = new Set(installations.filter(awaitingCleanup).map((installation) => installation.connectionId));
+      } catch (error) {
+        logWarn(this.env, "connector_list_installation_read_failed", {
+          workspace_id: workspaceId,
+          candidate_count: candidates.length,
+          code: diagnosticErrorCode(error, "installation_read_failed"),
+        });
+        retained = new Set(candidates.map((row) => String(row.id)));
+      }
+    }
+    return rows.filter((row) => row.status !== "disabled" || retained.has(String(row.id)));
   }
 
   async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
@@ -3901,6 +3948,17 @@ function unsupportedWebhookEvent(
     `Rally does not model the ${input.provider} event ${input.eventType}`,
     { provider: input.provider, eventType: input.eventType },
   );
+}
+
+/**
+ * Whether a disconnected connection's installation is still unsettled: the
+ * condition under which its row stays in the connections list so that Manage
+ * events remains reachable. Settled means every registration removed
+ * (`disconnected`), or the administrator forgot the cleanup credential, which
+ * is the explicit "I have dealt with this" for a webhook only they can remove.
+ */
+export function awaitingCleanup(installation: ConnectorInstallation): boolean {
+  return installation.state !== "disconnected" && !installation.cleanupCredentialForgotten;
 }
 
 function installationActionError(error: unknown): unknown {
