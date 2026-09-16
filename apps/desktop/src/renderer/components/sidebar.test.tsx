@@ -1446,19 +1446,29 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
   });
 
-  it.each([
-    ['a draft', 'draft'],
-    ['a paused Sidekick', 'paused'],
-  ] as const)('keeps the new-Sidekick slot when the workspace has only %s', (_label, status) => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+  it('keeps the new-Sidekick slot for drafts and resumes the most recently updated standalone draft', () => {
+    const olderDraft = { ...automation, id: 'automation-draft-older', status: 'draft' as const };
+    const newerDraft = { ...olderDraft, id: 'automation-draft-newer', updatedAt: '2026-07-21T09:00:00.000Z' };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[olderDraft, newerDraft]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const strip = screen.getByRole('region', { name: 'Sidekicks' });
-    expect(within(strip).getByRole('button', { name: 'New Sidekick' })).toBeInTheDocument();
+    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith(newerDraft.id);
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
+  });
+
+  it('keeps the new-Sidekick slot for paused Sidekicks and starts a new draft', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
   });
 
   it('keeps the new-Sidekick slot when only a work-stream-owned Sidekick exists', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' })).toBeInTheDocument();
+    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
   });
 
   it('manages Sidekicks through the library instead of listing them in the sidebar', () => {
