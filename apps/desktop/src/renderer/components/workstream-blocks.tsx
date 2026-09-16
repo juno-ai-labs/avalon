@@ -40,6 +40,7 @@ import {
   isConnectorHref,
   openFootnoteReferencePattern,
   personIdFromMentionHref,
+  personMentionMarkdownRanges,
 } from '@rally/contracts/citations';
 import {
   ConnectorConnectionCard,
@@ -700,6 +701,58 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
   return output + text.slice(cursor);
 }
 
+const RENDERED_PERSON_MENTION_PREFIX = 'person://render:';
+
+function renderedPersonMentionHref(token: string, personId: string): string {
+  return `${RENDERED_PERSON_MENTION_PREFIX}${token}:${personId}`;
+}
+
+function renderedPersonId(href: string | undefined, token: string): string | undefined {
+  const prefix = `${RENDERED_PERSON_MENTION_PREFIX}${token}:`;
+  if (!href?.toLowerCase().startsWith(prefix.toLowerCase())) return undefined;
+  return personIdFromMentionHref(`person:${href.slice(prefix.length)}`);
+}
+
+/**
+ * Mint render-local identity links only for the exact authoritative ranges.
+ * A second model-authored link to the same person must not borrow authority
+ * from the first one merely because its destination has the same id.
+ */
+function withAuthoritativeMentionLinks(text: string, mentions: MessageMention[], token: string): string {
+  const candidates = mentions
+    .filter((mention) => mention.type === 'connector' ? mention.connectorType : mention.personId)
+    .sort((left, right) => left.startOffset - right.startOffset);
+  if (candidates.length === 0) return text;
+  const hasPersonCandidate = candidates.some((mention) => mention.type === 'person');
+  const personRanges = new Set((hasPersonCandidate ? personMentionMarkdownRanges(text) : []).map((range) => (
+    `${range.startOffset}:${range.endOffset}:${range.personId}`
+  )));
+
+  let cursor = 0;
+  let output = '';
+  for (const mention of candidates) {
+    const { startOffset, endOffset } = mention;
+    if (startOffset < cursor || endOffset > text.length || endOffset <= startOffset) continue;
+    const source = text.slice(startOffset, endOffset);
+    let replacement: string | undefined;
+    if (mention.type === 'connector' && mention.connectorType && source.startsWith('@')) {
+      replacement = `[${escapeMarkdownLabel(source)}](${connectorMentionHref(token, mention.connectorType)})`;
+    } else if (mention.type === 'person' && mention.personId) {
+      const personId = mention.personId.toLowerCase();
+      if (personRanges.has(`${startOffset}:${endOffset}:${personId}`)) {
+        const destinationStart = source.lastIndexOf('](');
+        if (destinationStart >= 0) {
+          replacement = `${source.slice(0, destinationStart + 2)}${renderedPersonMentionHref(token, personId)})`;
+        }
+      }
+    }
+    if (replacement === undefined) continue;
+    output += text.slice(cursor, startOffset) + replacement;
+    cursor = endOffset;
+  }
+  return output + text.slice(cursor);
+}
+
 function mentionInitials(label: string): string {
   return label
     .replace(/^@/u, '')
@@ -780,7 +833,7 @@ function renderIdentity(
   mentions: MessageMention[],
   token: string,
 ): React.ReactNode {
-  const personId = personIdFromHref(href);
+  const personId = renderedPersonId(href, token);
   if (personId) {
     const mention = mentions.find((candidate) => (
       candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
@@ -788,6 +841,7 @@ function renderIdentity(
     if (!mention) return <span className="mention-text-fallback">{label}</span>;
     return <MentionChip fallbackLabel={label} mention={mention} personId={personId} />;
   }
+  if (personIdFromHref(href)) return <span className="mention-text-fallback">{label}</span>;
   if (isConnectorHref(href)) {
     const connectorType = tokenedConnectorType(href, token);
     const text = linkLabelText(label);
@@ -1063,7 +1117,7 @@ export function MarkdownBody({
   // Mentions first, normalization second, and the order is load-bearing: the
   // connector offsets are measured against the stored text, so anything that
   // changes its length has to run after they have been resolved into links.
-  const linked = withConnectorMentionLinks(children, stableMentions, token);
+  const linked = withAuthoritativeMentionLinks(children, stableMentions, token);
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;

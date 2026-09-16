@@ -166,6 +166,20 @@ attachment JSON is immutable; the stable work-stream resource row it names may
 be renamed, watched, or otherwise updated before delivery and is reused rather
 than overwritten or treated as an admission conflict.
 
+Accepted assistant prose promotes canonical `person://` links through the same
+turn-keyed mention authority. The conversation accepts only exact links outside
+Markdown code whose IDs still name active participants; model text can point at
+an identity but cannot grant access or resurrect a removed participant. Mention
+rows, attention order, member mention state, semantic realtime, and regional
+viewer/activity effects commit with the assistant transition. Because Rally is
+the actor rather than a user identity, this path does not fabricate a human
+author for sender-attributed email or push notification. Attention order is
+conversation-wide: a Rally reply that contains an authoritative mention marks
+the thread unread for participants whose seen waterline is behind, while only
+the named participant receives the mention badge.
+The renderer binds chips to those exact stored ranges with a render-local token,
+so one authoritative occurrence cannot bless another link to the same person.
+
 Every Bind transition is committed before the adapter returns the accepted
 assistant or tool-result message to Bind. At every provider boundary the host
 reconstructs the exact array, including the freshly rendered system message,
@@ -1593,6 +1607,39 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-15 — Assistant person links become authoritative mentions at acceptance
+
+**What changed:** accepting an assistant turn now scans its rendered Markdown
+prose for canonical `person://` links, resolves those IDs against active
+conversation participants, and atomically writes the turn's mention rows,
+attention ordinal, member mention state, semantic realtime reference, and
+regional viewer/activity effects. The shared parser returns exact source ranges
+and excludes fenced, indented, and inline code.
+
+**Why:** Rally emitted the correct `[@Name](person://<id>)` text in production,
+but assistant projection persisted only the text fact and blocks. The desktop
+correctly refused to dress that unauthoritative link as a mention chip, so the
+same response appeared as plain `@Name` and could not set mention attention.
+
+**Considered and rejected:** teaching the renderer to trust any model-authored
+`person://` link. That would turn text into identity authority at the least
+trusted boundary and let stale or invented IDs impersonate real mentions.
+Persisting presentation-only rows without attention and regional effects was
+also rejected because it would create a chip whose product semantics disagreed
+with the transcript authority.
+
+**Consequences, and what a future change has to respect:** model syntax remains
+only a candidate. The conversation object is the authority that validates
+current participation and commits all mention state with the accepted turn.
+Removed and unknown identities, malformed links, and links shown as code stay
+plain text. Rally-authored mentions produce mention state and activity targeting
+without inventing a human sender for sender-attributed notifications. Because
+the attention ordinal is conversation-wide, such a reply advances the thread's
+unread waterline for every participant; the mention waterline remains specific
+to the named participant.
+Rendering preserves the same occurrence boundary: matching a person ID alone is
+not authority for a different link elsewhere in the turn.
 
 ### 2026-09-14 — Keep slowdown notices scoped to a live inference
 
