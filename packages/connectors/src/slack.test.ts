@@ -920,9 +920,9 @@ describe("Slack connector", () => {
     };
 
     await expect(adapter.executeTool("search_messages", { query: "gizmo" }, context))
-      .resolves.toMatchObject({ output: { next_cursor: null } });
+      .resolves.toMatchObject({ pagination: { continuations: [] } });
     await expect(adapter.executeTool("search", { query: "gizmo" }, context))
-      .resolves.toMatchObject({ output: { next_cursor: null } });
+      .resolves.toMatchObject({ pagination: { continuations: [] } });
   });
 
   it("uses hidden event authorization for workspace message search", async () => {

@@ -1149,7 +1149,8 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     {
       definition: {
         name: "query",
-        description: "Query authorized rows by exact memoryTableRowIds or by typed filters, FTS, ordering, and cursor paging. Use exact IDs to reread rows after a revision conflict.",
+        pagination: { cursorParameter: "cursor" },
+        description: "Query authorized rows by exact memoryTableRowIds or by typed filters, FTS, ordering, and page-ID paging. Use exact IDs to reread rows after a revision conflict.",
         capability: "table.read",
         mode: "read",
         idempotency: "safe",
@@ -1200,7 +1201,12 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       },
       execute: async (raw) => {
         const result = await queryTable(env, input, raw);
-        return { output: result, summary: `Read ${result.rows.length} rows from “${result.name}”` };
+        const { nextCursor, ...output } = result;
+        const args = QuerySchema.parse(raw);
+        return { output, summary: `Read ${result.rows.length} rows from “${result.name}”`,
+          pagination: { continuations: nextCursor ? [{ operation: "query", slot: "nextPageId" as const,
+            input: { ...args, cursor: nextCursor } }] : [] },
+        };
       },
     },
     {

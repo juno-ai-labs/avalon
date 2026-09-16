@@ -1,4 +1,5 @@
 import { parseRpcInput } from "../lib/rpc-input";
+import { ToolPageError } from "./tool-page-storage";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { AgentCommunicationService } from "../services/agent-communication-service";
@@ -2442,8 +2443,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     );
     if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const value = await method.apply(this.toolReceipts, parsed.data.args);
-    return { status: 200, payload: { ok: true, value: value ?? null } };
+    try {
+      const value = await method.apply(this.toolReceipts, parsed.data.args);
+      return { status: 200, payload: { ok: true, value: value ?? null } };
+    } catch (error) {
+      if (error instanceof ToolPageError) return { status: 400, payload: { ok: false, error: error.message } };
+      throw error;
+    }
   }
 
   /**

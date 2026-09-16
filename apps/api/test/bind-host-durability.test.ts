@@ -507,6 +507,25 @@ describe("Bind host durability boundaries", () => {
     expect(guard.boundary()).toBeNull();
   });
 
+  it.each(["nextPageId", "previousPageId", "passages", "citations"])("grounds %s IDs to their resource among multiple active resources", (field) => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: field === "passages" ? "workstream.resources.search"
+      : field === "citations" ? "workstream.resources.summarize" : "workstream.resources.read" };
+    for (const resourceId of ["resource-a", "resource-b"]) {
+      const pageId = `workstream_quiet_amber_rapid_${resourceId === "resource-a" ? "otter" : "fox"}`;
+      guard.onStarted({ type: "tool_started", toolCallId: resourceId, toolName: "workstream_read_resource", pluginId: "rally:workstream", policy, input: { resourceId } } as never);
+      guard.onCompleted({ type: "tool_completed", toolCallId: resourceId, toolName: "workstream_read_resource", pluginId: "rally:workstream", policy,
+        result: { output: { resourceId, [field]: field === "passages" || field === "citations" ? [{ readPageId: pageId }] : pageId }, summary: "page" } } as never);
+    }
+    const readPolicy = { capability: "workstream.resources.read" };
+    guard.onStarted({ type: "tool_started", toolCallId: "next", toolName: "workstream_read_resource_next", pluginId: "rally:workstream", policy: readPolicy,
+      input: { pageId: "workstream_quiet_amber_rapid_otter" } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "next", toolName: "workstream_read_resource_next", pluginId: "rally:workstream", policy: readPolicy,
+      error: "Resource changed", data: { code: "resource_changed" }, phase: "execution", outcome: "definitive_failure" } as never);
+    expect(guard.boundary()).toContain("resource-a");
+    expect(guard.boundary()).not.toContain("resource-b");
+  });
+
   it("recovers a uniquely active read after the model corrupts its opaque cursor", () => {
     const guard = new __integrationTesting.AttachmentGroundingGuard();
     const policy = { capability: "workstream.resources.read" };

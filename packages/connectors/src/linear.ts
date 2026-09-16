@@ -1,4 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
+import { linearPage } from "./tool-pagination";
 import type { Region } from "@rally/contracts/regions";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
@@ -98,6 +99,7 @@ const LINEAR_CURSOR_SCHEMA = {
 const linearTools: ToolDefinition[] = [
   {
     name: "search_issues",
+    pagination: { cursorParameter: "after" },
     description: "Search recent Linear issues by title and description using the authorized Linear connection. A result that comes back empty means the terms are not in either field, not that issue bodies are unsearchable.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -131,6 +133,7 @@ const linearTools: ToolDefinition[] = [
   },
   {
     name: "list_teams",
+    pagination: { cursorParameter: "after" },
     description: "List teams available to the authorized Linear identity.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -139,6 +142,7 @@ const linearTools: ToolDefinition[] = [
   },
   {
     name: "list_projects",
+    pagination: { cursorParameter: "after" },
     description: "List recently updated Linear projects.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -162,6 +166,7 @@ const linearTools: ToolDefinition[] = [
     // and copy the id out of its `state`, which is a lookup dance a model has
     // no reason to invent and frequently gets wrong.
     name: "list_workflow_states",
+    pagination: { cursorParameter: "after" },
     description: "List the workflow states a Linear team's issues can be moved between, optionally for one team. Use this to find the stateId that update_issue and create_issue take.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -410,7 +415,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           ${issueFields}
           comments(first: 25) {
             nodes { id body createdAt updatedAt user { id name } }
-            pageInfo { hasNextPage endCursor }
+            pageInfo { hasNextPage }
           }
         }
       }
@@ -429,7 +434,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           lead { id name }
           teams(first: 50) {
             nodes { id key name }
-            pageInfo { hasNextPage endCursor }
+            pageInfo { hasNextPage }
           }
         }
       }
@@ -864,7 +869,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           }
         `, args);
         const issues = requiredRecord(data, "issues", "Linear did not return an issue search result");
-        return { output: boundLinearValue(issues), summary: `Searched Linear issues for “${args.query.slice(0, 80)}”` };
+        return linearPage(name, args, issues, `Searched Linear issues for “${args.query.slice(0, 80)}”`, boundLinearValue);
       }
 
       if (name === "read_issue") {
@@ -882,7 +887,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
             }
           }
         `, args);
-        return { output: boundLinearValue(requiredRecord(data, "teams", "Linear did not return teams")), summary: "Listed Linear teams" };
+        return linearPage(name, args, requiredRecord(data, "teams", "Linear did not return teams"), "Listed Linear teams", boundLinearValue);
       }
 
       if (name === "list_projects") {
@@ -895,7 +900,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
             }
           }
         `, args);
-        return { output: boundLinearValue(requiredRecord(data, "projects", "Linear did not return projects")), summary: "Listed Linear projects" };
+        return linearPage(name, args, requiredRecord(data, "projects", "Linear did not return projects"), "Listed Linear projects", boundLinearValue);
       }
 
       if (name === "read_project") {
@@ -917,10 +922,8 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           after: args.after ?? null,
           filter: args.teamId ? { team: { id: { eq: args.teamId } } } : null,
         });
-        return {
-          output: boundLinearValue(requiredRecord(data, "workflowStates", "Linear did not return workflow states")),
-          summary: args.teamId ? `Listed Linear workflow states for team ${args.teamId}` : "Listed Linear workflow states",
-        };
+        return linearPage(name, args, requiredRecord(data, "workflowStates", "Linear did not return workflow states"),
+          args.teamId ? `Listed Linear workflow states for team ${args.teamId}` : "Listed Linear workflow states", boundLinearValue);
       }
 
       if (name === "create_issue") {
