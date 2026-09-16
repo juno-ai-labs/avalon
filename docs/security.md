@@ -124,10 +124,10 @@ same as desktop.
   HTTP(S) link favicons are fetched only by the authenticated regional API,
   never by the renderer from the model-chosen destination. The service accepts
   public domain names only, uses the existing Firecrawl client to discover a
-  public HTTPS favicon URL, follows only loop-free image redirects that stay on
-  that hostname, validates image bytes, and keeps only a 30-day platform-wide KV
-  entry. The renderer receives the cached bytes and exposes them through a
-  revocable local object URL.
+  public HTTPS favicon URL, rejects image redirects, bounds the body read at
+  Cloudflare KV's value limit, validates image bytes, and keeps only a 30-day
+  platform-wide KV entry. The renderer receives the cached bytes and exposes
+  them through a revocable local object URL.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
@@ -947,8 +947,9 @@ Associated Domains entitlements; helpers retain their existing entitlement set.
 **What changed:** Markdown HTTP(S) links may display a favicon, but the
 sandboxed renderer obtains its bytes through the authenticated Rally API. The
 server accepts public domains only, asks the existing Firecrawl client for
-branding metadata, follows only same-host HTTPS image redirects, verifies image
-bytes, and caches the result or miss for 30 days in dedicated KV.
+branding metadata, rejects image redirects, bounds and verifies image bytes,
+and caches the result or confirmed miss for 30 days in dedicated KV. Transient
+provider and image-origin failures are not negative-cached.
 
 **Why:** Letting an `<img>` point at a model-authored site would notify that site
 when a message merely painted and would move arbitrary network access into the
@@ -960,9 +961,11 @@ the API. The former discloses browsing context from each client; the latter
 duplicates the server's existing public-web acquisition boundary.
 
 **Consequences:** Favicon failure is silent and never changes navigation.
-Cross-host, plaintext, and looping redirects are treated as absent for that
-host, the separately resolved parent may still supply its own mark, and detached
-still exports do not fetch live decoration.
+Redirects are treated as absent for that host, the separately resolved primary
+domain may still supply its own mark, and detached still exports do not fetch
+live decoration. Concurrent desktop requests for one normalized hostname share
+one API operation, and missing hosts remain memoized for at most 30 days in
+that API session.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 
