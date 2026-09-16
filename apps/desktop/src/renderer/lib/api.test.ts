@@ -196,6 +196,29 @@ afterEach(() => {
 });
 
 describe('Rally API wire adapter', () => {
+  it('coalesces in-flight favicon requests and remembers missing hosts', async () => {
+    let releaseIcon: ((response: Response) => void) | undefined;
+    const iconResponse = new Promise<Response>((resolve) => { releaseIcon = resolve; });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => iconResponse)
+      .mockImplementationOnce(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    const first = api.getFavicon('Docs.Example.com');
+    const second = api.getFavicon('docs.example.com');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    releaseIcon?.(new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      headers: { 'Content-Type': 'image/png' },
+    }));
+    const [firstIcon, secondIcon] = await Promise.all([first, second]);
+    expect(firstIcon).toBe(secondIcon);
+
+    await expect(api.getFavicon('missing.example.com')).resolves.toBeNull();
+    await expect(api.getFavicon('MISSING.example.com')).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('cancels transcription ticket acquisition even when the transport does not settle', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => new Promise<Response>(() => {}));
     vi.stubGlobal('fetch', fetchMock);

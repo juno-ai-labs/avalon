@@ -881,8 +881,8 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByRole('link', { name: 'Svix documentation' }))
       .toHaveAttribute('href', 'http://www.svix.com/docs');
     await waitFor(() => expect(document.querySelectorAll('.markdown-link-favicon')).toHaveLength(2));
-    expect(getFavicon).toHaveBeenCalledWith('docs.svix.com', expect.any(AbortSignal));
-    expect(getFavicon).toHaveBeenCalledWith('www.svix.com', expect.any(AbortSignal));
+    expect(getFavicon).toHaveBeenCalledWith('docs.svix.com');
+    expect(getFavicon).toHaveBeenCalledWith('www.svix.com');
     expect(createObjectURL).toHaveBeenCalledTimes(2);
 
     unmount();

@@ -554,8 +554,12 @@ export function redactQuery(path: string): string {
   return keys.length === 0 ? path.slice(0, separator) : `${path.slice(0, separator)}?${keys.join(',')}`;
 }
 
+const FAVICON_MISSING_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+
 export class RallyApi {
   private readonly pendingRunKeys = new Map<string, string>();
+  private readonly faviconRequests = new Map<string, Promise<Blob | null>>();
+  private readonly missingFavicons = new Map<string, number>();
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
   private renewalInFlight: Promise<string | null> | null = null;
@@ -1539,13 +1543,29 @@ export class RallyApi {
     return response.blob();
   }
 
-  async getFavicon(hostname: string, signal?: AbortSignal): Promise<Blob | null> {
+  getFavicon(hostname: string): Promise<Blob | null> {
+    const normalized = hostname.toLowerCase();
+    const missingUntil = this.missingFavicons.get(normalized);
+    if (missingUntil && missingUntil > Date.now()) return Promise.resolve(null);
+    this.missingFavicons.delete(normalized);
+    const pending = this.faviconRequests.get(normalized);
+    if (pending) return pending;
+    const request = this.fetchFavicon(normalized)
+      .then((favicon) => {
+        if (!favicon) this.missingFavicons.set(normalized, Date.now() + FAVICON_MISSING_TTL_MS);
+        return favicon;
+      })
+      .finally(() => this.faviconRequests.delete(normalized));
+    this.faviconRequests.set(normalized, request);
+    return request;
+  }
+
+  private async fetchFavicon(hostname: string): Promise<Blob | null> {
     const path = `/favicons/${encodeURIComponent(hostname)}`;
     const headers = new Headers({ Accept: "image/*" });
     const response = await this.traced(path, "GET", undefined, headers, () => this.execute(path, {
       method: "GET",
       headers,
-      ...(signal ? { signal } : {}),
     }));
     if (response.status === 404) return null;
     if (!response.ok) return this.throwResponseError(response);

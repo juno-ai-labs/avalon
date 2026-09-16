@@ -37,10 +37,9 @@ function cacheFixture() {
 }
 
 describe("favicon host resolution", () => {
-  it("walks a deep public host to its registrable domain and rejects non-public targets", () => {
+  it("pairs a deep public host with its registrable domain and rejects non-public targets", () => {
     expect(faviconHostChain("deep.docs.example.co.uk")).toEqual([
       "deep.docs.example.co.uk",
-      "docs.example.co.uk",
       "example.co.uk",
     ]);
     expect(faviconHostChain("127.0.0.1")).toBeNull();
@@ -76,16 +75,15 @@ describe("favicon host resolution", () => {
     expect(found?.contentType).toBe("image/svg+xml");
     expect(scrapeBranding.mock.calls.map(([url]) => url)).toEqual([
       "https://deep.docs.example.com/",
-      "https://docs.example.com/",
       "https://example.com/",
     ]);
-    expect(put).toHaveBeenCalledTimes(3);
+    expect(put).toHaveBeenCalledTimes(2);
     for (const call of put.mock.calls) {
       expect(call[2]).toMatchObject({ expirationTtl: 30 * 24 * 60 * 60 });
     }
   });
 
-  it("follows same-host image redirects but rejects redirects to another host", async () => {
+  it("rejects image redirects and falls back to the registrable domain", async () => {
     const { cache } = cacheFixture();
     const scrapeBranding = vi.fn(async (url: string) => url.startsWith("https://docs.")
       ? { faviconUrl: "https://cdn.example.net/start.svg", url, statusCode: 200 }
@@ -97,20 +95,34 @@ describe("favicon host resolution", () => {
       if (url === "https://cdn.example.net/start.svg") {
         return response(url, new Uint8Array(), "text/plain", 307, "/final.svg");
       }
-      if (url === "https://cdn.example.net/final.svg") {
-        return response(url, new Uint8Array(), "text/plain", 302, "https://private.example.org/icon.svg");
-      }
       if (url === "https://example.com/favicon.png") return response(url, png, "image/png");
       return response(url, new Uint8Array(), "text/plain", 404);
     });
 
     await expect(resolveFavicon(cache, "docs.example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
       .resolves.toMatchObject({ contentType: "image/png" });
-    expect(requested).toContain("https://cdn.example.net/final.svg");
-    expect(requested).not.toContain("https://private.example.org/icon.svg");
+    expect(requested).toEqual(expect.arrayContaining([
+      "https://cdn.example.net/start.svg",
+      "https://example.com/favicon.png",
+    ]));
+    expect(requested).not.toContain("https://cdn.example.net/final.svg");
   });
 
-  it("serves cached icons and cached misses without returning to Firecrawl or the origin", async () => {
+  it("keeps a successful parent fallback when the exact-host provider call fails", async () => {
+    const { cache, put } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => {
+      if (url === "https://docs.example.com/") throw new Error("provider unavailable");
+      return { faviconUrl: "/favicon.png", url, statusCode: 200 };
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => response(String(input), png, "image/png"));
+
+    await expect(resolveFavicon(cache, "docs.example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
+      .resolves.toMatchObject({ contentType: "image/png" });
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0]?.[0]).toBe("favicon:example.com");
+  });
+
+  it("reuses a cached icon and subdomain miss during parent fallback", async () => {
     const { cache } = cacheFixture();
     const scrapeBranding = vi.fn(async (url: string) => url === "https://example.com/"
       ? { faviconUrl: "/favicon.png", url, statusCode: 200 }
@@ -139,5 +151,61 @@ describe("favicon host resolution", () => {
 
     await expect(resolveFavicon(cache, "example.com", { scrapeBranding })).rejects.toBe(failure);
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 429, 503])("does not cache transient Firecrawl status %i as missing", async (statusCode) => {
+    const { cache, put } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: null, url, statusCode }));
+
+    await expect(resolveFavicon(cache, "example.com", { scrapeBranding })).rejects.toThrow("favicon_branding_fetch_failed");
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("does not cache a transient image response as missing", async () => {
+    const { cache, put } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: "/favicon.png", url, statusCode: 200 }));
+    const fetchMock = vi.fn(async (input: string | URL | Request) => response(String(input), new Uint8Array(), "text/plain", 503));
+
+    await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
+      .rejects.toThrow("favicon_image_fetch_failed");
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("stops reading an unbounded image body at the KV value boundary", async () => {
+    const { cache, put } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: "/favicon.png", url, statusCode: 200 }));
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(13 * 1024 * 1024));
+        controller.enqueue(new Uint8Array(13 * 1024 * 1024));
+      },
+      cancel() { cancelled = true; },
+    });
+    const fetchMock = vi.fn(async () => {
+      const value = new Response(body, { headers: { "content-type": "image/png" } });
+      Object.defineProperty(value, "url", { value: "https://example.com/favicon.png" });
+      return value;
+    });
+
+    await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
+      .resolves.toBeNull();
+    expect(cancelled).toBe(true);
+    expect(put).toHaveBeenCalledWith("favicon:example.com", "missing", expect.anything());
+  });
+
+  it("accepts a JPEG with bytes after its end marker and rejects an HTML body", async () => {
+    const jpegCache = cacheFixture();
+    const htmlCache = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: "/favicon.jpg", url, statusCode: 200 }));
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9, 0x0a]);
+    const jpegFetch = vi.fn(async (input: string | URL | Request) => response(String(input), jpeg, "image/jpeg"));
+    const html = new TextEncoder().encode("<html>not an image</html>");
+    const htmlFetch = vi.fn(async (input: string | URL | Request) => response(String(input), html, "text/html"));
+
+    await expect(resolveFavicon(jpegCache.cache, "example.com", { scrapeBranding }, jpegFetch as unknown as typeof fetch))
+      .resolves.toMatchObject({ contentType: "image/jpeg" });
+    await expect(resolveFavicon(htmlCache.cache, "example.com", { scrapeBranding }, htmlFetch as unknown as typeof fetch))
+      .resolves.toBeNull();
   });
 });

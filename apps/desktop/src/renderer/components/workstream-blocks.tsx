@@ -1053,17 +1053,17 @@ function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string
   const [source, setSource] = useState<string | null>(null);
   useEffect(() => {
     if (!api || !hostname) return;
-    const controller = new AbortController();
+    let active = true;
     let objectUrl: string | null = null;
-    void api.getFavicon(hostname, controller.signal)
+    void api.getFavicon(hostname)
       .then((blob) => {
-        if (!blob || controller.signal.aborted) return;
+        if (!blob || !active) return;
         objectUrl = URL.createObjectURL(blob);
         setSource(objectUrl);
       })
       .catch(() => undefined);
     return () => {
-      controller.abort();
+      active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [api, hostname]);
