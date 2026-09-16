@@ -5726,6 +5726,27 @@ function installDynamicPluginTools(
  */
 function prePaginationTool(tool: HarnessTool): HarnessTool {
   const descriptions: Record<string, Record<string, string>> = {
+    "gmail.read:gmail.search": {
+      maxResults: "Maximum messages to return in one page. Defaults to 10; follow the returned page token for more.",
+    },
+    "calendar.read:calendar.list_events": {
+      maxResults: "Maximum occurrences to return in one page. Defaults to 25; follow the returned page token for the rest of the window.",
+    },
+    "slack.messages.read:read_channel": {
+      limit: "Maximum messages to return, newest first. Defaults to 50; follow `next_cursor` for older ones.",
+    },
+    "slack.users.read:list_channel_members": {
+      limit: "Maximum member ids to return in one page. Defaults to 200; follow `next_cursor` for the rest.",
+    },
+    "granola.workspace.read:list_notes": {
+      pageSize: "Maximum notes to return in one page. Defaults to Granola's own page size; follow the cursor for the rest.",
+    },
+    "granola.workspace.read:list_folders": {
+      pageSize: "Maximum folders to return in one page. Defaults to Granola's own page size; follow the cursor for the rest.",
+    },
+    "notion.read:query_data_source": {
+      pageSize: "Maximum rows to return in one page. Defaults to 20; follow the cursor for the rest.",
+    },
     "workstream.resources.list": {
       limit: "Maximum resources to return in one page. Defaults to 25. It belongs to the first page only; a later page keeps the limit its cursor was issued with.",
       attachmentKind: "Return only resources of this kind, using one of the values the tool description lists, for example spreadsheet. Omit it for every kind, and never send a MIME type. It belongs to the first page only; a later page keeps the filter its cursor was issued with.",
@@ -5737,7 +5758,8 @@ function prePaginationTool(tool: HarnessTool): HarnessTool {
       maxPassageCharacters: "Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or follow the passage's read cursor to read further.",
     },
   };
-  const overrides = descriptions[tool.definition.capability];
+  const overrides = descriptions[`${tool.definition.capability}:${tool.definition.name}`]
+    ?? descriptions[tool.definition.capability];
   if (!overrides) return tool;
   const properties = z.record(z.string(), z.record(z.string(), z.unknown())).parse(tool.definition.inputSchema.properties);
   return { ...tool, definition: { ...tool.definition, inputSchema: { ...tool.definition.inputSchema,
@@ -7865,6 +7887,8 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  prePaginationTool,
+  connectorToolSurfaceHash,
   createToolEffectIntents,
   loadWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,

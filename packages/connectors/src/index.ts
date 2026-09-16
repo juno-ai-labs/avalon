@@ -649,7 +649,7 @@ export const googleTools: ToolDefinition[] = [
           description:
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
-        maxResults: { type: "integer", minimum: 1, maximum: 25, description: "Maximum messages to return in one page. Defaults to 10; follow the returned page token for more." },
+        maxResults: { type: "integer", minimum: 1, maximum: 25, description: "Maximum messages to return in one page. Defaults to 10." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["query"]
@@ -781,7 +781,7 @@ export const googleTools: ToolDefinition[] = [
           minLength: 1,
           description: "Plain text matched against an event's title, description, location, and attendees. Omit it to get every event in the window. It is not a query language, so operators written into it are matched literally and return nothing rather than filtering.",
         },
-        maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum occurrences to return in one page. Defaults to 25; follow the returned page token for the rest of the window." },
+        maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum occurrences to return in one page. Defaults to 25." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["timeMin", "timeMax"]
