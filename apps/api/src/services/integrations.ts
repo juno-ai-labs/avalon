@@ -1,3 +1,4 @@
+import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub } from "./conversation-parent-client";
@@ -2569,7 +2570,23 @@ export async function runWorkstreamHarness(
       afterHeartbeat: () => runtime.persistentLoop!.heartbeat!(),
     } : {}),
   });
+  // Independent reads begin while the lease heartbeat is checked. No prepared
+  // value grants authority, and tool/prompt setup still waits for the heartbeat.
+  const runDefinitionPreparation = new Preparation(() => input.automationRun
+    ? readAutomationRunDefinition(env, input) : Promise.resolve(null));
+  const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
+  runDefinitionPreparation.get();
+  inventoryPreparation.get();
   await liveness.pulse("run_start", true);
+  const promptPreparation = new Preparation(() => loadRunPromptContext(
+    env, input, attemptLease, workstream, runDefinitionPreparation,
+  ));
+  const toolsPreparation = new Preparation(() => loadHarnessTools(
+    env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
+    runDefinitionPreparation, inventoryPreparation,
+  ));
+  promptPreparation.get();
+  toolsPreparation.get();
   const requiresCanonicalBootstrap = !runtime.persistentLoop
     || runtime.persistentLoop.projection === null;
   const orderedTranscript = createTranscriptObjectPort(
@@ -2640,12 +2657,7 @@ export async function runWorkstreamHarness(
       issues: transcriptProjection.issues,
     });
   }
-  const promptContext = await loadRunPromptContext(
-    env,
-    input,
-    attemptLease,
-    { title: workstream.title, objective: workstream.objective },
-  );
+  const promptContext = await promptPreparation.get();
   const activationInputs = promptContext.additionalMessages.map(workstreamActivationInput);
   // Preserve the complete protocol transcript. OpenRouter's returned usage is
   // the authoritative context measurement; Avalon does not estimate bytes or
@@ -2660,12 +2672,7 @@ export async function runWorkstreamHarness(
   let modelName: string | null = null;
   let streamStarted = false;
   let suppressCurrentStreamPreview = false;
-  const harnessTools = await loadHarnessTools(
-    env,
-    input,
-    runAuthoritySnapshot,
-    runtime?.runtimeResourceAttacher,
-  );
+  const harnessTools = await toolsPreparation.get();
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   const activeCredentialPluginIds = new Set<string>();
@@ -4317,6 +4324,8 @@ async function loadRunPromptContext(
   input: WorkstreamWorkflowInput,
   lease: AttemptLease,
   workstream: { title: string; objective: string },
+  runDefinitionPreparation = new Preparation(() => input.automationRun
+    ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
 ): Promise<{
   systemPrompt: string;
   additionalMessages: ModelMessage[];
@@ -4346,7 +4355,8 @@ async function loadRunPromptContext(
   if (input.automationRun) {
     // A run reads its definition from its parent by revision. The revision is
     // immutable, so nothing is frozen into the loop input beyond the reference.
-    const definition = await readAutomationRunDefinition(env, input);
+    const definition = await runDefinitionPreparation.get();
+    if (!definition) throw new Error("sidekick_run_reference_missing");
     // What Rally delivers on the run's behalf, which is only the room a
     // work-stream automation belongs to, through the tool the run holds.
     // Naming the room tells the run its result has one place to go; naming
@@ -4858,11 +4868,28 @@ async function loadAuthorizedAttachmentReplay(
   return { output, contentParts };
 }
 
+// Read-only inventory can overlap independent execution preparation. It is
+// deliberately execution-scoped: connection changes are not cached across runs.
+async function loadHarnessInventory(env: Env, input: WorkstreamWorkflowInput) {
+  return Promise.all([
+    createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
+    env.DB.prepare(
+      `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
+       ORDER BY created_at ASC`,
+    ).bind(input.workspaceId).all<Record<string, unknown>>(),
+  ]);
+}
+
+const builtinToolSurfaces = new ToolSurfacePreparations();
+
 async function loadHarnessTools(
   env: Env,
   input: WorkstreamWorkflowInput,
   runAuthoritySnapshot?: RunAuthoritySnapshot,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
+  runDefinitionPreparation = new Preparation(() => input.automationRun
+    ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
+  inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input)),
 ): Promise<{
   coreTools: HarnessTool[];
   corePlugins: HarnessPlugin[];
@@ -4879,14 +4906,8 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const [attachedLinks, connectionRows] = await Promise.all([
-    createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
-    env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
-       ORDER BY created_at ASC`,
-    ).bind(input.workspaceId).all<Record<string, unknown>>(),
-  ]);
-  const runDefinition = input.automationRun ? await readAutomationRunDefinition(env, input) : null;
+  const [attachedLinks, connectionRows] = await inventoryPreparation.get();
+  const runDefinition = await runDefinitionPreparation.get();
   const defaultModelPluginIds = new Set(runDefinition?.defaultPluginIds ?? []);
   // Two reads, one per authority, where the retired statement was a join.
   // Which resources this work stream has attached is the object's, and which
@@ -4965,17 +4986,17 @@ async function loadHarnessTools(
       tool.definition.mode,
     ] as const)),
   );
-  for (const builtinPlugin of builtinPlugins) {
+  await Promise.all(builtinPlugins.map(async (builtinPlugin) => {
     pluginSurfaceHashes.set(
       builtinPlugin.canonicalId,
-      await connectorToolSurfaceHash(builtinPlugin.canonicalId, builtinPlugin.tools),
+      await builtinToolSurfaces.get(builtinPlugin.canonicalId, toolSurfaceJson(builtinPlugin.canonicalId, builtinPlugin.tools)),
     );
     for (const tool of builtinPlugin.tools) {
       const wireName = stableWireToolName(builtinPlugin.shortWireName, tool.definition.name);
       idempotencyByTool.set(wireName, tool.definition.idempotency);
       modeByTool.set(wireName, tool.definition.mode);
     }
-  }
+  }));
   const seenModelPluginIds = new Set<string>();
   const orderedConnectionRows = [...(connectionRows.results ?? [])].sort((left, right) => {
     const priority = connectorSelectionPriority(left, input.executionPrincipal, attached)
@@ -5603,7 +5624,15 @@ async function connectorToolSurfaceHash(
   tools: readonly HarnessTool[],
   canonicalToolName: (name: string) => string = (name) => name,
 ): Promise<string> {
-  return sha256(JSON.stringify({
+  return sha256(toolSurfaceJson(pluginId, tools, canonicalToolName));
+}
+
+function toolSurfaceJson(
+  pluginId: string,
+  tools: readonly HarnessTool[],
+  canonicalToolName: (name: string) => string = (name) => name,
+): string {
+  return JSON.stringify({
     pluginId,
     tools: tools.map(({ definition }) => ({
       name: canonicalToolName(definition.name),
@@ -5615,7 +5644,7 @@ async function connectorToolSurfaceHash(
       idempotency: definition.idempotency,
       inputSchema: definition.inputSchema,
     })),
-  }));
+  });
 }
 
 async function executeAuthorizedConnectorTool(

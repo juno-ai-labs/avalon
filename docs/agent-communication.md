@@ -53,8 +53,20 @@ The host derives a stable UUID from the durable tool effect identity for creatio
 and delivery replay. Start reserves an ordinary child under the same conversation
 parent, bootstraps the existing harness, and provisions its name, description and
 inherited model override. It grants no private-child viewer memberships. The
-child retains its inherited execution principal; messages do not replace it with
-a teammate's credentials.
+child retains its inherited execution principal; admission resolves it locally,
+and messages do not replace it with a teammate's credentials.
+
+Creation reserves the child and obtains the current generation in one parent RPC.
+Child reservation refuses archived parents. Bootstrap, identity provisioning and
+background initialization use one child RPC while retaining their existing
+validation, projection and replay paths. Initialization refusals retain the
+underlying authority error code, including provisioning failures. Team setup starts concurrently with child reservation and initialization.
+A shared promise reuses the same team within this execution; ownership registration
+still waits for both team setup and the child's background state. The initial assignment reuses the resolved
+team. Delivery checks parent authority and generation at the recipient, without
+a sender preflight or a preliminary read of the recipient's runtime. Teammate
+status reads run concurrently after workspace roster authorization; Sidekick
+access is still checked before reading each Sidekick.
 
 Agent messages reuse the durable non-human input preparation path (whose stored
 preparation kind remains `automation_activation`). Their own structured content
@@ -110,6 +122,14 @@ chat. The count shimmers subtly, emerges from behind the composer, and retreats
 behind it when work ends or the count becomes unavailable. Count changes roll
 vertically with fading digits. Reduced-motion preferences disable these effects.
 Participant messages use the ordinary safe-boundary admission path.
+
+Agent tools are preloaded through the existing persisted plugin-activation path,
+so they are available on the first model call. Bind still validates live execution
+authority before every tool invocation. The Sidekick directory tool reuses that
+command's active-member authorization through an internal WorkspaceDO read; it
+still filters personal ownership and workstream participation. Ordinary directory
+callers perform their own active-member check. This is a host-selected execution
+path, not a model argument, durable grant, or run-long authorization cache.
 
 Sidekick discovery uses the existing authorized directory and ranks the current
 workstream's Sidekicks first. Minimal creation defaults to workstream ownership;
@@ -185,6 +205,21 @@ stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-09-15 — Remove caller-orchestrated delegation round trips
+
+A production image delegation spent seconds in discovery and creation before its
+worker could start. Parent reservation now supplies the generation, child setup
+uses one RPC, and a send leaves parent-authority validation and principal selection
+to the receiving object. Team initialization is reused within a command and roster
+status reads run concurrently. Agent tools preload through normal activation, and
+Sidekick listing trusts Bind's fresh per-command member check instead of issuing
+the same D1 check again. Non-harness directory callers retain that check. The removed sender checks duplicated decisions the
+receiver already owns; no new asynchronous acceptance contract or scheduler was
+needed. Admission still persists input before returning, initialization retains
+its replay paths, and owner stop checks remain on both sides of delivery. Realtime
+outbox settlement remains unchanged. These reductions do not establish the command
+latency targets of p50 250 ms and p90 500 ms; production timing is still required.
 
 ### 2026-09-14 — Separate communication membership from execution ownership
 

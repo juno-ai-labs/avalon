@@ -7,6 +7,7 @@ import {
   IconImageGeneration,
   IconKeyframes,
   IconPlug,
+  IconStackBackward,
   IconWebhook,
   IconWorldSearch,
   type TablerIcon,
@@ -1953,6 +1954,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  */
 const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
   automations: IconKeyframes,
+  'background-agents': IconStackBackward,
   computer: IconDeviceDesktop,
   'image-generation': IconImageGeneration,
   plug: IconPlug,

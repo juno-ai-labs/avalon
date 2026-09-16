@@ -934,6 +934,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     });
   }
 
+  /** Reserve against current parent authority without a caller-side preflight RPC. */
+  async reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): Promise<ConversationParentReserveChildResult> {
+    const authority = await this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
+    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
+    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
+  }
+
   /**
    * Record a child before it is addressed.
    *
@@ -959,6 +966,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       } else {
         this.assertParent(request.workspaceId, request.parentId);
       }
+      if (request.kind === "child" && metadata.archived_at !== null) throw new Error("workstream_archived");
       const registered = this.registerChild(request.substreamId, request.kind, request.createdByUserId, now);
       const envelopes: ParentEffectEnvelope[] = [];
       if (registered && request.substreamId === "0" && request.directory) {
