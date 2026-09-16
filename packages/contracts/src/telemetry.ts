@@ -209,6 +209,7 @@ export const TELEMETRY_REALTIME_SOCKET_CAUSES = [
   "heartbeat_timeout",
   "server_closed",
   "ticket_failed",
+  "ticket_timeout",
   "resync_required",
   "offline",
   "access_revoked",

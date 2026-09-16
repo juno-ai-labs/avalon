@@ -17,6 +17,7 @@ import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
+import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 
 import type * as TelemetryModule from './telemetry';
@@ -551,16 +552,22 @@ describe('WorkspaceSocketProvider', () => {
     expect(socketTelemetry()).toEqual([]);
   });
 
-  it('calls an offline transition during the ticket request what it is', async () => {
+  it('times out a stranded reconnect ticket and starts another workspace attempt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     const queryClient = new QueryClient();
-    let releaseTicket: (() => void) | null = null;
-    const getWorkspaceSocketTicket = vi.fn(async () => {
-      await new Promise<void>((resolve) => { releaseTicket = resolve; });
-      return {
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-        ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      };
+    const ticket = {
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    };
+    let requestCount = 0;
+    const getWorkspaceSocketTicket = vi.fn(() => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        return requestSocketTicket(() => new Promise<typeof ticket>(() => undefined));
+      }
+      return Promise.resolve(ticket);
     });
     render(
       <QueryClientProvider client={queryClient}>
@@ -573,16 +580,52 @@ describe('WorkspaceSocketProvider', () => {
       </QueryClientProvider>,
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances[0]!.open());
+    act(() => FakeWebSocket.instances[0]!.close(1012));
 
-    // The desktop drops off the network while the ticket is still in flight, so
-    // the offline handler finds no socket to close and records nothing.
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS));
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'workspace',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'one',
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('calls an offline transition during the ticket request what it is', async () => {
+    const queryClient = new QueryClient();
+    let ticketSignal: AbortSignal | undefined;
+    const getWorkspaceSocketTicket = vi.fn((signal?: AbortSignal) => {
+      ticketSignal = signal;
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>connected surface</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    expect(ticketSignal?.aborted).toBe(false);
+
+    // The desktop drops off the network while the ticket is still in flight.
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     window.dispatchEvent(new Event('offline'));
-    releaseTicket!();
     await flushPromises();
 
-    // Dialling anyway would have produced a transport error a moment later, and
-    // counted an ordinary walk out of Wi-Fi range as a broken connection.
+    expect(ticketSignal?.aborted).toBe(true);
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(socketTelemetry()).toEqual([{
       kind: 'realtime_socket_state',
