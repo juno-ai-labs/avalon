@@ -64,7 +64,12 @@ advertises automatic signing-secret cutover. The desktop shows local manual
 guidance without changing installation state or verification material.
 
 Disconnect disables the ordinary connection and clears its credential access in
-the same transaction that captures a separate encrypted cleanup snapshot. Only a
+the same transaction that captures a separate encrypted cleanup snapshot. The
+connections list then shows the connection only while Rally still owes its
+provider a cleanup it can perform — the installation waiting on cleanup with
+its credential retained and a recorded provider identity — with Manage events
+still reachable until the removal settles; a disconnected connection with
+nothing left to remove leaves the list. Only a
 claimed removal step for an exact recorded provider ID can obtain that snapshot.
 It cannot refresh tokens, discover tools, create, update, or reactivate a connection.
 Generation and dispatched-intent checks precede provider I/O and settlement.

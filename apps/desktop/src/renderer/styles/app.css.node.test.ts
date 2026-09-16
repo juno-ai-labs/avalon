@@ -14,6 +14,32 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('connections table', () => {
+  /**
+   * The row is a flex line: dot, provider mark, name. A name long enough to
+   * wrap shrank its siblings first, and the 7px status dot became a 3px sliver
+   * beside a two-line "Google Drive + Docs + Sheets · alex@…". jsdom lays
+   * nothing out, so the declaration is what a component test can hold onto.
+   */
+  it('keeps the status dot and provider mark their size when a long name wraps', () => {
+    expect(rule('.connection-provider-dot')).toContain('flex: none;');
+    expect(rule('.settings-connection-name .connector-mark')).toContain('flex: none;');
+  });
+
+  it('draws the healthy dot in the saturated success step, not the text-and-fill one', () => {
+    // `success-base` is a sage tuned for text and fills; at 7px on the dark
+    // surface it read as grey, and an administrator could not tell healthy
+    // from disabled at a glance.
+    expect(rule('.connection-provider-dot.healthy')).toContain('var(--av-sys-color-success-vivid)');
+    expect(rule('.connection-provider-dot.healthy')).not.toContain('success-base');
+  });
+
+  it('colours the Test verdict by its outcome', () => {
+    expect(rule('.connection-test-outcome.is-passed')).toContain('var(--av-sys-color-success-');
+    expect(rule('.connection-test-outcome.is-failed')).toContain('var(--av-sys-color-danger-');
+  });
+});
+
 describe('capsule composer stacking', () => {
   /**
    * Once the field spans the capsule's full width — wrapped text, or an
