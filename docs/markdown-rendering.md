@@ -757,12 +757,20 @@ pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/citations.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-citations.test.tsx
 pnpm --filter @rally/contracts exec vitest run src/citations.test.ts
+pnpm --filter @rally/api exec vitest run test/favicon-service.test.ts test/firecrawl-web-tools.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/favicon-runtime.test.ts
 ```
 
 Both guards are `.node.test.ts` files: they read source off disk with `node:fs`,
 which `tsconfig.node.json` keeps out of the renderer program. They read from
 `process.cwd()`, so they must be run from the package directory —
 `--filter … exec` already does that.
+
+The favicon service's Node suite proves selection, caching, validation and
+failure policy against provider doubles. The workerd route test keeps Firecrawl
+and the image origin doubled but uses the real KV binding and execution context:
+it verifies binary metadata round-trips and that the primary-domain fallback is
+registered with `waitUntil` before the exact-host response returns.
 
 The traps, both of which have bitten:
 
