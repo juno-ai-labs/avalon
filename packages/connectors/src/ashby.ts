@@ -131,6 +131,9 @@ export function createAshbyConnector(config: AshbyConnectorConfig): ConnectorAda
     agentPlugin: AshbyAgentPluginDescriptor,
     dynamicAgentTools: personalMcp.dynamicAgentTools,
     capabilityConnectionScopes: { [AshbyCapabilities.personalMcp]: ["personal"], [AshbyCapabilities.workspaceEvents]: ["workspace"] },
+    // A personal Ashby connection is an MCP token; the webhook is created by
+    // the administrator's workspace install and `normalize` refuses the rest.
+    activityConnectionScopes: ["workspace"],
     async beginAuthorization(input) {
       if (input.connectionScope !== "personal") throw new ConnectorError("invalid_configuration", "Ashby workspace events require administrator setup in Settings");
       return authorization.begin({ state: String(input.state ?? ""), codeChallenge: String(input.codeChallenge ?? "") });

@@ -694,6 +694,10 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       [GranolaCapabilities.workspaceRead]: ["workspace"],
       [GranolaCapabilities.personalRead]: ["personal"],
     },
+    // Webhooks are registered by the workspace install, and `normalize` below
+    // refuses any other connection, so a personal connection's notes never
+    // reach Rally as events however they are watched.
+    activityConnectionScopes: ["workspace"],
     async beginAuthorization(input) {
       if (input.connectionScope !== "personal") {
         throw new ConnectorError("invalid_configuration", "Granola MCP OAuth is available only for personal connections");
