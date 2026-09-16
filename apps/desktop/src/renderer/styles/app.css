@@ -4878,6 +4878,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .connection-test-outcome p { color: var(--av-sys-color-text-default); margin: 0; }
 .connection-test-outcome.is-passed { background: var(--av-sys-color-success-wash); border-color: var(--av-sys-color-success-edge); color: var(--av-sys-color-success-base); }
 .connection-test-outcome.is-failed { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); color: var(--av-sys-color-danger-base); }
+/* The request failed, not the connection: warning, so it cannot be read as a verdict. */
+.connection-test-outcome.is-unavailable { background: var(--av-sys-color-warning-wash); border-color: var(--av-sys-color-warning-edge); color: var(--av-sys-color-warning-base); }
 .form-field > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 20px; }
 .form-field > select { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); min-height: 36px; min-width: 0; padding: 6px 10px; width: 100%; }
 .form-field > span,

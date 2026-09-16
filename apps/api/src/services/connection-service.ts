@@ -73,7 +73,7 @@ import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
 import { NotionRoutingService } from "./notion-routing-service";
@@ -478,31 +478,49 @@ export class ConnectionService {
 
   /**
    * The rows the connections list shows: every enabled one, and a disabled one
-   * only while Rally still owes its provider a cleanup it can perform.
+   * only while its installation is not settled.
    *
    * `disable` marks a row rather than deleting it, and the list returned every
    * row, so a connection an administrator had just removed stayed in the table
    * for good — badge reading "disabled", tools reading "—", and a second press
-   * of the trash icon changing nothing. The one thing a disconnected connection
-   * can still be for is finishing the webhook removal its installation
-   * lifecycle owes, and only where Rally can actually do it: the installation
-   * is waiting on cleanup, its cleanup credential is retained, and a
-   * registration carries the provider identity to remove. That row stays, with
-   * its Manage events controls, until the removal settles. Every other disabled
-   * row has nothing left to offer and leaves the list.
+   * of the trash icon changing nothing. What a disconnected row is still for is
+   * the installation behind it: a provider webhook Rally is about to remove, a
+   * registration whose create outcome was never learned and may be live under
+   * an identity Rally does not hold, or a disconnect that never reached the
+   * object. Manage events is reachable only from the row, so the row stays
+   * until the installation is `disconnected` or the administrator forgets its
+   * cleanup — the one explicit way to say "I have dealt with this". A disabled
+   * row with no installation, or a settled one, leaves.
+   *
+   * One hop, whatever the history: every disconnect leaves a row behind for
+   * ever, so a per-row read would grow with every reconnect. A read that fails
+   * keeps every candidate — an unsettled installation with no row cannot be
+   * recovered from Settings, while a settled one listed once more is a badge.
    */
   private async listedConnectionRows(workspaceId: string, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
     const candidates = rows.filter((row) => row.status === "disabled" && row.scope === "workspace"
       && (ConnectorInstallationProviders as readonly string[]).includes(String(row.connector_type)));
-    const owed = new Set<string>();
-    if (candidates.length > 0) {
-      const object = await this.workspaceObject(workspaceId);
-      for (const row of candidates) {
-        const installation = await object.connectorInstallation({ workspaceId, connectionId: String(row.id) });
-        if (installation && cleanupStillOwed(installation)) owed.add(String(row.id));
+    let retained: ReadonlySet<string>;
+    if (candidates.length === 0) retained = new Set();
+    else {
+      try {
+        const object = await this.workspaceObject(workspaceId);
+        const connectionIds = candidates.map((row) => String(row.id));
+        const installations: ConnectorInstallation[] = [];
+        for (let start = 0; start < connectionIds.length; start += 200) {
+          installations.push(...await object.connectorInstallations({ workspaceId, connectionIds: connectionIds.slice(start, start + 200) }));
+        }
+        retained = new Set(installations.filter(awaitingCleanup).map((installation) => installation.connectionId));
+      } catch (error) {
+        logWarn(this.env, "connector_list_installation_read_failed", {
+          workspace_id: workspaceId,
+          candidate_count: candidates.length,
+          code: diagnosticErrorCode(error, "installation_read_failed"),
+        });
+        retained = new Set(candidates.map((row) => String(row.id)));
       }
     }
-    return rows.filter((row) => row.status !== "disabled" || owed.has(String(row.id)));
+    return rows.filter((row) => row.status !== "disabled" || retained.has(String(row.id)));
   }
 
   async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
@@ -3933,14 +3951,14 @@ function unsupportedWebhookEvent(
 }
 
 /**
- * Whether Rally can still remove a disconnected installation's webhook itself:
- * the condition under which Manage events offers Retry cleanup, and the one
- * under which a disabled connection is still worth a row in the list.
+ * Whether a disconnected connection's installation is still unsettled: the
+ * condition under which its row stays in the connections list so that Manage
+ * events remains reachable. Settled means every registration removed
+ * (`disconnected`), or the administrator forgot the cleanup credential, which
+ * is the explicit "I have dealt with this" for a webhook only they can remove.
  */
-export function cleanupStillOwed(installation: ConnectorInstallation): boolean {
-  return installation.state === "cleanup_pending"
-    && !installation.cleanupCredentialForgotten
-    && installation.registrations.some((registration) => registration.providerId !== null && registration.state !== "removed");
+export function awaitingCleanup(installation: ConnectorInstallation): boolean {
+  return installation.state !== "disconnected" && !installation.cleanupCredentialForgotten;
 }
 
 function installationActionError(error: unknown): unknown {

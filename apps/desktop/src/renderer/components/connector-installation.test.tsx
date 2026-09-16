@@ -108,6 +108,21 @@ describe('workspace event controls', () => {
     expect(test).toHaveBeenCalledTimes(2);
   });
 
+  it('says the test could not run when the request fails, rather than that the connection failed it', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), state: 'current',
+      registrations: [registration('applicationSubmit', 'current')] } });
+    vi.spyOn(api, 'testConnection').mockRejectedValueOnce(new Error('The regional service could not be reached'));
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    await screen.findByText('Connected');
+    fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+    const outcome = await screen.findByRole('alert');
+    expect(outcome).toHaveClass('is-unavailable');
+    expect(outcome).toHaveTextContent('Couldn’t run the connection test');
+    expect(outcome).toHaveTextContent('could not be reached');
+    expect(screen.queryByText('Connection test failed')).toBeNull();
+  });
+
   it('adopts an enabled legacy connection only after explicit Test', async () => {
     const api = new RallyApi('https://api.example.test', null);
     const read = vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: null });
@@ -396,6 +411,17 @@ describe('Fireflies workspace setup', () => {
     } });
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     await screen.findByText(/Rally can't remove the webhook from your provider for you/u);
+    expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull();
+  });
+
+  it('offers no cleanup retry for a provider identity inspection never verified', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: {
+      ...installation(), state: 'cleanup_pending',
+      registrations: [{ ...registration('applicationSubmit', 'action_required', 'webhook-1'), providerIdVerified: false }],
+    } });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    await screen.findByText('Disconnected');
     expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull();
   });
 
