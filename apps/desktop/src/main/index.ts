@@ -115,6 +115,7 @@ import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry
 import { applicationMenuTemplate } from './application-menu';
 import { shareText, showDefinitionForSelection } from './text-services';
 import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
+import { RendererCrashRecovery } from './renderer-crash-recovery';
 import {
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
@@ -455,6 +456,18 @@ async function reportTelemetryProductIntent(
 }
 
 let mainWindow: BrowserWindow | null = null;
+let applicationIsQuitting = false;
+const rendererCrashRecovery = new RendererCrashRecovery({
+  showMessageBox: (options) => {
+    const parent = mainWindow;
+    return parent && !parent.isDestroyed()
+      ? dialog.showMessageBox(parent, options)
+      : dialog.showMessageBox(options);
+  },
+  relaunch: () => app.relaunch(),
+  quit: () => app.quit(),
+  onDialogError: (error) => logError('rally', 'could not show renderer crash recovery', error),
+});
 let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
 let settingsWindow: BrowserWindow | null = null;
@@ -549,7 +562,9 @@ function observeApplicationForeground(foregrounded: boolean): void {
   applicationLifecycleTelemetry.observeFocused(foregrounded);
   if (!changed) return;
   for (const window of rallyWindows()) {
-    window.webContents.send('application:foreground-changed', foregrounded);
+    if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) {
+      window.webContents.send('application:foreground-changed', foregrounded);
+    }
   }
 }
 let nativeCrashUploader: NativeCrashUploader | null = null;
@@ -4247,8 +4262,9 @@ async function createMainWindow(): Promise<void> {
   const mainWindowWebContentsId = mainWindow.webContents.id;
 
   installWindowDiagnostics(mainWindow, 'main');
-  mainWindow.webContents.on('render-process-gone', () => {
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+    if (!applicationIsQuitting) void rendererCrashRecovery.offer(details.reason);
   });
   mainWindow.once('ready-to-show', () => {
     mainWindowReadyToShow = true;
@@ -4598,6 +4614,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
+  applicationIsQuitting = true;
   if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault();
 });
 
