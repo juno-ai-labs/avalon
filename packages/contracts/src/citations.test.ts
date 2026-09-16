@@ -164,6 +164,8 @@ describe("person mention hrefs", () => {
     const markdown = `[@${"\\".repeat(42)}[x]](person://${id})`;
 
     expect(personMentionMarkdownRanges(markdown)).toEqual([]);
+  });
+
   it("reduces person mentions with citations at the shared outbound boundary", () => {
     expect(rewriteMessageAsPlainText(
       `## Request\n\nAsk [@Ada Lovelace](person://${id}) to **read** [the plan](resource://plan).`,
@@ -257,6 +259,18 @@ describe("person mention hrefs", () => {
     ].join("\n"));
   });
 
+  it("does not collect a citation footnote from multiline inline code", () => {
+    expect(rewriteMessageAsPlainText([
+      "Keep `start",
+      "[^x]: [Docs](https://example.com)",
+      "end` and [^x].",
+    ].join("\n"), { sources: "plain" })).toBe([
+      "Keep start",
+      "[^x]: [Docs](https://example.com)",
+      "end and [^x].",
+    ].join("\n"));
+  });
+
   it("removes quote containers from indented code without rewriting its contents", () => {
     expect(rewriteMessageAsPlainText(
       ">     [plan](resource://plan) and **literal**",
@@ -334,6 +348,23 @@ describe("person mention hrefs", () => {
   it("reduces emphasis across a soft line break", () => {
     expect(rewriteMessageAsPlainText("Please **review\nthis** today.", { sources: "none" }))
       .toBe("Please review\nthis today.");
+  });
+
+  it("reduces emphasis across a list-item continuation", () => {
+    expect(rewriteMessageAsPlainText("- **review\n  this** today", { sources: "none" }))
+      .toBe("- review\n  this today");
+  });
+
+  it("preserves a fenced code block nested directly inside a list item", () => {
+    expect(rewriteMessageAsPlainText([
+      "- ```md",
+      "  [plan](resource://plan)",
+      "  **literal**",
+      "  ```",
+    ].join("\n"), { sources: "none" })).toBe([
+      "    [plan](resource://plan)",
+      "    **literal**",
+    ].join("\n"));
   });
 
   it("preserves list depth and removes setext and thematic-break markup", () => {

@@ -761,9 +761,10 @@ Lists retain their source depth. Fenced, indented, and variable-backtick inline
 code retain literal content while their delimiters are removed, including a
 multiline code span and a fence nested in a blockquote; only the enclosing quote
 depth is removed from fenced or indented code content. Inline formatting may
-cross a paragraph's soft line breaks. Reference definitions are removed with a
+cross a paragraph's soft line breaks and a list item's continuation lines.
+Fences nested directly under list markers remain literal code. Reference definitions are removed with a
 title continued onto the following line and when nested in a blockquote, but a
-definition-shaped line inside multiline code remains literal. The
+definition- or footnote-shaped line inside multiline code remains literal. The
 renderer's supported `<br>` spellings become line breaks rather than literal
 tags, and ATX headings accept CommonMark's three-space indent. Citation and
 person-mention syntax inside code remains literal; prose references reduce to
