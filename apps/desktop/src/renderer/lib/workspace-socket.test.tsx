@@ -421,6 +421,8 @@ describe('WorkspaceSocketProvider', () => {
 
   it('keeps one workspace socket, subscribes durably, and invalidates every workspace surface', async () => {
     const queryClient = new QueryClient();
+    const recommendationKey = ['recommended-sidekicks', 'idle-workstream'];
+    queryClient.setQueryData(recommendationKey, []);
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -471,6 +473,7 @@ describe('WorkspaceSocketProvider', () => {
       ['sidekicks-library'],
       ['attached-sidekicks'],
       ['workstream-sidekicks'],
+      ['recommended-sidekicks'],
       ['note'],
       ['resources'],
       ['workstream-context'],
@@ -479,6 +482,7 @@ describe('WorkspaceSocketProvider', () => {
       ['telemetry-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
+    expect(queryClient.getQueryState(recommendationKey)?.isInvalidated).toBe(true);
     // The two sidebar lists are pushed whole, so a topic must never invalidate
     // them: nothing would refetch, and naming them here would suggest otherwise.
     for (const pushed of [['automations'], ['notes']]) {

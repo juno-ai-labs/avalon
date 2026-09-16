@@ -2095,7 +2095,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema, removeId: IdSchema.optional() }).parse(input);
     const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || identity.parentKind !== "workstream") {
       throw new Error("sidekick_attachment_identity_mismatch");
     }
     if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
@@ -4288,7 +4288,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ).toArray()[0];
         return row ? SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
       },
-      attachedSidekickIds: () => this.externalSubstreamId() === "0"
+      attachedSidekickIds: () => this.objectStore.identity()?.parentKind === "workstream"
         ? this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id)
         : [],
       saveSidekickSkills: (snapshot) => {
@@ -4304,7 +4304,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           if (!snapshot.activeRefs.includes(ref)) snapshot.activeRefs.push(ref);
           this.state.storage.sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
           const source = snapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
-          if (source && this.externalSubstreamId() === "0" && this.objectStore.identity()?.parentKind === "workstream") {
+          if (source && this.objectStore.identity()?.parentKind === "workstream") {
             this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)`, source.id, Date.now());
           }
         });

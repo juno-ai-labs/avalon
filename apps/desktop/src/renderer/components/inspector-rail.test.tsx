@@ -1161,7 +1161,8 @@ describe('a work stream’s Sidekicks in the main workstream rail', () => {
     // the platform's draws in the desktop's type and never for a keyboard.
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).not.toHaveAttribute('title');
     expect(screen.getByText('Write clearly.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Editorial guidance' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
     expect(onRemove).toHaveBeenCalledOnce();
   });
   it('keeps an authorized unavailable attachment visible', () => {

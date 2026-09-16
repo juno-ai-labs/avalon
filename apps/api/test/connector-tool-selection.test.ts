@@ -634,6 +634,12 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("withholds Sidekick management from workspace-principal runs", async () => {
+    const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([])), {
+      ...workflowInput(), executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+    });
+    expect(selected.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+  });
   it("gives background substreams normal writes, independent discovery and recursive agent tools", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
@@ -650,7 +656,8 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining([
         "start_agent", "list_agents", "send_message", "reply", "stop_agent",
       ]));
-    expect(selected.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["sidekicks_list", "attach", "detach"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -660,7 +667,8 @@ describe("connector tools selected for harness runs", () => {
     const room = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());
     const authoring = await __integrationTesting.loadHarnessTools(runtimeEnv, automationConversationInput());
     const child = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput(automationConversationInput()));
-    expect(room.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["sidekicks_list", "attach", "detach"]);
     expect(child.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
