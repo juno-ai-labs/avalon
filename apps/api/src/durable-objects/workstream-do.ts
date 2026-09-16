@@ -934,6 +934,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     });
   }
 
+  /** Reserve against current parent authority without a caller-side preflight RPC. */
+  async reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): Promise<ConversationParentReserveChildResult> {
+    const authority = await this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
+    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
+    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
+  }
+
   /**
    * Record a child before it is addressed.
    *
@@ -945,13 +952,6 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * row is version 1 of this parent's projection, so the child's first real
    * aggregate lands as version 2 and replaces it.
    */
-  /** Reserve against current parent authority without a caller-side preflight RPC. */
-  async reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): Promise<ConversationParentReserveChildResult> {
-    const authority = await this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
-    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
-    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
-  }
-
   async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
     await this.initialized;
     const request = ConversationParentReserveChildRequestSchema.parse(input);
