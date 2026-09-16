@@ -169,6 +169,8 @@ describe("tool-receipt authority on real workerd", () => {
     await expect(next!.execute({ pageId }, context("second"))).rejects.toThrow("page_id_invalid");
     await receipt(stub, "complete", { effectIntentId: "first", checkpointIndex: 1, outputRef: "first-output", outputSummary: "page",
       providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now() });
+    expect((await receipt(stub, "admit", { ...admission("first", "first"), requestHash: "different-query" })).value)
+      .toMatchObject({ state: "ambiguous_external_write" });
     await evictDurableObject(stub);
     await boot(stub);
     // Eviction expires the dead isolate's attempt lease. Model a resumed
@@ -228,6 +230,10 @@ describe("tool-receipt authority on real workerd", () => {
       providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now() });
     await receipt(stub, "admit", admission("consumer", "consumer"));
     await receipt(stub, "claimPage", { ...scope, pageId, effectIntentId: "consumer" });
+    await receipt(stub, "complete", { effectIntentId: "consumer", checkpointIndex: 1, outputRef: "consumer-output", outputSummary: "page",
+      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now() });
+    expect((await receipt(stub, "admit", { ...admission("consumer", "consumer"), requestHash: "different-page" })).value)
+      .toMatchObject({ state: "ambiguous_external_write" });
     await receipt(stub, "discardReceipt", { workspaceId: WORKSPACE_ID, effectIntentId: "consumer" });
     await receipt(stub, "admit", admission("replacement", "replacement"));
     expect((await receipt(stub, "claimPage", { ...scope, pageId, effectIntentId: "replacement" })).value).toEqual({ inputJson: '{"cursor":"opaque"}' });

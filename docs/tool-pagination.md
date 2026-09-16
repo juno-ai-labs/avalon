@@ -62,6 +62,9 @@ for pre-cutover receipts. Table queries retain their data-revision validation.
   Backwards navigation and independent searches are not treated as cycles.
 - Page ownership follows receipt state, rather than a second completion flag
   that could disagree after a crash. Run/producer deletion cascades to its pages.
+- Issued pages and consumer claims are receipt dependencies: a completed read
+  with either cannot be rebound to different arguments at the same call coordinate.
+  Otherwise published aliases could silently refer to a repurposed receipt.
 
 ## Boundary
 
@@ -80,6 +83,10 @@ Unchanged operations recognize the plugin's pre-expansion surface hash so a
 pagination-only change does not invalidate unrelated write receipts. Changed
 pagination operations deliberately retain their execution-plan fence: old raw
 cursor results are not declared interchangeable with page-ID results.
+Because input-schema descriptions participate in that digest, the private
+compatibility recipe restores the old prose for each changed connector field.
+Frozen hashes from pre-cutover definitions test this independently of the recipe;
+model-facing schemas retain only the new pagination instructions.
 
 ## Failure modes and limits
 

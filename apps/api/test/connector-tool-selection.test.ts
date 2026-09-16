@@ -6,6 +6,7 @@ import type {
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { runHarness, type HarnessEvent } from "@rally/agent-harness";
+import { googleTools, slackTools, notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -24,6 +25,20 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
+
+// Frozen from the real pre-cutover definitions at d7289cdbe, not from the
+// compatibility helper under test. Input-schema prose participates in this hash.
+it.each([
+  ["google", googleTools, "ee3d58df9c6be517cf31c61c24ff0a9e48496b6985952f2b1fb233c9e17107f3"],
+  ["slack", slackTools, "4252e614c1b846896edb924fd3210d89339b1536a81b22b19e8c5010baa27820"],
+  ["notion", notionTools, "9df5f6fbfe14255d35486d5efb4f90545bdf2919cab5a4321a5b3c43014f3ef6"],
+  ["granola", granolaTools, "68ee12b5c978b26d85e9d8893c0f9f5d3bdd5d6f42a1c4ef0f36654a6550c807"],
+] as const)("reconstructs the historical %s receipt surface", async (pluginId, definitions, expected) => {
+  const tools = definitions.map((definition) => __integrationTesting.prePaginationTool({
+    definition, execute: async () => ({ output: null, summary: "Unused hash fixture" }),
+  }));
+  expect(await __integrationTesting.connectorToolSurfaceHash(pluginId, tools)).toBe(Buffer.from(expected, "hex").toString("base64url"));
+});
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");

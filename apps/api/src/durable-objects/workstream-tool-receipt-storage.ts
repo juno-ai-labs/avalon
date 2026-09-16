@@ -590,9 +590,14 @@ export class WorkstreamToolReceiptStorage {
               )
            OR EXISTS (
                 SELECT 1 FROM attachment_tool_receipts WHERE tool_invocation_id = ?
+              )
+           OR EXISTS (
+                SELECT 1 FROM tool_pages WHERE producer_id = ? OR consumer_id = ?
               )`,
       runId,
       toolCallId,
+      effectIntentId,
+      effectIntentId,
       effectIntentId,
     )) !== undefined;
   }
