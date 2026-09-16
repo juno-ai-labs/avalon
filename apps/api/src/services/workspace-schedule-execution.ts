@@ -38,12 +38,11 @@ import type {
   WorkspaceNotificationIntentReapRequest,
   WorkspaceNotificationIntentReapResult,
 } from "../durable-objects/workspace-notification-intent-protocol";
-import { scheduledAlarmErrorCode } from "../durable-objects/scheduled-alarm-report";
 import { SLACK_INGRESS_ATTEMPT_LIMIT } from "../durable-objects/workspace-slack-protocol";
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import { fireDigestSchedule } from "./digest-run-service";
@@ -499,11 +498,10 @@ export async function recordWorkspaceScheduleFailure(
     target_kind: target.kind,
     target_id: target.id,
     // The row keeps the message, which a target here throws as a code. A
-    // stored row that no longer parses is the exception: its message is a
-    // JSON blob, and the field it names is what an operator needs, so it is
-    // reduced the way the alarm notice for the same failure reduces it.
+    // stored row that no longer parses is the exception, and it is composed
+    // the way the schedule and watch rows compose theirs above.
     code: error instanceof z.ZodError
-      ? scheduledAlarmErrorCode(error)
+      ? diagnosticErrorCode(error, "workspace_schedule_target_failed")
       : error instanceof Error ? error.message : "unknown_error",
   });
 }
@@ -715,6 +713,20 @@ async function runResourceWatch(
     .run();
 }
 
+/**
+ * The code an operator-visible failure record carries.
+ *
+ * A target's audit row keeps its own constant and the thrown message beside
+ * it. A stored row that no longer parses — a schedule's or a watch's
+ * `ConnectorPollWorkflowInputSchema`, built from the row itself — is the
+ * exception: its message is a JSON blob, and the field it names is what an
+ * operator filters on, so it rides behind the constant the way
+ * `diagnosticErrorCode` composes it everywhere else.
+ */
+function scheduleFailureCode(error: unknown, constant: string): string {
+  return error instanceof z.ZodError ? diagnosticErrorCode(error, constant) : constant;
+}
+
 async function recordScheduleFailure(
   ctx: WorkspaceScheduleContext,
   scheduleId: string,
@@ -731,7 +743,7 @@ async function recordScheduleFailure(
       uuidV7(),
       ctx.workspaceId,
       scheduleId,
-      JSON.stringify({ code: "schedule_execution_failed", message: message.slice(0, 500) }),
+      JSON.stringify({ code: scheduleFailureCode(error, "schedule_execution_failed"), message: message.slice(0, 500) }),
       new Date().toISOString()
     )
     .run();
@@ -754,7 +766,7 @@ async function recordWatchFailure(
       uuidV7(),
       ctx.workspaceId,
       watchId,
-      JSON.stringify({ code: "resource_watch_poll_failed", message: message.slice(0, 500) }),
+      JSON.stringify({ code: scheduleFailureCode(error, "resource_watch_poll_failed"), message: message.slice(0, 500) }),
       new Date().toISOString()
     )
     .run();

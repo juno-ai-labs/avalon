@@ -539,8 +539,8 @@ export class SidekickDO extends ConversationParentDurableObject {
   async saveDefinition(input: AutomationSubmitDefinitionRequest & { actor: AutomationActor }): Promise<{ definitionRevision: number; ready: boolean }> {
     await this.initialized;
     const { actor: rawActor, ...definitionInput } = input;
-    const request = AutomationSubmitDefinitionRequestSchema.parse(definitionInput);
-    const actor = AutomationActorSchema.parse(rawActor);
+    const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, definitionInput, "save_definition");
+    const actor = parseRpcInput(AutomationActorSchema, rawActor, "save_definition_actor");
     this.assertManager(this.assertAutomation(request.workspaceId, request.automationId), actor);
     const submitted = await this.submitDefinition(request);
     if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });

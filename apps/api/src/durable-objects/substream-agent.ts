@@ -17,7 +17,6 @@ import { ConversationParentKindSchema } from "@rally/contracts/conversation-pare
 import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
 import { workstreamDOName } from "./names";
 import { initialContextFrames } from "./substream-context-transfer";
-import { parseRpcInput } from "../lib/rpc-input";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
