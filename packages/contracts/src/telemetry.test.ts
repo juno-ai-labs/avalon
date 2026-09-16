@@ -727,8 +727,14 @@ describe("telemetry registry", () => {
     expect(TelemetryEnvelopeSchema.parse(socketEnvelope({
       socket: "substream_feed",
       state: "retrying",
-      cause: "resync_required",
+      cause: "ticket_timeout",
       attempts: "two_to_five",
+    }))).toMatchObject({ name: "realtime_socket_state" });
+    expect(TelemetryEnvelopeSchema.parse(socketEnvelope({
+      socket: "substream_feed",
+      state: "retrying",
+      cause: "resync_required",
+      attempts: "one",
     }))).toMatchObject({ name: "realtime_socket_state" });
 
     // A close code, a URL, a work-stream id, and an unregistered socket are all
