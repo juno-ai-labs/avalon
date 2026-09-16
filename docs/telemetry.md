@@ -14,6 +14,7 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/telemetry-*.ts` | Route, random identity epochs, local event spool, typed reporter, breadcrumbs, launch markers, and preference-independent reliability collection. |
 | `apps/desktop/src/main/application-open-observer.ts` | Closed cold-start attribution and activation coalescing so explicit deep-link/menu sources outrank Electron's generic Dock/reopen callback. |
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
+| `apps/desktop/src/main/renderer-crash-recovery.ts` | Native primary-window renderer-crash notice and application relaunch choice. |
 | `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | Device-only macOS Unified Logging for the closed renderer performance projection; it is not an upload path. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
@@ -351,6 +352,21 @@ exposure, survey response, replay, pageview, trace, log, or AI generation to mak
 a product appear configured.
 
 ### Native crashes
+
+The primary window also has an immediate, main-process-owned recovery path. If
+its renderer exits unexpectedly, Rally shows a native dialog with **Restart
+Rally** and **Quit Rally** choices. The dialog does not depend on React, the
+preload bridge, or the failed renderer. Restart schedules Electron's relaunch
+before taking the ordinary quit path, so the existing telemetry quit barrier and
+synchronous cleanup still run. Clean exits, deliberately killed renderers, and
+renderer exits observed after application shutdown begins do not show the
+dialog. Concurrent unexpected-exit signals share the one dialog already open.
+Application-focus broadcasts also skip a crashed renderer, so raising the
+native dialog cannot turn ordinary focus telemetry into follow-on frame errors.
+
+This live recovery complements Crashpad rather than replacing it: the native
+report is still rotated and uploaded on a later launch, while the dialog only
+gives the person a usable application again.
 
 Crashpad writes only to `active/<generation>/crashpad`, without a submit URL. The
 sibling manifest fixes the route, creation time, absolute 14-day local deadline,
@@ -1830,6 +1846,16 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-16 — Keep renderer crashes from becoming blank windows
+
+The primary window now answers an unexpected renderer exit with a native,
+main-process-owned restart-or-quit dialog. Previously the process-health observer
+recorded the crash and closed the window's realtime sockets but left the
+surviving `BrowserWindow` as a blank background. Reloading inside that renderer
+was rejected because the renderer no longer exists; a native dialog remains
+available at exactly that failure boundary and relaunches through Rally's normal
+quit cleanup.
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 
