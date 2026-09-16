@@ -257,9 +257,11 @@ synchronous still exports do not start asynchronous decoration.
 
 The API resolves a deep hostname and its registrable domain in parallel. The
 exact host returns as soon as it produces an icon, without waiting for the
-already-started primary-domain fallback; intermediate labels are deliberately
-not scraped because the product contract asks for the authored subdomain and
-the primary-domain fallback. Each candidate asks the shared Firecrawl client
+already-started primary-domain fallback; that fallback is registered with the
+request execution context so its provider response and KV write survive the
+early HTTP response. Intermediate labels are deliberately not scraped because
+the product contract asks for the authored subdomain and the primary-domain
+fallback. Each candidate asks the shared Firecrawl client
 for uncached `branding.images.favicon` metadata, accepts only a public HTTPS
 image URL, rejects image redirects, reads no more than Cloudflare KV's 25 MiB
 value boundary, validates the bytes as an image, and stores either the icon or

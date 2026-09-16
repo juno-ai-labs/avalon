@@ -193,6 +193,7 @@ export async function resolveFavicon(
   hostname: string,
   firecrawl: Pick<FirecrawlClient, "scrapeBranding">,
   fetcher: typeof fetch = fetch,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<ResolvedFavicon | null> {
   const chain = faviconHostChain(hostname);
   if (!chain) return null;
@@ -206,7 +207,10 @@ export async function resolveFavicon(
   let exactFailure: unknown;
   try {
     const result = await exact;
-    if (result) return result;
+    if (result) {
+      if (fallback && waitUntil) waitUntil(fallback);
+      return result;
+    }
   } catch (error) {
     exactFailure = error;
   }

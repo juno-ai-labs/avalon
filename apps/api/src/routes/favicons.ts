@@ -15,7 +15,13 @@ faviconRoutes.get("/:hostname", zValidator("param", FaviconParamsSchema), async 
   const { hostname } = c.req.valid("param");
   const apiKey = c.env.FIRECRAWL_API_KEY?.trim();
   if (!apiKey) throw new ApiError(503, "favicon_unavailable", "Favicon discovery is not configured");
-  const favicon = await resolveFavicon(c.env.FAVICON_CACHE, hostname, new FirecrawlClient({ apiKey }));
+  const favicon = await resolveFavicon(
+    c.env.FAVICON_CACHE,
+    hostname,
+    new FirecrawlClient({ apiKey }),
+    fetch,
+    (promise) => c.executionCtx.waitUntil(promise),
+  );
   if (!favicon) {
     return c.body(null, 404, { "Cache-Control": "private, max-age=2592000" });
   }
