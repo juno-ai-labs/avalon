@@ -184,10 +184,74 @@ describe("person mention hrefs", () => {
     ].join("\n"), { sources: "none" })).toBe([
       "A small update with old code and docs. Show [link](resource://id) literally.",
       "",
-      "  - ☑ Shipped",
-      "    - ☐ Follow up",
+      "- ☑ Shipped",
+      "  - ☐ Follow up",
       "",
       "    const answer = 42;",
+    ].join("\n"));
+  });
+
+  it("keeps person and link syntax literal in every form of code", () => {
+    const mention = `[@Ada](person://${id})`;
+    expect(rewriteMessageAsPlainText([
+      `Show \`${mention}\` and \`\`a \` [plan](resource://plan)\`\` literally.`,
+      "",
+      "```md",
+      mention,
+      "[plan](resource://plan)",
+      "```",
+      "",
+      `    ${mention}`,
+      "    **literal** [docs](https://example.com)",
+    ].join("\n"), { sources: "none" })).toBe([
+      `Show ${mention} and a \` [plan](resource://plan) literally.`,
+      "",
+      `    ${mention}`,
+      "    [plan](resource://plan)",
+      "",
+      `    ${mention}`,
+      "    **literal** [docs](https://example.com)",
+    ].join("\n"));
+    expect(rewriteMessageAsPlainText("Leave an unmatched ` delimiter alone.", { sources: "none" }))
+      .toBe("Leave an unmatched ` delimiter alone.");
+  });
+
+  it("reduces nested emphasis and identifiers without leaking delimiters", () => {
+    expect(rewriteMessageAsPlainText(
+      "Set **MAX_RETRIES**, **do_this**, _max_retries_, and **bold with *nested* inside**.",
+      { sources: "none" },
+    )).toBe("Set MAX_RETRIES, do_this, max_retries, and bold with nested inside.");
+  });
+
+  it("reduces the full shared link grammar without leaving destination punctuation", () => {
+    expect(rewriteMessageAsPlainText(
+      "Read [the RFC](https://example.com/a_(b)) and [the [draft] plan](https://example.com/p \"Plan\").",
+      { sources: "none" },
+    )).toBe("Read the RFC and the [draft] plan.");
+  });
+
+  it("preserves list depth and removes setext and thematic-break markup", () => {
+    expect(rewriteMessageAsPlainText([
+      "Title",
+      "-----",
+      "",
+      "- one",
+      "- two",
+      "  - three",
+      "    - four",
+      "",
+      "***",
+      "",
+      "Done",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Title",
+      "",
+      "- one",
+      "- two",
+      "  - three",
+      "    - four",
+      "",
+      "Done",
     ].join("\n"));
   });
 });
