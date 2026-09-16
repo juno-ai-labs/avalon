@@ -634,6 +634,12 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("withholds Sidekick management from workspace-principal runs", async () => {
+    const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([])), {
+      ...workflowInput(), executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+    });
+    expect(selected.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+  });
   it("gives background substreams normal writes, independent discovery and recursive agent tools", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),

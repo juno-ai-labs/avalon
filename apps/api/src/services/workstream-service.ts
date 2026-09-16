@@ -639,14 +639,18 @@ export class WorkstreamService {
     });
   }
 
+  private async requireSidekickParticipant(id: string, substreamId: string): Promise<void> {
+    const participants = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).participants();
+    if (!participants.some((person) => person.user_id === this.auth.userId)) {
+      throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can change Sidekick attachments");
+    }
+  }
+
   async sidekickAttachments(id: string, removeId?: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
     const conversation = new ConversationService(this.env, this.auth);
     if (removeId) await conversation.writableClient(id, substreamId);
     else await conversation.client(id, false, substreamId);
-    const participants = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).participants();
-    if (removeId && !participants.some((person) => person.user_id === this.auth.userId)) {
-      throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can remove a Sidekick");
-    }
+    if (removeId) await this.requireSidekickParticipant(id, substreamId);
     const agent = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
       asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id, asSubstreamId(substreamId)));
     const ids = await agent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, ...(removeId ? { removeId } : {}) });
@@ -679,6 +683,10 @@ export class WorkstreamService {
 
   async setSidekickRecommendation(id: string, sidekickId: string, attached: boolean, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
     await new ConversationService(this.env, this.auth).writableClient(id, substreamId);
+    await this.requireSidekickParticipant(id, "0");
+    // Check both authorities before the shared delete: a viewer of a child
+    // must not remove the recommendation and then fail its local removal.
+    if (!attached && substreamId !== "0") await this.requireSidekickParticipant(id, substreamId);
     if (attached) {
       const sidekick = await new AutomationService(this.env, this.auth).detail(sidekickId);
       if (sidekick.scope !== "workspace") throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
@@ -686,7 +694,17 @@ export class WorkstreamService {
     }
     const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
       workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
-    await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
+    try {
+      await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
+    } catch (error) {
+      if (error instanceof Error && error.message === "sidekick_attachment_participant_required") {
+        throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can change Sidekick attachments");
+      }
+      if (error instanceof Error && error.message === "sidekick_attachment_workstream_archived") {
+        throw new ApiError(409, "sidekick_attachment_workstream_archived", "The workstream is archived");
+      }
+      throw error;
+    }
     if (!attached) await this.sidekickAttachments(id, sidekickId, substreamId);
     return this.recommendedSidekicks(id);
   }

@@ -112,18 +112,18 @@ function ownedNote(status: WorkstreamAutomationSummary['status']): string | unde
  * chosen appearance and the live lifecycle, which an attachment does not — and
  * the attachment supplies the removal, which is the one thing only it can say.
  *
- * `undefined` until both answers are in, for the reason `SidekickSection`
+ * `undefined` until all three answers are in, for the reason `SidekickSection`
  * separates the two states: a half-answered union rendered as `[]` is a claim
  * that the room has no Sidekicks.
  */
-export function workstreamSidekickRows({ owned, attached, recommended = [], onRemoveAttachment, onRemoveRecommendation }: {
+export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, onRemoveRecommendation }: {
   owned: WorkstreamAutomationSummary[] | undefined;
   attached: SidekickAttachment[] | undefined;
-  recommended?: SidekickAttachment[] | undefined;
+  recommended: SidekickAttachment[] | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
   onRemoveRecommendation?: ((id: string) => void) | undefined;
 }): SidekickRow[] | undefined {
-  if (!owned || !attached) return undefined;
+  if (!owned || !attached || !recommended) return undefined;
   const attachments = new Map(attached.map((attachment) => [attachment.id, attachment]));
   const rows: SidekickRow[] = owned.map((sidekick) => {
     const attachment = attachments.get(sidekick.id);

@@ -33,7 +33,7 @@ describe("what a run may consult, and what it may do", () => {
     );
     // Foreground and background substreams use this same harness. Skills
     // offer guidance; normal tool authorization still decides execution.
-    expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)]");
+    expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({");
 
 
   });

@@ -84,14 +84,16 @@ describe('workstreamSidekickRows', () => {
     expect(remove).toHaveBeenCalledWith('shared');
     expect(localRemove).not.toHaveBeenCalled();
   });
-  it('waits for both answers before claiming the room has any', () => {
-    expect(workstreamSidekickRows({ owned: undefined, attached: [] })).toBeUndefined();
-    expect(workstreamSidekickRows({ owned: [], attached: undefined })).toBeUndefined();
-    expect(workstreamSidekickRows({ owned: [], attached: [] })).toEqual([]);
+  it('waits for all three answers before claiming the room has any', () => {
+    expect(workstreamSidekickRows({ owned: undefined, attached: [], recommended: [] })).toBeUndefined();
+    expect(workstreamSidekickRows({ owned: [], attached: undefined, recommended: [] })).toBeUndefined();
+    expect(workstreamSidekickRows({ owned: [], attached: [], recommended: undefined })).toBeUndefined();
+    expect(workstreamSidekickRows({ owned: [], attached: [], recommended: [] })).toEqual([]);
   });
 
   it('puts the room’s own first and keeps the attachments it does not own', () => {
     const rows = workstreamSidekickRows({
+      recommended: [],
       owned: [owned, { ...owned, id: 'owned-2', name: 'Standup digest', status: 'paused' }],
       attached: [{ id: 'attached-1', name: 'Editor', description: 'Review wording', available: false }],
     });
@@ -106,6 +108,7 @@ describe('workstreamSidekickRows', () => {
     // Sidekick is active, so the lifecycle has nothing to say, and only the
     // attachment knows the next run will not load it.
     const rows = workstreamSidekickRows({
+      recommended: [],
       owned: [owned],
       attached: [{ id: owned.id, name: owned.name, description: owned.description, available: false }],
     });
@@ -116,6 +119,7 @@ describe('workstreamSidekickRows', () => {
   it('draws one row for a Sidekick the room owns and has also loaded', () => {
     const onRemoveAttachment = vi.fn();
     const rows = workstreamSidekickRows({
+      recommended: [],
       owned: [{ ...owned, status: 'draft', appearance: { icon: 'rocket', color: 'teal' } }],
       attached: [{ id: owned.id, name: 'Stale name', description: 'Stale description', available: true }],
       onRemoveAttachment,
@@ -130,6 +134,7 @@ describe('workstreamSidekickRows', () => {
 
   it('offers no removal to somebody who may not detach one', () => {
     const rows = workstreamSidekickRows({
+      recommended: [],
       owned: [],
       attached: [{ id: 'attached-1', name: 'Editor', description: 'Review wording', available: true }],
     });

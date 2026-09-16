@@ -434,9 +434,10 @@ describe('WorkstreamSidebar', () => {
     expect(sections).toEqual(['Artifacts', 'Work-stream participants', 'Sidekicks']);
     const rows = within(within(sidebar).getByRole('region', { name: 'Sidekicks' })).getAllByRole('button');
     expect(rows.map((row) => row.getAttribute('aria-label')))
-      .toEqual(['Release notes', 'Editor', 'Remove Editor']);
+      .toEqual(['Release notes', 'Editor']);
     expect(screen.getByText('Unavailable · Review wording.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Editor' }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
     expect(onRemove).toHaveBeenCalledOnce();
 
     // Neither an empty answer nor a pending one leaves a heading behind, the
