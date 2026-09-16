@@ -139,10 +139,10 @@ function invalidateTopic(
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
       ['automation'], ['automation-draft'], ['sidekicks-library'],
-      // Both halves of a work stream's own **Sidekicks** section: what it owns
-      // and what its conversation loaded. A room's row never travels in the
+      // The workstream's owned and recommended Sidekicks, plus what its
+      // conversation loaded. A room's row never travels in the
       // pushed sidebar list, so this topic is what tells its rails to re-read.
-      ['attached-sidekicks'], ['workstream-sidekicks'],
+      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
     notes: [['note']],
     // Project state is carried by the connect snapshot and every later project

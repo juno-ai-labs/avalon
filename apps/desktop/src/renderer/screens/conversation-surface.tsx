@@ -1649,14 +1649,15 @@ export function ConversationSurface({
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
   const removeSidekick = useMutation({
-    mutationFn: async ({ sidekickId, recommendation }: { sidekickId: string; recommendation: boolean }) => {
+    mutationKey: ['remove-sidekick', id, substreamId],
+    mutationFn: async ({ sidekickId, recommendation, workstreamId, substreamId: targetSubstreamId }: { sidekickId: string; recommendation: boolean; workstreamId: string; substreamId: string }) => {
       if (recommendation) {
-        await api!.setRecommendedSidekick(id!, sidekickId, false, substreamId);
-      } else await api!.removeAttachedSidekick(id!, sidekickId, substreamId);
+        await api!.setRecommendedSidekick(workstreamId, sidekickId, false, targetSubstreamId);
+      } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
-      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', id] });
+    onSuccess: (_result, { workstreamId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
+      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
     },
   });
   const sidekickRefreshSequence = orderedTranscript.data?.eventSequence;
@@ -2080,10 +2081,10 @@ export function ConversationSurface({
     attached: attachedSidekicks.isError ? [] : attachedSidekicks.data,
     recommended: recommendedSidekicks.isError ? [] : recommendedSidekicks.data,
     ...(detail.participants.some((person) => person.id === session?.user.id)
-      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false }) }
+      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),
     ...(sidebarDetail.participants.some((person) => person.id === session?.user.id)
-      ? { onRemoveRecommendation: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: true }) }
+      ? { onRemoveRecommendation: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: true, workstreamId: id!, substreamId }) }
       : {}),
   });
   const sidekicksError = ownedSidekicks.error?.message

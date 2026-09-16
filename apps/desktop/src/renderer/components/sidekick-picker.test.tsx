@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { SidekickPicker } from './sidekick-picker';
 
@@ -14,6 +14,40 @@ function renderPicker(client = new QueryClient()) {
 }
 
 describe('Sidekick recommendation picker', () => {
+  it('keeps an in-flight attachment bound to its original workstream after navigation', async () => {
+    api.getSidekicks.mockResolvedValue([{ id: 'helper', scope: 'workspace', name: 'Guide', description: '' }]);
+    const recommended = [{ id: 'helper', name: 'Guide', description: '', available: true }];
+    let resolveAttach!: (value: typeof recommended) => void;
+    api.setRecommendedSidekick.mockReturnValue(new Promise((resolve) => { resolveAttach = resolve; }));
+    const client = new QueryClient();
+    const view = renderPicker(client);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach existing Sidekick' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Guide' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guide' })).toBeDisabled());
+    view.rerender(<Tooltip.Provider><QueryClientProvider client={client}><SidekickPicker workstreamId="other" participantIds={['person']} /></QueryClientProvider></Tooltip.Provider>);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await act(async () => { resolveAttach(recommended); });
+    await waitFor(() => expect(client.getQueryData(['recommended-sidekicks', 'room'])).toEqual(recommended));
+    expect(client.getQueryData(['recommended-sidekicks', 'other'])).toBeUndefined();
+  });
+
+  it('does not let an older read overwrite a successful attachment', async () => {
+    api.getSidekicks.mockResolvedValue([{ id: 'helper', scope: 'workspace', name: 'Guide', description: '' }]);
+    const recommended = [{ id: 'helper', name: 'Guide', description: '', available: true }];
+    api.setRecommendedSidekick.mockResolvedValue(recommended);
+    const client = new QueryClient();
+    let resolveRead!: (value: typeof recommended) => void;
+    const read = client.fetchQuery({ queryKey: ['recommended-sidekicks', 'room'], queryFn: () => new Promise<typeof recommended>((resolve) => { resolveRead = resolve; }) }).catch(() => undefined);
+    renderPicker(client);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Attach existing Sidekick' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Guide' }));
+    await waitFor(() => expect(client.getQueryData(['recommended-sidekicks', 'room'])).toEqual(recommended));
+    await act(async () => { resolveRead([]); await read; });
+    expect(client.getQueryData(['recommended-sidekicks', 'room'])).toEqual(recommended);
+  });
+
   it('lists workspace Sidekicks, searches, and updates the shared recommendation query', async () => {
     api.getSidekicks.mockResolvedValue([
       { id: 'workspace-helper', scope: 'workspace', name: 'Writing guide', description: 'House style' },
