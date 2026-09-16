@@ -26,7 +26,7 @@
  */
 
 import { uuidV7 } from "../lib/uuid-v7";
-import { ToolPageStorage, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
+import { ToolPageError, ToolPageStorage, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
 import {
   WorkstreamTranscriptStorage,
@@ -217,9 +217,9 @@ const LEASE_HOLDING_STATUSES = new Set(["running"]);
 export class WorkstreamToolReceiptStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
 
-  issuePage(input: z.infer<typeof PageIssueSchema> & { fence: ToolReceiptFence }): string {
+  issuePage(input: z.infer<typeof PageIssueSchema> & { fence: ToolReceiptFence }): string | null {
     return this.storage.transactionSync(() => {
-      this.#assertPageReceipt(input);
+      this.#assertPageReceipt(input, true);
       return new ToolPageStorage(this.sql).issue(input);
     });
   }
@@ -231,15 +231,15 @@ export class WorkstreamToolReceiptStorage {
     });
   }
 
-  #assertPageReceipt(input: { runId: string; effectIntentId: string; fence: ToolReceiptFence }): void {
-    if (input.runId !== input.fence.runId || this.#fence(input.fence, Date.now()) !== "held") {
-      throw new Error("page_execution_ownership_lost");
+  #assertPageReceipt(input: { runId: string; effectIntentId: string; fence: ToolReceiptFence }, allowCancellationRequested = false): void {
+    if (input.runId !== input.fence.runId || this.#fence(input.fence, Date.now(), allowCancellationRequested) !== "held") {
+      throw new ToolPageError("page_execution_ownership_lost");
     }
     const receipt = first(this.sql.exec<{ status: string }>(
       "SELECT status FROM tool_effects WHERE effect_intent_id = ? AND run_id = ?",
       input.effectIntentId, input.runId,
     ));
-    if (receipt?.status !== "executing") throw new Error("page_execution_receipt_missing");
+    if (receipt?.status !== "executing") throw new ToolPageError("page_execution_receipt_missing");
   }
 
   private get sql(): SqlStorage {
