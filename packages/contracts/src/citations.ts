@@ -800,7 +800,9 @@ function rewriteReferenceLinksAsPlainText(markdown: string): string {
     if (!definition || definition[1]!.startsWith("^")) continue;
     definitions.add(normalizeReferenceIdentifier(definition[1]!));
     definitionLines.add(index);
-    if (REFERENCE_LINK_TITLE.test(stripBlockquotePrefixes(source[index + 1] ?? ""))) {
+    const nextLine = source[index + 1] ?? "";
+    if (blockquoteDepth(nextLine) === blockquoteDepth(line)
+      && REFERENCE_LINK_TITLE.test(stripBlockquotePrefixes(nextLine))) {
       definitionLines.add(index + 1);
     }
   }
@@ -809,12 +811,15 @@ function rewriteReferenceLinksAsPlainText(markdown: string): string {
     .filter((_line, index) => !definitionLines.has(index))
     .join("\n");
   const rewritten = mapOutsideCode(withoutDefinitions, (prose) => prose
-    .replace(FULL_REFERENCE_LINK, (match, _image: string, label: string, identifier: string) => {
+    .replace(FULL_REFERENCE_LINK, (match, image: string, label: string, identifier: string, offset: number, value: string) => {
+      if (isMarkdownEscaped(value, offset + image.length)) return match;
       const reference = identifier || label;
       return definitions.has(normalizeReferenceIdentifier(reference)) ? label : match;
     })
-    .replace(SHORTCUT_REFERENCE_LINK, (match, _image: string, label: string) =>
-      definitions.has(normalizeReferenceIdentifier(label)) ? label : match));
+    .replace(SHORTCUT_REFERENCE_LINK, (match, image: string, label: string, offset: number, value: string) =>
+      !isMarkdownEscaped(value, offset + image.length) && definitions.has(normalizeReferenceIdentifier(label))
+        ? label
+        : match));
   return restoreReferenceSpans(rewritten, inlineSpans);
 }
 
@@ -835,6 +840,14 @@ function normalizeReferenceIdentifier(value: string): string {
 
 function markdownIndentWidth(value: string): number {
   return [...value].reduce((width, character) => width + (character === "\t" ? 4 : 1), 0);
+}
+
+function isMarkdownEscaped(value: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
 }
 
 function stripInlineMarkdown(value: string): string {
@@ -1018,6 +1031,7 @@ function listFenceOpening(line: string): {
   const match = /^(\s*)(?:[-+*]|\d{1,3}[.)])([ \t]+)(`{3,}|~{3,})(.*)$/u.exec(line);
   if (!match) return null;
   const delimiter = match[3]!;
+  if (delimiter.startsWith("`") && match[4]!.includes("`")) return null;
   return {
     content: `${delimiter}${match[4]!}`,
     contentIndent: match[0]!.indexOf(delimiter),
