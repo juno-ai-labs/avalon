@@ -216,12 +216,17 @@ jittered backoff. A failure in one does not delay the other's ticket request or
 handshake. Snapshot waterlines and replay rules decide whether a reconnected
 frame advances cached state; transport warmth is never treated as authority.
 Every workspace, control, and feed attempt acquires its ticket through the same
-10-second request boundary. The boundary rejects its caller and aborts the
-underlying fetch independently: shared credential renewal or a transport that
-does not settle after cancellation therefore cannot leave the loop's in-flight
-guard set forever. Timeout is a retryable `ticket_timeout`, distinct from a
-ticket response that fails normally and from an offline transition. Owner
-teardown and an explicit offline transition abort the same attempt immediately.
+bounded request primitive. Workspace, control, and an already-open feed use the
+existing 10-second request boundary; a feed still opening uses that attempt's
+existing 10/20/40-second whole-open budget so ticket acquisition cannot defeat
+the cold-open ladder. The boundary rejects its caller and aborts the underlying
+fetch independently: shared credential renewal or a transport that does not
+settle after cancellation therefore cannot leave the loop's in-flight guard set
+forever. Timeout is a retryable `ticket_timeout`, distinct from a ticket response
+that fails normally and from an offline transition. Owner teardown and an
+explicit offline transition abort the same attempt immediately. Transcription
+remains outside this persistent-socket boundary because capture owns that
+short-lived request's cancellation and timeout lifecycle.
 
 Normal route changes do not destroy a retained owner. Each socket owner also
 retains its query entries while mounted, independently of screen observers. The [local-cache contract](local-cache.md#a-live-subscription-owns-its-in-memory-state)
@@ -498,10 +503,11 @@ explicit product states rather than speculative guesses.
 
 **What changed:** Workspace, WorkstreamDO control, and SubstreamAgent feed
 connections now acquire tickets through one attempt-scoped request boundary.
-It settles the caller after the existing 10-second first-opening budget even if
-the underlying fetch or shared credential renewal remains pending, aborts on
-offline and owner teardown, and reports `ticket_timeout` separately before the
-ordinary jittered retry begins.
+It settles the caller after the owning attempt's existing budget even if the
+underlying fetch or shared credential renewal remains pending, aborts on offline
+and owner teardown, and reports `ticket_timeout` separately before the ordinary
+jittered retry begins. Cold feed opens retain their 10/20/40-second whole-open
+ladder; workspace, control, and already-open feed attempts use ten seconds.
 
 **Why:** An API deployment closed the live socket swarm while several ticket
 requests were starting. A feed that had opened previously did not arm the
@@ -523,7 +529,9 @@ the request-and-connection budget.
 aborts its pending ticket on offline and teardown, and telemetry can distinguish
 a hung request from an ordinary rejected ticket. Adding another persistent
 socket kind requires using the same bounded acquisition primitive rather than
-awaiting its ticket API directly.
+awaiting its ticket API directly. Transcription remains deliberately outside
+the boundary because capture owns its short-lived request's cancellation and
+timeout lifecycle.
 
 Shipped in the pull request for this change.
 

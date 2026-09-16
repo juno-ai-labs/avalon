@@ -166,7 +166,7 @@ const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
 const TRANSCRIPT_RANGE_TIMEOUT_MS = 15_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
-export const WORKSTREAM_OPEN_TIMEOUT_BASE_MS = SOCKET_TICKET_REQUEST_TIMEOUT_MS;
+export const WORKSTREAM_OPEN_TIMEOUT_BASE_MS = 10_000;
 export const WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS = 3;
 
 export function workstreamOpenTimeoutMs(timedOutAttempts: number): number {
@@ -1963,6 +1963,7 @@ export function useWorkstreamSocket(
           if (closedByEffect || openingTerminal || generation !== connectGeneration) return;
           openingTimer = null;
           const recoveredCanonically = completeOpeningFromCanonicalCaches();
+          const timedOutDuringTicket = activeTicketAbort === ticketAbort;
           connectGeneration += 1;
           if (activeTicketAbort === ticketAbort) {
             activeTicketAbort = null;
@@ -1977,13 +1978,21 @@ export function useWorkstreamSocket(
           trace.end({ outcome: 'timeout', timeoutMs });
           if (openTrace === trace) openTrace = null;
           if (recoveredCanonically) {
-            socketTelemetry.disconnected({ attempts: attempts.current, retrying: true });
+            socketTelemetry.disconnected({
+              attempts: attempts.current,
+              retrying: true,
+              ...(timedOutDuringTicket ? { cause: 'ticket_timeout' as const } : {}),
+            });
             scheduleReconnect();
             return;
           }
           openingTimedOutAttempts += 1;
           const retrying = openingTimedOutAttempts < WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS;
-          socketTelemetry.disconnected({ attempts: attempts.current, retrying });
+          socketTelemetry.disconnected({
+            attempts: attempts.current,
+            retrying,
+            ...(timedOutDuringTicket ? { cause: 'ticket_timeout' as const } : {}),
+          });
           if (!retrying) {
             openingTerminal = true;
             rejectPendingSubstreamCommands(new ApiError(
@@ -2041,6 +2050,7 @@ export function useWorkstreamSocket(
           effectiveAfterSequence,
           speculative,
           ticketAbort.signal,
+          openingCompleted ? SOCKET_TICKET_REQUEST_TIMEOUT_MS : workstreamOpenTimeoutMs(openingTimedOutAttempts),
         );
         if (closedByEffect || generation !== connectGeneration) return;
         if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
@@ -2256,6 +2266,8 @@ export function useWorkstreamSocket(
           }
         });
       } catch (error) {
+        // Offline and teardown advance the generation before aborting the
+        // ticket, so those owner cancellations are deliberately silent here.
         if (closedByEffect || generation !== connectGeneration) return;
         clearOpeningTimer();
         trace.end({ outcome: 'failed' });
