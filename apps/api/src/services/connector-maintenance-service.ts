@@ -1,3 +1,4 @@
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { RegionSchema } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from '../lib/ashby-ingress';
 import { planConnectorInstallation } from './connector-installation-plan';
@@ -170,9 +171,24 @@ export async function runConnectorMaintenance(env: Env, id: string, signal: Abor
       if (result?.registrations.some((registration) => registration.state === 'dispatched'
         || (registration.state === 'pending' && registration.afterRegistrationKeys.every((key) => result.registrations.some((dependency) => dependency.key === key && dependency.state === 'current'))))) continue;
       target.state = result?.state === 'current' ? 'current' : result?.state === 'failed' ? 'failed' : 'action_required';
-      target.reason = target.state === 'current' ? null : 'Inspect the per-connection installation receipt for the remaining provider action.';
-    } catch {
+      // The receipt's own words for a step that stopped or whose provider
+      // write is uncertain, when it has them, rather than a pointer to go and
+      // read them. The first such registration in array order is the one
+      // shown; several stopping at once is the receipt's to detail.
+      const stopped = result?.registrations.find((registration) => (
+        (registration.state === 'failed' || registration.state === 'action_required' || registration.state === 'unknown') && registration.error
+      ));
+      target.reason = target.state === 'current'
+        ? null
+        : stopped?.error ?? 'Inspect the per-connection installation receipt for the remaining provider action.';
+    } catch (error) {
       signal.throwIfAborted();
+      logWarn(env, 'connector_maintenance_target_failed', {
+        operation_id: id,
+        workspace_id: target.workspaceId,
+        connection_id: target.connectionId,
+        code: diagnosticErrorCode(error, 'connector_maintenance_target_failed'),
+      });
       target.state = 'action_required'; target.reason = 'The connection changed or its authority is unavailable. Preview again after resolving its state.';
     }
     await saveTarget(env, operation.id, index, target);

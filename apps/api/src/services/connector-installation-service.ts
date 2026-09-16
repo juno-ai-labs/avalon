@@ -1,3 +1,4 @@
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { RegionSchema } from "@rally/contracts/regions";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
@@ -150,6 +151,17 @@ export async function runConnectorInstallation(env: Env, workspace: string, conn
       // line before `management.create`, so requiring it keeps the validation
       // read that precedes the create out of this: a key refused there is a
       // failed inspection, not a refused registration, and says so.
+      // The receipt carries a sentence for the person; the log carries the
+      // step and the provider's own code, which the sentence does not.
+      logWarn(env, "connector_installation_step_failed", {
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        provider: installation?.provider ?? null,
+        action: registration.action,
+        step_id: registration.stepId ?? null,
+        write_dispatched: writeDispatched,
+        code: diagnosticErrorCode(error, "connector_installation_step_failed"),
+      });
       const refusal = registration.action === "create" && writeDispatched ? providerRefusal(error) : null;
       result = { ...result, ...(registration.action === "rotate" && writeDispatched ? { rotation: "unknown" as const } : {}),
         state: refusal || !writeDispatched ? "failed" : "unknown",

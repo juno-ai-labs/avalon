@@ -98,7 +98,12 @@ describe('the retirement route', () => {
       method: 'POST', headers, body: JSON.stringify({ region: 'global', confirmWorkspaceId: WORKSPACE_ID }),
     }), env(), context);
     expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toMatchObject({ error: 'regional_api_contract_mismatch' });
+    // Which field disagrees is what tells an operator whether Ace or the
+    // regional API is the one behind; the answer's values stay off the page.
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'regional_api_contract_mismatch',
+      message: expect.stringContaining('regional_response_invalid:'),
+    });
   });
 
   it('answers a directory that did not answer with a sentence, never the bare internal error', async () => {
