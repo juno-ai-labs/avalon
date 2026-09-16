@@ -223,11 +223,36 @@ describe("person mention hrefs", () => {
     )).toBe("Set MAX_RETRIES, do_this, max_retries, and bold with nested inside.");
   });
 
+  it("preserves escaped emphasis and intraword double underscores as literal text", () => {
+    expect(rewriteMessageAsPlainText(
+      String.raw`Show \*stars\*, \_underscores\_, and foo__bar__baz beside __bold__ text.`,
+      { sources: "none" },
+    )).toBe("Show *stars*, _underscores_, and foo__bar__baz beside bold text.");
+  });
+
   it("reduces the full shared link grammar without leaving destination punctuation", () => {
     expect(rewriteMessageAsPlainText(
       "Read [the RFC](https://example.com/a_(b)) and [the [draft] plan](https://example.com/p \"Plan\").",
       { sources: "none" },
     )).toBe("Read the RFC and the [draft] plan.");
+  });
+
+  it("reduces full, collapsed, and shortcut reference links and removes their definitions", () => {
+    expect(rewriteMessageAsPlainText([
+      "Read [the docs][guide], [the plan][], and [status]. Keep [unknown] literal.",
+      "",
+      "[guide]: https://example.com/docs",
+      "[the plan]: <https://example.com/plan> \"Plan\"",
+      "[status]: /status",
+      "",
+      "    [guide]: https://example.com/literal",
+      "    [the docs][guide]",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Read the docs, the plan, and status. Keep [unknown] literal.",
+      "",
+      "    [guide]: https://example.com/literal",
+      "    [the docs][guide]",
+    ].join("\n"));
   });
 
   it("preserves list depth and removes setext and thematic-break markup", () => {

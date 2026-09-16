@@ -754,7 +754,9 @@ protocol boundary makes adding another outbound surface a choice of source-list
 shape rather than another chance to forget one internal syntax.
 
 **Consequences:** Formatting punctuation such as headings, emphasis, strike,
-code spans, and link destinations does not reach these plain-text surfaces.
+code spans, and inline or reference-style link destinations does not reach
+these plain-text surfaces. Escaped punctuation and intraword underscores remain
+literal instead of being mistaken for formatting.
 Lists retain their source depth. Fenced, indented, and variable-backtick inline
 code retain literal content while their delimiters are removed. Citation and
 person-mention syntax inside code remains literal; prose references reduce to
