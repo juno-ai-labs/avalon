@@ -1048,38 +1048,11 @@ function httpHostname(href: string | undefined): string | null {
   }
 }
 
-function hasLinkContent(children: React.ReactNode): boolean {
-  return Children.toArray(children).some((child) => (
-    typeof child === 'string' ? child.trim().length > 0 : true
-  ));
-}
-
 function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string | undefined }): React.JSX.Element | null {
   const hostname = httpHostname(href);
-  const sentinel = useRef<HTMLSpanElement | null>(null);
-  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   const [source, setSource] = useState<string | null>(null);
   useEffect(() => {
-    if (visible || !hostname) return;
-    const anchor = sentinel.current?.closest('a');
-    if (!anchor) {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => (
-        entry.isIntersecting
-        && entry.intersectionRect.width > 0
-        && entry.intersectionRect.height > 0
-      ))) return;
-      setVisible(true);
-      observer.disconnect();
-    });
-    observer.observe(anchor);
-    return () => observer.disconnect();
-  }, [hostname, visible]);
-  useEffect(() => {
-    if (!api || !hostname || !visible) return;
+    if (!api || !hostname) return;
     let active = true;
     let objectUrl: string | null = null;
     void api.getFavicon(hostname)
@@ -1093,10 +1066,10 @@ function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [api, hostname, visible]);
+  }, [api, hostname]);
   return source
     ? <img alt="" aria-hidden="true" className="markdown-link-favicon" src={source} />
-    : <span aria-hidden="true" className="markdown-link-favicon-sentinel" ref={sentinel} />;
+    : <span aria-hidden="true" className="markdown-link-favicon-sentinel" />;
 }
 
 export function MarkdownBody({
@@ -1244,7 +1217,7 @@ export function MarkdownBody({
               href={href}
               identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
             >
-              {!still && httpHostname(href) && hasLinkContent(linkChildren)
+              {!still && httpHostname(href)
                 ? <><MarkdownLinkFavicon key={href} api={faviconApi} href={href} />{linkChildren}</>
                 : linkChildren}
             </CitationLink>

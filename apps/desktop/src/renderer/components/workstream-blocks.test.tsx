@@ -892,56 +892,16 @@ describe('MessageBlock markdown', () => {
     revokeObjectURL.mockRestore();
   });
 
-  it('waits for an HTTP link to enter the viewport before requesting its favicon', async () => {
-    const callbacks: IntersectionObserverCallback[] = [];
-    const disconnect = vi.fn();
-    class IntersectionObserverDouble {
-      constructor(callback: IntersectionObserverCallback) { callbacks.push(callback); }
-      disconnect = disconnect;
-      observe = vi.fn();
-      takeRecords = () => [];
-      unobserve = vi.fn();
-    }
-    vi.stubGlobal('IntersectionObserver', IntersectionObserverDouble);
+  it('requests every HTTP link favicon when the message renders', async () => {
     const getFavicon = vi.fn(async () => null);
     optionalAppSession.mockReturnValue({ api: { getFavicon } });
 
-    render(<MarkdownBody>{'[Documentation](https://docs.example.com)'}</MarkdownBody>);
+    render(<MarkdownBody>{'[](https://empty.example) [\u200b](https://zero-area.example) [Documentation](https://docs.example.com)'}</MarkdownBody>);
 
-    expect(getFavicon).not.toHaveBeenCalled();
-    act(() => callbacks[0]?.([
-      {
-        isIntersecting: true,
-        intersectionRect: { width: 120, height: 20 },
-      } as IntersectionObserverEntry,
-    ], {} as IntersectionObserver));
-    await waitFor(() => expect(getFavicon).toHaveBeenCalledWith('docs.example.com'));
-    expect(disconnect).toHaveBeenCalled();
-  });
-
-  it('does not request favicons for empty or zero-area HTTP links', () => {
-    const callbacks: IntersectionObserverCallback[] = [];
-    class IntersectionObserverDouble {
-      constructor(callback: IntersectionObserverCallback) { callbacks.push(callback); }
-      disconnect = vi.fn();
-      observe = vi.fn();
-      takeRecords = () => [];
-      unobserve = vi.fn();
-    }
-    vi.stubGlobal('IntersectionObserver', IntersectionObserverDouble);
-    const getFavicon = vi.fn(async () => null);
-    optionalAppSession.mockReturnValue({ api: { getFavicon } });
-
-    render(<MarkdownBody>{'[](https://empty.example) [\u200b](https://zero-area.example)'}</MarkdownBody>);
-
-    // The truly empty link constructs no favicon observer. A zero-width label
-    // still reaches layout, but an intersection with no painted area is inert.
-    expect(callbacks).toHaveLength(1);
-    act(() => callbacks[0]?.([{
-      isIntersecting: true,
-      intersectionRect: { width: 0, height: 20 },
-    } as IntersectionObserverEntry], {} as IntersectionObserver));
-    expect(getFavicon).not.toHaveBeenCalled();
+    await waitFor(() => expect(getFavicon).toHaveBeenCalledTimes(3));
+    expect(getFavicon).toHaveBeenCalledWith('empty.example');
+    expect(getFavicon).toHaveBeenCalledWith('zero-area.example');
+    expect(getFavicon).toHaveBeenCalledWith('docs.example.com');
   });
 
   it('keeps a multiline connector mention as a chip', () => {
