@@ -755,10 +755,10 @@ shape rather than another chance to forget one internal syntax.
 
 **Consequences:** Formatting punctuation such as headings, emphasis, strike,
 code spans, and link destinations does not reach these plain-text surfaces.
-Lists and fenced code retain readable indentation and content without their
-delimiters. Citation syntax inside code retains the existing literal-code
-contract, while person mentions preserve the pre-existing email and Slack
-reduction behavior.
+Lists retain their source depth. Fenced, indented, and variable-backtick inline
+code retain literal content while their delimiters are removed. Citation and
+person-mention syntax inside code remains literal; prose references reduce to
+their visible labels.
 
 ### 2026-09-10 — A published site gets its own mark
 
