@@ -105,6 +105,9 @@ update it in the same change.
 
 ## Agent, connectors, and integrations
 
+Authored cursor tools are documented in [tool pagination](tool-pagination.md):
+first/next schemas, plugin-prefixed page IDs, receipt-owned storage, and the MCP exclusion.
+
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`agent-harness.md`](agent-harness.md) | The Bind adapter and its capability-aware Azure/OpenRouter model routes: one persistent loop per substream, subordinate execution admission, caller-specific resource policy, safe model/tool steps, loadable skills, streaming, receipts, scoped durable memory, and the boundary between the SubstreamAgent host and Bind. |

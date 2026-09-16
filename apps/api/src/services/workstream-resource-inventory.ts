@@ -53,10 +53,10 @@ export function renderWorkstreamResourceInventoryAggregate(input: {
     groups.length > 0 ? "Groups:" : "Groups: none",
     ...groups,
     "",
-    "Use workstream_list_resources with attachmentKind, limit, and cursor to list exact resources.",
+    "Use workstream_list_resources with attachmentKind and limit to list exact resources.",
     `Allowed attachmentKind values: ${ATTACHMENT_KIND_ENTRIES.map(({ kind }) => kind).join(", ")}.`,
-    "First page: { attachmentKind: \"<one allowed value>\", limit: 25 }. Continuation: { cursor: \"<nextCursor>\" }.",
-    "Follow nextCursor until it is null when complete coverage is required.",
+    "First page: { attachmentKind: \"<one allowed value>\", limit: 25 }. Continue with workstream_list_resources_next({ pageId: \"<nextPageId>\" }).",
+    "Follow nextPageId until it is null when complete coverage is required.",
   ].join("\n");
 }
 

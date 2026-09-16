@@ -1,4 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
+import { nextCursorPage, paginatedResult } from "./tool-pagination";
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
@@ -155,6 +156,8 @@ function tool(
   return {
     name,
     description,
+    ...(["search", "search_messages", "read_channel", "read_thread", "list_channel_members"].includes(name)
+      ? { pagination: { cursorParameter: "cursor" } } : {}),
     capability,
     mode,
     idempotency: mode === "read" ? "safe" : "record_before_execute",
@@ -334,7 +337,7 @@ export const slackTools: ToolDefinition[] = [
   }, ["channel_id", "message_ts"]),
   tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", {
     channel_id: conversationId("The conversation to read."),
-    limit: { ...boundedLimit, description: "Maximum messages to return, newest first. Defaults to 50; follow `next_cursor` for older ones." },
+    limit: { ...boundedLimit, description: "Maximum messages to return, newest first. Defaults to 50." },
     cursor: unboundedCursor,
   }, ["channel_id"]),
   tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", {
@@ -366,7 +369,7 @@ export const slackTools: ToolDefinition[] = [
   }, ["user_id"]),
   tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", {
     channel_id: conversationId("The conversation whose members to list."),
-    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum member ids to return in one page. Defaults to 200; follow `next_cursor` for the rest." },
+    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum member ids to return in one page. Defaults to 200." },
     cursor: unboundedCursor,
   }, ["channel_id"]),
 ];
@@ -1638,7 +1641,7 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 20,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return { output: slackSearchPage(result.results), summary: "Searched Slack messages, files, channels, and users" };
+      return nextCursorPage(name, args, slackSearchPage(result.results), "Searched Slack messages, files, channels, and users");
     }
     case "search_messages": {
       const args = SlackDirectInputSchemas.search_messages.parse(rawArgs);
@@ -1660,7 +1663,7 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 20,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return { output: slackSearchPage(result.results), summary: "Searched Slack messages" };
+      return nextCursorPage(name, args, slackSearchPage(result.results), "Searched Slack messages");
     }
     case "find_users": {
       const args = SlackDirectInputSchemas.find_users.parse(rawArgs);
@@ -1684,14 +1687,13 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 50,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return {
+      return paginatedResult(name, args, {
         output: {
           messages: result.messages,
           has_more: result.has_more ?? false,
-          next_cursor: result.response_metadata?.next_cursor || null,
         },
         summary: `Read ${result.messages.length} messages from Slack conversation ${args.channel_id}`,
-      };
+      }, "cursor", result.response_metadata?.next_cursor || null);
     }
     case "read_thread": {
       const args = SlackDirectInputSchemas.read_thread.parse(rawArgs);
@@ -1701,14 +1703,13 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 100,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return {
+      return paginatedResult(name, args, {
         output: {
           messages: result.messages,
           has_more: result.has_more ?? false,
-          next_cursor: result.response_metadata?.next_cursor || null,
         },
         summary: `Read ${result.messages.length} messages from a Slack thread`,
-      };
+      }, "cursor", result.response_metadata?.next_cursor || null);
     }
     case "read_file": {
       const args = SlackDirectInputSchemas.read_file.parse(rawArgs);
@@ -1780,13 +1781,12 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 200,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return {
+      return paginatedResult(name, args, {
         output: {
           member_user_ids: result.members,
-          next_cursor: result.response_metadata?.next_cursor || null,
         },
         summary: `Listed ${result.members.length} Slack conversation members`,
-      };
+      }, "cursor", result.response_metadata?.next_cursor || null);
     }
   }
 }

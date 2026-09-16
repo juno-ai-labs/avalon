@@ -89,6 +89,11 @@ later decision.
 
 ### Authorization model
 
+Rally-authored cursor tools use [first/next pagination](tool-pagination.md).
+Adapters extract their known continuation field before bounding content; the
+run's receipt authority stores it and returns a plugin-prefixed page ID. Native
+tools are opted in explicitly, while hosted MCP schemas/results remain untouched.
+
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
 - Workspace automations remain explicitly bound to selected workspace connections so a published automation cannot silently change providers or accounts.

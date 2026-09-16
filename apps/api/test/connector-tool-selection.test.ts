@@ -52,6 +52,7 @@ const GOOGLE_WORKSPACE_CAPABILITIES = [
 
 const GOOGLE_WORKSPACE_TOOLS = [
   "drive.search",
+  "drive.search_next",
   "drive.get_metadata",
   "drive.download",
   "drive.export",
@@ -1290,13 +1291,16 @@ describe("connector tools selected for harness runs", () => {
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
       "gmail.read_profile",
       "gmail.search",
+      "gmail.search_next",
       "gmail.find_contacts",
       "gmail.read_thread",
       "gmail.read_message",
       "gmail.create_draft",
       "gmail.send",
       "calendar.list_calendars",
+      "calendar.list_calendars_next",
       "calendar.list_events",
+      "calendar.list_events_next",
       "calendar.read_event",
       "calendar.create_event",
       "calendar.update_event",
@@ -1445,6 +1449,7 @@ describe("connector tools selected for harness runs", () => {
     // capability this connection was actually given.
     expect(googleToolNames(selected.tools)).toEqual([
       "drive.search",
+      "drive.search_next",
       "drive.get_metadata",
       "drive.download",
       "drive.export",

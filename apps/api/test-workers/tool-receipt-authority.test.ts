@@ -14,7 +14,10 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import type { HarnessToolContext } from "@rally/agent-harness";
+import { withToolPagination } from "../src/services/tool-pagination";
+import { z } from "zod";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
@@ -123,6 +126,89 @@ function admission(effectIntentId: string, toolCallId: string): Record<string, u
 }
 
 describe("tool-receipt authority on real workerd", () => {
+  it("keeps page IDs durable, receipt-owned, scoped and single-consumer across eviction", async () => {
+    // No inference: exercise the actual tool wrapper, endpoint and storage.
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    const fence = { runId: RUN, attemptId: ATTEMPT, owner: OWNER };
+    const principal = { type: "workspace" as const, workspaceId: asWorkspaceId(WORKSPACE_ID) };
+    const context = (id: string): HarnessToolContext => ({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+      harnessRunId: RUN, toolCallId: id, effectIntentId: id, executionPrincipal: principal, signal: new AbortController().signal });
+    const received: unknown[] = [];
+    const [first, next] = withToolPagination({
+      definition: { name: "search", description: "Search", capability: "test.read", mode: "read", idempotency: "safe",
+        pagination: { cursorParameter: "cursor" }, inputSchema: { type: "object", properties: { query: { type: "string" }, cursor: { type: "string" } }, required: ["query"] } },
+      execute: async (args) => {
+        received.push(args);
+        return { output: { items: ["item"] }, summary: "page", pagination: { continuations: [{
+          operation: "search", slot: "nextPageId", input: { query: "needle", cursor: z.object({ cursor: z.string().optional() }).parse(args).cursor ? "opaque-second" : "opaque+/=cursor" },
+        }] } };
+      },
+    }, { prefix: "google_2", connectionId: "connection-2", fence, receipts: {
+      issuePage: async (args) => {
+        const answer = await receipt(stub, "issuePage", args);
+        if (answer.error) throw new Error(answer.error);
+        return z.string().parse(answer.value);
+      },
+      claimPage: async (args) => {
+        const answer = await receipt(stub, "claimPage", args);
+        if (answer.error) throw new Error(answer.error);
+        return z.object({ inputJson: z.string() }).parse(answer.value);
+      },
+    } });
+    await receipt(stub, "admit", admission("first", "first"));
+    await expect(first!.execute({ query: "needle", cursor: "invented" }, context("first"))).rejects.toThrow();
+    const output = await first!.execute({ query: "needle" }, context("first"));
+    const pageId = z.object({ nextPageId: z.string() }).parse(output.output).nextPageId;
+    expect(pageId).toMatch(/^google_2_[a-z]+_[a-z]+_[a-z]+_[a-z]+$/u);
+    expect(output).not.toHaveProperty("pagination");
+    expect(JSON.stringify(output)).not.toContain("opaque+/=cursor");
+    await receipt(stub, "admit", admission("second", "second"));
+    await expect(next!.execute({ pageId }, context("second"))).rejects.toThrow("page_id_invalid");
+    await receipt(stub, "complete", { effectIntentId: "first", checkpointIndex: 1, outputRef: "first-output", outputSummary: "page",
+      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now() });
+    await evictDurableObject(stub);
+    await boot(stub);
+    // Eviction expires the dead isolate's attempt lease. Model a resumed
+    // attempt acquiring it; the continuation itself must survive unchanged.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET lease_owner = ?, lease_expires_at = ? WHERE run_id = ?", OWNER, Date.now() + 600_000, RUN);
+    });
+    await expect(receipt(stub, "claimPage", { runId: RUN, effectIntentId: "second", operation: "search",
+      connectionId: "connection-1", principalJson: JSON.stringify(principal), fence, pageId })).rejects.toThrow("page_id_invalid");
+    const secondOutput = await next!.execute({ pageId }, context("second"));
+    expect(received).toEqual([{ query: "needle" }, { query: "needle", cursor: "opaque+/=cursor" }]);
+    // An uncertain delivery resumes the same receipt; it does not create a
+    // second consumer. The wrapper issues the same outgoing alias on replay.
+    await next!.execute({ pageId }, context("second"));
+    await receipt(stub, "admit", admission("third", "third"));
+    await expect(next!.execute({ pageId }, context("third"))).rejects.toThrow("page_in_progress");
+    await receipt(stub, "complete", { effectIntentId: "second", checkpointIndex: 1, outputRef: "second-output", outputSummary: "page",
+      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now() });
+    await expect(next!.execute({ pageId }, context("third"))).rejects.toThrow("page_already_consumed");
+    const secondPageId = z.object({ nextPageId: z.string() }).parse(secondOutput.output).nextPageId;
+    const claim = { runId: RUN, operation: "search", connectionId: "connection-2", principalJson: JSON.stringify(principal), fence, pageId: secondPageId };
+    for (const wrong of [{ operation: "another_search" }, { principalJson: '{"type":"user","userId":"other"}' }]) {
+      await expect(receipt(stub, "claimPage", { ...claim, effectIntentId: "third", ...wrong })).rejects.toThrow("page_id_invalid");
+    }
+    await receipt(stub, "admit", admission("fourth", "fourth"));
+    const claims = await Promise.allSettled(["third", "fourth"].map((effectIntentId) => receipt(stub, "claimPage", { ...claim, effectIntentId })));
+    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const winner = claims[0]!.status === "fulfilled" ? "third" : "fourth";
+    const retry = winner === "third" ? "fourth" : "third";
+    // A -> B -> A is refused even though every page would get a new alias.
+    await expect(receipt(stub, "issuePage", { ...claim, effectIntentId: winner, prefix: "google_2", slot: "nextPageId",
+      inputJson: JSON.stringify({ query: "needle", cursor: "opaque+/=cursor" }) })).rejects.toThrow("page_did_not_advance");
+    await receipt(stub, "fail", { effectIntentId: winner, status: "failed", phase: "execute", errorJson: '{"code":"temporary"}', payloadJson: "{}", fence, now: Date.now() });
+    expect((await receipt(stub, "claimPage", { ...claim, effectIntentId: retry })).value)
+      .toEqual({ inputJson: JSON.stringify({ query: "needle", cursor: "opaque-second" }) });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT consumer_id FROM tool_pages WHERE page_id = ?", pageId).one().consumer_id).toBe("second");
+      state.storage.sql.exec("UPDATE runs SET lease_owner = 'successor'");
+    });
+    await expect(first!.execute({ query: "needle" }, context(retry))).rejects.toThrow("page_execution_ownership_lost");
+  });
   it("admits a receipt and its checkpoint in one committed step", async () => {
     const stub = agent();
     await boot(stub);
@@ -438,6 +524,9 @@ describe("tool-receipt authority on real workerd", () => {
     await receipt(stub, "admit", { ...everyField, ...admission("dispatch-probe", "dispatch-probe") });
 
     for (const operation of methods) {
+      // Pagination has an explicit refusal protocol (unknown page, lost
+      // executing receipt); the dedicated test above drives its success path.
+      if (operation === "issuePage" || operation === "claimPage") continue;
       const answer = await receipt(stub, operation, everyField);
       expect(answer.error ?? "", `operation ${operation}`)
         .not.toBe("invalid_tool_receipt_operation");
