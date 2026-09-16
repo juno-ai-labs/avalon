@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cloneMessageHtml,
   restoreMessageSelection,
+  serializedPlainText,
   snapshotMessageSelection,
   writeFormattedClipboard,
 } from './message-text-clipboard';
@@ -31,6 +32,7 @@ describe('message text clipboard', () => {
 
     const snapshot = snapshotMessageSelection(root);
     expect(snapshot.plain).toBe('there');
+    expect(snapshot.html).toContain('<strong>');
     expect(snapshot.html).toContain('there');
     selection.removeAllRanges();
     expect(window.getSelection()?.toString()).toBe('');
@@ -49,12 +51,39 @@ describe('message text clipboard', () => {
     expect(snapshotMessageSelection(root)).toEqual({ html: '', plain: '', range: null });
   });
 
-  it('strips copy buttons from a whole-body clone', () => {
-    const root = mount('<p>Body copy</p><button type="button">Copy code</button>');
+  it('strips copy chrome and keeps citation labels in a whole-body clone', () => {
+    const root = mount(
+      '<p>See <button type="button" class="citation-chip"><span class="citation-chip-label">the Q3 plan</span></button> for details.</p>'
+      + '<button type="button" data-clipboard-exclude="" aria-label="Copy code">Copy code</button>',
+    );
     const cloned = cloneMessageHtml(root);
-    expect(cloned.plain).toContain('Body copy');
+    expect(cloned.plain).toBe('See the Q3 plan for details.');
+    expect(cloned.html).toContain('the Q3 plan');
     expect(cloned.html).not.toContain('Copy code');
-    expect(cloned.html).toContain('Body copy');
+    expect(cloned.html).not.toContain('data-clipboard-exclude');
+  });
+
+  it('puts paragraph and list breaks into whole-body plain text', () => {
+    const root = mount('<p>First para.</p><p>Second para.</p><ul><li>a</li><li>b</li></ul>');
+    expect(cloneMessageHtml(root).plain).toBe('First para.\nSecond para.\na\nb');
+    const withBreak = mount('<p>One</p><p>Two<br>Three</p>');
+    expect(cloneMessageHtml(withBreak).plain).toBe('One\nTwo\nThree');
+  });
+
+  it('decodes entities when the HTML fallback has to supply plain text', async () => {
+    const write = vi.fn<(items: ClipboardItemStub[]) => Promise<void>>(async () => undefined);
+    class ClipboardItemStub {
+      readonly items: Record<string, Blob>;
+      constructor(items: Record<string, Blob>) {
+        this.items = items;
+      }
+    }
+    vi.stubGlobal('ClipboardItem', ClipboardItemStub);
+    vi.stubGlobal('navigator', { clipboard: { write, writeText: vi.fn() } });
+
+    await writeFormattedClipboard('<p>A &amp; B</p>', '');
+    const item = write.mock.calls[0]?.[0]?.[0];
+    expect(await item!.items['text/plain']!.text()).toBe('A & B');
   });
 
   it('writes HTML and plain text together when ClipboardItem is available', async () => {
@@ -77,5 +106,10 @@ describe('message text clipboard', () => {
     expect(item!.items['text/plain']).toBeInstanceOf(Blob);
     expect(await item!.items['text/html']!.text()).toBe('<p>Hi</p>');
     expect(await item!.items['text/plain']!.text()).toBe('Hi');
+  });
+
+  it('serializes a detached tree the same way cloneMessageHtml does', () => {
+    const root = mount('<p>Keep me</p>');
+    expect(serializedPlainText(root)).toBe('Keep me');
   });
 });

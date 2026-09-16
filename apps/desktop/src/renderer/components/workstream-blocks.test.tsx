@@ -47,6 +47,7 @@ vi.mock('../lib/platform', () => ({
     showDefinitionForSelection,
     shareText,
   }),
+  desktopRuntimeConfig: getRuntimeConfig,
   desktopServicesAvailable,
 }));
 vi.mock('thinking-orbs', () => ({
@@ -1648,13 +1649,13 @@ describe('MessageBlock text context menu', () => {
 
   async function openBodyMenu(body: Element): Promise<void> {
     fireEvent.contextMenu(body);
-    await screen.findByRole('menuitem', { name: 'Copy' });
+    await screen.findByRole('menuitem', { name: /^Copy$/ });
   }
 
   it('copies formatted HTML of the whole assistant body when nothing is selected', async () => {
     const { container } = render(<MessageBlock {...actions} message={agent} />);
     await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Copy$/ }));
     await waitFor(() => expect(write).toHaveBeenCalledOnce());
     const item = write.mock.calls[0]?.[0]?.[0];
     expect(item).toBeDefined();
@@ -1722,7 +1723,7 @@ describe('MessageBlock text context menu', () => {
     await screen.findByRole('menuitem', { name: 'Look Up' });
     expect(screen.getByRole('menuitem', { name: 'Look Up' })).toHaveAttribute('data-disabled');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Share' }));
-    await waitFor(() => expect(shareText).toHaveBeenCalledWith(agent.text));
+    await waitFor(() => expect(shareText).toHaveBeenCalledWith('The settled answer.'));
 
     desktopServicesAvailable.mockReturnValue(false);
     rerender(<MessageBlock {...actions} message={agent} />);
@@ -1734,10 +1735,32 @@ describe('MessageBlock text context menu', () => {
   it('does not put the menu on a glance or a still', () => {
     const { container, rerender } = render(<MarkdownBody glance telemetry={{ messageId: 'g', workstreamId: 'w' }}>{'Glance'}</MarkdownBody>);
     fireEvent.contextMenu(container.querySelector('.markdown-body')!);
-    expect(screen.queryByRole('menuitem', { name: 'Copy' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^Copy$/ })).not.toBeInTheDocument();
     rerender(<MarkdownBody still telemetry={{ messageId: 's', workstreamId: 'w' }}>{'Still'}</MarkdownBody>);
     fireEvent.contextMenu(container.querySelector('.markdown-body')!);
-    expect(screen.queryByRole('menuitem', { name: 'Copy' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^Copy$/ })).not.toBeInTheDocument();
+  });
+
+  it('hides Speak while an assistant turn is still streaming', async () => {
+    const { container } = render(
+      <SpeechPlaybackProvider api={{ streamMessageSpeech: vi.fn(async () => new ReadableStream<Uint8Array>()) }}>
+        <MessageBlock {...actions} message={{ ...agent, streaming: true, text: 'Partial **answer**.' }} />
+      </SpeechPlaybackProvider>,
+    );
+    await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
+    expect(screen.queryByRole('menuitem', { name: 'Speak response' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Copy$/ })).toBeVisible();
+  });
+
+  it('names Speak on a human turn Speak, not Speak response', async () => {
+    render(
+      <SpeechPlaybackProvider api={{ streamMessageSpeech: vi.fn(async () => new ReadableStream<Uint8Array>()) }}>
+        <MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />
+      </SpeechPlaybackProvider>,
+    );
+    await openBodyMenu(screen.getByLabelText('Message from Adam').querySelector('.markdown-body')!);
+    expect(screen.getByRole('menuitem', { name: /^Speak$/ })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Speak response' })).not.toBeInTheDocument();
   });
 });
 

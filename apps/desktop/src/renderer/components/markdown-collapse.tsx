@@ -173,6 +173,7 @@ function CollapseHeading({
               aria-expanded={expanded}
               aria-label={label}
               className="markdown-collapse-chevron"
+              data-clipboard-exclude=""
               onClick={(event) => {
                 event.stopPropagation();
                 collapse.toggle(id);
