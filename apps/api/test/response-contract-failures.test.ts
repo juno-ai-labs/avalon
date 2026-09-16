@@ -105,6 +105,9 @@ describe("response contract failures", () => {
     app.get("/prose", () => {
       throw new Error("Provider included customer@example.com in its response");
     });
+    app.get("/interpolated", () => {
+      throw new Error("memory_table_value_type:Customer_Email:string");
+    });
 
     const refused = await app.request("https://api.example.com/refused", { method: "GET" }, testEnv());
     expect(refused.status).toBe(500);
@@ -120,5 +123,15 @@ describe("response contract failures", () => {
     expect(prose).toMatchObject({ code: "internal_error", error_name: "Error" });
     expect(prose).not.toHaveProperty("error_code");
     expect(JSON.stringify(prose)).not.toContain("customer@example.com");
+    // The list row reads the code without expanding the entry.
+    expect(logged.mock.calls[0]![0]).toMatchObject({
+      message: "request_failed 500 internal_error admit_external_event_invalid:event.eventSequence:invalid_type",
+    });
+
+    // Code-shaped is not trusted: a member-chosen name after a colon stays off.
+    await app.request("https://api.example.com/interpolated", { method: "GET" }, testEnv());
+    const interpolated = logged.mock.calls[2]![0] as Record<string, unknown>;
+    expect(interpolated).not.toHaveProperty("error_code");
+    expect(JSON.stringify(interpolated)).not.toContain("Customer_Email");
   });
 });

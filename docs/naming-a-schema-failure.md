@@ -102,9 +102,13 @@ with the warning the check reports instead of failing.
   components.
 - `codeShaped(text)` — reduced to the character class and length a code-shaped
   field will carry.
-- `isCodeShaped(text)` — whether a message already has that shape, which is
-  the test a boundary applies before copying a thrown message into an indexed
-  field or a notice: no whitespace, so it cannot be prose.
+- `isCodeShaped(text)` — whether a message already has that shape: no
+  whitespace, so it cannot be prose. A bound on what a value can be, never a
+  reason to trust it — `memory_table_value_type:${column.name}:string` passes.
+- `isDiagnosticCode(text)` — whether a message is one this module composed: a
+  label, `_invalid`, then the issues. The test a reporter applies before
+  carrying a *thrown* message with separators in it, because only
+  `zodDiagnosticCode` and `parseRpcInput` produce that shape.
 - `zodDiagnosticCode(error, label)` — a named code, or `null` for anything that
   is not a schema rejection, so a caller keeps its own vocabulary everywhere
   else.
@@ -125,9 +129,9 @@ its own is a boundary that drifts.
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
-| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop instead of reducing it to the fallback |
-| `apps/api/src/middleware/errors.ts` | `request_failed` carries a code-shaped message a Durable Object threw, as `error_code`, where the row said `internal_error` and `Error` |
-| `apps/api/src/services/workspace-schedule-execution.ts` | the `workspace_schedule_target_failed` audit row names a handler's own rejection the way the notice does |
+| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback |
+| `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
+| `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
 | `apps/api/src/durable-objects/sidekick-do.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
 | `apps/api/src/durable-objects/workspace-do.ts` | the entry points on the Sidekick's publication tail and the connector-event pipeline: `applyExternalEventRegistrations`, `ensureMemoryScope`, `createMemoryTable`, `memoryTableWithColumns`, `recordMemoryTableOpenReceipt`, `memoryTableMutationReceipt`, `applyAutomationDirectory`, `ingestConnectorEvent`, `claimConnectorEvent`, `settleConnectorEvent`, `matchExternalEventDestinations` |
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
@@ -216,20 +220,28 @@ an object today is indistinguishable, to any caller, from a plain `Error`,
 and nothing proves which callers or tests depend on that. The set converted
 here is the set on the paths that demonstrably lost the reason: the incident's
 object, its publication tail, and the event pipeline that feeds it. The rest
-are listed above by object for the next change to adopt. Also rejected:
-making `diagnosticErrorCode` log any message. A code-shaped message has no
-whitespace and cannot be prose, which is the same test the notice already
-applied; a sentence still reduces to the fallback.
+are listed above by object for the next change to adopt. Also rejected, after
+review: letting the logger carry any code-shaped message. The first draft
+did, on the argument that a string with no whitespace cannot be prose, and
+the reviewers showed what else it cannot be: bounded. The tree throws
+`memory_table_value_type:${column.name}:string`, an R2 key after a colon, a
+target id, and `${component}_schema_hash_mismatch:${version}`, and each of
+those in an indexed field or the OTel `error.type` is a member's value or one
+grouping key per object. Shape is a limit on a value, not its provenance. So
+the logger admits a thrown message in the bare constant class it always
+trusted, plus the family only the primitive composes, and nothing between.
 
-**Consequences:** A reporter that reads a thrown message now accepts the
-whole code class — uppercase, `-`, `:`, `.` — not only `[a-z][a-z0-9_]*`, so
-a saved query that matched a `reason` or `error_code` exactly may see a
-longer value carrying the path after the code it matched. The label an entry
-point passes to `parseRpcInput` is the RPC method, so a caller's log names
-which of an object's methods refused, not only which schema. The bare-`catch`
-sites that log nothing at all — the project-default consumer, the Slack
-reaction ticker, push delivery — are unchanged: naming a reason they never
-record is a logging decision for their owners, not this rule.
+**Consequences:** `diagnosticErrorCode` and the `request_failed` row carry a
+`parseRpcInput` message across the hop and still reduce an interpolated
+message to the fallback, so a saved query on `reason` or `error_code` sees a
+longer value only for a schema rejection. `error_code` joins the row summary,
+so the Workers Logs list shows the code without expanding the entry. The
+label an entry point passes to `parseRpcInput` is the RPC method, so a
+caller's log names which of an object's methods refused, not only which
+schema. The bare-`catch` sites that log nothing at all — the project-default
+consumer, the Slack reaction ticker, push delivery — are unchanged: naming a
+reason they never record is a logging decision for their owners, not this
+rule.
 
 Shipped in #768.
 
