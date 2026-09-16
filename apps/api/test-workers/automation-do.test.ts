@@ -28,6 +28,8 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  agentAddressForId,
+  WorkstreamWorkflowInputSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
   type AutomationDraft,
 } from "@rally/contracts";
@@ -46,6 +48,8 @@ import {
 import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { AgentCommunicationService } from "../src/services/agent-communication-service";
+import { WorkstreamService } from "../src/services/workstream-service";
 import { bootstrapConversationChildRuntime, bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "../src/services/workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "../src/services/workstream-authority";
 import {
@@ -501,6 +505,50 @@ describe("AutomationDO", () => {
     }
     await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } }, { name: 'sidekick_detach', arguments: { sidekickId: ownedId } }]);
     expect((await execute(root)).split('\n').find((line) => line.includes('sidekick-owned-helper'))).toContain('[Recommended]');
+
+    // A delegated agent has a real local participant but no human-viewable
+    // private-child membership. Its tools must use execution authority.
+    await execute(root, [{ name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }]);
+    const input = WorkstreamWorkflowInputSchema.parse({ region: 'global', workspaceId: WORKSPACE_ID,
+      parentKind: 'workstream', parentId: workstreamId, substreamId: '0', loopId: `workstream:${workstreamId}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: 'user', userId: AUTHOR_ID }, reason: 'test' });
+    const agents = new AgentCommunicationService(TEST_ENV, input);
+    const toolContext = { workspaceId: WORKSPACE_ID, workstreamId, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal };
+    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } },
+      { name: 'sidekick_attach', arguments: { sidekickId: AUTOMATION_ID } },
+      { name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }];
+    const started = await agents.start({ name: 'Knowledge helper', description: 'Use shared knowledge',
+      message: 'Attach and load relevant knowledge.', attachmentIds: [] }, toolContext);
+    const address = agentAddressForId(started.agentId);
+    const hidden = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, workstreamId, address.substreamId)));
+    const completedRuns = () => runInDurableObject(hidden, (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'completed'").one().n);
+    await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+    expect(await parent.authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: workstreamId,
+      substreamId: address.substreamId, userId: AUTHOR_ID })).toMatchObject({ authorized: false });
+    const userService = new WorkstreamService(TEST_ENV, { sessionId: SESSION_ID, userId: AUTHOR_ID,
+      workspaceId: WORKSPACE_ID, region: 'global', role: 'member', analyticsWorkspaceId: null });
+    await expect(userService.setSidekickRecommendation(workstreamId, AUTOMATION_ID, false, address.substreamId))
+      .rejects.toMatchObject({ status: 404 });
+    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([AUTOMATION_ID]);
+    expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
+    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } },
+      { name: 'sidekick_detach', arguments: { sidekickId: AUTOMATION_ID } }];
+    await agents.send({ agentId: started.agentId, message: 'Detach that recommendation.', attachmentIds: [] },
+      { ...toolContext, effectIntentId: crypto.randomUUID() });
+    await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
+    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
+    expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
+    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
+    await hidden.stopOwnedAgent();
+    await expect(userService.setSidekickRecommendation(workstreamId, AUTOMATION_ID, true, address.substreamId,
+      { ...input, substreamId: address.substreamId, backgroundAgent: true })).rejects.toMatchObject({
+      status: 403, code: 'sidekick_attachment_execution_forbidden',
+    });
+    expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
   });
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();

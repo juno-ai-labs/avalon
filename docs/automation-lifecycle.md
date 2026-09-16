@@ -56,11 +56,21 @@ Workstream main and child agents receive only list/attach/detach from this
 plugin; drafting stays in the Sidekick's own authoring conversation.
 Management tools require a user execution principal. Workspace-principal runs
 still discover eligible skills but receive no person-authorized management tools.
+Hidden background children use a host-only execution path: their stored user
+principal, active runtime, local participation and parent participation must
+agree. They do not acquire human viewer access. Detachment addresses that
+child's loaded attachments directly, preserving Main and siblings; REST callers
+still pass the ordinary child viewer check. Attachment routes reject automation
+parents with a typed unsupported-parent response.
 Each new execution snapshots eligible recommendations and marks their catalog
 lines `[Recommended]`, encouraging use when relevant without activating bodies.
 Detaching an explicit recommendation also removes the current substream's local
 attachment; sibling attachments survive. Workstream ownership itself cannot be
 detached. Workspace Sidekicks remain ordinarily discoverable after detachment.
+The common recommendation service publishes the existing workspace `automations`
+sync topic after a successful change, including agent-originated changes. Every
+desktop window invalidates its recommendation queries on that topic, so an idle
+sibling view learns about shared changes without waiting for transcript activity.
 Both participant preconditions are checked before the shared delete. The two
 object removals remain idempotent, not a cross-object transaction. Executions
 with no eligible Sidekick sources skip recommendation authority reads entirely.
@@ -78,6 +88,9 @@ also clears its current local attachment. An owned Sidekick that has never been
 loaded carries no removal action; its recommendation follows ownership.
 The rail marks recommendations with a right-aligned circled carambola icon whose
 tooltip explains shared discovery without automatic loading.
+Picker state is keyed by workstream, and an attachment response cancels older
+recommendation reads before updating that workstream's cache. Removal state is
+keyed by conversation, so navigation cannot carry an error into another substream.
 A merged row takes its lifecycle from the owned summary and its availability
 from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
@@ -644,7 +657,10 @@ or the memory store the automation scope lives in.
 Workstream recommendation coverage lives in `test-workers/automation-do.test.ts`
 (child agent tool attachment, fresh main/sibling catalogs, local loading, combined
 removal) and `test-workers/conversation-parent-contract.test.ts` (v12 migration,
-idempotency, scope, participation). Run them with `pnpm --filter @rally/api
+idempotency, scope, participation, durable sync publication and unsupported
+automation parents). Hidden child tool coverage also proves REST refusal,
+stopped-execution refusal and preservation of Main's loaded attachment.
+Run them with `pnpm --filter @rally/api
 test:workers`. Desktop `sidekick-picker.test.tsx`, `sidekick-section.test.tsx`, and
 `workstream-sidekicks.test.tsx` cover selection, merged badges/removal, and switching
 substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
@@ -819,6 +835,12 @@ recommendation also clears its loaded attachment in the current substream.
 The service checks parent and local participation before removal; management
 tools are withheld from workspace-principal runs. Empty skill catalogs do not
 wake recommendation authorities just to intersect their results with nothing.
+The existing `automations` sync topic also refreshes recommendation queries;
+publication belongs in the common service because agent tools bypass REST
+middleware and otherwise leave other windows stale.
+Hidden agents use their durable execution identity for the same commands because
+their child conversations intentionally have no human viewer admission. That
+exception stays host-only and clears only the executing child's local attachment.
 
 ### 2026-09-15 — A rule can name Fireflies
 

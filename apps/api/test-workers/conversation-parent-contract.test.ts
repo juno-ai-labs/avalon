@@ -329,7 +329,17 @@ describe("conversation parent contract", () => {
     const shared = await seedAutomation('workspace', null);
     const personal = await seedAutomation('personal', null);
     const service = new WorkstreamService(TEST_ENV, AUTH);
+    await expect(service.sidekickAttachments(shared)).rejects.toMatchObject({
+      status: 422, code: 'sidekick_attachment_parent_kind_unsupported',
+    });
+    await expect(service.sidekickAttachments(shared, personal)).rejects.toMatchObject({
+      status: 422, code: 'sidekick_attachment_parent_kind_unsupported',
+    });
+    const recommendationSyncCount = () => runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM workspace_sync_events WHERE topics_json = '[\"automations\"]'").one().n);
+    const beforeAttachSync = await recommendationSyncCount();
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, true);
+    expect(await recommendationSyncCount()).toBe(beforeAttachSync + 1);
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, true);
     expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items.map((item) => item.id)).toEqual([shared]);
     await expect(service.setSidekickRecommendation(WORKSPACE_ROOM_ID, personal, true)).rejects.toMatchObject({ code: 'sidekick_attachment_scope_invalid' });
@@ -340,7 +350,9 @@ describe("conversation parent contract", () => {
       await expect(instance.setSidekickRecommendation({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_ROOM_ID,
         userId: MEMBER_ID, sidekickId: shared, attached: true })).rejects.toThrow('sidekick_attachment_participant_required');
     });
+    const beforeDetachSync = await recommendationSyncCount();
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false);
+    expect(await recommendationSyncCount()).toBe(beforeDetachSync + 1);
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false);
     expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items).toEqual([]);
   });
