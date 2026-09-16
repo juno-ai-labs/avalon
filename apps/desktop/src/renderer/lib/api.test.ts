@@ -196,11 +196,12 @@ afterEach(() => {
 });
 
 describe('Rally API wire adapter', () => {
-  it('coalesces in-flight favicon requests and remembers missing hosts', async () => {
+  it('coalesces in-flight favicon requests without extending a missing response lifetime', async () => {
     let releaseIcon: ((response: Response) => void) | undefined;
     const iconResponse = new Promise<Response>((resolve) => { releaseIcon = resolve; });
     const fetchMock = vi.fn()
       .mockImplementationOnce(async () => iconResponse)
+      .mockImplementationOnce(async () => new Response(null, { status: 404 }))
       .mockImplementationOnce(async () => new Response(null, { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
@@ -214,9 +215,12 @@ describe('Rally API wire adapter', () => {
     const [firstIcon, secondIcon] = await Promise.all([first, second]);
     expect(firstIcon).toBe(secondIcon);
 
-    await expect(api.getFavicon('missing.example.com')).resolves.toBeNull();
-    await expect(api.getFavicon('MISSING.example.com')).resolves.toBeNull();
+    const firstMissing = api.getFavicon('missing.example.com');
+    const secondMissing = api.getFavicon('MISSING.example.com');
+    await expect(Promise.all([firstMissing, secondMissing])).resolves.toEqual([null, null]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(api.getFavicon('missing.example.com')).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('cancels transcription ticket acquisition even when the transport does not settle', async () => {
