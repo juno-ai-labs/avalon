@@ -62,7 +62,7 @@ catalog descriptions while retaining the assigned tool name.
 
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
-refs pinned to an execution). Only main-substream loading attaches; removal
+refs pinned to an execution). Loading attaches within the current substream; removal
 affects future executions. Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
@@ -1303,6 +1303,13 @@ projection changes only, not token cadence.
 
 ## Testing
 
+`test-workers/conversation-parent-contract.test.ts` upgrades a populated v12 parent
+and exercises recommendation RPCs through the shared service. The child-tool
+regression in `test-workers/automation-do.test.ts` proves shared recommendations
+and independent local attachments end to end. Run both with
+`pnpm --filter @rally/api test:workers`; dropping the recommendation write or
+restoring main-only loading makes the corresponding regression fail.
+
 This inventory does not by itself satisfy the ordered-transcript acceptance
 contract. The PRD's focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
 maps persistent loop ownership, reserve-before-await ordering, safe controls,
@@ -1640,6 +1647,19 @@ unread waterline for every participant; the mention waterline remains specific
 to the named participant.
 Rendering preserves the same occurrence boundary: matching a person ID alone is
 not authority for a different link elsewhere in the turn.
+
+### 2026-09-15 — Workstream Sidekick recommendations
+
+**What changed:** WorkstreamDO migration 13 adds explicit workspace Sidekick
+attachment IDs. Substream execution snapshots carry recommended refs, while
+each substream retains its own loaded attachments.
+
+**Why:** Recommendation belongs to the shared workstream and loading belongs
+to the conversation. Keeping one relation at each authority avoids copying
+Sidekick instructions or attachment lists into every child.
+
+**Consequences:** Existing execution snapshots accept absent recommendation
+metadata. Workstream-owned Sidekicks derive recommendation from ownership.
 
 ### 2026-09-14 — Keep slowdown notices scoped to a live inference
 

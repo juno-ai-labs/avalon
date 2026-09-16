@@ -42,6 +42,7 @@ import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/lau
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { WorkstreamSidebar, type ConversationRowTarget } from '../components/workstream-sidebar';
+import { SidekickPicker } from '../components/sidekick-picker';
 import {
   PENDING_SUBSTREAM_DRAFT_ID,
   type LaunchingSubstream,
@@ -792,6 +793,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       } : null}
       renderSidebar={(context) => (
         <WorkstreamSidebar
+          addSidekick={<SidekickPicker workstreamId={context.detail.id} participantIds={context.detail.participants.map((person) => person.id)} />}
           sidekicks={context.sidekicks}
           sidekicksError={context.sidekicksError}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}

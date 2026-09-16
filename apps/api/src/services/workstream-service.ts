@@ -1,8 +1,10 @@
 import { AutomationService } from "./automation-service";
+import { ConversationService } from "./conversation-service";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
 import type { SidekickAttachment } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -18,7 +20,7 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/substream-agent";
-import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
+import { substreamLoopId, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError, asApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
@@ -638,13 +640,23 @@ export class WorkstreamService {
     });
   }
 
-  async sidekickAttachments(id: string, removeId?: string): Promise<{ items: SidekickAttachment[] }> {
-    const detail = await this.get(id);
-    if (removeId && !detail.participants.some((person) => person.user.id === this.auth.userId)) {
-      throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can remove a Sidekick");
+  private async requireSidekickParticipant(id: string, substreamId: string): Promise<void> {
+    const participants = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).participants();
+    if (!participants.some((person) => person.user_id === this.auth.userId)) {
+      throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can change Sidekick attachments");
     }
+  }
+
+  async sidekickAttachments(id: string, removeId?: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
+    const conversation = new ConversationService(this.env, this.auth);
+    if (removeId) await conversation.writableClient(id, substreamId);
+    else await conversation.client(id, false, substreamId);
+    if ((await conversation.resolveParent(id)).kind !== "workstream") {
+      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick attachments belong to workstreams");
+    }
+    if (removeId) await this.requireSidekickParticipant(id, substreamId);
     const agent = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
-      asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id));
+      asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id, asSubstreamId(substreamId)));
     const ids = await agent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, ...(removeId ? { removeId } : {}) });
     const items: SidekickAttachment[] = [];
     const service = new AutomationService(this.env, this.auth);
@@ -660,6 +672,68 @@ export class WorkstreamService {
       }
     }
     return { items };
+  }
+
+  async recommendedSidekicks(id: string): Promise<{ items: SidekickAttachment[] }> {
+    await new ConversationService(this.env, this.auth).client(id);
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    const ids = new Set(await room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }));
+    const directory = await new AutomationService(this.env, this.auth).listSidekicks();
+    return { items: directory.items.filter((item) => item.scope === "workspace" && ids.has(item.id)).map((item) => ({
+      id: item.id, name: item.name, description: item.description, available: item.loadable === true && item.status === "active",
+    })) };
+  }
+
+  async setSidekickRecommendation(id: string, sidekickId: string, attached: boolean, substreamId = "0",
+    /** Host-supplied execution context only; never accepted from a REST request. */
+    backgroundExecution?: Pick<WorkstreamWorkflowInput, "backgroundAgent" | "parentKind" | "workspaceId" | "parentId" | "substreamId" | "executionPrincipal">,
+  ): Promise<{ items: SidekickAttachment[] }> {
+    await new ConversationService(this.env, this.auth).writableClient(id, backgroundExecution ? "0" : substreamId);
+    await this.requireSidekickParticipant(id, "0");
+    const backgroundAgent = backgroundExecution ? await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+      this.auth.workspaceId, conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId))) : null;
+    if (backgroundExecution && backgroundAgent) {
+      const runtime = await backgroundAgent.agentRuntimeInfo();
+      const identity = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).identity();
+      if (!backgroundExecution.backgroundAgent || backgroundExecution.parentKind !== "workstream"
+        || backgroundExecution.workspaceId !== this.auth.workspaceId || backgroundExecution.parentId !== id
+        || backgroundExecution.substreamId !== substreamId || substreamId === "0"
+        || backgroundExecution.executionPrincipal.type !== "user" || backgroundExecution.executionPrincipal.userId !== this.auth.userId
+        || !runtime?.background || runtime.status === "stopped" || runtime.executionPrincipal?.type !== "user"
+        || runtime.executionPrincipal.userId !== this.auth.userId || !identity || identity.archived_at !== null) {
+        throw new ApiError(403, "sidekick_attachment_execution_forbidden", "This agent cannot change Sidekick attachments");
+      }
+    }
+    // Check both authorities before the shared delete: a viewer of a child
+    // must not remove the recommendation and then fail its local removal.
+    if (backgroundExecution || (!attached && substreamId !== "0")) await this.requireSidekickParticipant(id, substreamId);
+    if (attached) {
+      const sidekick = await new AutomationService(this.env, this.auth).detail(sidekickId);
+      if (sidekick.scope !== "workspace") throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
+      if (sidekick.lifecycle === "deleted") throw new ApiError(422, "sidekick_attachment_archived", "Choose a non-archived Sidekick");
+    }
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    try {
+      await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
+    } catch (error) {
+      if (error instanceof Error && error.message === "sidekick_attachment_participant_required") {
+        throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can change Sidekick attachments");
+      }
+      if (error instanceof Error && error.message === "sidekick_attachment_workstream_archived") {
+        throw new ApiError(409, "sidekick_attachment_workstream_archived", "The workstream is archived");
+      }
+      throw error;
+    }
+    if (!attached) {
+      if (backgroundAgent) await backgroundAgent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, removeId: sidekickId });
+      else await this.sidekickAttachments(id, sidekickId, substreamId);
+    }
+    // Both REST and agent tools use this service; every open rail needs the
+    // same shared recommendation change, even on an idle sibling substream.
+    await publishWorkspaceSync(this.env, this.auth.workspaceId, ["automations"]);
+    return this.recommendedSidekicks(id);
   }
 
   async get(id: string): Promise<WorkstreamDetail> {

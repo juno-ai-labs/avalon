@@ -53,7 +53,7 @@ function ConversationRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, addSidekick, substreamActions, mainActions }: {
   workstream: Pick<WorkstreamDetail, 'id' | 'title' | 'appearance' | 'resources' | 'participants'> & Pick<WorkstreamChildDirectory, 'privateChildren'>;
   /**
    * A substream is being created in this work stream: the composer has been
@@ -78,6 +78,7 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = null, presen
    */
   sidekicks?: SidekickRow[] | undefined;
   sidekicksError?: string | undefined;
+  addSidekick?: React.ReactNode;
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
   onNewSubstream?: () => void;
@@ -304,6 +305,7 @@ export function WorkstreamSidebar({ workstream, creatingSubstream = null, presen
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
         <SidekickSection items={sidekicks} error={sidekicksError} />
+        {addSidekick}
       </div>
       <div className="sidebar-collapse-footer">
         <IconButton
