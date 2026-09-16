@@ -1,4 +1,4 @@
-import type { BrowserWindow, Menu, MenuItemConstructorOptions, WebContents } from 'electron';
+import type { BrowserWindow, SharingItem, WebContents } from 'electron';
 
 /**
  * macOS Dictionary and the system share sheet for a message-text selection.
@@ -20,17 +20,13 @@ export function shareText(
   platform: NodeJS.Platform,
   text: unknown,
   dependencies: {
-    buildMenu: (template: MenuItemConstructorOptions[]) => Pick<Menu, 'popup'>;
+    popupShare: (sharingItem: SharingItem, window: BrowserWindow | null) => void;
     window: BrowserWindow | null;
   },
 ): void {
-  if (platform !== 'darwin') return;
   if (typeof text !== 'string' || text.length === 0) {
     throw new Error('Invalid share text');
   }
-  const menu = dependencies.buildMenu([{
-    role: 'shareMenu',
-    sharingItem: { texts: [text] },
-  }]);
-  menu.popup(dependencies.window ? { window: dependencies.window } : undefined);
+  if (platform !== 'darwin') return;
+  dependencies.popupShare({ texts: [text] }, dependencies.window);
 }

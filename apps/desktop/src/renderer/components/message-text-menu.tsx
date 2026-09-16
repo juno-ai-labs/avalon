@@ -10,7 +10,8 @@ import {
   type ReactElement,
 } from 'react';
 
-import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { logError } from '../../common/logger';
+import { desktopBridge, desktopRuntimeConfig, desktopServicesAvailable } from '../lib/platform';
 import {
   cloneMessageHtml,
   EMPTY_MESSAGE_TEXT_SNAPSHOT,
@@ -27,11 +28,13 @@ import { useSpeechPlayback } from './speech-playback';
  * share the action row's speech toggle and the window's one-voice mutex;
  * Look Up and Share are macOS-only OS affordances behind trusted IPC.
  */
-export function MessageTextMenu({ children, markdown, telemetry }: {
+export function MessageTextMenu({ children, markdown, speechKind = 'response', streaming = false, telemetry }: {
   children: ReactElement<{
     onContextMenuCapture?: (event: MouseEvent<HTMLElement>) => void;
   }>;
   markdown: string;
+  speechKind?: 'response' | 'message';
+  streaming?: boolean;
   telemetry?: { messageId: string; workstreamId: string };
 }) {
   const snapshotRef = useRef<MessageTextSnapshot>(EMPTY_MESSAGE_TEXT_SNAPSHOT);
@@ -43,12 +46,14 @@ export function MessageTextMenu({ children, markdown, telemetry }: {
   const speechId = telemetry?.messageId ?? fallbackSpeechId;
   const speaking = speech?.activeMessageId === speechId;
   const speakLabel = speaking ? 'Stop speaking' : 'Speak';
-  const speakName = speaking ? 'Stop speaking' : 'Speak response';
+  const speakName = speaking
+    ? 'Stop speaking'
+    : speechKind === 'message' ? 'Speak' : 'Speak response';
 
   useEffect(() => {
     if (!desktopServicesAvailable()) return;
     let cancelled = false;
-    void desktopBridge().getRuntimeConfig().then((config) => {
+    void desktopRuntimeConfig().then((config) => {
       if (!cancelled) setDarwinDesktop(config.platform === 'darwin');
     }).catch(() => undefined);
     return () => {
@@ -86,11 +91,15 @@ export function MessageTextMenu({ children, markdown, telemetry }: {
         await writeFormattedClipboard(whole.html, whole.plain);
       }
       reportCopied();
-    })().catch(() => undefined);
+    })().catch((error) => {
+      logError('rally', 'could not copy this message', error);
+    });
   };
 
   const copyMarkdown = (): void => {
-    void navigator.clipboard.writeText(markdown).then(reportCopied).catch(() => undefined);
+    void navigator.clipboard.writeText(markdown).then(reportCopied).catch((error) => {
+      logError('rally', 'could not copy this message as markdown', error);
+    });
   };
 
   const toggleSpeech = (): void => {
@@ -101,16 +110,25 @@ export function MessageTextMenu({ children, markdown, telemetry }: {
 
   const lookUp = (): void => {
     restoreMessageSelection(snapshotRef.current.range);
-    void desktopBridge().showDefinitionForSelection().catch(() => undefined);
+    void desktopBridge().showDefinitionForSelection().catch((error) => {
+      logError('rally', 'could not look up this selection', error);
+    });
   };
 
   const share = (): void => {
-    const text = snapshotRef.current.plain.length > 0 ? snapshotRef.current.plain : markdown;
-    void desktopBridge().shareText(text).catch(() => undefined);
+    const body = bodyRef.current;
+    const text = snapshotRef.current.plain.length > 0
+      ? snapshotRef.current.plain
+      : body ? cloneMessageHtml(body).plain : '';
+    if (text.length === 0) return;
+    void desktopBridge().shareText(text).catch((error) => {
+      logError('rally', 'could not share this message', error);
+    });
   };
 
   const child = Children.only(children);
   const nativeServices = darwinDesktop && desktopServicesAvailable();
+  const offerSpeech = speech && !streaming;
 
   return (
     <ContextMenu.Root>
@@ -121,7 +139,7 @@ export function MessageTextMenu({ children, markdown, telemetry }: {
         <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
           <ContextMenu.Item className="menu-item" onSelect={copyFormatted}>Copy</ContextMenu.Item>
           <ContextMenu.Item className="menu-item" onSelect={copyMarkdown}>Copy as markdown</ContextMenu.Item>
-          {speech && (
+          {offerSpeech && (
             <ContextMenu.Item aria-label={speakName} className="menu-item" onSelect={toggleSpeech}>
               {speakLabel}
             </ContextMenu.Item>

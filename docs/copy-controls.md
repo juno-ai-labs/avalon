@@ -62,7 +62,9 @@ both render two of them, an endpoint and a secret.
   [`conversation-surfaces.md`](conversation-surfaces.md). The message-text
   context menu's **Copy** writes formatted HTML through the renderer clipboard
   rather than `copyText`, because the IPC channel cannot carry HTML and caps
-  at 4,000 characters.
+  at 4,000 characters. That write sanitizes the clone: nodes marked
+  `data-clipboard-exclude` (code-block copy, heading chevrons) are removed;
+  citation chips and cards are unwrapped so their labels stay in both flavors.
 - **The outcome and its timer live in the hook.** No control keeps a `copied`
   flag or a `setTimeout` of its own; the same test asserts it. That is what
   keeps every control showing an outcome for the same time.

@@ -48,4 +48,31 @@ describe('SpeechPlaybackProvider mutex', () => {
     expect(players[0]?.stop).toHaveBeenCalled();
     expect(streamMessageSpeech.mock.calls.map(([markdown]) => markdown)).toEqual(['First', 'Second']);
   });
+
+  it('aborts the speech request when prepare fails', async () => {
+    let seen: AbortSignal | undefined;
+    const streamMessageSpeech = vi.fn<SpeechApi['streamMessageSpeech']>(
+      async (_markdown, signal) => {
+        seen = signal;
+        return new Promise<ReadableStream<Uint8Array>>(() => undefined);
+      },
+    );
+    render(
+      <SpeechPlaybackProvider
+        api={{ streamMessageSpeech }}
+        createPlayer={() => ({
+          prepare: vi.fn(async () => {
+            throw new Error('no audio context');
+          }),
+          play: vi.fn(async () => undefined),
+          stop: vi.fn(),
+        })}
+      >
+        <SpeakButtons />
+      </SpeechPlaybackProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'One' }));
+    await waitFor(() => expect(seen?.aborted).toBe(true));
+  });
 });
