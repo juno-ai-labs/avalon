@@ -129,6 +129,40 @@ describe("Firecrawl API client", () => {
     });
   });
 
+  it("asks Firecrawl for uncached branding and returns its favicon URL", async () => {
+    const fetcher = mockFetchResponse(jsonResponse({
+      success: true,
+      data: {
+        branding: { images: { favicon: "https://cdn.example.com/icon.svg" } },
+        metadata: {
+          sourceURL: "https://docs.example.com/",
+          url: "https://docs.example.com/introduction",
+          statusCode: 200,
+        },
+      },
+    }));
+    const client = new FirecrawlClient({
+      apiKey: "fc-test-key",
+      fetch: fetcher as typeof globalThis.fetch,
+    });
+
+    await expect(client.scrapeBranding("https://docs.example.com/"))
+      .resolves.toEqual({
+        faviconUrl: "https://cdn.example.com/icon.svg",
+        url: "https://docs.example.com/introduction",
+        statusCode: 200,
+      });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
+      url: "https://docs.example.com/",
+      formats: ["branding"],
+      onlyMainContent: false,
+      proxy: "auto",
+      timeout: 25_000,
+      maxAge: 0,
+      storeInCache: false,
+    });
+  });
+
   it("retries transient responses, including a non-JSON 5xx, within Retry-After", async () => {
     const sleep = vi.fn(async () => undefined);
     const fetcher = mockFetchResponse(jsonResponse({ success: true, data: { web: [] } }))

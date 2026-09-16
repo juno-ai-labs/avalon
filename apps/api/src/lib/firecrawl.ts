@@ -52,6 +52,16 @@ const scrapeResponseSchema = z.object({
   }),
 });
 
+const brandingResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    branding: z.object({
+      images: z.object({ favicon: z.string().nullish() }).nullish(),
+    }).nullish(),
+    metadata: scrapeMetadataSchema,
+  }),
+});
+
 const errorEnvelopeSchema = z.object({
   success: z.literal(false).optional(),
   error: z.string().optional(),
@@ -88,6 +98,12 @@ export interface FirecrawlScrapeOutput {
   creditsUsed?: number;
   proxyUsed?: string;
   cacheState?: string;
+}
+
+export interface FirecrawlBrandingOutput {
+  faviconUrl: string | null;
+  url: string | null;
+  statusCode: number;
 }
 
 export interface FirecrawlCallOptions {
@@ -207,6 +223,29 @@ export class FirecrawlClient {
       ...(metadata.creditsUsed == null ? {} : { creditsUsed: metadata.creditsUsed }),
       ...(metadata.proxyUsed == null ? {} : { proxyUsed: metadata.proxyUsed }),
       ...(metadata.cacheState == null ? {} : { cacheState: metadata.cacheState }),
+    };
+  }
+
+  /** Resolve a page's browser mark without returning or retaining its content. */
+  async scrapeBranding(url: string, options: FirecrawlCallOptions = {}): Promise<FirecrawlBrandingOutput> {
+    const response = await this.request(
+      "/scrape",
+      {
+        url,
+        formats: ["branding"],
+        onlyMainContent: false,
+        proxy: "auto",
+        timeout: SCRAPE_TIMEOUT_MS,
+        maxAge: 0,
+        storeInCache: false,
+      },
+      brandingResponseSchema,
+      options.signal,
+    );
+    return {
+      faviconUrl: response.data.branding?.images?.favicon ?? null,
+      url: response.data.metadata.url ?? response.data.metadata.sourceURL ?? null,
+      statusCode: response.data.metadata.statusCode ?? 0,
     };
   }
 

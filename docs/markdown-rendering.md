@@ -21,6 +21,8 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
+| `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
+| `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
@@ -233,6 +235,45 @@ navigable link. Every other link renders as an external one, with
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
 model's text cannot impersonate one.
+
+### Web links and favicons
+
+`remark-gfm` owns autolinking as well as tables and footnotes. A naked
+`https://…` or `http://…` URL therefore reaches the same anchor renderer as a
+named Markdown link; `www.…` is GFM's other literal form and receives an HTTP
+target. Rally does not rewrite domain-shaped prose such as `docs.example.com`
+without a scheme or `www.` because that is not a GFM autolink and guessing at
+prose would create navigable destinations the author did not write.
+
+When a message renders, every HTTP(S) anchor asks the authenticated regional API
+for the hostname's favicon. The renderer never contacts the destination itself.
+One `RallyApi` coalesces concurrent requests for the same normalized hostname.
+Successful and missing responses require browser revalidation, which keeps the
+30-day KV entry as the one cache clock instead of extending a nearly expired
+entry in Chromium. The renderer displays returned bytes through a short-lived
+object URL, marks the image presentational, and revokes the URL when the link
+unmounts. A missing or failed favicon changes nothing about the link. Glances
+remain inert text and synchronous still exports do not start asynchronous
+decoration.
+
+The API resolves a deep hostname and its registrable domain in parallel. The
+exact host returns as soon as it produces an icon, without waiting for the
+already-started primary-domain fallback; that fallback is registered with the
+request execution context so its provider response and KV write survive the
+early HTTP response. Intermediate labels are deliberately not scraped because
+the product contract asks for the authored subdomain and the primary-domain
+fallback. Each candidate asks the shared Firecrawl client
+for uncached `branding.images.favicon` metadata, accepts only a public HTTPS
+image URL, rejects image redirects, reads no more than Cloudflare KV's 25 MiB
+value boundary through a stream limiter without retaining a second chunk copy,
+and applies one team-selected 25-second deadline across branding discovery plus
+the image response headers and body. It validates the bytes as an image and
+stores either the icon or a confirmed miss in the dedicated platform-wide
+`FAVICON_CACHE`. A transient
+Firecrawl, network, rate-limit, or server failure is not negative-cached, and a
+failure for one candidate cannot discard a valid result from the other. Each KV
+entry expires after 30 days; the next read fetches and overwrites it, so no stale
+generation is retained.
 
 ### Citations
 
@@ -716,12 +757,20 @@ pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/citations.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-citations.test.tsx
 pnpm --filter @rally/contracts exec vitest run src/citations.test.ts
+pnpm --filter @rally/api exec vitest run test/favicon-service.test.ts test/firecrawl-web-tools.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/favicon-runtime.test.ts
 ```
 
 Both guards are `.node.test.ts` files: they read source off disk with `node:fs`,
 which `tsconfig.node.json` keeps out of the renderer program. They read from
 `process.cwd()`, so they must be run from the package directory —
 `--filter … exec` already does that.
+
+The favicon service's Node suite proves selection, caching, validation and
+failure policy against provider doubles. The workerd route test keeps Firecrawl
+and the image origin doubled but uses the real KV binding and execution context:
+it verifies binary metadata round-trips and that the primary-domain fallback is
+registered with `waitUntil` before the exact-host response returns.
 
 The traps, both of which have bitten:
 
@@ -769,6 +818,42 @@ renderer's supported `<br>` spellings become line breaks rather than literal
 tags, and ATX headings accept CommonMark's three-space indent. Citation and
 person-mention syntax inside code remains literal; prose references reduce to
 their visible labels.
+### 2026-09-15 — Web links carry the site's current mark
+
+**What changed:** GFM literal HTTP(S) URLs and named HTTP(S) Markdown links now
+share one favicon decoration. The authenticated API asks the existing Firecrawl
+client for the exact hostname's and registrable domain's branding metadata in
+parallel, prefers the exact-host result, validates the returned image, and
+caches icons and confirmed misses in a dedicated Cloudflare KV namespace for 30
+days before replacement. The desktop loads every message link and coalesces
+concurrent requests by hostname.
+
+**Why:** A naked URL and a named link are the same navigation affordance after
+parsing, but only the text distinguished one site from another. Fetching in the
+renderer would disclose every painted link to its destination and repeat the
+same work on every device; one server-owned cache gives the platform a reusable
+mark without widening renderer egress.
+
+**Considered and rejected:** A client-side favicon request, direct page scraping
+alongside the existing web provider, and caching by full URL. The first turns
+rendering into third-party tracking, the second creates a parallel scraping
+boundary, and the third stores duplicates even though favicons belong to hosts.
+Parent fallback is concurrent rather than serial so a missing deep-host icon
+adds no extra Firecrawl round trip before the primary-domain result can be used;
+intermediate labels are not queried because they are neither endpoint the
+product contract selected.
+
+**Consequences:** Favicon discovery requires the regional `FIRECRAWL_API_KEY`.
+Only public HTTPS image URLs returned by Firecrawl are fetched, and image
+redirects are rejected rather than followed. Each complete candidate lookup is
+bounded at 25 seconds, selected by the team to match Firecrawl's existing
+branding scrape budget and stay inside Cloudflare's 30-second `waitUntil`
+window; the same abort signal covers Firecrawl plus the image headers and body.
+Transient failures are not stored as 30-day misses, a missing mark is silent,
+browser responses revalidate against KV, and synchronous saved-message rendering
+intentionally omits this live decoration. The existing GFM autolinker remains
+the syntax authority and now has explicit regression tests for a naked URL and
+for loading every message link without viewport bookkeeping.
 
 ### 2026-09-10 — A published site gets its own mark
 

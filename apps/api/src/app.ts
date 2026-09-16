@@ -20,6 +20,7 @@ import { demoOperatorRoutes } from './routes/demo-operations';
 import { devRoutes } from "./routes/dev";
 import { digestRoutes } from "./routes/digest";
 import { featureFlagRoutes } from "./routes/feature-flags";
+import { faviconRoutes } from "./routes/favicons";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { projectRoutes } from "./routes/projects";
@@ -163,6 +164,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/conversations", conversationRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/resources", resourceRoutes);
+  protectedApi.route("/favicons", faviconRoutes);
   protectedApi.route("/search", searchRoutes);
   protectedApi.route("/speech", speechRoutes);
   protectedApi.route("/realtime", realtimeRoutes);
