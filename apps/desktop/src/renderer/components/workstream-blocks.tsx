@@ -1215,8 +1215,9 @@ export function MarkdownBody({
               href={href}
               identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
             >
-              {!still && <MarkdownLinkFavicon key={href} api={faviconApi} href={href} />}
-              {linkChildren}
+              {!still && httpHostname(href)
+                ? <><MarkdownLinkFavicon key={href} api={faviconApi} href={href} />{linkChildren}</>
+                : linkChildren}
             </CitationLink>
           )
       ),
