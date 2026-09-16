@@ -32,7 +32,7 @@ interface TranscriptOperationExecutor {
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
-  it("keeps participant appends off the internal transcript RPC boundary", async () => {
+  it("keeps transaction-local transcript mutations off the internal RPC boundary", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -55,6 +55,16 @@ describe("work-stream transcript on workerd SQLite", () => {
 
     expect(result.status).toBe(400);
     expect(JSON.parse(result.bodyJson)).toMatchObject({ error: "invalid_transcript_operation" });
+
+    const bindResult = await runInDurableObject(stub, (instance) =>
+      (instance as TranscriptOperationExecutor).executeTranscriptOperation({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        operation: "commitBindTransition",
+        args: [],
+      }));
+    expect(bindResult.status).toBe(400);
+    expect(JSON.parse(bindResult.bodyJson)).toMatchObject({ error: "invalid_transcript_operation" });
   });
 
   it("commits exact projections and authoritative assistant mentions before repairing an interrupted tool batch", async () => {
