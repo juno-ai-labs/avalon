@@ -1,4 +1,4 @@
-import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
+import { describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
 import { RegionSchema } from "@rally/contracts/regions";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import type { ConnectorInstallationManagement } from "./installation";
@@ -898,7 +898,7 @@ async function granolaOAuthCallbackStage<T>(
       throw new ConnectorError(
         "provider_error",
         "Granola returned an unexpected OAuth or MCP response",
-        { oauthStage, responseInvalid: true, responseIssues: describeZodIssues(error) },
+        { oauthStage, responseInvalid: true, responseIssues: codeShaped(describeZodIssues(error)) },
       );
     }
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
