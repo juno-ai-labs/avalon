@@ -1,24 +1,18 @@
-import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron';
+import type { MessageBoxOptions, MessageBoxReturnValue, RenderProcessGoneDetails } from 'electron';
 
-export type RendererExitReason =
-  | 'clean-exit'
-  | 'abnormal-exit'
-  | 'killed'
-  | 'crashed'
-  | 'oom'
-  | 'memory-eviction'
-  | 'launch-failed'
-  | 'integrity-failure';
+export type RendererExitReason = RenderProcessGoneDetails['reason'];
 
 interface RendererCrashRecoveryDependencies {
   readonly showMessageBox: (options: MessageBoxOptions) => Promise<MessageBoxReturnValue>;
+  readonly isQuitting: () => boolean;
   readonly relaunch: () => void;
   readonly quit: () => void;
-  readonly onDialogError?: (error: unknown) => void;
+  readonly onError: (error: unknown) => void;
 }
 
 const unexpectedExitReasons = new Set<RendererExitReason>([
   'abnormal-exit',
+  'killed',
   'crashed',
   'oom',
   'memory-eviction',
@@ -37,7 +31,7 @@ export class RendererCrashRecovery {
   constructor(private readonly dependencies: RendererCrashRecoveryDependencies) {}
 
   offer(reason: RendererExitReason): Promise<void> {
-    if (!unexpectedExitReasons.has(reason)) return Promise.resolve();
+    if (!unexpectedExitReasons.has(reason) || this.dependencies.isQuitting()) return Promise.resolve();
     if (this.pending) return this.pending;
 
     this.pending = this.showDialog().finally(() => {
@@ -56,15 +50,22 @@ export class RendererCrashRecovery {
         detail: 'Restart Rally to open a fresh window and continue.',
         buttons: ['Restart Rally', 'Quit Rally'],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 0,
         noLink: true,
       });
     } catch (error) {
-      this.dependencies.onDialogError?.(error);
+      this.dependencies.onError(error);
       return;
     }
 
-    if (result.response === 0) this.dependencies.relaunch();
+    if (this.dependencies.isQuitting()) return;
+    if (result.response === 0) {
+      try {
+        this.dependencies.relaunch();
+      } catch (error) {
+        this.dependencies.onError(error);
+      }
+    }
     this.dependencies.quit();
   }
 }

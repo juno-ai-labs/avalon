@@ -26,8 +26,14 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain('new RendererCrashRecovery({');
     expect(mainWindowCrashHandler).toBeDefined();
     expect(mainWindowCrashHandler).toContain('realtimeSocketBroker.closeOwner(mainWindowWebContentsId)');
-    expect(mainWindowCrashHandler).toContain(
-      'if (!applicationIsQuitting) void rendererCrashRecovery.offer(details.reason)',
+    expect(mainWindowCrashHandler).toContain('rendererReady = false');
+    expect(mainWindowCrashHandler).toContain('void rendererCrashRecovery.offer(details.reason)');
+    expect(source).toContain('isQuitting: () => applicationIsQuitting');
+    expect(source).toContain(
+      'parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()',
+    );
+    expect(source).toContain(
+      'availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow])',
     );
     expect(beforeQuitHandler).toBeDefined();
     expect(beforeQuitHandler).toContain('applicationIsQuitting = true');
@@ -92,7 +98,6 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain('BrowserWindow.getFocusedWindow()');
     expect(source).toContain('applicationLifecycle(state)');
     expect(observer).toContain('applicationLifecycleTelemetry.observeFocused(foregrounded)');
-    expect(observer).toContain('!window.webContents.isCrashed()');
     expect(observer).toContain("window.webContents.send('application:foreground-changed', foregrounded)");
     expect(source).toContain('if (startsHidden) observeApplicationForeground(false)');
     expect(source).toContain('observeApplicationForeground(true)');

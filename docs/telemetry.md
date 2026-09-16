@@ -14,7 +14,7 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/telemetry-*.ts` | Route, random identity epochs, local event spool, typed reporter, breadcrumbs, launch markers, and preference-independent reliability collection. |
 | `apps/desktop/src/main/application-open-observer.ts` | Closed cold-start attribution and activation coalescing so explicit deep-link/menu sources outrank Electron's generic Dock/reopen callback. |
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
-| `apps/desktop/src/main/renderer-crash-recovery.ts` | Native primary-window renderer-crash notice and application relaunch choice. |
+| `apps/desktop/src/main/renderer-crash-recovery.ts`, `apps/desktop/src/main/renderer-window-availability.ts` | Native primary-window renderer-crash notice and application relaunch choice, plus the shared live-renderer filter for main-process broadcasts. |
 | `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | Device-only macOS Unified Logging for the closed renderer performance projection; it is not an upload path. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
@@ -358,11 +358,23 @@ its renderer exits unexpectedly, Rally shows a native dialog with **Restart
 Rally** and **Quit Rally** choices. The dialog does not depend on React, the
 preload bridge, or the failed renderer. Restart schedules Electron's relaunch
 before taking the ordinary quit path, so the existing telemetry quit barrier and
-synchronous cleanup still run. Clean exits, deliberately killed renderers, and
-renderer exits observed after application shutdown begins do not show the
-dialog. Concurrent unexpected-exit signals share the one dialog already open.
-Application-focus broadcasts also skip a crashed renderer, so raising the
-native dialog cannot turn ordinary focus telemetry into follow-on frame errors.
+synchronous cleanup still run. A dialog is parented only when the main window is
+already visible; an exit during startup uses an application-modal dialog so the
+recovery choice cannot be hidden behind a window that never reached its first
+paint. Clean exits and renderer exits observed after application shutdown begins
+do not show the dialog. A renderer killed outside Rally's shutdown path is an
+unexpected disappearance and receives the same recovery choice. Concurrent
+unexpected-exit signals share the one dialog already open. Every shared-window
+broadcast excludes destroyed or crashed renderer contents, so raising the native
+dialog—or receiving a concurrent session, settings, theme, or icon change—cannot
+turn the original crash into follow-on frame errors. Secondary Settings and
+Sidekicks windows remain independently closable and reopenable; only the primary
+window owns whole-application recovery.
+
+This use of a native dialog is intentionally narrower than the rendered deep-link
+failure window: deep-link errors still have a live renderer and need consistent
+cross-platform layout, while renderer-crash recovery must work when no renderer
+exists to draw that surface.
 
 This live recovery complements Crashpad rather than replacing it: the native
 report is still rotated and uploaded on a later launch, while the dialog only
@@ -483,7 +495,7 @@ pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/t
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts
 pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
-pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts
 pnpm --filter @rally/desktop test:release
 pnpm --filter @rally/desktop test:crashpad
 pnpm --filter @rally/site test
@@ -1852,10 +1864,14 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 The primary window now answers an unexpected renderer exit with a native,
 main-process-owned restart-or-quit dialog. Previously the process-health observer
 recorded the crash and closed the window's realtime sockets but left the
-surviving `BrowserWindow` as a blank background. Reloading inside that renderer
-was rejected because the renderer no longer exists; a native dialog remains
-available at exactly that failure boundary and relaunches through Rally's normal
-quit cleanup.
+surviving `BrowserWindow` as a blank background, as observed when Rally 1.376.0's
+renderer exited with `SIGTRAP`. Reloading inside that renderer was rejected
+because the renderer no longer exists; a native dialog remains available at
+exactly that failure boundary and relaunches through Rally's normal quit cleanup.
+Future changes must preserve startup visibility (the recovery choice cannot be
+parented to a window that never painted), keep crashed renderer contents out of
+all shared broadcasts, and invalidate renderer readiness before queuing deep
+links.
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 

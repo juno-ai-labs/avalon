@@ -116,6 +116,7 @@ import { applicationMenuTemplate } from './application-menu';
 import { shareText, showDefinitionForSelection } from './text-services';
 import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import { RendererCrashRecovery } from './renderer-crash-recovery';
+import { availableRendererWindows } from './renderer-window-availability';
 import {
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
@@ -460,13 +461,14 @@ let applicationIsQuitting = false;
 const rendererCrashRecovery = new RendererCrashRecovery({
   showMessageBox: (options) => {
     const parent = mainWindow;
-    return parent && !parent.isDestroyed()
+    return parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
       ? dialog.showMessageBox(parent, options)
       : dialog.showMessageBox(options);
   },
+  isQuitting: () => applicationIsQuitting,
   relaunch: () => app.relaunch(),
   quit: () => app.quit(),
-  onDialogError: (error) => logError('rally', 'could not show renderer crash recovery', error),
+  onError: (error) => logError('rally', 'renderer crash recovery failed', error),
 });
 let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
@@ -562,9 +564,7 @@ function observeApplicationForeground(foregrounded: boolean): void {
   applicationLifecycleTelemetry.observeFocused(foregrounded);
   if (!changed) return;
   for (const window of rallyWindows()) {
-    if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) {
-      window.webContents.send('application:foreground-changed', foregrounded);
-    }
+    window.webContents.send('application:foreground-changed', foregrounded);
   }
 }
 let nativeCrashUploader: NativeCrashUploader | null = null;
@@ -687,8 +687,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return [mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow]
-    .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
+  return availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow]);
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -4264,7 +4263,8 @@ async function createMainWindow(): Promise<void> {
   installWindowDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
-    if (!applicationIsQuitting) void rendererCrashRecovery.offer(details.reason);
+    rendererReady = false;
+    void rendererCrashRecovery.offer(details.reason);
   });
   mainWindow.once('ready-to-show', () => {
     mainWindowReadyToShow = true;
