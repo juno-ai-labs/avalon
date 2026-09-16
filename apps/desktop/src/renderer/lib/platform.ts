@@ -451,6 +451,12 @@ const browserBridge: RallyDesktopBridge = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async showDefinitionForSelection() {
+    // Dictionary is a macOS main-process affordance; a tab has none.
+  },
+  async shareText() {
+    // The system share sheet is a macOS main-process affordance; a tab has none.
+  },
   async setConversationDetailsOpen() {
     // A browser tab cannot resize its own top-level window. The attached rail
     // still opens inside the viewport, which is the browser-safe fallback.
