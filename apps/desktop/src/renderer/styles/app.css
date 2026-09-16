@@ -4844,6 +4844,23 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   padding: 10px 12px;
 }
 .dialog-callout > p { margin: 0; }
+/* Manage events: four groups — status, the actions each beside its caption,
+   the verdict, Advanced — with more space between groups than within one, so
+   a caption reads as its button's rather than as the next line of prose. */
+.installation-panel { display: grid; gap: 20px; }
+.installation-status { display: grid; gap: 4px; }
+.installation-status h3 { font-size: var(--av-cmp-control-font-size); font-weight: 600; margin: 0; }
+.installation-status p { margin: 0; }
+.installation-status-meta { color: var(--av-sys-color-text-muted); }
+.installation-actions { display: grid; gap: 10px; }
+.installation-action { align-items: center; display: grid; gap: 12px; grid-template-columns: auto minmax(0, 1fr); }
+.installation-action > p { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; }
+.installation-advanced { border-top: 1px solid var(--av-sys-color-border-subtle); display: grid; gap: 12px; padding-top: 16px; }
+.installation-advanced > section { display: grid; gap: 12px; justify-items: start; }
+.installation-advanced > section > details,
+.installation-advanced > section > p { justify-self: stretch; }
+.installation-advanced > section > p { margin: 0; }
+.installation-panel > .connection-test-outcome { margin-top: 0; }
 /* The Test verdict in Manage events: the outcome's colour on the box, the icon
    and the heading, with the provider's sentence beneath in the body colour. */
 .connection-test-outcome {
