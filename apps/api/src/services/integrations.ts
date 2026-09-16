@@ -1787,7 +1787,7 @@ function createAvalonAutomationsPlugin(
   const plugin = createAutomationsPlugin({
     ...(input.parentKind === "workstream" ? { attachmentPort: {
       setAttached: async (sidekickId: string, attached: boolean) => new WorkstreamService(env, await attachmentAuth())
-        .setSidekickRecommendation(input.parentId, sidekickId, attached, input.substreamId ?? "0"),
+        .setSidekickRecommendation(input.parentId, sidekickId, attached, input.substreamId ?? "0", input.backgroundAgent ? input : undefined),
     } } : {}),
     catalog,
     inspectedPluginIds,

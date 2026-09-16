@@ -8,7 +8,11 @@ import { desktopBridge } from '../lib/platform';
 import { Button, InlineError, Modal, Tip } from './primitives';
 
 /** Recommends workspace knowledge to every conversation in this workstream. */
-export function SidekickPicker({ workstreamId, participantIds }: { workstreamId: string; participantIds: string[] }): React.JSX.Element | null {
+export function SidekickPicker(props: { workstreamId: string; participantIds: string[] }): React.JSX.Element {
+  return <WorkstreamSidekickPicker key={props.workstreamId} {...props} />;
+}
+
+function WorkstreamSidekickPicker({ workstreamId, participantIds }: { workstreamId: string; participantIds: string[] }): React.JSX.Element | null {
   const { api, session } = useAppSession();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -16,7 +20,8 @@ export function SidekickPicker({ workstreamId, participantIds }: { workstreamId:
   const directory = useQuery({ queryKey: ['sidekicks-library'], queryFn: ({ signal }) => api!.getSidekicks(signal), enabled: Boolean(api && open) });
   const attach = useMutation({
     mutationFn: (sidekickId: string) => api!.setRecommendedSidekick(workstreamId, sidekickId, true),
-    onSuccess: (items) => {
+    onSuccess: async (items) => {
+      await queryClient.cancelQueries({ queryKey: ['recommended-sidekicks', workstreamId], exact: true });
       queryClient.setQueryData(['recommended-sidekicks', workstreamId], items);
       setOpen(false);
     },
