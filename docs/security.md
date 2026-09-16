@@ -127,9 +127,10 @@ same as desktop.
   public HTTPS favicon URL, rejects image redirects, bounds the body read at
   Cloudflare KV's value limit without a second retained chunk copy, applies a
   25-second deadline across branding discovery and the origin response,
-  validates image bytes, and keeps only a 30-day platform-wide KV entry. The renderer
-  requests only for anchors that enter the viewport, receives the cached bytes,
-  and exposes them through a revocable local object URL.
+  validates image bytes, and keeps only a 30-day platform-wide KV entry. The
+  renderer requests only for non-empty anchors with positive painted area in
+  the viewport, receives the cached bytes, and exposes them through a revocable
+  local object URL.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
@@ -971,8 +972,9 @@ duplicates the server's existing public-web acquisition boundary.
 Redirects are treated as absent for that host, the separately resolved primary
 domain may still supply its own mark, and detached still exports do not fetch
 live decoration. Concurrent desktop requests for one normalized hostname share
-one API operation, off-screen anchors start none, and browser responses
-revalidate so the KV entry remains the one 30-day cache clock. The team selected
+one API operation, off-screen, empty, and zero-area anchors start none, and
+browser responses revalidate so the KV entry remains the one 30-day cache
+clock. The team selected
 25 seconds to match Firecrawl's branding scrape budget and remain within
 Cloudflare's 30-second `waitUntil` window; one signal spans Firecrawl discovery,
 image headers, and the body. A deadline failure is transient and therefore never

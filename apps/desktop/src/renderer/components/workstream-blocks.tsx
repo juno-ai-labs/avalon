@@ -1048,6 +1048,12 @@ function httpHostname(href: string | undefined): string | null {
   }
 }
 
+function hasLinkContent(children: React.ReactNode): boolean {
+  return Children.toArray(children).some((child) => (
+    typeof child === 'string' ? child.trim().length > 0 : true
+  ));
+}
+
 function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string | undefined }): React.JSX.Element | null {
   const hostname = httpHostname(href);
   const sentinel = useRef<HTMLSpanElement | null>(null);
@@ -1061,7 +1067,11 @@ function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string
       return;
     }
     const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
+      if (!entries.some((entry) => (
+        entry.isIntersecting
+        && entry.intersectionRect.width > 0
+        && entry.intersectionRect.height > 0
+      ))) return;
       setVisible(true);
       observer.disconnect();
     });
@@ -1234,7 +1244,7 @@ export function MarkdownBody({
               href={href}
               identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
             >
-              {!still && httpHostname(href)
+              {!still && httpHostname(href) && hasLinkContent(linkChildren)
                 ? <><MarkdownLinkFavicon key={href} api={faviconApi} href={href} />{linkChildren}</>
                 : linkChildren}
             </CitationLink>
