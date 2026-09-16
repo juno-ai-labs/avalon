@@ -14,6 +14,27 @@ describe('Electron telemetry wiring', () => {
     expect(handler).not.toContain('preloadPath');
   });
 
+  it('offers native recovery when the primary renderer exits unexpectedly', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+    const mainWindowCrashHandler = source.match(
+      /mainWindow\.webContents\.on\('render-process-gone',[\s\S]*?\n {2}\}\);/u,
+    )?.[0];
+    const beforeQuitHandler = source.match(
+      /app\.on\('before-quit',[\s\S]*?\n\}\);/u,
+    )?.[0];
+
+    expect(source).toContain('new RendererCrashRecovery({');
+    expect(mainWindowCrashHandler).toBeDefined();
+    expect(mainWindowCrashHandler).toContain('realtimeSocketBroker.closeOwner(mainWindowWebContentsId)');
+    expect(mainWindowCrashHandler).toContain(
+      'if (!applicationIsQuitting) void rendererCrashRecovery.offer(details.reason)',
+    );
+    expect(beforeQuitHandler).toBeDefined();
+    expect(beforeQuitHandler).toContain('applicationIsQuitting = true');
+    expect(beforeQuitHandler!.indexOf('applicationIsQuitting = true'))
+      .toBeLessThan(beforeQuitHandler!.indexOf('telemetryQuitBarrier.hold'));
+  });
+
   it('applies breadcrumb teardown to Product analytics changes rather than Debug changes', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
     const debugController = source.match(
@@ -71,6 +92,7 @@ describe('Electron telemetry wiring', () => {
     expect(source).toContain('BrowserWindow.getFocusedWindow()');
     expect(source).toContain('applicationLifecycle(state)');
     expect(observer).toContain('applicationLifecycleTelemetry.observeFocused(foregrounded)');
+    expect(observer).toContain('!window.webContents.isCrashed()');
     expect(observer).toContain("window.webContents.send('application:foreground-changed', foregrounded)");
     expect(source).toContain('if (startsHidden) observeApplicationForeground(false)');
     expect(source).toContain('observeApplicationForeground(true)');
