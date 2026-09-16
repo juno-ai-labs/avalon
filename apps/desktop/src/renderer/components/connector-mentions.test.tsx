@@ -37,6 +37,7 @@ vi.mock('../lib/app-session', () => ({
 }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ openExternal: mocks.openExternal }),
+  desktopServicesAvailable: () => false,
 }));
 
 beforeEach(() => {

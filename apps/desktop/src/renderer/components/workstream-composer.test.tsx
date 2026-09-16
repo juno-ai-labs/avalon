@@ -22,6 +22,7 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: () => () => undefined,
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 beforeEach(() => {

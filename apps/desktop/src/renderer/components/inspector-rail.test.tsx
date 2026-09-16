@@ -36,6 +36,7 @@ vi.mock('../lib/platform', () => ({
       return () => applicationSettings.listeners.delete(listener);
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 const workstream: WorkstreamDetail = {
