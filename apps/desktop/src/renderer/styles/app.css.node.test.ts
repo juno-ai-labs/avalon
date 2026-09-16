@@ -45,6 +45,8 @@ describe('connections table', () => {
   it('colours the Test verdict by its outcome', () => {
     expect(rule('.connection-test-outcome.is-passed')).toContain('var(--av-sys-color-success-');
     expect(rule('.connection-test-outcome.is-failed')).toContain('var(--av-sys-color-danger-');
+    // A request that never ran the test is neither verdict.
+    expect(rule('.connection-test-outcome.is-unavailable')).toContain('var(--av-sys-color-warning-');
   });
 });
 

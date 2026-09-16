@@ -64,12 +64,16 @@ advertises automatic signing-secret cutover. The desktop shows local manual
 guidance without changing installation state or verification material.
 
 Disconnect disables the ordinary connection and clears its credential access in
-the same transaction that captures a separate encrypted cleanup snapshot. The
-connections list then shows the connection only while Rally still owes its
-provider a cleanup it can perform — the installation waiting on cleanup with
-its credential retained and a recorded provider identity — with Manage events
-still reachable until the removal settles; a disconnected connection with
-nothing left to remove leaves the list. Only a
+the same transaction that captures a separate encrypted cleanup snapshot. A
+registration with no provider identity that was never dispatched — `pending`,
+or `failed` because the provider refused it or nothing was sent — settles as
+removed in that transaction; one whose create outcome is unknown waits for the
+administrator. The connections list then shows the disconnected connection
+only while its installation is unsettled: not yet `disconnected`, and its
+cleanup credential not forgotten. Manage events is reachable only from the row,
+so the row stays for a removal still queued, a webhook only the administrator
+can find, or a disconnect that never reached the object, and leaves once the
+removal settles or the administrator forgets the cleanup credential. Only a
 claimed removal step for an exact recorded provider ID can obtain that snapshot.
 It cannot refresh tokens, discover tools, create, update, or reactivate a connection.
 Generation and dispatched-intent checks precede provider I/O and settlement.
@@ -320,6 +324,44 @@ and actual operator execution remain outside this implementation task.
 Only the reviewed version present in the deployed provider declaration is accepted.
 Unknown provider outcomes and not-yet-adopted Granola connections report customer
 action. An administrator's explicit Test adopts an existing Granola connection.
+
+### 2026-09-16 — A removed connection leaves the list once its installation is settled
+
+**What changed:** `GET /connections` no longer returns a disabled connection
+whose installation is settled — `disconnected`, or its cleanup credential
+forgotten — or that has no installation at all. A disabled row whose
+installation is still unsettled stays, so Manage events stays reachable. The
+object answers the list's question in one `connectorInstallations` hop for
+every disabled candidate, and a read that fails keeps every candidate rather
+than failing the list. Disconnect now settles a registration that has no
+provider identity and was never dispatched — `pending`, or `failed` — as
+removed instead of leaving it waiting for an inspection nobody can perform.
+Manage events offers Retry cleanup only for a verified provider identity, the
+one kind the cleanup runner will act on.
+
+**Why:** A removed connection sat in the table for good, badge reading
+"disabled". The first cut of this rule kept a row only while Rally itself could
+remove the webhook, and dropped the rows where the administrator has to act —
+a create whose outcome was never learned may be live at the provider under an
+identity Rally does not hold, and the notice written for exactly that case was
+reachable only from the row. Keying on the installation being unsettled keeps
+those, and also keeps a row whose disconnect never reached the object, which
+`disable` marks disabled regardless; hiding that one would leave live
+registrations behind an invisible connection.
+
+**Considered and rejected:** Keeping a forgotten-cleanup row so its provider
+ids stay readable. Forgetting is the one explicit way to say "I have dealt with
+this", and a row that can never leave is the complaint this change answers; the
+control's caption now says to copy the ids first. Also rejected: a read per
+disabled row, which grows with every reconnect a workspace has ever made.
+
+**Consequences:** A row that lingers after removal means the installation is
+not settled: a removal still queued or refused, a webhook only the
+administrator can remove, or a disconnect that did not complete. Reading the
+installation list is the only new object method; it returns what exists and
+omits what does not.
+
+Shipped in the pull request for this change.
 
 ### 2026-09-15 — A create the provider refused is a failed step, not an unknown one
 
