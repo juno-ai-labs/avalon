@@ -10,6 +10,7 @@ import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LocalCacheScopeProvider } from './local-cache-scope';
+import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 
 import type * as TelemetryModule from './telemetry';
 import { cancelWorkstreamFeedOpen, markWorkstreamFeedOpenStarted } from './telemetry';
@@ -356,6 +357,83 @@ describe('useWorkstreamControlSocket', () => {
     act(() => second.message(metadata(2, { backgroundAgentCount: 1 })));
     expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toBe(1);
     cancelWorkstreamFeedOpen(workstreamId, 100);
+  });
+
+  it('times out a stranded reconnect ticket and starts another control attempt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const ticket = {
+      url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
+      ticket: 'control-ticket',
+      protocols: socketTicketProtocols('control-ticket'),
+    };
+    let requestCount = 0;
+    const getWorkstreamControlSocketTicket = vi.fn(() => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        return requestSocketTicket(() => new Promise<typeof ticket>(() => undefined));
+      }
+      return Promise.resolve(ticket);
+    });
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(queryClient) },
+    );
+    await flushPromises();
+    act(() => FakeWebSocket.instances[0]!.open());
+    act(() => FakeWebSocket.instances[0]!.close(1012));
+
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS));
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'workstream_control',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'one',
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('aborts an in-flight control ticket when the desktop goes offline', async () => {
+    let online = true;
+    vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
+    let ticketSignal: AbortSignal | undefined;
+    const getWorkstreamControlSocketTicket = vi.fn((
+      _id: string,
+      _requestId?: string,
+      signal?: AbortSignal,
+    ) => {
+      ticketSignal = signal;
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(new QueryClient()) },
+    );
+    await flushPromises();
+    expect(ticketSignal?.aborted).toBe(false);
+
+    online = false;
+    act(() => window.dispatchEvent(new Event('offline')));
+    await flushPromises();
+
+    expect(ticketSignal?.aborted).toBe(true);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'workstream_control',
+      state: 'stopped',
+      cause: 'offline',
+      attempts: 'zero',
+    });
   });
 
   it('reports its own connections under the control socket rather than the feed', async () => {
