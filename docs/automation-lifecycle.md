@@ -758,13 +758,17 @@ empty state on whether any Sidekick record existed made a draft count as though
 it occupied that slot even though drafts are deliberately filtered from the
 strip. The result was neither a shortcut nor an action. The slot's own occupancy
 is the smaller and more legible authority for whether to show its empty state.
+The same rule deliberately applies to a paused-only workspace: the tile names
+the empty active-shortcut slot, not the absence of every Sidekick, and a blank
+slot was judged less useful than keeping the library entry point available.
 
 **Consequences:** The tile remains absent while the directory is loading and
 disappears as soon as one active standalone Sidekick can occupy the strip.
-`/sidekicks/new` still creates a new draft on each arrival; keeping this entry
-point visible is an intentional product choice, not idempotency for that route.
-This reverses the stricter record-existence rule documented by the 2026-09-10
-**The empty strip makes the first Sidekick** entry below.
+When a standalone draft already exists, the tile resumes the most recently
+updated draft rather than routing through `/sidekicks/new` and multiplying
+abandoned drafts. With only paused or workstream-owned Sidekicks it still opens
+`/sidekicks/new`. This reverses the stricter record-existence rule documented by
+the 2026-09-10 **The empty strip makes the first Sidekick** entry below.
 
 ### 2026-09-15 — A rule can name Fireflies
 
