@@ -30,7 +30,7 @@
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { isMarkdownCode, mapMarkdownProse, markdownLineKinds } from "./markdown-code";
+import { isMarkdownCode, markdownLineKinds } from "./markdown-code";
 
 /** A citation target, once the scheme allowlist has decided what it is. */
 export type CitationTarget =
@@ -365,6 +365,10 @@ const REFERENCE_LINK_DEFINITION = /^ {0,3}\[((?:\\.|[^\]\\])+)\]\s*:\s*(?:<[^>\n
 const FULL_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\]\[([^\]]*)\]/gu;
 /** Shortcut reference links: `[label]` and `![alt]`, when a matching definition exists. */
 const SHORTCUT_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\](?![[(])/gu;
+/** A title continued onto the line after a reference-link definition. */
+const REFERENCE_LINK_TITLE = /^ {0,3}(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/u;
+/** Blockquote containers removed only when classifying or presenting their contents. */
+const BLOCKQUOTE_PREFIX = /^(?: {0,3}>[ \t]?)+/u;
 /**
  * An inline code span, as every read in this module has to agree one looks.
  *
@@ -434,7 +438,7 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
   // Consulted only where no definition is open: inside one, an indented line is
   // the definition's own second block, which is what disqualifies it as a
   // citation — not an indented code block at the document's level.
-  const code = markdownLineKinds(lines).map(isMarkdownCode);
+  const code = notificationMarkdownLineKinds(lines).map(isMarkdownCode);
 
   /** The identifier whose definition the following indented lines continue. */
   let open: string | null = null;
@@ -647,12 +651,12 @@ export function rewriteMessageAsPlainText(
 function markdownFormattingAsPlainText(markdown: string): string {
   const lines: string[] = [];
   const source = rewriteReferenceLinksAsPlainText(markdown).replace(/\r\n/gu, "\n").split("\n");
-  const kinds = markdownLineKinds(source);
+  const kinds = notificationMarkdownLineKinds(source);
   for (const [index, raw] of source.entries()) {
     const kind = kinds[index]!;
     if (kind === "fence-open" || kind === "fence-close") continue;
     if (kind === "fence-content") {
-      lines.push(`    ${raw.trimEnd()}`);
+      lines.push(`    ${raw.replace(BLOCKQUOTE_PREFIX, "").trimEnd()}`);
       continue;
     }
     if (kind === "indented-code") {
@@ -669,7 +673,7 @@ function markdownFormattingAsPlainText(markdown: string): string {
     if (/^\s{0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
       continue;
     }
-    line = line.replace(/^\s{0,3}(?:>\s*)+/u, "");
+    line = line.replace(BLOCKQUOTE_PREFIX, "");
     const heading = /^(#{1,6})\s+(.*?)(?:\s+#+)?$/u.exec(line);
     if (heading) {
       lines.push(stripInlineMarkdown(heading[2]!));
@@ -699,7 +703,7 @@ function markdownFormattingAsPlainText(markdown: string): string {
  */
 function rewriteReferenceLinksAsPlainText(markdown: string): string {
   const source = markdown.replace(/\r\n/gu, "\n").split("\n");
-  const kinds = markdownLineKinds(source);
+  const kinds = notificationMarkdownLineKinds(source);
   const definitions = new Set<string>();
   const definitionLines = new Set<number>();
   for (const [index, line] of source.entries()) {
@@ -708,6 +712,7 @@ function rewriteReferenceLinksAsPlainText(markdown: string): string {
     if (!definition || definition[1]!.startsWith("^")) continue;
     definitions.add(normalizeReferenceIdentifier(definition[1]!));
     definitionLines.add(index);
+    if (REFERENCE_LINK_TITLE.test(source[index + 1] ?? "")) definitionLines.add(index + 1);
   }
   if (definitions.size === 0) return markdown;
   const withoutDefinitions = source
@@ -742,6 +747,7 @@ function stripInlineMarkdown(value: string): string {
   });
   return escaped
     .replace(INLINE_LINK, (match, label: string, href: string) => (match.startsWith("!") ? label || href : label))
+    .replace(/<br\s*\/?>/giu, "\n")
     .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/giu, "$1")
     .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/gu, "$1")
     .replace(/(^|[^\p{L}\p{N}])__(?=\S)([\s\S]*?\S)__(?=$|[^\p{L}\p{N}])/gu, "$1$2")
@@ -770,7 +776,7 @@ function sourceLine(label: string, target: CitationTarget, plain: boolean): stri
 /** The definitions themselves, now that their content lives in the source list. */
 function stripFootnoteDefinitions(markdown: string): string {
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
-  const code = markdownLineKinds(lines).map(isMarkdownCode);
+  const code = notificationMarkdownLineKinds(lines).map(isMarkdownCode);
   const kept: string[] = [];
   let dropping = false;
   for (const [index, line] of lines.entries()) {
@@ -837,7 +843,10 @@ const SPAN_PLACEHOLDER = "\u0000";
  * choosing back in.
  */
 function mapOutsideCode(markdown: string, rewrite: (segment: string) => string): string {
-  return mapMarkdownProse(markdown.replace(/\r\n/gu, "\n"), (prose) => prose.split("\n").map((line) => {
+  const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
+  const kinds = notificationMarkdownLineKinds(lines);
+  return lines.map((line, index) => {
+    if (isMarkdownCode(kinds[index]!)) return line;
     const spans: string[] = [];
     const parked = replaceInlineCodeSpans(line.split(SPAN_PLACEHOLDER).join(""), (span) => {
       spans.push(span);
@@ -847,5 +856,16 @@ function mapOutsideCode(markdown: string, rewrite: (segment: string) => string):
       new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
       (_match, index: string) => spans[Number(index)] ?? "",
     );
-  }).join("\n"));
+  }).join("\n");
+}
+
+/**
+ * The shared code classifier applied after removing blockquote containers.
+ *
+ * A fenced example remains code when it is quoted. Keeping this adaptation at
+ * the notification boundary avoids changing structural consumers that need the
+ * raw container markers to build their own rendered block tree.
+ */
+function notificationMarkdownLineKinds(lines: readonly string[]) {
+  return markdownLineKinds(lines.map((line) => line.replace(BLOCKQUOTE_PREFIX, "")));
 }

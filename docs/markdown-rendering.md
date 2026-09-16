@@ -758,7 +758,10 @@ code spans, and inline or reference-style link destinations does not reach
 these plain-text surfaces. Escaped punctuation and intraword underscores remain
 literal instead of being mistaken for formatting.
 Lists retain their source depth. Fenced, indented, and variable-backtick inline
-code retain literal content while their delimiters are removed. Citation and
+code retain literal content while their delimiters are removed, including a
+fence nested in a blockquote. Reference definitions are removed with a title
+continued onto the following line, and the renderer's supported `<br>` spellings
+become line breaks rather than literal tags. Citation and
 person-mention syntax inside code remains literal; prose references reduce to
 their visible labels.
 

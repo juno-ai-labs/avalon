@@ -216,6 +216,19 @@ describe("person mention hrefs", () => {
       .toBe("Leave an unmatched ` delimiter alone.");
   });
 
+  it("keeps Markdown literal in a fenced block nested inside a blockquote", () => {
+    const mention = `[@Ada](person://${id})`;
+    expect(rewriteMessageAsPlainText([
+      "> ```md",
+      `> ${mention}`,
+      "> **literal** [plan](resource://plan)",
+      "> ```",
+    ].join("\n"), { sources: "none" })).toBe([
+      `    ${mention}`,
+      "    **literal** [plan](resource://plan)",
+    ].join("\n"));
+  });
+
   it("reduces nested emphasis and identifiers without leaking delimiters", () => {
     expect(rewriteMessageAsPlainText(
       "Set **MAX_RETRIES**, **do_this**, _max_retries_, and **bold with *nested* inside**.",
@@ -253,6 +266,22 @@ describe("person mention hrefs", () => {
       "    [guide]: https://example.com/literal",
       "    [the docs][guide]",
     ].join("\n"));
+  });
+
+  it("removes a reference definition title continued onto the next line", () => {
+    expect(rewriteMessageAsPlainText([
+      "Read [docs][guide].",
+      "",
+      "[guide]: /docs",
+      "  \"Documentation\"",
+    ].join("\n"), { sources: "none" })).toBe("Read docs.");
+  });
+
+  it("turns the renderer's supported break tags into line breaks outside code", () => {
+    expect(rewriteMessageAsPlainText(
+      "First<br>Second<br/>Third<br />Fourth and `<br/>`.",
+      { sources: "none" },
+    )).toBe("First\nSecond\nThird\nFourth and <br/>.");
   });
 
   it("preserves list depth and removes setext and thematic-break markup", () => {
