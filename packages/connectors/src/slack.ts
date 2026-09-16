@@ -1405,7 +1405,13 @@ async function slackApiResponse<M extends SlackWebApiMethod>(
   }
   const response = definition.response.safeParse(payload);
   if (!response.success) {
-    throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, response.error.flatten());
+    // Every reason helper on the API side reads `responseIssues` before
+    // falling back to `provider_error`; without it a malformed body reached
+    // the ingress job and the connection row as the word `provider_error`.
+    throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, {
+      ...response.error.flatten(),
+      responseIssues: codeShaped(describeZodIssues(response.error)),
+    });
   }
   const rawScopes = responseWithMetadata.headers.get("x-oauth-scopes");
   return {

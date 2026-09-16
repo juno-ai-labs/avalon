@@ -429,6 +429,22 @@ describe("work-stream description refresh", () => {
     expect(prompts).toHaveLength(0);
   });
 
+  it("names the field a model's off-schema answer failed, rather than calling the model unavailable", async () => {
+    // The model was reached and answered; its JSON did not match the decision
+    // schema. `model_unavailable` sent an operator to look at the provider.
+    const { objectStore, env } = fixture({
+      proposal: { decision: "rewrite", description: 42, confidence: 0.95, reasoning: "Outgrown." } as unknown as Proposal,
+    });
+    addQualifyingConversation(objectStore);
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "failed", code: "description_decision_invalid:description:invalid_type" });
+    expect(refreshRow(objectStore)).toMatchObject({
+      decision: "failed",
+      rejection_code: "description_decision_invalid:description:invalid_type",
+    });
+  });
+
   it("spends the window rather than retrying a model that failed", async () => {
     const { objectStore, env } = fixture();
     addQualifyingConversation(objectStore);

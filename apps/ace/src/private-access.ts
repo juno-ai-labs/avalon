@@ -1,3 +1,4 @@
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { regional, relayRegionalError } from './regional-api';
 import { ACCESS_PAGE_SIZE, AccessPageQuerySchema, AccessRecoverySchema, AccessRecoveryResultSchema, DownloadGrantInputSchema } from '@rally/contracts/private-access';
 import { downloadGrantUrl, issueDownloadGrant, listAccessRequests, listDownloadGrants, revokeDownloadGrant } from '@rally/db/private-access';
@@ -26,7 +27,7 @@ accessRoutes.get('/downloads', async (c) => {
 });
 accessRoutes.post('/downloads/:id/revoke', async (c) => {
   const id = z.string().uuid().safeParse(c.req.param('id'));
-  if (!id.success) return c.json({ error: 'invalid_grant' }, 400);
+  if (!id.success) return c.json({ error: 'invalid_grant', message: `The grant id was refused (${zodDiagnosticCode(id.error, 'grant_id')})` }, 400);
   if (!await revokeDownloadGrant(c.env.GLOBAL_DB, id.data)) return c.json({ error: 'not_found' }, 404);
   console.log(JSON.stringify({ event: 'ace_download_grant_revoked', actor: c.get('principal').subject, grantId: id.data }));
   return c.json({ revoked: true });
@@ -34,7 +35,10 @@ accessRoutes.post('/downloads/:id/revoke', async (c) => {
 accessRoutes.post('/requests/:id/recover', async (c) => {
   const id = z.string().uuid().safeParse(c.req.param('id'));
   const input = AccessRecoverySchema.safeParse(await c.req.json().catch(() => null));
-  if (!id.success || !input.success) return c.json({ error: 'invalid_recovery' }, 400);
+  if (!id.success || !input.success) {
+    const refused = !id.success ? zodDiagnosticCode(id.error, 'request_id') : zodDiagnosticCode(input.error, 'recovery');
+    return c.json({ error: 'invalid_recovery', message: `The recovery request was refused (${refused})` }, 400);
+  }
   try {
     const result = await regional(c.env, 'global', `/internal/access/requests/${id.data}/recover`,
       { method: 'POST', body: input.data }, (value) => AccessRecoveryResultSchema.parse(value));
@@ -45,7 +49,11 @@ accessRoutes.post('/requests/:id/recover', async (c) => {
 accessRoutes.post('/downloads', async (c) => {
   if (c.req.header('origin') !== new URL(c.req.url).origin) return c.json({ error: 'same_origin_required' }, 403);
   const body = DownloadGrantInputSchema.safeParse(await c.req.json().catch(() => null));
-  if (!body.success) return c.json({ error: 'invalid_download_request' }, 400);
+  // The rejection an operator actually meets — a bad expiry typed into the
+  // form — is this one; the issuer's re-validation below is the rare race.
+  if (!body.success) {
+    return c.json({ error: 'invalid_download_request', message: `The download request was refused (${zodDiagnosticCode(body.error, 'download_request')})` }, 400);
+  }
   if (body.data.requestId && !await c.env.GLOBAL_DB.prepare('SELECT id FROM access_requests WHERE id = ?')
     .bind(body.data.requestId).first()) return c.json({ error: 'request_not_found' }, 404);
   try {
@@ -57,8 +65,11 @@ accessRoutes.post('/downloads', async (c) => {
       grantId: grant.id, requestId: body.data.requestId ?? null, expiresAt: grant.expiresAt }));
     return c.json({ id: grant.id, url: downloadGrantUrl(grant.token), expiresAt: grant.expiresAt }, 201);
   } catch (error) {
-    // A deadline can pass between request validation and the shared issuer.
-    if (error instanceof z.ZodError) return c.json({ error: 'invalid_download_request' }, 400);
+    // A deadline can pass between request validation and the shared issuer,
+    // which re-validates; the field it refused is what the operator corrects.
+    if (error instanceof z.ZodError) {
+      return c.json({ error: 'invalid_download_request', message: `The download grant was refused (${zodDiagnosticCode(error, 'download_grant')})` }, 400);
+    }
     throw error;
   }
 });

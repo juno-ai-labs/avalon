@@ -1,6 +1,7 @@
 import { regionConfiguration } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts/regions";
 import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { z } from 'zod';
 import type { Env } from './env';
 
@@ -91,9 +92,12 @@ export function relayRegionalError(error: unknown): Response {
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   if (error instanceof z.ZodError) {
+    // Which field disagrees is the one thing an operator can act on: it says
+    // whether Ace or the regional API is the one behind. Paths and issue
+    // codes only; the regional answer's values stay out of the page.
     return Response.json({
       error: 'regional_api_contract_mismatch',
-      message: 'The regional API answered in a shape this version of Ace does not recognise; Ace and the regional API may be on different versions.',
+      message: `The regional API answered in a shape this version of Ace does not recognise (${zodDiagnosticCode(error, 'regional_response')}); Ace and the regional API may be on different versions.`,
     }, { status: 502 });
   }
   return Response.json({ error: 'regional_api_unavailable', message: 'The regional API could not be reached.' }, { status: 502 });
