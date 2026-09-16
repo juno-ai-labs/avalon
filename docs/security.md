@@ -944,6 +944,17 @@ Associated Domains entitlements; helpers retain their existing entitlement set.
 
 ## Changelog
 
+### 2026-09-16 — Receipt-owned pagination replaces model-held provider tokens
+
+Authored tool continuations now live in the owning SubstreamAgent and expose
+plugin-prefixed page IDs. Redemption checks run, principal, connection, operation,
+producer completion, and receipt ownership before executing with current
+authorization. New attachment state therefore needs neither a second HMAC nor
+an artificial TTL; signed-token decoding remains for historical receipts only.
+Generic JSON rewriting was rejected because content fields are not evidence of
+cursor ownership. MCP/pass-through contracts remain unchanged. See
+[`tool-pagination.md`](tool-pagination.md) for the lifecycle and recovery rules.
+
 ### 2026-09-15 — Link decoration does not widen renderer egress
 
 **What changed:** Markdown HTTP(S) links may display a favicon, but the

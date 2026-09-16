@@ -36,13 +36,16 @@ not in D1, a connector instance, model context, or an in-memory map. Issuance is
 unique per producing receipt and output slot. A page becomes usable only when
 that receipt completes. Claims are fenced synchronous transactions. An executing
 consumer excludes other receipts; a completed consumer permanently consumes the
-page; a failed consumer permits retry. Resuming the same receipt is idempotent.
+page; a failed or deleted consumer permits retry. Deleting a consumer clears
+its claim rather than deleting another receipt's page. Resuming the same receipt is idempotent.
 Existing receipt replay supplies completed results without another provider call.
 
 Resource reads also expose `previousPageId` through `read_resource_previous`.
 Search passages and summary citations expose `readPageId`, accepted by
 `read_resource_next`. Resource version and expiry validation stays in the existing
-attachment executor. Table queries retain their data-revision validation.
+attachment executor. New attachment continuation state is private JSON, without
+HMAC signing or an artificial expiry; the old signed-token decoder remains only
+for pre-cutover receipts. Table queries retain their data-revision validation.
 
 ## Invariants
 
@@ -73,7 +76,10 @@ schemas are materialized during tool loading, including the Sidekick authoring
 catalog. Stored old attachment receipts remain readable by grounding and version
 dependency checks. Old model-authored cursor calls are not silently translated:
 the new schema rejects them, and the model must start a new first-page call.
-Execution-plan compatibility fences remain in force across this surface change.
+Unchanged operations recognize the plugin's pre-expansion surface hash so a
+pagination-only change does not invalidate unrelated write receipts. Changed
+pagination operations deliberately retain their execution-plan fence: old raw
+cursor results are not declared interchangeable with page-ID results.
 
 ## Failure modes and limits
 
@@ -87,9 +93,15 @@ the format does not prove issuance or scope; the receipt authority checks those.
 
 Unknown, wrong-scope, or uncommitted IDs fail with `page_id_invalid`; completed
 and concurrent consumers produce `page_already_consumed` and `page_in_progress`.
-`page_did_not_advance` names a repeated forward continuation. These failures tell
-the caller to restart or use the completed page's next ID. Existing provider,
-attachment and table expiry/version failures are preserved. Failed reads do not
+These failures tell the caller to restart or use the completed page's next ID.
+A repeated forward continuation instead returns the fetched content with
+`nextPageId: null` and a `paginationWarning` that coverage may be incomplete.
+It neither discards the fetched page nor presents a provider loop as proof of
+exhaustive coverage. Issuance permits a cancellation request that arrived during
+the provider call, like receipt completion; claims still refuse new cancelled work.
+Known page failures cross RPC as named object-port errors; provider schema
+failures identify declared fields without exposing rejected data. Existing provider,
+attachment version and table expiry/version failures are preserved. Failed reads do not
 consume their incoming page, so transient failures can be retried.
 
 There is no new arbitrary page count, timeout, or general repeated-failure breaker.
@@ -106,8 +118,10 @@ does not invoke inference. Eviction expires the former isolate's lease; the test
 explicitly models acquiring it again before redeeming a persisted page.
 
 `packages/connectors/src/tool-pagination.test.ts` proves exact extraction before
-bounding and preservation of cursor-named document content. Existing connector,
-attachment, table, tool-selection, grounding and receipt suites cover the original
+bounding and preservation of cursor-named document content.
+`pagination-adapters.test.ts` enumerates all authored pagination declarations and
+executes both first and continuation calls against provider HTTP doubles.
+Existing connector, attachment, table, tool-selection, grounding and receipt suites cover the original
 authorized executors. `workstream-object-schema.test.ts` covers migration shape.
 
 ## Changelog
@@ -124,3 +138,7 @@ must leave pass-through tool schemas and results unchanged.
 Exact-prefix validation and plain-language recovery instructions prevent malformed
 aliases from reaching storage without leaving smaller models to interpret regex
 errors or guess replacement IDs.
+Returning fetched content with an explicit coverage warning was chosen over
+throwing on repeated provider cursors, which made a safe retry repeat the loop.
+Continuation ownership also replaces new attachment cursor signing/expiry;
+legacy decoding is retained for stored receipts, not for new model arguments.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { granolaPage, linearPage, nextCursorPage, notionPage, paginatedResult } from "./tool-pagination";
+import { connectorObservationErrorCode } from "./observability";
 
 describe("authored pagination extraction", () => {
   const opaque = "opaque+/=".repeat(10_000);
@@ -26,5 +27,18 @@ describe("authored pagination extraction", () => {
     expect(() => linearPage("search", input, { pageInfo: { hasNextPage: true, endCursor: null } }, "page", project)).toThrow("endCursor");
     expect(() => notionPage("search", input, { has_more: true, next_cursor: null }, "page", project)).toThrow("next_cursor");
     expect(() => granolaPage("search", input, { hasMore: true, cursor: null }, "page", project)).toThrow("cursor");
+  });
+
+  it("names malformed provider fields without exposing rejected data", () => {
+    expect(() => notionPage("search", input, { has_more: true, next_cursor: 42 }, "page", project))
+      .toThrow("pagination_response_invalid:next_cursor:invalid_type");
+    expect(() => linearPage("search", input, { pageInfo: { hasNextPage: "secret" } }, "page", project))
+      .toThrow("pagination_response_invalid:pageInfo.hasNextPage:invalid_type");
+    try {
+      granolaPage("search", input, { hasMore: true }, "page", project);
+      expect.unreachable("a promised page without a cursor must fail");
+    } catch (error) {
+      expect(connectorObservationErrorCode(error)).toBe("schema_invalid:cursor:custom");
+    }
   });
 });

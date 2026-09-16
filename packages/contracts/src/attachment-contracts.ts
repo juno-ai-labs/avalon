@@ -66,7 +66,7 @@ export const ATTACHMENT_LIST_RESOURCES_DESCRIPTION = [
   "List resources visible in this work stream. Filter with attachmentKind using exactly one of these values:",
   ...ATTACHMENT_KIND_ENTRIES.map((entry) => `- ${entry.kind} — ${entry.description}`),
   "Omit attachmentKind to list every kind. Do not use or guess MIME types.",
-  "Use list_resources_next with pageId copied from nextPageId to continue. Stop when nextPageId is null.",
+  "Use workstream_list_resources_next with pageId copied from nextPageId to continue. Stop when nextPageId is null.",
   // Two identifiers arrive per item and only one is an argument. Without this
   // the model is left to choose, and the wrong choice is rejected by every
   // other resource tool's schema — a wasted turn each time.
@@ -333,10 +333,10 @@ export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentTool
  */
 export const AttachmentListResourcesArgumentsSchema = z.strictObject({
   limit: z.number().int().min(1).max(50)
-    .describe("Maximum resources to return in one page. Defaults to 25. Set it on the first call; list_resources_next retains it automatically.")
+    .describe("Maximum resources to return in one page. Defaults to 25. Set it on the first call; workstream_list_resources_next retains it automatically.")
     .optional(),
   attachmentKind: AttachmentKindSchema
-    .describe("Return only resources of this kind, for example spreadsheet. Omit it for every kind, and never send a MIME type. Set it on the first call; list_resources_next retains it automatically.")
+    .describe("Return only resources of this kind, for example spreadsheet. Omit it for every kind, and never send a MIME type. Set it on the first call; workstream_list_resources_next retains it automatically.")
     .optional(),
   cursor: CursorSchema
     .describe("Continue an earlier listing: send the exact `nextCursor` that call returned, by itself and with no other argument. Omit it for the first page, and stop when `nextCursor` comes back null. It is an opaque token, not a page number, so never construct, shorten, or increment one.")
@@ -388,7 +388,7 @@ export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
     .describe("Maximum passages to return. Defaults to 5.")
     .optional(),
   maxPassageCharacters: z.number().int().min(500).max(4_000)
-    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or pass the passage's readPageId to read_resource_next to read further.")
+    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or pass the passage's readPageId to workstream_read_resource_next to read further.")
     .optional(),
 });
 export const AttachmentViewResourceArgumentsSchema = z.strictObject({

@@ -810,6 +810,20 @@ describe("connector tools selected for harness runs", () => {
       idempotency: "safe",
     }, selected);
 
+    const unchanged = selected.plugins.find((plugin) => plugin.canonicalId === googlePluginId)!.tools.find((tool) => !tool.definition.pagination)!;
+    const unchangedPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({ pluginId: googlePluginId,
+      canonicalToolName: unchanged.definition.name, capability: unchanged.definition.capability,
+      mode: unchanged.definition.mode, idempotency: unchanged.definition.idempotency }, selected);
+    expect(unchangedPolicy.prePaginationSurfaceHash).toEqual(selected.prePaginationSurfaceHashes.get(googlePluginId));
+    expect(unchangedPolicy.prePaginationSurfaceHash).toEqual(expect.any(String));
+    const priorPlan = { pluginId: googlePluginId, canonicalToolName: unchanged.definition.name,
+      capability: unchanged.definition.capability, mode: unchanged.definition.mode, idempotency: unchanged.definition.idempotency,
+      connectionId: WORKSPACE_CONNECTION_ID, toolSurfaceHash: unchangedPolicy.prePaginationSurfaceHash };
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify(priorPlan), unchangedPolicy)).toBe(true);
+    expect(googlePolicy.prePaginationSurfaceHash).toBeUndefined();
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({ ...priorPlan,
+      canonicalToolName: googlePolicy.definition.name, capability: googlePolicy.definition.capability }), googlePolicy)).toBe(false);
+
     expect(listPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(loadPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(timePolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });

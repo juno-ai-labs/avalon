@@ -22,7 +22,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { Env } from "../env";
-import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
+import { AttachmentCursorError, openAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
 import {
   ATTACHMENT_TEXT_EXTRACTOR_VERSION,
@@ -53,7 +53,6 @@ import {
 
 const LIST_CURSOR_PURPOSE = "workstream-list-resources";
 const READ_CURSOR_PURPOSE = "workstream-read-resource";
-const CURSOR_TTL_MS = 60 * 60_000;
 const DEFAULT_LIST_LIMIT = 25;
 const DEFAULT_READ_CHARACTERS = 12_000;
 const MAXIMUM_READ_CHARACTERS = 24_000;
@@ -911,11 +910,12 @@ async function sealCursorState(
   purpose: string,
   state: Record<string, unknown>,
 ): Promise<string> {
-  return sealAttachmentCursor(env.SESSION_SIGNING_KEY, {
+  // This payload is private continuation input stored by the receipt authority,
+  // never an argument exposed to the model. Keep scope checks, not a second TTL.
+  return JSON.stringify({
     purpose: scopedCursorPurpose(options, purpose),
     principal: executionPrincipalKey(input.executionPrincipal),
     scopeId: input.parentId,
-    expiresAt: Date.now() + CURSOR_TTL_MS,
     state,
   });
 }
@@ -929,11 +929,16 @@ async function openCursorState<T>(
   schema: z.ZodType<T>,
 ): Promise<T> {
   try {
-    const payload = await openAttachmentCursor(env.SESSION_SIGNING_KEY, cursor, {
+    const expected = {
       purpose: scopedCursorPurpose(options, purpose),
       principal: executionPrincipalKey(input.executionPrincipal),
       scopeId: input.parentId,
-    });
+    };
+    // Signed tokens remain readable for receipts produced before this cutover.
+    const payload = cursor.startsWith("{")
+      ? z.object({ purpose: z.literal(expected.purpose), principal: z.literal(expected.principal),
+          scopeId: z.literal(expected.scopeId), state: z.record(z.string(), z.unknown()) }).parse(JSON.parse(cursor))
+      : await openAttachmentCursor(env.SESSION_SIGNING_KEY, cursor, expected);
     return schema.parse(payload.state);
   } catch (error) {
     if (error instanceof AttachmentCursorError) throw attachmentError(error.code, error.message);

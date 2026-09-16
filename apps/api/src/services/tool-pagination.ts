@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { validateToolArguments } from "@rally/agent-harness";
+import { stableWireToolName } from "./connector-tool-inventory";
+import { ObjectPortError } from "../runtime/object-port";
 import type { HarnessTool, HarnessToolContext, HarnessToolResult } from "@rally/agent-harness";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { ToolReceiptFence } from "../durable-objects/workstream-tool-receipt-storage";
@@ -10,7 +12,7 @@ function pageInput(prefix: string, operation: string, previous = false) {
     .regex(new RegExp(`^${escapedPrefix}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
     .describe("Copy the page ID returned by this plugin. Send it alone; filters and page size are retained automatically.") });
   const field = previous ? "previousPageId" : operation === "read_resource" ? "nextPageId or readPageId" : "nextPageId";
-  const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${operation} to start a new read.`;
+  const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${stableWireToolName(prefix, operation)} to start a new read.`;
   function validateInput(input: unknown) {
     return schema.safeParse(input).success ? null : new z.ZodError([
       { code: "custom", path: ["pageId"], message },
@@ -61,11 +63,13 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
     try {
       return await host.receipts.claimPage({ ...identity(context), operation: target, pageId });
     } catch (error) {
+      const message = error instanceof ObjectPortError ? error.code : error instanceof Error ? error.message : "";
       // Keep the attachment grounding guard's existing, bounded recovery
       // semantics when a model damages a page ID before resource resolution.
-      if (operation === "read_resource" && error instanceof Error && error.message.startsWith("page_id_invalid:")) {
-        throw Object.assign(new Error(error.message), { code: "invalid_cursor" });
+      if (operation === "read_resource" && message.startsWith("page_id_invalid:")) {
+        throw Object.assign(new Error(message), { code: "invalid_cursor" });
       }
+      if (error instanceof ObjectPortError && message.startsWith("page_")) throw new Error(message, { cause: error });
       throw error;
     }
   }
@@ -84,6 +88,9 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
           : continuation.passageIndex === undefined ? continuation.slot : `passage:${continuation.passageIndex}`,
         inputJson: JSON.stringify(continuation.input),
       });
+      if (pageId === null) {
+        publicOutput.paginationWarning = "The provider repeated a continuation. This page was returned, but pagination stopped to avoid repeating pages. Do not claim the full result set was read.";
+      }
       if (continuation.slot === "readPageId") {
         const field = continuation.citationIndex === undefined ? "passages" : "citations";
         const passages = z.array(z.record(z.string(), z.unknown())).parse(publicOutput[field]);
@@ -100,7 +107,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
   const first: HarnessTool = {
     ...tool,
     definition: { ...tool.definition, inputSchema: firstSchema,
-      description: pagination.sourceOnly ? tool.definition.description : `${tool.definition.description} Starts a new read. For another page, call ${operation}_next with the returned nextPageId.`,
+      description: pagination.sourceOnly ? tool.definition.description : `${tool.definition.description} Starts a new read. For another page, call ${stableWireToolName(host.prefix, `${operation}_next`)} with the returned nextPageId.`,
     },
     validateInput: (input) => firstKeys.safeParse(input).error
       ?? validateToolArguments(input, firstSchema) ?? tool.validateInput?.(input) ?? null,
@@ -115,7 +122,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
   const nextInput = pageInput(host.prefix, operation);
   const next: HarnessTool = {
     definition: { ...tool.definition, name: `${operation}_next`,
-      description: `Read the next page of ${operation}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
+      description: `Read the next page of ${stableWireToolName(host.prefix, operation)}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
       inputSchema: z.toJSONSchema(nextInput.schema),
     },
     validateInput: nextInput.validateInput,
@@ -131,6 +138,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
     ...next,
     validateInput: previousInput.validateInput,
     definition: { ...next.definition, name: "read_resource_previous",
+      inputSchema: z.toJSONSchema(previousInput.schema),
       description: "Read the preceding resource page using its previousPageId. Each page ID can be consumed once.",
     },
     execute: async (raw, context) => {
