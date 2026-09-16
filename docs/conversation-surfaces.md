@@ -379,6 +379,20 @@ a gradient painted over the line, because each of those rows has an idle, a
 hover and a current fill and an overlay matched to one shows as a bar in the
 other two.
 
+The same 24px mask sits on the rails' own scrollers: `.sidebar-scroll` and
+`.workstream-context-scroll` on the block axis, `.sidebar-automation-strip` on
+the inline axis. A list that overflows fades the edge items are disappearing
+into, and only that edge — the far edge at rest, both once the scroller has
+moved, the near edge when it can go no further. A list that fits has no
+timeline and therefore no mask, so the first and last items stay at full ink.
+The near and far lengths are registered custom properties driven by two ranged
+scroll animations rather than one interpolating gradient, because blending a
+three-stop far-fade into a three-stop near-fade does not produce both fades in
+the middle. Those two animations are clocks, so the global reduced-motion kill
+switch would pin them at their 100% keyframes; their durations stay `auto`
+under that preference, restored next to the kill switch, because a fade that
+says "there is more this way" is not motion.
+
 The fade appears only where something is actually clipped, and nothing measures
 anything to decide that. The mask rides a scroll-driven animation whose timeline
 is the line's own inline scroller: a line whose text fits is not scrollable, its
@@ -389,7 +403,9 @@ Renaming a row, dragging either rail, or collapsing one re-decides on its own.
 The keyframe holds one value at both ends because nothing is meant to move; the
 timeline is being asked a question about overflow, not used as a clock, and the
 fill mode is what keeps the mask applied for the reader whose reduced-motion
-preference forces every animation to 0.001ms.
+preference forces every animation to 0.001ms. The scroll-edge cover uses the
+same fill; its start and end lengths cannot, and are the exception the kill
+switch carves out.
 
 Both longhands sit below the `animation` shorthand, which resets both of them,
 and `app.css.node.test.ts` asserts their *positions* rather than their presence.
@@ -645,6 +661,41 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-16 — A rail fades the items it clips, and only the edge that is clipping them
+
+**What changed:** The work-stream list, the work-stream sidebar, and the Sidekick
+strip now fade items at a scroll edge the same 24px way a clipped row title
+fades, and only while that edge is actually clipping something. A scroller
+whose content fits stays sharp; a scroller at rest fades only its far edge; a
+scroller in the middle fades both; a scroller that can go no further fades only
+the near edge.
+
+**Why:** The line fade made a hard cut on a row title look like a rendering
+fault, and the same cut was still sitting on the rails' own scrollports —
+work streams disappearing under the command bar, Sidekick tiles sliced at the
+sidebar's trailing edge. An unconditional mask would have faded the first and
+last items of a short list for no reason, which is the case the line fade
+already refuses.
+
+**Considered and rejected:** One animation interpolating a three-stop far-fade
+into a three-stop near-fade. The shared stop travels through the scroller and
+the list looks washed out in the middle; registered lengths that grow and
+shrink over the first and last 24px of travel keep the middle items at full
+ink. Also rejected: measuring overflow in the component. The inactive-timeline
+condition is the same question the line fade already asks, and a
+`ResizeObserver` on these lists would sit next to their existing motion
+choreography.
+
+**Consequences:** The cover animation is the overflow question and must keep
+one mask at both keyframes. The start and end animations are clocks, so their
+`animation-duration: auto` has to win against the global reduced-motion kill
+switch — that restore is load-bearing, and deleting it pins every overflowing
+list to a leading fade and no trailing one. `animation-range` joins
+`animation-duration` and `animation-timeline` below the shorthand; a reorder
+that looks like tidying reintroduces an unconditional fade. Do not paint a
+gradient over the scroller: these rows carry three fills, and an overlay
+matched to one is a bar in the other two.
 
 ### 2026-09-15 — The participant dialog stays open across roster changes
 
