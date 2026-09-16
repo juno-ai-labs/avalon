@@ -2552,7 +2552,10 @@ export async function runWorkstreamHarness(
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
   }
   const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
-  const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? [] : await recommendedSidekickRefs(env, input);
+  // No eligible sources means no recommendation can enter this snapshot. Avoid
+  // waking parent authorities for executions that cannot use any Sidekick.
+  const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
+    : currentSidekickSources.length > 0 ? await recommendedSidekickRefs(env, input) : [];
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
@@ -4979,7 +4982,7 @@ async function loadHarnessTools(
   // Drafting belongs to the Sidekick's authoring conversation. Other agents
   // discover or create that conversation and send it the setup request.
   const loadedAutomationPluginIds = new Set<string>();
-  const sidekickPlugin = !input.automationRun && (input.parentKind === "workstream"
+  const sidekickPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds)
     : null;

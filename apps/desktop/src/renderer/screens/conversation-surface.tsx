@@ -2077,8 +2077,8 @@ export function ConversationSurface({
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
     owned: ownedSidekicks.isError ? [] : ownedSidekicks.data,
-    attached: attachedSidekicks.data,
-    recommended: recommendedSidekicks.data,
+    attached: attachedSidekicks.isError ? [] : attachedSidekicks.data,
+    recommended: recommendedSidekicks.isError ? [] : recommendedSidekicks.data,
     ...(detail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false }) }
       : {}),
