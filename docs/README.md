@@ -105,11 +105,9 @@ update it in the same change.
 
 ## Agent, connectors, and integrations
 
-Authored cursor tools are documented in [tool pagination](tool-pagination.md):
-first/next schemas, plugin-prefixed page IDs, receipt-owned storage, and the MCP exclusion.
-
 | Document | Scope — read and update when changing… |
 | --- | --- |
+| [`tool-pagination.md`](tool-pagination.md) | Authored first/next tool schemas, plugin-prefixed page IDs, receipt-owned continuation storage, validation and recovery, and the MCP/pass-through exclusion. |
 | [`agent-harness.md`](agent-harness.md) | The Bind adapter and its capability-aware Azure/OpenRouter model routes: one persistent loop per substream, subordinate execution admission, caller-specific resource policy, safe model/tool steps, loadable skills, streaming, receipts, scoped durable memory, and the boundary between the SubstreamAgent host and Bind. |
 | [`agent-attachments.md`](agent-attachments.md) | The model-facing attachment subsystem: natural-language kind contracts, durable resource identity, derivative lifecycle, bounded hydration, image recovery, and compaction rediscovery. Read before changing attachment projection, extraction, tools, or cleanup. |
 | [`context-compaction.md`](context-compaction.md) | What a run remembers once its context fills up: the 80%-of-window trigger measured from provider usage, the sectioned handoff summary the model is asked for, the two-message transcript a compaction leaves behind, and the per-work-stream checkpoint later runs replay. Read before changing the threshold, the summary prompt, the checkpoint shape, or object-local `transcript_compaction_checkpoints`. |

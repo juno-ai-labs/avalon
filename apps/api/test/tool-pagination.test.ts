@@ -44,7 +44,7 @@ describe("model-facing authored pagination", () => {
     expect(message).toContain("Copy nextPageId exactly from a tool result");
     expect(message).toContain("do not invent or repair an ID");
     expect(message).toContain("If that field is null, stop");
-    expect(message).toContain("call list_resources to start a new read");
+    expect(message).toContain("call google_2_list_resources to start a new read");
     expect(message).not.toContain("private-provider-token");
     await expect(next.execute(input, context)).rejects.toThrow(error!);
     expect(authority.receipts.claimPage).not.toHaveBeenCalled();

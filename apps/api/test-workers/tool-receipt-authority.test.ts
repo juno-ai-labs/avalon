@@ -88,6 +88,7 @@ async function receipt(
     args,
   });
   const parsed = body as { value?: unknown; error?: string } | null;
+  if (parsed?.error && (operation === "issuePage" || operation === "claimPage")) throw new Error(parsed.error);
   return { status, value: parsed?.value ?? null, ...(parsed?.error ? { error: parsed.error } : {}) };
 }
 
@@ -149,7 +150,7 @@ describe("tool-receipt authority on real workerd", () => {
       issuePage: async (args) => {
         const answer = await receipt(stub, "issuePage", args);
         if (answer.error) throw new Error(answer.error);
-        return z.string().parse(answer.value);
+        return z.string().nullable().parse(answer.value);
       },
       claimPage: async (args) => {
         const answer = await receipt(stub, "claimPage", args);
@@ -197,17 +198,44 @@ describe("tool-receipt authority on real workerd", () => {
     expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const winner = claims[0]!.status === "fulfilled" ? "third" : "fourth";
     const retry = winner === "third" ? "fourth" : "third";
-    // A -> B -> A is refused even though every page would get a new alias.
-    await expect(receipt(stub, "issuePage", { ...claim, effectIntentId: winner, prefix: "google_2", slot: "nextPageId",
-      inputJson: JSON.stringify({ query: "needle", cursor: "opaque+/=cursor" }) })).rejects.toThrow("page_did_not_advance");
+    // A -> B -> A stops without discarding already-fetched provider content.
+    expect((await receipt(stub, "issuePage", { ...claim, effectIntentId: winner, prefix: "google_2", slot: "nextPageId",
+      inputJson: JSON.stringify({ query: "needle", cursor: "opaque+/=cursor" }) })).value).toBeNull();
     await receipt(stub, "fail", { effectIntentId: winner, status: "failed", phase: "execute", errorJson: '{"code":"temporary"}', payloadJson: "{}", fence, now: Date.now() });
     expect((await receipt(stub, "claimPage", { ...claim, effectIntentId: retry })).value)
       .toEqual({ inputJson: JSON.stringify({ query: "needle", cursor: "opaque-second" }) });
+    const stopped = await next!.execute({ pageId: secondPageId }, context(retry));
+    expect(stopped.output).toMatchObject({ items: ["item"], nextPageId: null, paginationWarning: expect.stringContaining("Do not claim the full result set") });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec("SELECT consumer_id FROM tool_pages WHERE page_id = ?", pageId).one().consumer_id).toBe("second");
       state.storage.sql.exec("UPDATE runs SET lease_owner = 'successor'");
     });
     await expect(first!.execute({ query: "needle" }, context(retry))).rejects.toThrow("page_execution_ownership_lost");
+  });
+  it("releases deleted consumers and preserves issuance when cancellation arrives after a provider read", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    const fence = { runId: RUN, attemptId: ATTEMPT, owner: OWNER };
+    const scope = { runId: RUN, operation: "search", connectionId: null, principalJson: "principal", fence };
+    await receipt(stub, "admit", admission("producer", "producer"));
+    const malformed = await post(stub, "/internal/tool-receipt", { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+      operation: "issuePage", args: [{ ...scope, effectIntentId: "producer", prefix: "SECRET-invalid", slot: "nextPageId", inputJson: "{}" }] });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body).toEqual({ ok: false, error: "page_arguments_invalid:prefix:invalid_format" });
+    const pageId = (await receipt(stub, "issuePage", { ...scope, effectIntentId: "producer", prefix: "workstream", slot: "nextPageId", inputJson: '{"cursor":"opaque"}' })).value;
+    await receipt(stub, "complete", { effectIntentId: "producer", checkpointIndex: 1, outputRef: "output", outputSummary: "page",
+      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false, fence, now: Date.now() });
+    await receipt(stub, "admit", admission("consumer", "consumer"));
+    await receipt(stub, "claimPage", { ...scope, pageId, effectIntentId: "consumer" });
+    await receipt(stub, "discardReceipt", { workspaceId: WORKSPACE_ID, effectIntentId: "consumer" });
+    await receipt(stub, "admit", admission("replacement", "replacement"));
+    expect((await receipt(stub, "claimPage", { ...scope, pageId, effectIntentId: "replacement" })).value).toEqual({ inputJson: '{"cursor":"opaque"}' });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?", Date.now(), RUN);
+    });
+    expect((await receipt(stub, "issuePage", { ...scope, effectIntentId: "replacement", prefix: "workstream", slot: "nextPageId", inputJson: '{"cursor":"next"}' })).value).toMatch(/^workstream_/u);
+    await expect(receipt(stub, "claimPage", { ...scope, pageId, effectIntentId: "replacement" })).rejects.toThrow("page_execution_ownership_lost");
   });
   it("admits a receipt and its checkpoint in one committed step", async () => {
     const stub = agent();

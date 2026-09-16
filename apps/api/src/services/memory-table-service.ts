@@ -1150,7 +1150,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       definition: {
         name: "query",
         pagination: { cursorParameter: "cursor" },
-        description: "Query authorized rows by exact memoryTableRowIds or by typed filters, FTS, ordering, and cursor paging. Use exact IDs to reread rows after a revision conflict.",
+        description: "Query authorized rows by exact memoryTableRowIds or by typed filters, FTS, ordering, and page-ID paging. Use exact IDs to reread rows after a revision conflict.",
         capability: "table.read",
         mode: "read",
         idempotency: "safe",

@@ -460,6 +460,14 @@ describe("work-stream attachment tools", () => {
     await expect(read.execute({ cursor: firstOutput.previousCursor }, context())).resolves.toMatchObject({
       output: { range: { start: 0, end: 12_000 }, charactersBefore: 0 },
     });
+    const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * 60 * 60_000);
+    try {
+      await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).resolves.toMatchObject({
+        output: { range: { start: 19_000, end: 19_534 }, charactersAfter: 0 },
+      });
+    } finally {
+      later.mockRestore();
+    }
     await expect(read.execute({ cursor: `${firstOutput.nextCursor}tampered` }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);

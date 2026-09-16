@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { WORKSTREAM_ADDRESS_ADJECTIVES_V1, WORKSTREAM_ADDRESS_NOUNS_V1 } from "../lib/workstream-email-address";
 
 export const TOOL_PAGE_SCHEMA = `CREATE TABLE tool_pages (
@@ -10,7 +11,7 @@ export const TOOL_PAGE_SCHEMA = `CREATE TABLE tool_pages (
   connection_id TEXT,
   principal_json TEXT NOT NULL,
   input_json TEXT NOT NULL CHECK(json_valid(input_json)),
-  consumer_id TEXT REFERENCES tool_effects(effect_intent_id) ON DELETE CASCADE,
+  consumer_id TEXT REFERENCES tool_effects(effect_intent_id) ON DELETE SET NULL,
   parent_page_id TEXT,
   PRIMARY KEY(run_id, page_id),
   UNIQUE(producer_id, slot)
@@ -27,19 +28,27 @@ export const PageIssueSchema = PageIdentitySchema.extend({
 });
 export const PageClaimSchema = PageIdentitySchema.extend({ pageId: z.string() });
 
+export class ToolPageError extends Error {}
+
+function parsePage<T>(schema: z.ZodType<T>, raw: unknown): T {
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw new ToolPageError(zodDiagnosticCode(parsed.error, "page_arguments")!);
+  return parsed.data;
+}
+
 /** Called only inside the receipt authority's fenced synchronous transaction. */
 export class ToolPageStorage {
   constructor(private readonly sql: SqlStorage) {}
 
-  issue(raw: z.infer<typeof PageIssueSchema>): string {
-    const input = PageIssueSchema.parse(raw);
+  issue(raw: z.infer<typeof PageIssueSchema>): string | null {
+    const input = parsePage(PageIssueSchema, raw);
     const existing = this.sql.exec<{ page_id: string; input_json: string; operation: string }>(
       "SELECT page_id, input_json, operation FROM tool_pages WHERE producer_id = ? AND slot = ?",
       input.effectIntentId, input.slot,
     ).toArray()[0];
     if (existing) {
       if (existing.input_json !== input.inputJson || existing.operation !== input.operation) {
-        throw new Error("page_receipt_result_changed");
+        throw new ToolPageError("page_receipt_result_changed");
       }
       return existing.page_id;
     }
@@ -58,7 +67,7 @@ export class ToolPageStorage {
         WHERE p.run_id = ?1 AND a.slot = 'nextPageId'
       ) SELECT page_id FROM ancestors WHERE input_json = ?3 AND operation = ?4 AND slot = 'nextPageId' LIMIT 1`,
       input.runId, parent.page_id, input.inputJson, input.operation).toArray()[0];
-      if (cycle) throw new Error("page_did_not_advance: The provider repeated a continuation. Restart with the first-page tool.");
+      if (cycle) return null;
     }
     for (;;) {
       const bytes = crypto.getRandomValues(new Uint32Array(4));
@@ -76,7 +85,7 @@ export class ToolPageStorage {
   }
 
   claim(raw: z.infer<typeof PageClaimSchema>): { inputJson: string } {
-    const input = PageClaimSchema.parse(raw);
+    const input = parsePage(PageClaimSchema, raw);
     const row = this.sql.exec<{
       input_json: string; consumer_id: string | null; consumer_status: string | null;
     }>(`SELECT page.input_json, page.consumer_id, consumer.status AS consumer_status
@@ -85,9 +94,9 @@ export class ToolPageStorage {
       WHERE page.run_id = ? AND page.page_id = ? AND page.operation = ?
         AND page.connection_id IS ? AND page.principal_json = ? AND producer.status = 'completed'`,
     input.runId, input.pageId, input.operation, input.connectionId, input.principalJson).toArray()[0];
-    if (!row) throw new Error("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation and run.");
+    if (!row) throw new ToolPageError("page_id_invalid: Restart with the first-page tool; pageId is not available for this operation and run.");
     if (row.consumer_id !== null && row.consumer_id !== input.effectIntentId && row.consumer_status !== "failed") {
-      throw new Error(row.consumer_status === "completed"
+      throw new ToolPageError(row.consumer_status === "completed"
         ? "page_already_consumed: Use nextPageId from the completed page, or restart with the first-page tool."
         : "page_in_progress: This page already has a call in progress.");
     }
