@@ -1464,8 +1464,16 @@ describe("Slack connector", () => {
       return json({ ok: true, plan: 42 });
     });
 
+    // The failing field rides on the error, code-shaped, for the API's reason
+    // helpers to read; the body's values do not.
     await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
-      .rejects.toThrow(/malformed response/iu);
+      .rejects.toMatchObject({
+        code: "provider_error",
+        message: expect.stringMatching(/malformed response/iu),
+        details: { responseIssues: expect.stringMatching(/^[A-Za-z0-9_:.-]+$/u) },
+      });
+    await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
+      .rejects.toMatchObject({ details: { responseIssues: expect.stringContaining("invalid_type") } });
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "ada@example.com",
     }, neverAborts(), fetcher)).resolves.toMatchObject({

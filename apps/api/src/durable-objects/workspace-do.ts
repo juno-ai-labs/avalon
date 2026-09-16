@@ -6013,6 +6013,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_committed",
+        // `reason` says the write landed. What the settler was told went
+        // wrong is `error`, persisted above and written for a person; the
+        // code the settler derived from it is what the row indexes.
+        ...(request.outcome === "failed" && "errorCode" in request && request.errorCode
+          ? { error_code: request.errorCode }
+          : {}),
       });
       return;
     }

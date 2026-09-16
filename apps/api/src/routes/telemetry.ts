@@ -113,7 +113,14 @@ export async function parseCrashUpload(c: Context<HonoAppEnv>) {
   return { metadata, bytes, breadcrumbs };
 }
 
+/**
+ * A schema rejection is rethrown as itself rather than mapped: the error
+ * handler answers it with the same 500 `internal_error` this would, and logs
+ * the route and the failing paths, where a mapped `ApiError` logged nothing
+ * but the code.
+ */
 function crashApiError(error: unknown): never {
+  if (error instanceof z.ZodError) throw error;
   const code = error instanceof Error ? error.message : "crash_upload_invalid";
   if (code === "crash_dump_too_large") throw new ApiError(413, code, "The crash report is too large");
   if (code === "crash_rate_limited") throw new ApiError(429, code, "Too many crash reports were uploaded");
@@ -132,6 +139,7 @@ function crashApiError(error: unknown): never {
 }
 
 function anonymousTelemetryApiError(error: unknown): never {
+  if (error instanceof z.ZodError) throw error;
   const code = error instanceof Error ? error.message : 'telemetry_anonymous_invalid';
   if (code === 'telemetry_capability_invalid' || code === 'telemetry_capability_expired') {
     throw new ApiError(401, code, 'The telemetry capability is invalid or expired');
@@ -167,6 +175,7 @@ publicTelemetryRoutes.post(
         c.req.valid("json").routeToken,
       );
     } catch (error) {
+      if (error instanceof z.ZodError) throw error;
       const code = error instanceof Error ? error.message : 'telemetry_bootstrap_failed';
       if (code === 'telemetry_journey_closed') {
         throw new ApiError(409, code, 'The onboarding telemetry journey is closed');
@@ -263,6 +272,7 @@ authenticatedTelemetryRoutes.post(
         c.req.valid("json").capability,
       )));
     } catch (error) {
+      if (error instanceof z.ZodError) throw error;
       const code = error instanceof Error ? error.message : "telemetry_link_invalid";
       if (code === "telemetry_link_conflict") {
         throw new ApiError(409, code, "The anonymous analytics epoch is already linked");

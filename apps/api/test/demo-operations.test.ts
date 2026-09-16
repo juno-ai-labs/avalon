@@ -2,12 +2,14 @@ import "../../../tests/isolated-region";
 import type { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { demoOperatorRoutes } from "../src/routes/demo-operations";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
 import { listDemoCastCandidates } from "../src/services/demo-cast";
+import { __demoPreparationTesting } from "../src/services/demo-preparation";
 import {
   abandonDemoOperation,
   activeDemoPack,
@@ -605,5 +607,35 @@ describe("the Workflow instance id", () => {
     expect(id).toMatch(/^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/u);
     expect(id.length).toBeLessThanOrEqual(100);
     expect(id).toBe(`demo-preparation-${OPERATION_ID}-12`);
+  });
+});
+
+describe("what the operator reads when a phase stops", () => {
+  it("names the field a stored demo record failed, where it said demo_internal_error", () => {
+    // The pack and the copied-connection rows are this repository's own
+    // writes; one that no longer parses is a version skew, and the field is
+    // the whole diagnosis. The rejection's text stays in the log.
+    const rejection = z.strictObject({ cast: z.array(z.strictObject({ role: z.string() })) })
+      .safeParse({ cast: [{ role: 42 }] });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    expect(__demoPreparationTesting.operatorError(rejection.error)).toMatchObject({
+      code: "demo_phase_invalid:cast.0.role:invalid_type",
+    });
+    expect(__demoPreparationTesting.operatorError(new Error("D1_ERROR: no such table")))
+      .toMatchObject({ code: "demo_internal_error" });
+  });
+
+  it("names the field a stored cast failed in the reader that actually meets it", () => {
+    // `castOf` answers a corrupt `cast_json` with an `ApiError` before the
+    // phase's own error path runs, so the field has to be named here or it is
+    // `demo_cast_unreadable` on the operator's page and nowhere else.
+    let thrown: unknown;
+    try {
+      __demoPreparationTesting.castOf({ cast_json: JSON.stringify({ presenter: 42 }) } as never);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: expect.stringMatching(/^demo_cast_unreadable:.*invalid_type/u) });
   });
 });
