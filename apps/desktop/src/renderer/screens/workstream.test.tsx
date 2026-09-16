@@ -109,6 +109,7 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings,
     onApplicationSettingsChanged,
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 const headerWorkstream: WorkstreamDetail = {

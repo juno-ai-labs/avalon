@@ -451,6 +451,12 @@ const browserBridge: RallyDesktopBridge = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async showDefinitionForSelection() {
+    // Dictionary is a macOS main-process affordance; a tab has none.
+  },
+  async shareText() {
+    // The system share sheet is a macOS main-process affordance; a tab has none.
+  },
   async setConversationDetailsOpen() {
     // A browser tab cannot resize its own top-level window. The attached rail
     // still opens inside the viewport, which is the browser-safe fallback.
@@ -560,6 +566,20 @@ export function desktopBridge(): RallyDesktopBridge {
   if (window.rally) return window.rally;
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') return browserBridge;
   throw new Error('Rally desktop services did not load. Reopen the application.');
+}
+
+let runtimeConfigPromise: Promise<RuntimeConfig> | null = null;
+
+/**
+ * One `getRuntimeConfig()` for the window. Platform cannot change for the
+ * life of the process, so each feed body must not open its own IPC.
+ */
+export function desktopRuntimeConfig(): Promise<RuntimeConfig> {
+  runtimeConfigPromise ??= desktopBridge().getRuntimeConfig().catch((error: unknown) => {
+    runtimeConfigPromise = null;
+    throw error;
+  });
+  return runtimeConfigPromise;
 }
 
 /**

@@ -6,7 +6,10 @@ import { SidekickPicker } from './sidekick-picker';
 
 const api = vi.hoisted(() => ({ getSidekicks: vi.fn(), setRecommendedSidekick: vi.fn() }));
 const openSidekicks = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openSidekicks }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ openSidekicks }),
+  desktopServicesAvailable: () => false,
+}));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session: { user: { id: 'person' } } }) }));
 
 function renderPicker(client = new QueryClient()) {

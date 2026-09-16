@@ -10,7 +10,8 @@ stream finishes or the person stops it.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | The icon-and-text action under a finished response; it always passes the stored markdown, not the visible collapsed DOM. |
-| `apps/desktop/src/renderer/components/speech-playback.tsx` | The one-active-message lifecycle, immediate AudioContext activation, cancellation, and failure logging. |
+| `apps/desktop/src/renderer/components/message-text-menu.tsx` | The feed message's right-click Speak / Stop speaking, the same toggle and stored markdown as the action row. Hidden while the turn is still streaming. A human body names the item *Speak*. |
+| `apps/desktop/src/renderer/components/speech-playback.tsx` | The one-active-message mutex, immediate AudioContext activation, cancellation, and failure logging. A second Speak from any surface stops the clip that is already playing. |
 | `apps/desktop/src/renderer/lib/pcm-speech-player.ts` | Incremental 24 kHz signed little-endian PCM decoding and gapless Web Audio scheduling. |
 | `apps/desktop/src/renderer/lib/api.ts` | Authenticated `POST /speech` fetch and response-format validation without body buffering. |
 | `apps/api/src/routes/speech.ts` | The protected regional streaming response and content-free operational events. |
@@ -49,6 +50,8 @@ context, and restores the button.
   destroy time-to-first-audio.
 - **Only one message speaks at a time.** Starting another cancels the current
   fetch and Web Audio graph; overlapping agent voices make neither intelligible.
+  The provider is that mutex for the window: the action row and the message-text
+  menu both call `speak` / `stop` on it, so they cannot play over each other.
 - **Each PCM player is single-use.** Stop closes its AudioContext; replay creates
   a fresh player instead of trying to resume a closed browser audio graph.
 - **The renderer never receives the Azure credential.** It holds only its Rally
@@ -59,7 +62,9 @@ context, and restores the button.
   twice by the action row's `MessageAction`, which
   [`conversation-surfaces.md`](conversation-surfaces.md) describes. A second
   string for the same button is how this control ended up saying two different
-  things at once before.
+  things at once before. The message-text menu uses that same accessible name
+  on an assistant body and *Speak* on a human body, because those words are
+  not a Rally response.
 
 ## Boundary
 
@@ -108,13 +113,15 @@ authenticated streaming without buffering;
 `apps/desktop/src/renderer/lib/pcm-speech-player.test.ts` proves sample decoding;
 and `apps/desktop/src/renderer/components/workstream-blocks.test.tsx` proves a
 collapsed response sends the exact full markdown and exposes the Speak/Stop
-state. Run them with:
+state. `speech-playback.test.tsx` proves a second Speak stops the clip that is
+already playing. Run them with:
 
 ```sh
 pnpm --filter @rally/api exec vitest run test/message-speech-service.test.ts
 pnpm --filter @rally/desktop exec vitest run \
   src/renderer/lib/api.test.ts \
   src/renderer/lib/pcm-speech-player.test.ts \
+  src/renderer/components/speech-playback.test.tsx \
   src/renderer/components/workstream-blocks.test.tsx
 ```
 
@@ -152,6 +159,30 @@ stream backpressure and keeps only the current provider reader plus one
 prefetched provider promise. That prefetch can synthesize one chunk a person
 later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
+
+### 2026-09-16 — Speak from the message menu uses the same one-voice mutex
+
+**What changed:** The feed message's right-click Speak / Stop speaking is the
+same toggle as the action row: same stored markdown, same
+`SpeechPlaybackProvider`. Starting a second clip — from another turn or from
+the other control — stops the one that is playing. A streaming assistant
+body has no Speak item. A human body's item is named *Speak*. A failed
+`prepare()` or `play()` aborts the in-flight `/speech` request.
+
+**Why:** A second speech entry point without the existing mutex would play two
+voices over each other. OS Speech was the alternative, and it would have been
+a second engine as well as a second lock. Speaking a partial stream would
+read a truncated snapshot the action row never offered. *Speak response* on
+a member's own turn is the row's sentence for the assistant.
+
+**Considered and rejected:** A separate player for the menu, or calling
+Electron `startSpeaking`. Either one breaks the one-voice rule the action row
+already had. Also rejected: leaving Speak on the streaming body and letting
+later tokens join the player — the PCM player is single-use and the request
+is the stored markdown at click time.
+
+**Consequences:** Any new Speak control has to call this provider. A second
+`SpeechPlaybackProvider` in the same window would be a second mutex.
 
 ### 2026-09-10 — Speak says *Speak response*, and the AI disclosure leaves with the native title
 

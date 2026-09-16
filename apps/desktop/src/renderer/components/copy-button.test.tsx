@@ -5,7 +5,10 @@ import { COPY_FEEDBACK_MS } from '../lib/use-copy';
 import { CopyButton, CopyField } from './copy-button';
 
 const copyText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => undefined));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ copyText }),
+  desktopServicesAvailable: () => false,
+}));
 
 afterEach(() => {
   cleanup();
