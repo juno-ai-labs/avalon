@@ -245,20 +245,16 @@ target. Rally does not rewrite domain-shaped prose such as `docs.example.com`
 without a scheme or `www.` because that is not a GFM autolink and guessing at
 prose would create navigable destinations the author did not write.
 
-When an HTTP(S) anchor enters the viewport it asks the authenticated regional
-API for the hostname's favicon. Off-screen links create no provider work, so a
-long model response or imported document cannot turn its total link count into
-unbounded automatic requests. An empty link label constructs no favicon work,
-and an observed anchor must intersect with positive painted width and height;
-zero-width labels colocated in the viewport therefore remain inert. The
-renderer never contacts the destination itself. One `RallyApi` coalesces
-concurrent requests for the same normalized hostname. Successful and missing
-responses require browser revalidation, which keeps the 30-day KV entry as the
-one cache clock instead of extending a nearly expired entry in Chromium. The
-renderer displays returned bytes through a short-lived object URL, marks the
-image presentational, and revokes the URL when the link unmounts. A missing or
-failed favicon changes nothing about the link. Glances remain inert text and
-synchronous still exports do not start asynchronous decoration.
+When a message renders, every HTTP(S) anchor asks the authenticated regional API
+for the hostname's favicon. The renderer never contacts the destination itself.
+One `RallyApi` coalesces concurrent requests for the same normalized hostname.
+Successful and missing responses require browser revalidation, which keeps the
+30-day KV entry as the one cache clock instead of extending a nearly expired
+entry in Chromium. The renderer displays returned bytes through a short-lived
+object URL, marks the image presentational, and revokes the URL when the link
+unmounts. A missing or failed favicon changes nothing about the link. Glances
+remain inert text and synchronous still exports do not start asynchronous
+decoration.
 
 The API resolves a deep hostname and its registrable domain in parallel. The
 exact host returns as soon as it produces an icon, without waiting for the
@@ -829,9 +825,8 @@ share one favicon decoration. The authenticated API asks the existing Firecrawl
 client for the exact hostname's and registrable domain's branding metadata in
 parallel, prefers the exact-host result, validates the returned image, and
 caches icons and confirmed misses in a dedicated Cloudflare KV namespace for 30
-days before replacement. The desktop observes only visible anchors and
-coalesces concurrent requests by hostname; empty and zero-area anchors cannot
-start discovery.
+days before replacement. The desktop loads every message link and coalesces
+concurrent requests by hostname.
 
 **Why:** A naked URL and a named link are the same navigation affordance after
 parsing, but only the text distinguished one site from another. Fetching in the
@@ -858,7 +853,7 @@ Transient failures are not stored as 30-day misses, a missing mark is silent,
 browser responses revalidate against KV, and synchronous saved-message rendering
 intentionally omits this live decoration. The existing GFM autolinker remains
 the syntax authority and now has explicit regression tests for a naked URL and
-for empty or zero-area adversarial links.
+for loading every message link without viewport bookkeeping.
 
 ### 2026-09-10 — A published site gets its own mark
 
