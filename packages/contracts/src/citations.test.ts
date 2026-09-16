@@ -245,6 +245,25 @@ describe("person mention hrefs", () => {
     ].join("\n"));
   });
 
+  it("does not collect a reference definition from multiline inline code", () => {
+    expect(rewriteMessageAsPlainText([
+      "Keep `start",
+      "[guide]: /literal",
+      "end` and [docs][guide].",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Keep start",
+      "[guide]: /literal",
+      "end and [docs][guide].",
+    ].join("\n"));
+  });
+
+  it("removes quote containers from indented code without rewriting its contents", () => {
+    expect(rewriteMessageAsPlainText(
+      ">     [plan](resource://plan) and **literal**",
+      { sources: "none" },
+    )).toBe("    [plan](resource://plan) and **literal**");
+  });
+
   it("reduces nested emphasis and identifiers without leaking delimiters", () => {
     expect(rewriteMessageAsPlainText(
       "Set **MAX_RETRIES**, **do_this**, _max_retries_, and **bold with *nested* inside**.",
@@ -310,6 +329,11 @@ describe("person mention hrefs", () => {
 
   it("removes ATX heading markers after their allowed indentation", () => {
     expect(rewriteMessageAsPlainText("  ## Status", { sources: "none" })).toBe("Status");
+  });
+
+  it("reduces emphasis across a soft line break", () => {
+    expect(rewriteMessageAsPlainText("Please **review\nthis** today.", { sources: "none" }))
+      .toBe("Please review\nthis today.");
   });
 
   it("preserves list depth and removes setext and thematic-break markup", () => {
