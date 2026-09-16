@@ -13,6 +13,7 @@ import {
   personMentionMarkdownPattern,
   personMentionMarkdownRanges,
   rewriteCitationsAsPlainText,
+  rewriteMessageAsPlainText,
 } from "./citations";
 
 describe("parseCitationHref", () => {
@@ -163,6 +164,283 @@ describe("person mention hrefs", () => {
     const markdown = `[@${"\\".repeat(42)}[x]](person://${id})`;
 
     expect(personMentionMarkdownRanges(markdown)).toEqual([]);
+  });
+
+  it("reduces person mentions with citations at the shared outbound boundary", () => {
+    expect(rewriteMessageAsPlainText(
+      `## Request\n\nAsk [@Ada Lovelace](person://${id}) to **read** [the plan](resource://plan).`,
+      { sources: "none" },
+    )).toBe("Request\n\nAsk @Ada Lovelace to read the plan.");
+  });
+
+  it("reduces general Markdown while preserving readable structure", () => {
+    expect(rewriteMessageAsPlainText([
+      "> A *small* update with ~~old~~ `code` and [docs](https://example.com). Show `[link](resource://id)` literally.",
+      "",
+      "- [x] **Shipped**",
+      "  - [ ] Follow up",
+      "",
+      "```ts",
+      "const answer = 42;",
+      "```",
+    ].join("\n"), { sources: "none" })).toBe([
+      "A small update with old code and docs. Show [link](resource://id) literally.",
+      "",
+      "- ☑ Shipped",
+      "  - ☐ Follow up",
+      "",
+      "    const answer = 42;",
+    ].join("\n"));
+  });
+
+  it("keeps person and link syntax literal in every form of code", () => {
+    const mention = `[@Ada](person://${id})`;
+    expect(rewriteMessageAsPlainText([
+      `Show \`${mention}\` and \`\`a \` [plan](resource://plan)\`\` literally.`,
+      "",
+      "```md",
+      mention,
+      "[plan](resource://plan)",
+      "```",
+      "",
+      `    ${mention}`,
+      "    **literal** [docs](https://example.com)",
+    ].join("\n"), { sources: "none" })).toBe([
+      `Show ${mention} and a \` [plan](resource://plan) literally.`,
+      "",
+      `    ${mention}`,
+      "    [plan](resource://plan)",
+      "",
+      `    ${mention}`,
+      "    **literal** [docs](https://example.com)",
+    ].join("\n"));
+    expect(rewriteMessageAsPlainText("Leave an unmatched ` delimiter alone.", { sources: "none" }))
+      .toBe("Leave an unmatched ` delimiter alone.");
+  });
+
+  it("keeps Markdown literal in a fenced block nested inside a blockquote", () => {
+    const mention = `[@Ada](person://${id})`;
+    expect(rewriteMessageAsPlainText([
+      "> ```md",
+      `> ${mention}`,
+      "> **literal** [plan](resource://plan)",
+      "> > literal quote marker",
+      "> ```",
+    ].join("\n"), { sources: "none" })).toBe([
+      `    ${mention}`,
+      "    **literal** [plan](resource://plan)",
+      "    > literal quote marker",
+    ].join("\n"));
+  });
+
+  it("preserves multiline inline code and escaped backticks", () => {
+    expect(rewriteMessageAsPlainText([
+      "Show ``first",
+      "[plan](resource://plan) and **literal**",
+      "last`` exactly.",
+      "Escaped \\`name\\` stays in backticks.",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Show first",
+      "[plan](resource://plan) and **literal**",
+      "last exactly.",
+      "Escaped `name` stays in backticks.",
+    ].join("\n"));
+  });
+
+  it("does not collect a reference definition from multiline inline code", () => {
+    expect(rewriteMessageAsPlainText([
+      "Keep `start",
+      "[guide]: /literal",
+      "end` and [docs][guide].",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Keep start",
+      "[guide]: /literal",
+      "end and [docs][guide].",
+    ].join("\n"));
+  });
+
+  it("does not collect a citation footnote from multiline inline code", () => {
+    expect(rewriteMessageAsPlainText([
+      "Keep `start",
+      "[^x]: [Docs](https://example.com)",
+      "end` and [^x].",
+    ].join("\n"), { sources: "plain" })).toBe([
+      "Keep start",
+      "[^x]: [Docs](https://example.com)",
+      "end and [^x].",
+    ].join("\n"));
+  });
+
+  it("preserves an escaped footnote reference without inventing a source", () => {
+    expect(rewriteMessageAsPlainText([
+      "Show \\[^x] literally.",
+      "",
+      "[^x]: [Docs](https://example.com)",
+    ].join("\n"), { sources: "plain" })).toBe("Show [^x] literally.");
+  });
+
+  it("removes quote containers from indented code without rewriting its contents", () => {
+    expect(rewriteMessageAsPlainText(
+      ">     [plan](resource://plan) and **literal**",
+      { sources: "none" },
+    )).toBe("    [plan](resource://plan) and **literal**");
+  });
+
+  it("reduces nested emphasis and identifiers without leaking delimiters", () => {
+    expect(rewriteMessageAsPlainText(
+      "Set **MAX_RETRIES**, **do_this**, _max_retries_, and **bold with *nested* inside**.",
+      { sources: "none" },
+    )).toBe("Set MAX_RETRIES, do_this, max_retries, and bold with nested inside.");
+  });
+
+  it("preserves escaped emphasis and intraword double underscores as literal text", () => {
+    expect(rewriteMessageAsPlainText(
+      String.raw`Show \*stars\*, \_underscores\_, and foo__bar__baz beside __bold__ text.`,
+      { sources: "none" },
+    )).toBe("Show *stars*, _underscores_, and foo__bar__baz beside bold text.");
+  });
+
+  it("reduces the full shared link grammar without leaving destination punctuation", () => {
+    expect(rewriteMessageAsPlainText(
+      "Read [the RFC](https://example.com/a_(b)) and [the [draft] plan](https://example.com/p \"Plan\").",
+      { sources: "none" },
+    )).toBe("Read the RFC and the [draft] plan.");
+  });
+
+  it("reduces full, collapsed, and shortcut reference links and removes their definitions", () => {
+    expect(rewriteMessageAsPlainText([
+      "Read [the docs][guide], [the plan][], and [status]. Keep [unknown] literal.",
+      "",
+      "[guide]: https://example.com/docs",
+      "[the plan]: <https://example.com/plan> \"Plan\"",
+      "[status]: /status",
+      "",
+      "    [guide]: https://example.com/literal",
+      "    [the docs][guide]",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Read the docs, the plan, and status. Keep [unknown] literal.",
+      "",
+      "    [guide]: https://example.com/literal",
+      "    [the docs][guide]",
+    ].join("\n"));
+  });
+
+  it("removes a reference definition title continued onto the next line", () => {
+    expect(rewriteMessageAsPlainText([
+      "Read [docs][guide].",
+      "",
+      "[guide]: /docs",
+      "  \"Documentation\"",
+    ].join("\n"), { sources: "none" })).toBe("Read docs.");
+  });
+
+  it("preserves escaped reference syntax while removing its definition", () => {
+    expect(rewriteMessageAsPlainText([
+      "See \\[docs].",
+      "",
+      "[docs]: /docs",
+    ].join("\n"), { sources: "none" })).toBe("See [docs].");
+  });
+
+  it("preserves escaped inline citation syntax", () => {
+    expect(rewriteMessageAsPlainText(
+      "Show \\[plan](resource://plan)",
+      { sources: "none" },
+    )).toBe("Show [plan](resource://plan)");
+  });
+
+  it("does not consume a reference title-shaped line in another container", () => {
+    expect(rewriteMessageAsPlainText([
+      "Read [docs][guide].",
+      "",
+      "[guide]: /docs",
+      "> \"Visible quote\"",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Read docs.",
+      "",
+      "\"Visible quote\"",
+    ].join("\n"));
+  });
+
+  it("reduces reference links and definitions inside blockquotes", () => {
+    expect(rewriteMessageAsPlainText([
+      "> Read [docs][guide].",
+      ">",
+      "> [guide]: /docs",
+    ].join("\n"), { sources: "none" })).toBe("Read docs.");
+  });
+
+  it("turns the renderer's supported break tags into line breaks outside code", () => {
+    expect(rewriteMessageAsPlainText(
+      "First<br>Second<br/>Third<br />Fourth and `<br/>`.",
+      { sources: "none" },
+    )).toBe("First\nSecond\nThird\nFourth and <br/>.");
+  });
+
+  it("removes ATX heading markers after their allowed indentation", () => {
+    expect(rewriteMessageAsPlainText("  ## Status", { sources: "none" })).toBe("Status");
+  });
+
+  it("reduces emphasis across a soft line break", () => {
+    expect(rewriteMessageAsPlainText("Please **review\nthis** today.", { sources: "none" }))
+      .toBe("Please review\nthis today.");
+  });
+
+  it("reduces emphasis across a list-item continuation", () => {
+    expect(rewriteMessageAsPlainText("- **review\n  this** today", { sources: "none" }))
+      .toBe("- review\n  this today");
+  });
+
+  it("reduces emphasis across a lazy list-item continuation", () => {
+    expect(rewriteMessageAsPlainText("- **review\nthis** today", { sources: "none" }))
+      .toBe("- review\nthis today");
+  });
+
+  it("leaves whitespace-invalid strikethrough delimiters literal", () => {
+    expect(rewriteMessageAsPlainText("Keep ~~ this ~~ literal", { sources: "none" }))
+      .toBe("Keep ~~ this ~~ literal");
+  });
+
+  it("preserves a fenced code block nested directly inside a list item", () => {
+    expect(rewriteMessageAsPlainText([
+      "- ```md",
+      "  [plan](resource://plan)",
+      "  **literal**",
+      "  ```",
+    ].join("\n"), { sources: "none" })).toBe([
+      "    [plan](resource://plan)",
+      "    **literal**",
+    ].join("\n"));
+  });
+
+  it("treats list-leading triple-backtick spans with closing backticks as inline code", () => {
+    expect(rewriteMessageAsPlainText("- ```name``` then continue", { sources: "none" }))
+      .toBe("- name then continue");
+  });
+
+  it("preserves list depth and removes setext and thematic-break markup", () => {
+    expect(rewriteMessageAsPlainText([
+      "Title",
+      "-----",
+      "",
+      "- one",
+      "- two",
+      "  - three",
+      "    - four",
+      "",
+      "***",
+      "",
+      "Done",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Title",
+      "",
+      "- one",
+      "- two",
+      "  - three",
+      "    - four",
+      "",
+      "Done",
+    ].join("\n"));
   });
 });
 
@@ -382,6 +660,19 @@ describe("rewriteCitationsAsPlainText", () => {
   it("leaves an inline code span showing the syntax alone", () => {
     expect(rewriteCitationsAsPlainText("Write `[Title](resource://id)` to cite."))
       .toBe("Write `[Title](resource://id)` to cite.");
+  });
+
+  it("does not consume quoted indented code as a top-level footnote continuation", () => {
+    expect(rewriteMessageAsPlainText([
+      "Claim.[^x]",
+      "",
+      "[^x]: [Docs](https://example.com)",
+      ">     visible code",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Claim.[1]",
+      "",
+      "    visible code",
+    ].join("\n"));
   });
 
   it("leaves an indented code block alone, the other way a model shows the syntax", () => {
