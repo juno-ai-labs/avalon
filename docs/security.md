@@ -125,7 +125,8 @@ same as desktop.
   never by the renderer from the model-chosen destination. The service accepts
   public domain names only, uses the existing Firecrawl client to discover a
   public HTTPS favicon URL, rejects image redirects, bounds the body read at
-  Cloudflare KV's value limit without a second retained chunk copy, validates
+  Cloudflare KV's value limit without a second retained chunk copy, applies a
+  25-second deadline across the origin response headers and body, validates
   image bytes, and keeps only a 30-day platform-wide KV entry. The renderer
   requests only for anchors that enter the viewport, receives the cached bytes,
   and exposes them through a revocable local object URL.
@@ -949,7 +950,8 @@ Associated Domains entitlements; helpers retain their existing entitlement set.
 sandboxed renderer obtains its bytes through the authenticated Rally API. The
 server accepts public domains only, asks the existing Firecrawl client for
 branding metadata, rejects image redirects, bounds and verifies image bytes,
-and caches the result or confirmed miss for 30 days in dedicated KV. Transient
+applies a 25-second deadline to the origin image request, and caches the result
+or confirmed miss for 30 days in dedicated KV. Transient
 provider and image-origin failures are not negative-cached. A primary-domain
 fallback that outlives an exact-host response is retained through the request
 execution context rather than detached from the Worker lifecycle.
@@ -957,7 +959,9 @@ execution context rather than detached from the Worker lifecycle.
 **Why:** Letting an `<img>` point at a model-authored site would notify that site
 when a message merely painted and would move arbitrary network access into the
 renderer. Repeating lookup on every client would also discard the platform-wide
-reuse the mark is meant to provide.
+reuse the mark is meant to provide. Cloudflare publishes no individual
+subrequest deadline, so an origin can otherwise keep the authenticated request
+and its coalesced desktop promise open indefinitely.
 
 **Considered and rejected:** Direct renderer fetches and direct page scraping in
 the API. The former discloses browsing context from each client; the latter
@@ -968,7 +972,10 @@ Redirects are treated as absent for that host, the separately resolved primary
 domain may still supply its own mark, and detached still exports do not fetch
 live decoration. Concurrent desktop requests for one normalized hostname share
 one API operation, off-screen anchors start none, and browser responses
-revalidate so the KV entry remains the one 30-day cache clock.
+revalidate so the KV entry remains the one 30-day cache clock. The team selected
+25 seconds to match Firecrawl's branding scrape budget and remain within
+Cloudflare's 30-second `waitUntil` window; a deadline failure is transient and
+therefore never stored as a 30-day miss.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 
