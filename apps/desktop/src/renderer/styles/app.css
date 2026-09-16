@@ -249,7 +249,12 @@ pre {
    the kill switch because its two keyframes are the same value; these cannot.
 
    Same ordering trap as the line fade, plus `animation-range`, which the
-   shorthand also resets. All three longhands stay below it. */
+   shorthand also resets. All three longhands stay below it.
+
+   The mask does not spare a focus ring. Tab and this rail's own
+   `scrollIntoView({ block: 'nearest' })` both park a row flush with the
+   scrollport edge, which is exactly the 24px the fade owns, so
+   `scroll-padding` on the same axis keeps the indicator out of the band. */
 @property --clipped-scroll-fade-start {
   syntax: '<length>';
   inherits: false;
@@ -296,6 +301,7 @@ pre {
 }
 
 :is(.sidebar-scroll, .workstream-context-scroll) {
+  scroll-padding-block: 24px;
   animation: clipped-scroll-fade-block linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
   animation-duration: auto, auto, auto;
   animation-timeline: scroll(self block), scroll(self block), scroll(self block);
@@ -303,6 +309,7 @@ pre {
 }
 
 .sidebar .sidebar-automation-strip {
+  scroll-padding-inline: 24px;
   animation: clipped-scroll-fade-inline linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
   animation-duration: auto, auto, auto;
   animation-timeline: scroll(self inline), scroll(self inline), scroll(self inline);

@@ -574,6 +574,7 @@ describe('clipped scroll edges on both navigation rails', () => {
   it('fades the work-stream scrollers from their own block overflow', () => {
     const fade = fadeRule(BLOCK_SCROLLERS);
 
+    expect(fade).toContain('scroll-padding-block: 24px;');
     expect(fade).toContain(`animation: ${COVER};`);
     const shorthand = fade.indexOf('animation: clipped-scroll-fade-block');
     expect(fade.indexOf('animation-duration: auto, auto, auto;')).toBeGreaterThan(shorthand);
@@ -584,6 +585,7 @@ describe('clipped scroll edges on both navigation rails', () => {
   it('fades the Sidekick strip from its own inline overflow', () => {
     const fade = fadeRule(INLINE_SCROLLER);
 
+    expect(fade).toContain('scroll-padding-inline: 24px;');
     expect(fade).toContain(`animation: ${INLINE_COVER};`);
     const shorthand = fade.indexOf('animation: clipped-scroll-fade-inline');
     expect(fade.indexOf('animation-duration: auto, auto, auto;')).toBeGreaterThan(shorthand);
@@ -617,8 +619,11 @@ describe('clipped scroll edges on both navigation rails', () => {
   });
 
   it('keeps the scroll-edge durations on the scroller timeline under reduced motion', () => {
-    expect(rule(':is(.sidebar-scroll, .workstream-context-scroll), .sidebar .sidebar-automation-strip'))
-      .toContain('animation-duration: auto !important;');
+    const restore = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\*,\s*\*::before,\s*\*::after \{[\s\S]*?:is\(\.sidebar-scroll, \.workstream-context-scroll\), \.sidebar \.sidebar-automation-strip \{([^}]*)\}/u,
+    )?.[1] ?? null;
+
+    expect(restore).toContain('animation-duration: auto !important;');
   });
 });
 
