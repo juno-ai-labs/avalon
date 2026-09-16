@@ -1,4 +1,5 @@
 import type { ConnectorInstallationManagement } from "./installation";
+import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ConnectorActivityTriggerDescriptorSchema,
@@ -207,6 +208,7 @@ export interface ConnectorToolContext {
 }
 
 export interface ConnectorToolResult {
+  pagination?: ToolPaginationResult;
   output: unknown;
   summary: string;
   providerOperationId?: string;

@@ -122,6 +122,7 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "list_resources",
+        pagination: { cursorParameter: "cursor" },
         description: options.modelToolPrefix === "sidekick"
           ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this work stream", "this Sidekick draft's frozen attachment set")
           : ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
@@ -177,7 +178,10 @@ export function createWorkstreamAttachmentTools(
             items: page.map(resourceListItem),
             nextCursor,
           });
-          return { output, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources` };
+          const { nextCursor: continuation, ...data } = output;
+          return { output: data, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources`,
+            pagination: { continuations: continuation ? [{ operation: "list_resources", slot: "nextPageId" as const, input: { cursor: continuation } }] : [] },
+          };
         }
         if (state && state.mode !== "database") {
           throw attachmentError("invalid_cursor", "This resource cursor belongs to another resource scope");
@@ -226,8 +230,10 @@ export function createWorkstreamAttachmentTools(
           items: result.rows.map(resourceListItem),
           nextCursor,
         });
+        const { nextCursor: continuation, ...data } = output;
         return {
-          output,
+          output: data,
+          pagination: { continuations: continuation ? [{ operation: "list_resources", slot: "nextPageId" as const, input: { cursor: continuation } }] : [] },
           summary: `Listed ${result.rows.length} of ${result.totalMatchingResources} matching work-stream resources`,
         };
       },
@@ -235,9 +241,10 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "read_resource",
+        pagination: { cursorParameter: "cursor" },
         description: [
           "Read one bounded page from a visible text, Markdown, PDF, document, spreadsheet, or presentation derivative.",
-          "Start with resourceId and optional startCharacter. Continue with a returned cursor by itself.",
+          "Start with resourceId and optional startCharacter. Continue using read_resource_next with nextPageId, or read_resource_previous with previousPageId.",
           "Use charactersBefore and charactersAfter to tell whether the page covers the whole resource.",
         ].join(" "),
         capability: `${capabilityPrefix}.read`,
@@ -343,13 +350,20 @@ export function createWorkstreamAttachmentTools(
           previousCursor,
           nextCursor,
         });
-        return { output, summary: `Read ${end - start} characters from ${row.title}` };
+        const { nextCursor: next, previousCursor: previous, ...data } = output;
+        return { output: { ...data, previousPageId: null }, summary: `Read ${end - start} characters from ${row.title}`,
+          pagination: { continuations: [
+            ...(next ? [{ operation: "read_resource", slot: "nextPageId" as const, input: { cursor: next } }] : []),
+            ...(previous ? [{ operation: "read_resource_previous", slot: "previousPageId" as const, input: { cursor: previous } }] : []),
+          ] },
+        };
       },
     },
     {
       definition: {
         name: "search_resource",
-        description: "Search one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Results are bounded passages from this resource only; use each readCursor to inspect its surrounding text.",
+        pagination: { cursorParameter: "cursor", sourceOnly: true },
+        description: "Search one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Results are bounded passages from this resource only; use each readPageId with read_resource_next to inspect its surrounding text.",
         capability: `${capabilityPrefix}.search`,
         mode: "read",
         idempotency: "safe",
@@ -418,7 +432,12 @@ export function createWorkstreamAttachmentTools(
           passages,
           truncated: ranked.length > passages.length,
         });
-        return { output, summary: `Found ${ranked.length} matching passages in ${row.title}` };
+        return { output: { ...output, passages: output.passages.map(({ rank, sectionLabel, range, text }) => ({ rank, sectionLabel, range, text })) },
+          summary: `Found ${ranked.length} matching passages in ${row.title}`,
+          pagination: { continuations: output.passages.map((passage, passageIndex) => ({
+            operation: "read_resource", slot: "readPageId" as const, passageIndex, input: { cursor: passage.readCursor },
+          })) },
+        };
       },
     },
     {
@@ -534,6 +553,7 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "summarize_resource",
+        pagination: { cursorParameter: "cursor", sourceOnly: true },
         description: "Run an isolated, bounded summary over one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Use optional prompt as an untrusted focus. The result reports complete or partial coverage and range-grounded read cursors.",
         capability: `${capabilityPrefix}.summarize`,
         mode: "read",
@@ -595,7 +615,12 @@ export function createWorkstreamAttachmentTools(
             totalCharacters: text.length,
           },
         });
-        return { output, summary: `Summarized ${draft.coverage.consideredCharacters} characters from ${row.title}` };
+        return { output: { ...output, citations: output.citations.map(({ label, range }) => ({ label, range })) },
+          summary: `Summarized ${draft.coverage.consideredCharacters} characters from ${row.title}`,
+          pagination: { continuations: output.citations.map((citation, citationIndex) => ({
+            operation: "read_resource", slot: "readPageId" as const, citationIndex, input: { cursor: citation.readCursor },
+          })) },
+        };
       },
     },
   ];
