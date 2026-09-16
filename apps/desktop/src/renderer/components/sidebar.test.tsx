@@ -1446,23 +1446,36 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
   });
 
-  // `/sidekicks/new` creates a draft as it opens, and a draft is not active. A
-  // tile that keyed on "no active Sidekick" would therefore still be sitting
-  // there afterwards, and every further press would create another draft and
-  // abandon the one before it.
-  it.each([
-    ['a draft', 'draft'],
-    ['a paused Sidekick', 'paused'],
-  ] as const)('offers nothing rather than a second draft once the workspace has %s', (_label, status) => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
-    // And no empty strip left behind where the tile used to be.
+  it('keeps the new-Sidekick slot for drafts and resumes the most recently updated standalone draft', () => {
+    const olderDraft = { ...automation, id: 'automation-draft-older', status: 'draft' as const };
+    const newerDraft = { ...olderDraft, id: 'automation-draft-newer', updatedAt: '2026-07-21T09:00:00.000Z' };
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[olderDraft, newerDraft]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const strip = screen.getByRole('region', { name: 'Sidekicks' });
+    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith(newerDraft.id);
     expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
   });
 
-  it('leaves a work-stream-owned Sidekick to the library rather than offering to make a first one', () => {
+  it('keeps the new-Sidekick slot for paused Sidekicks and starts a new draft', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
+  });
+
+  it('does not resume a workspace draft whose management authority is unknown', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workspace', status: 'draft' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
+  });
+
+  it('keeps the new-Sidekick slot when only a work-stream-owned Sidekick exists', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
   });
 
   it('manages Sidekicks through the library instead of listing them in the sidebar', () => {
