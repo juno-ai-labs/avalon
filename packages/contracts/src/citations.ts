@@ -652,11 +652,22 @@ export function rewriteMessageAsPlainText(
   markdown: string,
   options: CitationRewriteOptions = {},
 ): string {
-  const references = mapOutsideCode(rewriteCitationsAsPlainText(markdown, options), (prose) => prose.replace(
+  const inlineSpans: string[] = [];
+  const protectedMarkdown = mapNotificationProse(
+    markdown.split(MESSAGE_SPAN_PLACEHOLDER).join(""),
+    (prose) => replaceInlineCodeSpans(prose, (_span, content) => {
+      inlineSpans.push(content);
+      return `${MESSAGE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${MESSAGE_SPAN_PLACEHOLDER}`;
+    }),
+  );
+  const references = mapOutsideCode(rewriteCitationsAsPlainText(protectedMarkdown, options), (prose) => prose.replace(
     personMentionMarkdownPattern(),
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
   ));
-  return markdownFormattingAsPlainText(references);
+  return markdownFormattingAsPlainText(references).replace(
+    new RegExp(`${MESSAGE_SPAN_PLACEHOLDER}(\\d+)${MESSAGE_SPAN_PLACEHOLDER}`, "gu"),
+    (_match, index: string) => inlineSpans[Number(index)] ?? "",
+  );
 }
 
 /** Markdown structure reduced to readable plain text without flattening it. */
@@ -674,19 +685,26 @@ function markdownFormattingAsPlainText(markdown: string): string {
   const source = parkedMarkdown.replace(/\r\n/gu, "\n").split("\n");
   const kinds = notificationMarkdownLineKinds(source);
   let fenceQuoteDepth = 0;
+  let fenceListIndent = 0;
   for (let index = 0; index < source.length; index += 1) {
     const raw = source[index]!;
     const kind = kinds[index]!;
     if (kind === "fence-open") {
       fenceQuoteDepth = blockquoteDepth(raw);
+      fenceListIndent = listFenceOpening(stripBlockquotePrefixes(raw))?.contentIndent ?? 0;
       continue;
     }
     if (kind === "fence-close") {
       fenceQuoteDepth = 0;
+      fenceListIndent = 0;
       continue;
     }
     if (kind === "fence-content") {
-      lines.push(`    ${stripBlockquotePrefixes(raw, fenceQuoteDepth).trimEnd()}`);
+      const content = stripListContinuationIndent(
+        stripBlockquotePrefixes(raw, fenceQuoteDepth),
+        fenceListIndent,
+      );
+      lines.push(`    ${content.trimEnd()}`);
       continue;
     }
     if (kind === "indented-code") {
@@ -714,7 +732,23 @@ function markdownFormattingAsPlainText(markdown: string): string {
       const marker = /\d/u.test(bullet[2]!) ? bullet[2]! : "-";
       const item = bullet[3]!.replace(/^\[([ xX])\]\s*/u, (_match, checked: string) =>
         (checked === " " ? "☐ " : "☑ "));
-      lines.push(`${indent}${marker} ${stripInlineMarkdown(item)}`);
+      const itemLines = [item];
+      const itemIndent = markdownIndentWidth(bullet[1]!);
+      const quoteDepth = blockquoteDepth(raw);
+      while (index + 1 < source.length && kinds[index + 1] === "prose") {
+        const nextRaw = source[index + 1]!;
+        const next = stripBlockquotePrefixes(nextRaw.trimEnd());
+        const nextIndent = /^(\s*)/u.exec(next)?.[1] ?? "";
+        if (!next.trim()
+          || blockquoteDepth(nextRaw) !== quoteDepth
+          || markdownIndentWidth(nextIndent) <= itemIndent
+          || /^(\s*)(?:[-*+]|\d{1,3}[.)])\s+/u.test(next)) break;
+        itemLines.push(next);
+        index += 1;
+      }
+      const reduced = stripInlineMarkdown(itemLines.join("\n")).split("\n");
+      lines.push(`${indent}${marker} ${reduced[0] ?? ""}`);
+      lines.push(...reduced.slice(1));
       continue;
     }
     const paragraph = [line];
@@ -896,6 +930,8 @@ const SPAN_PLACEHOLDER = "\u0000";
 const MULTILINE_SPAN_PLACEHOLDER = "\u0001";
 /** Reference scanning parks spans separately so a definition-shaped code line stays literal. */
 const REFERENCE_SPAN_PLACEHOLDER = "\u0002";
+/** The outer boundary protects inline code before citation and footnote scans run. */
+const MESSAGE_SPAN_PLACEHOLDER = "\u0003";
 
 /**
  * Applies a rewrite to everything except code.
@@ -956,7 +992,56 @@ function mapNotificationProse(markdown: string, rewrite: (prose: string) => stri
  * raw container markers to build their own rendered block tree.
  */
 function notificationMarkdownLineKinds(lines: readonly string[]) {
-  return markdownLineKinds(lines.map((line) => stripBlockquotePrefixes(line)));
+  let activeListFence: { readonly contentIndent: number; readonly delimiter: string } | null = null;
+  const normalized = lines.map((raw) => {
+    const line = stripBlockquotePrefixes(raw);
+    if (activeListFence) {
+      const content = stripListContinuationIndent(line, activeListFence.contentIndent);
+      const closing = /^ {0,3}(`{3,}|~{3,})/u.exec(content)?.[1];
+      if (closing?.startsWith(activeListFence.delimiter[0]!)
+        && closing.length >= activeListFence.delimiter.length) activeListFence = null;
+      return content;
+    }
+    const opening = listFenceOpening(line);
+    if (!opening) return line;
+    activeListFence = { contentIndent: opening.contentIndent, delimiter: opening.delimiter };
+    return opening.content;
+  });
+  return markdownLineKinds(normalized);
+}
+
+function listFenceOpening(line: string): {
+  readonly content: string;
+  readonly contentIndent: number;
+  readonly delimiter: string;
+} | null {
+  const match = /^(\s*)(?:[-+*]|\d{1,3}[.)])([ \t]+)(`{3,}|~{3,})(.*)$/u.exec(line);
+  if (!match) return null;
+  const delimiter = match[3]!;
+  return {
+    content: `${delimiter}${match[4]!}`,
+    contentIndent: match[0]!.indexOf(delimiter),
+    delimiter,
+  };
+}
+
+function stripListContinuationIndent(line: string, width: number): string {
+  let index = 0;
+  let removed = 0;
+  while (index < line.length && removed < width) {
+    if (line[index] === " ") {
+      removed += 1;
+      index += 1;
+      continue;
+    }
+    if (line[index] === "\t") {
+      removed += 4;
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return removed >= width ? line.slice(index) : line;
 }
 
 function blockquoteDepth(line: string): number {
