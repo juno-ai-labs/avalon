@@ -466,22 +466,23 @@ function SidekickTile({ sidekick }: { sidekick: AutomationSummary }): React.JSX.
 }
 
 /**
- * The strip's own way to make the first Sidekick, standing where a Sidekick's
- * tile would: the same hexagon, drawn as an empty slot because there is no
- * Sidekick yet to take a colour or a symbol from, with a plus in it.
+ * The strip's action for an empty active-shortcut slot, standing where a
+ * Sidekick's tile would: the same hexagon, drawn without a colour or symbol,
+ * with a plus in it. A draft or paused Sidekick can exist without occupying
+ * this slot.
  *
- * Only while the strip is empty. Once one Sidekick qualifies the strip is a row
- * of shortcuts that scrolls, and an action tile in it would compete with them
- * for the one place a person looks to reach a Sidekick; the library window this
- * opens carries New Sidekick of its own from then on.
+ * Only while no active standalone Sidekick qualifies. Once one does, the strip
+ * is a row of shortcuts that scrolls, and an action tile in it would compete
+ * with them for the one place a person looks to reach a Sidekick; the library
+ * window carries New Sidekick of its own from then on.
  */
-function NewSidekickTile(): React.JSX.Element {
+function NewSidekickTile({ target }: { target: string }): React.JSX.Element {
   return (
     <SidekickStripTile
       glyph={<HexagonGlyph className="sidekick-new-glyph" fill="none" ink="var(--av-sys-color-text-muted)" symbol={Plus} />}
       label="New Sidekick"
       name="New Sidekick"
-      onClick={() => void desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET)}
+      onClick={() => void desktopBridge().openSidekicks(target)}
       tip={{ label: 'New Sidekick', side: 'top' }}
     />
   );
@@ -1173,12 +1174,16 @@ export function Sidebar({
   // makes, so the two cannot disagree about which route this is.
   const onNewStreamRoute = location.pathname === '/workstreams/new';
   const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
-  // The strip has one useful empty state once its answer has arrived: offer a
-  // new Sidekick until an active standalone Sidekick can occupy the slot.
-  // Drafts, paused Sidekicks, and work-stream-owned Sidekicks are available in
-  // the library, but none of them paints a shortcut here and none should leave
-  // this part of the sidebar blank.
   const sidekickShortcutsLoaded = automations !== undefined;
+  const resumableDraft = useMemo(() => (automations ?? [])
+    .filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'draft')
+    .reduce<AutomationSummary | undefined>((latest, sidekick) => {
+      if (!latest) return sidekick;
+      const recency = sidekick.updatedAt.localeCompare(latest.updatedAt);
+      return recency > 0 || (recency === 0 && sidekick.id.localeCompare(latest.id) > 0)
+        ? sidekick
+        : latest;
+    }, undefined), [automations]);
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1675,7 +1680,7 @@ export function Sidebar({
     >
       {standaloneSidekicks.length > 0
         ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
-        : <NewSidekickTile />}
+        : <NewSidekickTile target={resumableDraft?.id ?? NEW_SIDEKICK_TARGET} />}
     </section>
   );
 
