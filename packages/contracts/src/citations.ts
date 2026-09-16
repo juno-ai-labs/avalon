@@ -26,6 +26,9 @@
  *   arrives as a broken image and a grounded answer as a page of `[^1]` markers.
  */
 
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { isMarkdownCode, mapMarkdownProse, markdownLineKinds } from "./markdown-code";
 
 /** A citation target, once the scheme allowlist has decided what it is. */
@@ -91,14 +94,61 @@ export function personIdFromMentionHref(href: string | undefined): string | unde
 
 /**
  * Matches `[@Label](person:<uuid>)` and `[@Label](person://<uuid>)` in agent
- * text. Capture group 1 is the label, with Markdown escapes intact. Fresh each
- * call so a `/g` lastIndex cannot leak across reductions.
+ * text. Capture group 1 is the label, with Markdown escapes intact, and group
+ * 2 is the person id. Fresh each call so a `/g` lastIndex cannot leak across
+ * reductions.
  */
 export function personMentionMarkdownPattern(): RegExp {
   return new RegExp(
-    String.raw`\[@((?:\\.|[^\]])+)\]\(person:(?:\/\/)?${PERSON_UUID}\)`,
+    String.raw`\[@((?:\\.|[^\\\]])+)\]\(person:(?:\/\/)?(${PERSON_UUID})\)`,
     "giu",
   );
+}
+
+export interface PersonMentionMarkdownRange {
+  readonly personId: string;
+  readonly startOffset: number;
+  readonly endOffset: number;
+}
+
+interface PositionedMarkdownNode {
+  readonly type: string;
+  readonly url?: unknown;
+  readonly children?: readonly PositionedMarkdownNode[];
+  readonly position?: {
+    readonly start: { readonly offset?: number };
+    readonly end: { readonly offset?: number };
+  };
+}
+
+/**
+ * Identity-bearing person links in rendered Markdown prose, with exact source
+ * offsets. Code examples are not mentions: fenced, indented and inline code
+ * stay outside the result just as they stay outside the rendered link path.
+ *
+ * This only recognizes syntax. A caller that turns a range into authority must
+ * still resolve `personId` against its own current participant set.
+ */
+export function personMentionMarkdownRanges(markdown: string): PersonMentionMarkdownRange[] {
+  const ranges: PersonMentionMarkdownRange[] = [];
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as PositionedMarkdownNode;
+  const visit = (node: PositionedMarkdownNode): void => {
+    if (node.type === "link" && typeof node.url === "string") {
+      const personId = personIdFromMentionHref(node.url);
+      const startOffset = node.position?.start.offset;
+      const endOffset = node.position?.end.offset;
+      if (personId !== undefined && startOffset !== undefined && endOffset !== undefined) {
+        const source = markdown.slice(startOffset, endOffset);
+        const match = [...source.matchAll(personMentionMarkdownPattern())][0];
+        if (match?.index === 0 && match[0].length === source.length && match[2]?.toLowerCase() === personId) {
+          ranges.push({ personId, startOffset, endOffset });
+        }
+      }
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+  return ranges;
 }
 
 /**
