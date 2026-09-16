@@ -222,10 +222,26 @@ describe("person mention hrefs", () => {
       "> ```md",
       `> ${mention}`,
       "> **literal** [plan](resource://plan)",
+      "> > literal quote marker",
       "> ```",
     ].join("\n"), { sources: "none" })).toBe([
       `    ${mention}`,
       "    **literal** [plan](resource://plan)",
+      "    > literal quote marker",
+    ].join("\n"));
+  });
+
+  it("preserves multiline inline code and escaped backticks", () => {
+    expect(rewriteMessageAsPlainText([
+      "Show ``first",
+      "[plan](resource://plan) and **literal**",
+      "last`` exactly.",
+      "Escaped \\`name\\` stays in backticks.",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Show first",
+      "[plan](resource://plan) and **literal**",
+      "last exactly.",
+      "Escaped `name` stays in backticks.",
     ].join("\n"));
   });
 
@@ -277,11 +293,23 @@ describe("person mention hrefs", () => {
     ].join("\n"), { sources: "none" })).toBe("Read docs.");
   });
 
+  it("reduces reference links and definitions inside blockquotes", () => {
+    expect(rewriteMessageAsPlainText([
+      "> Read [docs][guide].",
+      ">",
+      "> [guide]: /docs",
+    ].join("\n"), { sources: "none" })).toBe("Read docs.");
+  });
+
   it("turns the renderer's supported break tags into line breaks outside code", () => {
     expect(rewriteMessageAsPlainText(
       "First<br>Second<br/>Third<br />Fourth and `<br/>`.",
       { sources: "none" },
     )).toBe("First\nSecond\nThird\nFourth and <br/>.");
+  });
+
+  it("removes ATX heading markers after their allowed indentation", () => {
+    expect(rewriteMessageAsPlainText("  ## Status", { sources: "none" })).toBe("Status");
   });
 
   it("preserves list depth and removes setext and thematic-break markup", () => {
