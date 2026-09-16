@@ -12,6 +12,7 @@ import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
 import { localCacheScope } from './lib/local-cache';
+import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
 import { workspaceFromSession } from './lib/session-workspace';
@@ -478,7 +479,9 @@ export default function App(): React.JSX.Element {
       <QueryClientProvider client={queryClient}>
         <Tooltip.Provider>
           <AppSessionProvider>
-            <AccountOnboardingGate><SessionGate /></AccountOnboardingGate>
+            <FaviconApiProvider>
+              <AccountOnboardingGate><SessionGate /></AccountOnboardingGate>
+            </FaviconApiProvider>
           </AppSessionProvider>
         </Tooltip.Provider>
       </QueryClientProvider>
