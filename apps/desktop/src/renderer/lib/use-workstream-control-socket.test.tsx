@@ -400,6 +400,42 @@ describe('useWorkstreamControlSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
+  it('aborts an in-flight control ticket when the desktop goes offline', async () => {
+    let online = true;
+    vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
+    let ticketSignal: AbortSignal | undefined;
+    const getWorkstreamControlSocketTicket = vi.fn((
+      _id: string,
+      _requestId?: string,
+      signal?: AbortSignal,
+    ) => {
+      ticketSignal = signal;
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    renderHook(
+      () => useWorkstreamControlSocket({ getWorkstreamControlSocketTicket }, workstreamId, true),
+      { wrapper: wrapper(new QueryClient()) },
+    );
+    await flushPromises();
+    expect(ticketSignal?.aborted).toBe(false);
+
+    online = false;
+    act(() => window.dispatchEvent(new Event('offline')));
+    await flushPromises();
+
+    expect(ticketSignal?.aborted).toBe(true);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'workstream_control',
+      state: 'stopped',
+      cause: 'offline',
+      attempts: 'zero',
+    });
+  });
+
   it('reports its own connections under the control socket rather than the feed', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);

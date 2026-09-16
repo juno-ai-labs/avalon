@@ -4,7 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render } from '@testing-library/react';
 import { useEffect, type PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamSocketApi, WorkstreamSocketConnection } from './use-workstream-socket';
+import {
+  WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
+  type WorkstreamSocketApi,
+  type WorkstreamSocketConnection,
+} from './use-workstream-socket';
 import {
   RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
   WorkstreamSocketPool,
@@ -165,7 +169,10 @@ describe('useRetainedWorkstreamSocket for an automation parent', () => {
 
     // The pool's active work stream opened its pair; the automation opened a
     // feed of its own and asked for no control ticket at all.
-    expect(api.getSocketTicket).toHaveBeenCalledWith(automationId, '0', expect.anything(), 0, false, expect.anything());
+    expect(api.getSocketTicket).toHaveBeenCalledWith(
+      automationId, '0', expect.anything(), 0, false, expect.anything(),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
+    );
     expect(api.getWorkstreamControlSocketTicket.mock.calls.map(([id]) => id)).toEqual([workstreamId]);
   });
 });
@@ -203,6 +210,7 @@ describe('WorkstreamSocketPool', () => {
       0,
       true,
       expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     const warmedSockets = FakeWebSocket.instances.filter(
@@ -271,7 +279,10 @@ describe('WorkstreamSocketPool', () => {
     await expect(currentConnection!.createMessage({ text: 'Wait for setup', clientId: '00000000-0000-7000-8000-000000000640', runMode: 'queue' })).rejects.toMatchObject({ code: 'workspace_setup_pending' });
     const pair = [...FakeWebSocket.instances];
     const feed = pair.find((socket) => String(socket.url).endsWith('/feed'))!;
-    expect(api.getSocketTicket).toHaveBeenCalledWith(workstreamId, '0', expect.any(String), 0, true, expect.any(AbortSignal));
+    expect(api.getSocketTicket).toHaveBeenCalledWith(
+      workstreamId, '0', expect.any(String), 0, true, expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
+    );
     act(() => { feed.readyState = FakeWebSocket.OPEN; feed.dispatchEvent(new Event('open')); });
     await flushPromises();
     expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
@@ -319,6 +330,7 @@ describe('WorkstreamSocketPool', () => {
       0,
       true,
       expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
     const warmedFeed = warmedSockets.find((socket) => String(socket.url).endsWith('/feed'));
     if (!warmedFeed) throw new Error('The hovered work stream opened no feed socket.');

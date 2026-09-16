@@ -1038,6 +1038,27 @@ describe('socket ticket transport', () => {
     await Promise.all(rejections);
     expect(signals).toHaveLength(3);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(signals.every((signal) => signal.reason instanceof DOMException
+      && signal.reason.name === 'AbortError')).toBe(true);
+  });
+
+  it('does not report a bounded ticket cancellation as a network failure', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      })
+    )));
+    const api = new RallyApi('https://api.rally.test', session);
+    const ticket = api.getWorkspaceSocketTicket();
+    const rejection = expect(ticket).rejects.toMatchObject({
+      code: 'socket_ticket_timeout',
+    });
+
+    await vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS);
+
+    await rejection;
+    expect(reportJavascriptError).not.toHaveBeenCalled();
   });
 
   it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
