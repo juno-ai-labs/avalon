@@ -58,7 +58,7 @@ import {
   applyRetirementGate,
   retiredObjectResponse,
 } from "./object-retirement";
-import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
+import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { ApiError } from "../lib/api-error";
 import { externalEventOpening } from "../lib/external-event-opening";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -1801,7 +1801,11 @@ export class SidekickDO extends ConversationParentDurableObject {
       (pluginId) => {
         const connection = connectionsByPlugin.get(pluginId);
         return connection
-          ? connectorActivityTriggerDescriptors(registry.get(connection.connector_type), connection.config_json)
+          ? connectorActivityTriggerDescriptors(
+            registry.get(connection.connector_type),
+            connection.config_json,
+            storedConnectionScope(connection.scope),
+          )
           : undefined;
       },
     ));
@@ -1816,7 +1820,11 @@ export class SidekickDO extends ConversationParentDurableObject {
     for (const evaluator of rules.evaluators) {
       const connection = connectionsByPlugin.get(evaluator.source.suggestedSourcePluginId);
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", "An evaluator names a plugin with no connection");
-      const descriptors = connectorActivityTriggerDescriptors(registry.get(connection.connector_type), connection.config_json);
+      const descriptors = connectorActivityTriggerDescriptors(
+        registry.get(connection.connector_type),
+        connection.config_json,
+        storedConnectionScope(connection.scope),
+      );
       const eventFamilies: Record<string, string[]> = {};
       for (const descriptor of descriptors) {
         for (const family of descriptor.eventFamilies) {

@@ -103,6 +103,8 @@ import {
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import {
+  connectorActivityScopes,
+  connectorActivitySupportsScope,
   connectorCapabilitySupportsScope,
   AshbyCapabilities,
   AshbyWorkspaceAgentPresentation,
@@ -129,7 +131,7 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { countEnv, numericEnv } from "../env";
-import { connectorActivityTriggerDescriptors } from "../lib/connector-activity-triggers";
+import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { sha256 } from "../lib/crypto";
 import { markLoopActivationRecorded } from "../lib/loop-activation-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -2094,7 +2096,7 @@ async function loadAutomationCreatorPluginCatalog(
     const granted = new Set(grantedScopes);
     const connectionId = String(row.id);
     const connectorType = String(row.connector_type);
-    const scope = row.scope === "workspace" ? "workspace" as const : "personal" as const;
+    const scope = storedConnectionScope(String(row.scope ?? ""));
     const ownerUserId = row.owner_user_id == null ? null : String(row.owner_user_id);
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
     const staticDefinitions = dynamicCapability
@@ -2109,6 +2111,15 @@ async function loadAutomationCreatorPluginCatalog(
     // tools alone made every webhook automation impossible to draft.
     const eventCapable = adapter.manifest.activityTriggers.length > 0 || Boolean(adapter.webhookActivity);
     if (!dynamicCapability && !staticDefinitions.length && !eventCapable) continue;
+    // The scope this connector's events need, named only when this connection
+    // is on the wrong side of it: the drafting tools turn it into the sentence
+    // the model relays, and a connector whose events this scope can carry has
+    // nothing to say. Its triggers are empty in that case, and a count of zero
+    // is the one thing a drafting model reads as "this connector has no
+    // events" — which is false, and sent it to a timer instead.
+    const activityRequiresScope = eventCapable && !connectorActivitySupportsScope(adapter, scope)
+      ? connectorActivityScopes(adapter)[0] ?? null
+      : null;
     const frozen: FrozenConnectorPlugin = {
       pluginId: `connection:${connectionId}`,
       modelPluginId,
@@ -2176,7 +2187,8 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
-      activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json)),
+      activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope),
+      ...(activityRequiresScope ? { activityRequiresScope } : {}),
       tools: definitions.map((definition) => ({
           name: stableWireToolName(wirePrefix, definition.name),
           canonicalName: definition.name,

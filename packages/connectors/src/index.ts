@@ -77,6 +77,8 @@ export {
   acknowledgeConnectorAgentActivation,
   authorizedConnection,
   connectorRetryAfterMs,
+  connectorActivityScopes,
+  connectorActivitySupportsScope,
   connectorCapabilitySupportsScope,
   connectorOriginFromActivity,
   connectorOriginUrl,
@@ -5101,6 +5103,21 @@ export class ConnectorRegistry {
               `Connector ${manifest.type} has invalid connection scopes for capability ${capability}`,
             );
           }
+        }
+      }
+      if (adapter.activityConnectionScopes) {
+        const scopes = adapter.activityConnectionScopes;
+        if (!scopes.length || scopes.some((scope) => !manifest.supportedScopes.includes(scope))) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} has invalid connection scopes for its activity`,
+          );
+        }
+        if (!manifest.activityTriggers.length && !adapter.webhookActivity && !adapter.pollingActivity && !adapter.poll) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} narrows the scopes of activity it does not produce`,
+          );
         }
       }
       if (adapter.dynamicAgentTools) {

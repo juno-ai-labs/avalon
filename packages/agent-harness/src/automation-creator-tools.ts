@@ -11,6 +11,7 @@ import {
 } from "@rally/contracts";
 
 import {
+  activityTriggerScopeRefusal,
   asRecord,
   executeAutomationCreatorDiscoveryTool,
   parseAutomationSubmission,
@@ -450,6 +451,21 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
               code: "custom",
               path: ["evaluators", index, "source", "suggestedSourcePluginId"],
               message: "This plugin has not been inspected. Call sidekick_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
+              input: evaluator.source.suggestedSourcePluginId,
+            });
+            continue;
+          }
+          // Refused on the plugin rather than on the event, because every
+          // event is refused: this connection's scope cannot receive any of
+          // them. A rule naming an event type outright is not otherwise
+          // checked against the catalog here, so without this the draft is
+          // accepted and the automation is silent for good.
+          const scopeRefusal = activityTriggerScopeRefusal(plugin);
+          if (scopeRefusal) {
+            issues.push({
+              code: "custom",
+              path: ["evaluators", index, "source", "suggestedSourcePluginId"],
+              message: scopeRefusal,
               input: evaluator.source.suggestedSourcePluginId,
             });
             continue;
