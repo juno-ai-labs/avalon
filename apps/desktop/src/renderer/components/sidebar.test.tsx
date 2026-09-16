@@ -1464,6 +1464,13 @@ describe('Sidebar work-stream markers', () => {
     expect(openSidekicks).toHaveBeenCalledWith('new');
   });
 
+  it('does not resume a workspace draft whose management authority is unknown', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workspace', status: 'draft' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
+    fireEvent.click(create);
+    expect(openSidekicks).toHaveBeenCalledWith('new');
+  });
+
   it('keeps the new-Sidekick slot when only a work-stream-owned Sidekick exists', () => {
     render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
