@@ -3004,6 +3004,8 @@ export const WorkstreamNameResultSchema = z.object({
 
 export const ToolDefinitionSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  /** Authored pagination only. Never accepted from remote MCP declarations. */
+  pagination: z.object({ cursorParameter: z.string().min(1), sourceOnly: z.boolean().optional() }).optional(),
   /**
    * Exact provider-owned operation identity behind a normalized dynamic tool
    * name. Hosts use this only at execution; it is never model-visible.

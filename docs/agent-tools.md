@@ -456,6 +456,16 @@ tools as one protocol:
   the whole operation on one conflict. Its error identifies the conflicting
   paths without supplying replacement tokens.
 
+For Rally-authored tools, use the first/next primitive in
+[`tool-pagination.md`](tool-pagination.md), not a model-facing opaque cursor.
+The first tool takes filters; its companion takes only a copied `pageId`, with
+an exact plugin prefix and four lowercase words. Describe the producer field,
+null/end signal, and fully qualified wire tool name in recovery text. Filters
+remain server-owned. Provider tokens must be extracted at explicit authored
+slots before content bounding; MCP/pass-through contracts are not rewritten.
+
+The following cursor guidance applies to internal adapter contracts and
+provider-defined pass-through schemas, not to the authored model-facing surface.
 A pagination cursor is the same protocol with one tool on both ends, and it
 fails the same way when the description is left off. A model that has not paged
 yet holds no cursor, so an undescribed `pageToken`, `after`, `cursor`, or
@@ -598,9 +608,10 @@ still making historical generic uploads discoverable by a useful kind.
 
 All attachment argument schemas are strict and share the same bounds. A first
 list or read call carries human-meaningful arguments; a continuation carries
-only an authenticated opaque cursor. The cursor is purpose-separated and binds
-the execution principal and owning scope, but it remains a name rather than
-authority: an executor still performs its normal authorization query.
+only a receipt-owned page ID. Its lookup binds the execution principal and owning
+scope, but it remains a name rather than authority: an executor still performs
+its normal authorization query. New private continuation state needs no HMAC or
+artificial expiry; old signed cursors are decoded only for stored receipts.
 
 An authorized wrong-tool call may carry a bounded `suggestedCall` for exactly
 `workstream_read_resource`, `workstream_view_resource`, their two
@@ -643,15 +654,15 @@ are handled as untrusted content wherever they surface.
 The work-stream runtime now exposes five bounded content operations. The old
 `workstream_read` hard-capped index is replaced by
 `workstream_list_resources`, whose first call accepts an optional natural-
-language kind and whose cursor-only continuations can exhaust more than fifty
+language kind and whose page-ID-only continuations can exhaust more than fifty
 resources. `workstream_read_resource` returns 12,000 characters by default and
-at most 24,000, with exact characters before and after plus previous/next cursors.
+at most 24,000, with exact characters before and after plus previous/next page IDs.
 `workstream_search_resource` derives bounded ranges from one versioned
 derivative in memory and returns at most five passages and 20,000 characters.
 `workstream_view_resource` returns a
 JSON-only inclusion summary plus as many as eight ephemeral visual parts, and
 `workstream_summarize_resource` runs one isolated reader over deterministic,
-server-identified ranges with an optional untrusted prompt. Every cursor is
+server-identified ranges with an optional untrusted prompt. Every continuation is
 reauthorized and bound to the current inventory or derivative version.
 
 All five operations use the same visibility loader as the right sidebar.
@@ -993,6 +1004,16 @@ future agent tool or plugin, not just this family.
   system messages that tell the model when to reach for a tool.
 - [`security.md`](security.md) — trust boundaries and what is treated as
   untrusted.
+
+### 2026-09-16 — Move authored pagination state out of model arguments
+
+Authored tools now expose first/next calls and receipt-owned page IDs, with
+wire-qualified recovery instructions and explicit end signals. Keeping opaque
+provider cursors in the model schema required smaller models to copy fragile
+tokens and preserve filters; the runtime can preserve both instead. Internal
+adapter and pass-through schema guidance remains, but does not authorize
+exposing raw continuations from authored tools. The owning mechanism and
+tradeoffs are in [`tool-pagination.md`](tool-pagination.md).
 
 ### 2026-09-11 — A blocked connector can become an action, without making OAuth model-authored
 

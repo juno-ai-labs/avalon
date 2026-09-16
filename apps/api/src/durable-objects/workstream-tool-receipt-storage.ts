@@ -26,6 +26,8 @@
  */
 
 import { uuidV7 } from "../lib/uuid-v7";
+import { ToolPageError, ToolPageStorage, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
+import type { z } from "zod";
 import {
   WorkstreamTranscriptStorage,
   type PreparedToolLifecycle,
@@ -214,6 +216,31 @@ const LEASE_HOLDING_STATUSES = new Set(["running"]);
 
 export class WorkstreamToolReceiptStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
+
+  issuePage(input: z.infer<typeof PageIssueSchema> & { fence: ToolReceiptFence }): string | null {
+    return this.storage.transactionSync(() => {
+      this.#assertPageReceipt(input, true);
+      return new ToolPageStorage(this.sql).issue(input);
+    });
+  }
+
+  claimPage(input: z.infer<typeof PageClaimSchema> & { fence: ToolReceiptFence }): { inputJson: string } {
+    return this.storage.transactionSync(() => {
+      this.#assertPageReceipt(input);
+      return new ToolPageStorage(this.sql).claim(input);
+    });
+  }
+
+  #assertPageReceipt(input: { runId: string; effectIntentId: string; fence: ToolReceiptFence }, allowCancellationRequested = false): void {
+    if (input.runId !== input.fence.runId || this.#fence(input.fence, Date.now(), allowCancellationRequested) !== "held") {
+      throw new ToolPageError("page_execution_ownership_lost");
+    }
+    const receipt = first(this.sql.exec<{ status: string }>(
+      "SELECT status FROM tool_effects WHERE effect_intent_id = ? AND run_id = ?",
+      input.effectIntentId, input.runId,
+    ));
+    if (receipt?.status !== "executing") throw new ToolPageError("page_execution_receipt_missing");
+  }
 
   private get sql(): SqlStorage {
     return this.storage.sql;
@@ -563,9 +590,14 @@ export class WorkstreamToolReceiptStorage {
               )
            OR EXISTS (
                 SELECT 1 FROM attachment_tool_receipts WHERE tool_invocation_id = ?
+              )
+           OR EXISTS (
+                SELECT 1 FROM tool_pages WHERE producer_id = ? OR consumer_id = ?
               )`,
       runId,
       toolCallId,
+      effectIntentId,
+      effectIntentId,
       effectIntentId,
     )) !== undefined;
   }

@@ -1,4 +1,5 @@
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
+import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
 import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
@@ -22,7 +23,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 60;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 61;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3111,6 +3112,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       stopped_at INTEGER
     ) STRICT`],
   },
+  { version: 61, description: "receipt-owned friendly pagination continuations", statements: [TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX] },
 ];
 
 /**

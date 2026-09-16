@@ -1,4 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
+import { notionPage } from "./tool-pagination";
 import type { Region } from "@rally/contracts/regions";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
@@ -86,6 +87,7 @@ const NOTION_CURSOR_SCHEMA = {
 export const notionTools: ToolDefinition[] = [
   {
     name: "search",
+    pagination: { cursorParameter: "startCursor" },
     description: "Search accessible Notion pages or data sources by title.",
     capability: NotionCapabilities.read,
     mode: "read",
@@ -131,6 +133,7 @@ export const notionTools: ToolDefinition[] = [
   },
   {
     name: "query_data_source",
+    pagination: { cursorParameter: "startCursor" },
     description: "Query one bounded page of rows from a Notion data source.",
     capability: NotionCapabilities.read,
     mode: "read",
@@ -145,7 +148,7 @@ export const notionTools: ToolDefinition[] = [
           maxLength: 200,
           description: "The data source to read rows from, as search with `object: \"data_source\"` returns it in `id`. Call retrieve_data_source first to learn what its columns mean.",
         },
-        pageSize: { type: "integer", minimum: 1, maximum: 25, description: "Maximum rows to return in one page. Defaults to 20; follow the cursor for the rest." },
+        pageSize: { type: "integer", minimum: 1, maximum: 25, description: "Maximum rows to return in one page. Defaults to 20." },
         startCursor: NOTION_CURSOR_SCHEMA,
       },
       required: ["dataSourceId"],
@@ -232,6 +235,7 @@ export const notionTools: ToolDefinition[] = [
   },
   {
     name: "list_comments",
+    pagination: { cursorParameter: "startCursor" },
     description: "List one bounded page of unresolved comments for a Notion page or block.",
     capability: NotionCapabilities.commentRead,
     mode: "read",
@@ -831,7 +835,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         if (args.object) body.filter = { property: "object", value: args.object };
         if (args.startCursor) body.start_cursor = args.startCursor;
         const output = await request(context.connection, context.signal, "POST", "/search", body);
-        return { output: boundNotionValue(output), summary: `Searched Notion for “${args.query.slice(0, 80)}”` };
+        return notionPage(name, args, output, `Searched Notion for “${args.query.slice(0, 80)}”`, boundNotionValue);
       }
 
       if (name === "retrieve_page") {
@@ -850,7 +854,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         const body: Record<string, unknown> = { page_size: args.pageSize };
         if (args.startCursor) body.start_cursor = args.startCursor;
         const output = await request(context.connection, context.signal, "POST", `/data_sources/${encodeURIComponent(args.dataSourceId)}/query`, body);
-        return { output: boundNotionValue(output), summary: `Queried Notion data source ${args.dataSourceId}` };
+        return notionPage(name, args, output, `Queried Notion data source ${args.dataSourceId}`, boundNotionValue);
       }
 
       if (name === "create_page") {
@@ -894,7 +898,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
           page_size: args.pageSize,
           start_cursor: args.startCursor,
         });
-        return { output: boundNotionValue(output), summary: `Listed comments for Notion block ${args.blockId}` };
+        return notionPage(name, args, output, `Listed comments for Notion block ${args.blockId}`, boundNotionValue);
       }
 
       if (name === "create_comment") {

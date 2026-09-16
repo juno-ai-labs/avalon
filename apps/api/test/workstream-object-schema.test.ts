@@ -133,6 +133,7 @@ const EXPECTED_TABLES = [
   "terminal_workspace",
   "tool_effect_checkpoints",
   "tool_effects",
+  "tool_pages",
   "transcript_activities",
   "transcript_activity_intervals",
   "transcript_compaction_checkpoints",

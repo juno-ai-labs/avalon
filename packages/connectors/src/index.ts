@@ -1,4 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
+import { paginatedResult } from "./tool-pagination";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
@@ -632,6 +633,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.search",
+    pagination: { cursorParameter: "pageToken" },
     description:
       "Search the authorized user's Gmail messages. Each hit returns its sender, recipients, subject, date, labels, snippet, and RFC Message-ID, so a search result is usually enough to answer who wrote what and when without opening the message.",
     capability: "gmail.read",
@@ -647,7 +649,7 @@ export const googleTools: ToolDefinition[] = [
           description:
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
-        maxResults: { type: "integer", minimum: 1, maximum: 25, description: "Maximum messages to return in one page. Defaults to 10; follow the returned page token for more." },
+        maxResults: { type: "integer", minimum: 1, maximum: 25, description: "Maximum messages to return in one page. Defaults to 10." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["query"]
@@ -736,6 +738,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.list_calendars",
+    pagination: { cursorParameter: "pageToken" },
     description: "List the calendars this account can see, each with the id and name the other calendar tools accept. Call this to discover a calendar id, or pass a calendar's name directly to those tools and they will resolve it.",
     capability: "calendar.read",
     mode: "read",
@@ -751,6 +754,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.list_events",
+    pagination: { cursorParameter: "pageToken" },
     description: "List events in a time range, expanding recurring events into their individual occurrences and ordering them by start time. `timeMin` and `timeMax` are required and must be RFC 3339 timestamps that include an offset, for example 2026-08-11T00:00:00-07:00.",
     capability: "calendar.read",
     mode: "read",
@@ -777,7 +781,7 @@ export const googleTools: ToolDefinition[] = [
           minLength: 1,
           description: "Plain text matched against an event's title, description, location, and attendees. Omit it to get every event in the window. It is not a query language, so operators written into it are matched literally and return nothing rather than filtering.",
         },
-        maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum occurrences to return in one page. Defaults to 25; follow the returned page token for the rest of the window." },
+        maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum occurrences to return in one page. Defaults to 25." },
         pageToken: GOOGLE_PAGE_TOKEN_SCHEMA
       },
       required: ["timeMin", "timeMax"]
@@ -821,6 +825,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "drive.search",
+    pagination: { cursorParameter: "pageToken" },
     description:
       "Search accessible Google Drive files by name and by content. `query` is matched as plain text against both the file name and the indexed contents of Docs, Sheets, Slides, and PDFs — it is not a Drive query expression, so operators written into it are matched literally. Narrow with `fileType` and `modifiedAfter` rather than by describing the filter in `query`, and use `orderBy: \"modified\"` for the most recent rather than the most relevant.",
     capability: "drive.read",
@@ -2536,14 +2541,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           recordArray(payload, "messages").slice(0, args.maxResults),
           context.signal
         );
-        return {
+        return paginatedResult(name, args, {
           output: boundedToolOutput({
             items: messages,
-            nextPageToken: readString(payload, "nextPageToken"),
             resultSizeEstimate: readNumber(payload, "resultSizeEstimate")
           }),
           summary: `Found ${messages.length} Gmail messages`
-        };
+        }, "pageToken", readString(payload, "nextPageToken"));
       }
       if (name === "gmail.find_contacts") {
         const args = z.strictObject({
@@ -2702,7 +2706,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const calendars = recordArray(payload, "items").slice(0, args.maxResults).map(sanitizeGoogleCalendar);
         return {
-          output: boundedToolOutput({ items: calendars, nextPageToken: readString(payload, "nextPageToken") }),
+          output: boundedToolOutput({ items: calendars }),
+          pagination: { continuations: readString(payload, "nextPageToken") ? [{ operation: name, slot: "nextPageId", input: { ...args, pageToken: readString(payload, "nextPageToken") } }] : [] },
           summary: `Found ${calendars.length} Google calendars`
         };
       }
@@ -2742,7 +2747,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           sanitizeCalendarEvent(event, calendarId)
         );
         return {
-          output: boundedToolOutput({ items, nextPageToken: readString(payload, "nextPageToken") }),
+          output: boundedToolOutput({ items }),
+          pagination: { continuations: readString(payload, "nextPageToken") ? [{ operation: name, slot: "nextPageId", input: { ...args, pageToken: readString(payload, "nextPageToken") } }] : [] },
           summary: `Found ${items.length} calendar events`
         };
       }
@@ -3070,7 +3076,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         ).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         const files = recordArray(payload, "files").slice(0, args.maxResults).map(sanitizeDriveFile);
         return {
-          output: boundedToolOutput({ items: files, nextPageToken: readString(payload, "nextPageToken") }),
+          output: boundedToolOutput({ items: files }),
+          pagination: { continuations: readString(payload, "nextPageToken") ? [{ operation: name, slot: "nextPageId", input: { ...args, pageToken: readString(payload, "nextPageToken") } }] : [] },
           summary: `Found ${files.length} Drive files`
         };
       }
