@@ -1,5 +1,9 @@
 import type { ConnectorInstallationManagement } from "./installation";
-import { ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY, ConnectorActivityTriggerDescriptorSchema, ConnectorOriginResourceSchema } from "@rally/contracts";
+import {
+  ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
+  ConnectorActivityTriggerDescriptorSchema,
+  ConnectorOriginResourceSchema,
+} from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type {
   ConnectorActivityFilterField,

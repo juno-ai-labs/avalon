@@ -106,6 +106,25 @@ describe("connector OAuth callback failures", () => {
     ).diagnostics).not.toHaveProperty("response_issues");
   });
 
+  it("truncates a long raw rejection to the code's bound rather than dropping it", () => {
+    // Three nested paths measure past 120 characters. Shaped at the source the
+    // way every other boundary shapes it, the row keeps the first paths; left
+    // raw, the gate on the branch above would have dropped the field entirely
+    // for exactly the rejection an operator most wants it on.
+    const deep = z.strictObject({
+      structuredContent: z.strictObject({
+        workspace: z.strictObject({ workspaceIdentity: z.string(), workspaceName: z.string() }),
+        account: z.strictObject({ verifiedEmail: z.string() }),
+      }),
+    }).safeParse({ structuredContent: { workspace: { workspaceIdentity: 1, workspaceName: 2 }, account: { verifiedEmail: 3 } } });
+    expect(deep.success).toBe(false);
+    if (deep.success) return;
+
+    const issues = classifyConnectorOAuthCallbackFailure(deep.error).diagnostics.response_issues as string;
+    expect(issues.length).toBeLessThanOrEqual(120);
+    expect(issues.startsWith("structuredContent.workspace.workspaceIdentity:invalid_type")).toBe(true);
+  });
+
   it("classifies schema, API, and unknown failures without their messages", () => {
     const schemaError = z.object({ token: z.string() }).safeParse({ token: 1 });
     expect(schemaError.success).toBe(false);

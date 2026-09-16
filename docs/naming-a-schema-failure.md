@@ -222,9 +222,16 @@ that matched `poll_failed` exactly sees a longer value for the schema case,
 and `connector_activity_streams_degraded` on the connection row carries it.
 `response_issues` on the callback log is admitted only through
 `isCodeShaped`, so an adapter that put anything but paths in that detail
-would see it dropped, not logged. `responseIssues` is the one new key the
-OAuth stage helpers attach; an adapter adding a stage helper of its own
-should attach the same key or its rejection stays unnamed at the log.
+would see it dropped, not logged — which is why every source shapes it with
+`codeShaped` first: a three-issue nested rejection measures past the gate's
+bound, and unshaped it would have been dropped for exactly the rejection an
+operator most wants named, where shaped it truncates. `responseIssues` is the
+one new key the OAuth stage helpers attach; an adapter adding a stage helper
+of its own should attach the same key, shaped, or its rejection stays unnamed
+at the log. The poll workflow's result contract admits a stream code as long
+as the primitive produces; at its old cap of 100 one deep path failed the
+whole poll result, and the step recorded the connection failing for a
+degradation the result had already described.
 
 Shipped in #769.
 
