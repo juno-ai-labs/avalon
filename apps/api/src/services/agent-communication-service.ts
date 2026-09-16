@@ -1,3 +1,5 @@
+import { rpcResultBody } from "../durable-objects/rpc-result";
+import { Preparation } from "./harness-preparation";
 import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId,
   asUserId, asWorkstreamId, type AgentId, type StartAgentInput,
@@ -10,12 +12,12 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createResourceObjectPort } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
-import { provisionWorkstreamObject } from "./workstream-runtime-database";
 import { createAutomation } from "./automation-service";
 
 /** Host-only routing: tools cannot supply their sender, workspace, team or principal. */
 export class AgentCommunicationService {
   readonly senderId: AgentId;
+  private readonly teamPreparation = new Preparation(() => this.resolveTeam());
 
   constructor(private readonly env: Env, private readonly input: WorkstreamWorkflowInput) {
     this.senderId = agentIdForAddress({ parentKind: input.parentKind, parentId: input.parentId, substreamId: input.substreamId ?? asSubstreamId("0") });
@@ -32,7 +34,11 @@ export class AgentCommunicationService {
       conversationObjectName(this.env.AVALON_REGION, this.input.workspaceId, address.parentId, address.substreamId));
   }
 
-  private async team(): Promise<AgentId> {
+  private team(): Promise<AgentId> {
+    return this.teamPreparation.get();
+  }
+
+  private async resolveTeam(): Promise<AgentId> {
     if (this.input.agentExchange) return this.input.agentExchange.teamId;
     const team = await (await this.workspace()).ensureAgentTeam({ workspaceId: this.input.workspaceId, originAgentId: this.senderId });
     return AgentIdSchema.parse(team.teamId);
@@ -70,25 +76,30 @@ export class AgentCommunicationService {
       undefined, this.input.substreamId ?? "0").identity();
     if (!identity || identity.archived_at !== null) throw new AgentCommunicationError("agent_origin_unavailable");
     const parent = await conversationParentStub(this.env, this.input);
-    const authority = await parent.authority({ workspaceId: this.input.workspaceId, parentId: this.input.parentId });
-    if (!authority.exists || authority.archived) throw new AgentCommunicationError("workstream_archived");
-    const teamId = await this.team();
-    await parent.reserveChild({ workspaceId: this.input.workspaceId, parentId: this.input.parentId,
-      substreamId: asSubstreamId(id), kind: "child", createdByUserId: identity.created_by_user_id ? asUserId(identity.created_by_user_id) : null,
-      authorityGeneration: authority.authorityGeneration });
+    // Start membership setup while the parent reserves and the child initializes.
+    const teamPromise = this.team();
+    const reservation = await parent.reserveAgentChild({ workspaceId: this.input.workspaceId, parentId: this.input.parentId,
+      substreamId: asSubstreamId(id), createdByUserId: identity.created_by_user_id ? asUserId(identity.created_by_user_id) : null })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.message === "workstream_archived") throw new AgentCommunicationError("workstream_archived");
+        throw error;
+      });
     const child = await this.conversation(childId);
-    const boot = await child.bootstrapRuntime({ workspaceId: this.input.workspaceId, parentKind: this.input.parentKind,
-      parentId: this.input.parentId, substreamId: asSubstreamId(id), generation: authority.authorityGeneration });
-    if (boot.status !== 200) throw new AgentCommunicationError("agent_bootstrap_failed");
-    await provisionWorkstreamObject(this.env, {
-      workspaceId: this.input.workspaceId, workstreamId: this.input.parentId, substreamId: id,
+    const initialized = await child.initializeDelegatedAgent({ bootstrap: { workspaceId: this.input.workspaceId, parentKind: this.input.parentKind,
+      parentId: this.input.parentId, substreamId: asSubstreamId(id), generation: reservation.authorityGeneration }, provision: {
       title: args.name, objective: args.description, scope: identity.scope,
       createdByUserId: identity.created_by_user_id,
       participantUserIds: this.input.executionPrincipal.type === "user" ? [this.input.executionPrincipal.userId] : [],
       harnessStatus: "idle", titleStatus: "settled", emailAddress: null, emailRouteStatus: null,
       systemKind: null, modelOverride: identity.model_override, now: Date.now(),
-    });
-    await child.initializeBackgroundAgent({ executionPrincipal: this.input.executionPrincipal });
+    }, executionPrincipal: this.input.executionPrincipal });
+    if (initialized.status !== 200) {
+      const body = rpcResultBody(initialized);
+      const code = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+        ? body.error : "agent_initialization_failed";
+      throw new AgentCommunicationError(code);
+    }
+    const teamId = await teamPromise;
     const registered = await (await this.workspace()).registerAgentDelegation({ workspaceId: this.input.workspaceId,
       teamId, ownerAgentId: this.senderId, agentId: childId });
     if (!registered.ok) throw new AgentCommunicationError(registered.code);
@@ -98,7 +109,7 @@ export class AgentCommunicationService {
     }
     let sourceStopped: boolean;
     try {
-      await this.send({ ...args, agentId: childId }, context);
+      await this.deliver({ ...args, agentId: childId }, id, true, teamId);
     } finally {
       // Admission may commit even when its confirmation is lost. Preserve an
       // owner stop on both the successful and uncertain delivery paths.
@@ -110,7 +121,11 @@ export class AgentCommunicationService {
   }
 
   async send(args: SendAgentMessageInput | ReplyToAgentMessageInput, context: HarnessToolContext) {
-    if ("agentId" in args) await this.contactSidekick(args.agentId);
+    if ("agentId" in args) {
+      const teamId = await this.team();
+      await this.contactSidekick(args.agentId, teamId);
+      return this.deliver(args, await this.messageId(context), true, teamId);
+    }
     return this.deliver(args, await this.messageId(context));
   }
 
@@ -128,38 +143,33 @@ export class AgentCommunicationService {
     }
   }
 
-  private async deliver(args: SendAgentMessageInput | ReplyToAgentMessageInput, messageId: string, resumeStopped = true) {
+  private async deliver(args: SendAgentMessageInput | ReplyToAgentMessageInput, messageId: string, resumeStopped = true, teamId?: AgentId) {
     const route = await (await this.workspace()).resolveAgentMessage({
       workspaceId: this.input.workspaceId, messageId, senderAgentId: this.senderId,
-      ...("agentId" in args ? { recipientAgentId: args.agentId, preferredTeamId: await this.team() }
+      ...("agentId" in args ? { recipientAgentId: args.agentId, preferredTeamId: teamId ?? await this.team() }
         : { replyToMessageId: args.messageId }),
     });
     if (!route.ok) throw new AgentCommunicationError(route.code);
     const target = route.value;
     if ("messageId" in args) await this.authorizeSidekick(target.recipientAgentId);
     const address = agentAddressForId(target.recipientAgentId);
-    const parent = await conversationParentStub(this.env, { workspaceId: this.input.workspaceId, ...address });
-    const authority = await parent.authority({ workspaceId: this.input.workspaceId, parentId: address.parentId });
-    if (!authority.exists || authority.archived) throw new AgentCommunicationError("workstream_archived");
     const recipient = await this.conversation(target.recipientAgentId);
-    const runtime = await recipient.agentRuntimeInfo();
-    if (!runtime) throw new AgentCommunicationError("agent_destination_unavailable");
     const attachmentIds = await this.validateAttachments(args.attachmentIds);
     const result = await recipient.admitAgentMessage({ workspaceId: this.input.workspaceId,
       workstreamId: asWorkstreamId(address.parentId), messageId, clientMessageId: `agent-message:${messageId}`,
       recipientAgentId: target.recipientAgentId, resumeStopped, text: args.message, attachmentIds,
       agentExchange: { teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId },
-      executionPrincipal: runtime.executionPrincipal ?? this.input.executionPrincipal,
+      executionPrincipal: this.input.executionPrincipal,
       origin: "agent_message", now: Date.now() });
     if (!result.accepted) throw new AgentCommunicationError(result.code);
     return { messageId };
   }
 
-  private async contactSidekick(agentId: AgentId) {
+  private async contactSidekick(agentId: AgentId, teamId: AgentId) {
     const address = agentAddressForId(agentId);
     if (address.parentKind !== "automation" || address.substreamId !== "0") return;
     await this.authorizeSidekick(agentId);
-    await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId: await this.team(), agentId });
+    await (await this.workspace()).joinAgentTeam({ workspaceId: this.input.workspaceId, teamId, agentId });
   }
 
   private async authorizeSidekick(agentId: AgentId) {
@@ -172,10 +182,14 @@ export class AgentCommunicationService {
     if (!access.authorized || access.archived) throw new AgentCommunicationError("sidekick_contact_forbidden");
   }
 
-  async sidekicks() {
+  /** The harness option is supplied by the host executor, after Bind's per-command authority check. */
+  async sidekicks(authorization: "verify_membership" | "harness_command" = "verify_membership") {
     if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
-    const listed = await (await this.workspace()).listSidekickDirectory({ workspaceId: this.input.workspaceId,
-      userId: this.input.executionPrincipal.userId });
+    const workspace = await this.workspace();
+    const request = { workspaceId: this.input.workspaceId, userId: this.input.executionPrincipal.userId };
+    const listed = authorization === "harness_command"
+      ? await workspace.listSidekickDirectoryForAuthorizedMember(request)
+      : await workspace.listSidekickDirectory(request);
     const owningWorkstreamId = await this.owningWorkstream();
     return { sidekicks: listed.items.sort((a, b) =>
       Number(b.owningWorkstreamId === owningWorkstreamId) - Number(a.owningWorkstreamId === owningWorkstreamId),
@@ -213,20 +227,18 @@ export class AgentCommunicationService {
     const result = await (await this.workspace()).listAgentTeammates({ workspaceId: this.input.workspaceId,
       teamId: await this.team(), requesterAgentId: this.senderId });
     if (!result.ok) throw new AgentCommunicationError(result.code);
-    const agents = [];
-    for (const agentId of result.value.agentIds) {
-      if (agentId === this.senderId) continue;
+    const agents = await Promise.all(result.value.agentIds.filter((id) => id !== this.senderId).map(async (agentId) => {
       try {
         await this.authorizeSidekick(agentId);
       } catch (error) {
         if (error instanceof AgentCommunicationError
-          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) continue;
+          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) return null;
         throw error;
       }
       const runtime = await (await this.conversation(agentId)).agentRuntimeInfo();
-      if (runtime) agents.push({ agentId, name: runtime.name, description: runtime.description, status: runtime.status });
-    }
-    return { agents };
+      return runtime ? { agentId, name: runtime.name, description: runtime.description, status: runtime.status } : null;
+    }));
+    return { agents: agents.filter((agent) => agent !== null) };
   }
 
   async stop(agentId: AgentId) {

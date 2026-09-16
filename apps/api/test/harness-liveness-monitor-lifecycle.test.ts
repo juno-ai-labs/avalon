@@ -66,10 +66,13 @@ describe("harness liveness-monitor lifetime", () => {
     );
 
     expectOrdered(root, [
+      'await liveness.pulse("run_start", true);',
+      "promptPreparation.get();",
+      "toolsPreparation.get();",
       "await loadTriggerFencedTranscriptMessages(",
       "await projectModelProtocolTranscript(",
-      "await loadRunPromptContext(",
-      "await loadHarnessTools(",
+      "await promptPreparation.get()",
+      "await toolsPreparation.get()",
       "await persistImmutableRunScope(",
       "await persistInitialPluginActivations(",
       "await liveness.pulse(\"inference_start\", true);",
