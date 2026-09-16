@@ -7,6 +7,7 @@ const FAVICON_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 // therefore not a usable result for this service.
 const KV_MAX_VALUE_BYTES = 25 * 1024 * 1024;
 const textDecoder = new TextDecoder();
+const oversizedImageBody = new Error("favicon_image_body_too_large");
 
 type FaviconCacheMetadata =
   | { kind: "icon"; contentType: string }
@@ -91,32 +92,24 @@ async function readImageBytes(response: Response): Promise<ArrayBuffer | null> {
       return null;
     }
   }
-  const reader = response.body?.getReader();
-  if (!reader) return new ArrayBuffer(0);
-  const chunks: Uint8Array[] = [];
+  if (!response.body) return new ArrayBuffer(0);
   let total = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      if (total + value.byteLength > KV_MAX_VALUE_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-      total += value.byteLength;
-    }
-  } finally {
-    reader.releaseLock();
+    const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        if (total + chunk.byteLength > KV_MAX_VALUE_BYTES) {
+          controller.error(oversizedImageBody);
+          return;
+        }
+        total += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    }));
+    return await new Response(bounded).arrayBuffer();
+  } catch (error) {
+    if (error === oversizedImageBody) return null;
+    throw error;
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
 }
 
 async function fetchHostFavicon(

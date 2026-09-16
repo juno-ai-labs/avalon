@@ -3381,6 +3381,7 @@ pre {
   vertical-align: -0.12em;
   width: 1em;
 }
+.markdown-link-favicon-sentinel { display: contents; }
 /* Grok Bot keeps mentions inside the message rather than making them read like
    links: one flat rectangular chip, the identity mark, and the name. These are
    the packaged renderer's inserted-chip metrics: the negative block margins
