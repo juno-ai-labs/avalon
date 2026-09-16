@@ -556,6 +556,7 @@ export function redactQuery(path: string): string {
 
 export class RallyApi {
   private readonly pendingRunKeys = new Map<string, string>();
+  private readonly faviconRequests = new Map<string, Promise<Blob | null>>();
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
   private renewalInFlight: Promise<string | null> | null = null;
@@ -1536,6 +1537,31 @@ export class RallyApi {
       ...(signal ? { signal } : {}),
     });
     if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
+  getFavicon(hostname: string): Promise<Blob | null> {
+    const normalized = hostname.toLowerCase();
+    const pending = this.faviconRequests.get(normalized);
+    if (pending) return pending;
+    const request = this.fetchFavicon(normalized)
+      .finally(() => this.faviconRequests.delete(normalized));
+    this.faviconRequests.set(normalized, request);
+    return request;
+  }
+
+  private async fetchFavicon(hostname: string): Promise<Blob | null> {
+    const path = `/favicons/${encodeURIComponent(hostname)}`;
+    const headers = new Headers({ Accept: "image/*" });
+    const response = await this.traced(path, "GET", undefined, headers, () => this.execute(path, {
+      method: "GET",
+      headers,
+    }));
+    if (response.status === 404) return null;
+    if (!response.ok) return this.throwResponseError(response);
+    if (!response.headers.get("content-type")?.startsWith("image/")) {
+      throw new ApiError("The favicon response was not an image.", 502, "invalid_response");
+    }
     return response.blob();
   }
 
