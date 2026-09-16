@@ -271,6 +271,14 @@ describe("person mention hrefs", () => {
     ].join("\n"));
   });
 
+  it("preserves an escaped footnote reference without inventing a source", () => {
+    expect(rewriteMessageAsPlainText([
+      "Show \\[^x] literally.",
+      "",
+      "[^x]: [Docs](https://example.com)",
+    ].join("\n"), { sources: "plain" })).toBe("Show [^x] literally.");
+  });
+
   it("removes quote containers from indented code without rewriting its contents", () => {
     expect(rewriteMessageAsPlainText(
       ">     [plan](resource://plan) and **literal**",
@@ -334,6 +342,13 @@ describe("person mention hrefs", () => {
     ].join("\n"), { sources: "none" })).toBe("See [docs].");
   });
 
+  it("preserves escaped inline citation syntax", () => {
+    expect(rewriteMessageAsPlainText(
+      "Show \\[plan](resource://plan)",
+      { sources: "none" },
+    )).toBe("Show [plan](resource://plan)");
+  });
+
   it("does not consume a reference title-shaped line in another container", () => {
     expect(rewriteMessageAsPlainText([
       "Read [docs][guide].",
@@ -374,6 +389,16 @@ describe("person mention hrefs", () => {
   it("reduces emphasis across a list-item continuation", () => {
     expect(rewriteMessageAsPlainText("- **review\n  this** today", { sources: "none" }))
       .toBe("- review\n  this today");
+  });
+
+  it("reduces emphasis across a lazy list-item continuation", () => {
+    expect(rewriteMessageAsPlainText("- **review\nthis** today", { sources: "none" }))
+      .toBe("- review\nthis today");
+  });
+
+  it("leaves whitespace-invalid strikethrough delimiters literal", () => {
+    expect(rewriteMessageAsPlainText("Keep ~~ this ~~ literal", { sources: "none" }))
+      .toBe("Keep ~~ this ~~ literal");
   });
 
   it("preserves a fenced code block nested directly inside a list item", () => {
@@ -635,6 +660,19 @@ describe("rewriteCitationsAsPlainText", () => {
   it("leaves an inline code span showing the syntax alone", () => {
     expect(rewriteCitationsAsPlainText("Write `[Title](resource://id)` to cite."))
       .toBe("Write `[Title](resource://id)` to cite.");
+  });
+
+  it("does not consume quoted indented code as a top-level footnote continuation", () => {
+    expect(rewriteMessageAsPlainText([
+      "Claim.[^x]",
+      "",
+      "[^x]: [Docs](https://example.com)",
+      ">     visible code",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Claim.[1]",
+      "",
+      "    visible code",
+    ].join("\n"));
   });
 
   it("leaves an indented code block alone, the other way a model shows the syntax", () => {

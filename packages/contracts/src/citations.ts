@@ -453,13 +453,16 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
 
   /** The identifier whose definition the following indented lines continue. */
   let open: string | null = null;
+  let openQuoteDepth = 0;
   for (const [index, line] of lines.entries()) {
     if (open === null && code[index]) continue;
 
     const contentLine = stripBlockquotePrefixes(line);
+    const quoteDepth = blockquoteDepth(line);
     const definition = FOOTNOTE_DEFINITION.exec(contentLine);
     if (definition) {
       open = normalizeFootnoteIdentifier(definition[1]!);
+      openQuoteDepth = quoteDepth;
       // A repeated identifier keeps the first definition, which is what a GFM
       // parser does with one; the second would otherwise silently win here and
       // disagree with what the renderer shows.
@@ -471,8 +474,8 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
       // end it, because GFM allows a blank line inside a multi-paragraph one —
       // and a definition with a second paragraph is exactly what must not
       // qualify.
-      if (!contentLine.trim()) continue;
-      if (/^(?: {4}|\t)/u.test(contentLine)) {
+      if (quoteDepth === openQuoteDepth && !contentLine.trim()) continue;
+      if (quoteDepth === openQuoteDepth && /^(?: {4}|\t)/u.test(contentLine)) {
         definitions.set(open, `${definitions.get(open) ?? ""}\n\n${contentLine.trim()}`);
         continue;
       }
@@ -483,7 +486,9 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
     // citing anything. Counting one there appended a source list to a message
     // that cites nothing — and, worse, took the number the first real footnote
     // was owed, so the transcript said 1 where the delivered copy said 2.
-    for (const match of replaceInlineCodeSpans(line, () => " ").matchAll(FOOTNOTE_REFERENCE)) {
+    const scannableLine = replaceInlineCodeSpans(line, () => " ");
+    for (const match of scannableLine.matchAll(FOOTNOTE_REFERENCE)) {
+      if (match.index !== undefined && isMarkdownEscaped(scannableLine, match.index)) continue;
       const identifier = normalizeFootnoteIdentifier(match[1]!);
       if (!referenced.includes(identifier)) referenced.push(identifier);
     }
@@ -499,7 +504,10 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
 /** One paragraph, exactly one link — or nothing, which is a classic footnote. */
 function asCitation(content: string): FootnoteCitation | null {
   if (content.includes("\n")) return null;
-  const links = [...content.matchAll(INLINE_LINK)];
+  const links = [...content.matchAll(INLINE_LINK)].filter((match) => {
+    const opener = (match.index ?? 0) + (match[0].startsWith("!") ? 1 : 0);
+    return !isMarkdownEscaped(content, opener);
+  });
   if (links.length !== 1) return null;
   const [match, label = "", href = ""] = links[0]!;
   const target = parseCitationHref(href);
@@ -610,12 +618,15 @@ export function rewriteCitationsAsPlainText(markdown: string, options: CitationR
     // scheme shows through. Asking the strict parser instead left
     // `[the deck](resource://Q3-deck.pdf)` verbatim in an email and
     // `![Plan](resource://plans/2026)` as a broken image in a channel.
-    .replace(INLINE_LINK, (match, label: string, href: string) =>
-      (citationScheme(href) === "resource" ? label : match))
+    .replace(INLINE_LINK, (match, label: string, href: string, offset: number, value: string) => {
+      const opener = offset + (match.startsWith("!") ? 1 : 0);
+      return !isMarkdownEscaped(value, opener) && citationScheme(href) === "resource" ? label : match;
+    })
     // Only a referenced *and* defined identifier is renumbered. A reference
     // whose definition never arrived is left exactly as written, because
     // rewriting it would invent a source that does not exist.
-    .replace(FOOTNOTE_REFERENCE, (match, identifier: string) => {
+    .replace(FOOTNOTE_REFERENCE, (match, identifier: string, offset: number, value: string) => {
+      if (isMarkdownEscaped(value, offset)) return match;
       // Folded, like every other read of an identifier in this module. The
       // definitions and the source list below key on the folded form, so
       // looking up the raw capture here left `[^Q3]` in the body above a
@@ -733,15 +744,12 @@ function markdownFormattingAsPlainText(markdown: string): string {
       const item = bullet[3]!.replace(/^\[([ xX])\]\s*/u, (_match, checked: string) =>
         (checked === " " ? "☐ " : "☑ "));
       const itemLines = [item];
-      const itemIndent = markdownIndentWidth(bullet[1]!);
       const quoteDepth = blockquoteDepth(raw);
       while (index + 1 < source.length && kinds[index + 1] === "prose") {
         const nextRaw = source[index + 1]!;
         const next = stripBlockquotePrefixes(nextRaw.trimEnd());
-        const nextIndent = /^(\s*)/u.exec(next)?.[1] ?? "";
         if (!next.trim()
           || blockquoteDepth(nextRaw) !== quoteDepth
-          || markdownIndentWidth(nextIndent) <= itemIndent
           || /^(\s*)(?:[-*+]|\d{1,3}[.)])\s+/u.test(next)) break;
         itemLines.push(next);
         index += 1;
@@ -868,7 +876,7 @@ function stripInlineMarkdown(value: string): string {
     .replace(/(^|[^\p{L}\p{N}])__(?=\S)([\s\S]*?\S)__(?=$|[^\p{L}\p{N}])/gu, "$1$2")
     .replace(/(^|[^\p{L}\p{N}])\*(?=\S)([\s\S]*?\S)\*(?=$|[^\p{L}\p{N}])/gu, "$1$2")
     .replace(/(^|[^\p{L}\p{N}_])_(?=\S)([\s\S]*?\S)_(?=$|[^\p{L}\p{N}_])/gu, "$1$2")
-    .replace(/~~([^~]+)~~/gu, "$1")
+    .replace(/~~(?=\S)([^~]*?\S)~~/gu, "$1")
     .replace(
       new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
       (_match, index: string) => spans[Number(index)] ?? "",
@@ -894,6 +902,7 @@ function stripFootnoteDefinitions(markdown: string): string {
   const code = notificationMarkdownLineKinds(lines).map(isMarkdownCode);
   const kept: string[] = [];
   let dropping = false;
+  let definitionQuoteDepth = 0;
   for (const [index, line] of lines.entries()) {
     // Same rule as the scan: a `[^1]:` line inside code is the syntax being
     // shown, not a definition to remove.
@@ -902,12 +911,15 @@ function stripFootnoteDefinitions(markdown: string): string {
       continue;
     }
     const contentLine = stripBlockquotePrefixes(line);
+    const quoteDepth = blockquoteDepth(line);
     if (FOOTNOTE_DEFINITION.test(contentLine)) {
       dropping = true;
+      definitionQuoteDepth = quoteDepth;
       continue;
     }
     if (dropping) {
-      if (!contentLine.trim() || /^(?: {4}|\t)/u.test(contentLine)) continue;
+      if (quoteDepth === definitionQuoteDepth
+        && (!contentLine.trim() || /^(?: {4}|\t)/u.test(contentLine))) continue;
       dropping = false;
     }
     kept.push(line);
@@ -918,7 +930,9 @@ function stripFootnoteDefinitions(markdown: string): string {
 /** A footnote's own words, with the marks a plain list would show verbatim removed. */
 function plainInline(content: string, plain: boolean): string {
   return content
-    .replace(INLINE_LINK, (match, label: string, href: string) => {
+    .replace(INLINE_LINK, (match, label: string, href: string, offset: number, value: string) => {
+      const opener = offset + (match.startsWith("!") ? 1 : 0);
+      if (isMarkdownEscaped(value, opener)) return match;
       const target = parseCitationHref(href);
       if (target.scheme !== "external") return label;
       return plain ? sourceLine(label, target, true) : match;
