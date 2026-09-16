@@ -335,6 +335,9 @@ describe('token references', () => {
     // turned it off, and the number that travels over it so the component
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
+    // Near and far fade lengths on a scroller that clips its items. Registered
+    // so they interpolate as lengths; a theme has no opinion about them.
+    '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',
     '--turn-bubble-radius',
     // The in-flight sweep's band, a twentieth of the surface's own ink: it is
     // derived from `currentColor` on the surface it paints, so one rule reads

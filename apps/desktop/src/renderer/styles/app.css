@@ -217,6 +217,105 @@ pre {
   animation-timeline: scroll(self inline);
 }
 
+/* The same fade, at the edges of a rail that clips its items rather than a
+   line that clips its last characters. The work-stream list and the work-stream
+   sidebar scroll vertically; the Sidekick strip under the list scrolls
+   sideways. A hard cut there is the same rendering fault the line fade exists
+   to avoid, just on the other axis of the same rails.
+
+   The mask still appears only when something is actually clipped. An
+   unconditional four-stop gradient would fade the first and last items of a
+   list that fits, which is the case the line fade's inactive timeline already
+   refuses. The cover animation is that question asked of the scroller itself:
+   no overflow, no timeline, no mask.
+
+   The two lengths are the part that has to move. At the start of the overflow
+   only the far edge should fade — items are beginning to disappear ahead, not
+   behind — and at the end only the near edge. Interpolating a three-stop
+   "far fade" into a three-stop "near fade" does not produce both fades in the
+   middle; the shared stop travels through the scroller and the list looks
+   washed out. Registered lengths grow the near fade over the first 24px of
+   travel and shrink the far fade over the last 24px, which is the same extent
+   a clipped line uses, so a row that is starting to leave the scroller fades
+   the same way its title fades when it cannot fit.
+
+   The cover holds one mask at both ends because it is still a question about
+   overflow, not a clock. The start and end animations *are* clocks, and the
+   global reduced-motion block's `0.001ms` duration would pin them to their
+   100% keyframes (near fade on, far fade off) no matter where the scroller
+   sits. Those three durations have to stay `auto` under that preference —
+   this is not motion — which is why the restore in the global reduced-motion
+   block is `!important` and why the test pins it. The line fade can live with
+   the kill switch because its two keyframes are the same value; these cannot.
+
+   Same ordering trap as the line fade, plus `animation-range`, which the
+   shorthand also resets. All three longhands stay below it.
+
+   The mask does not spare a focus ring. Tab and this rail's own
+   `scrollIntoView({ block: 'nearest' })` both park a row flush with the
+   scrollport edge, which is exactly the 24px the fade owns, so
+   `scroll-padding` on the same axis keeps the indicator out of the band. */
+@property --clipped-scroll-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --clipped-scroll-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes clipped-scroll-fade-block {
+  0%, 100% {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 var(--clipped-scroll-fade-start),
+      #000 calc(100% - var(--clipped-scroll-fade-end)),
+      transparent
+    );
+  }
+}
+
+@keyframes clipped-scroll-fade-inline {
+  0%, 100% {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--clipped-scroll-fade-start),
+      #000 calc(100% - var(--clipped-scroll-fade-end)),
+      transparent
+    );
+  }
+}
+
+@keyframes clipped-scroll-fade-start {
+  0% { --clipped-scroll-fade-start: 0px; }
+  100% { --clipped-scroll-fade-start: 24px; }
+}
+
+@keyframes clipped-scroll-fade-end {
+  0% { --clipped-scroll-fade-end: 24px; }
+  100% { --clipped-scroll-fade-end: 0px; }
+}
+
+:is(.sidebar-scroll, .workstream-context-scroll) {
+  scroll-padding-block: 24px;
+  animation: clipped-scroll-fade-block linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
+  animation-duration: auto, auto, auto;
+  animation-timeline: scroll(self block), scroll(self block), scroll(self block);
+  animation-range: normal, 0px 24px, calc(100% - 24px) 100%;
+}
+
+.sidebar .sidebar-automation-strip {
+  scroll-padding-inline: 24px;
+  animation: clipped-scroll-fade-inline linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
+  animation-duration: auto, auto, auto;
+  animation-timeline: scroll(self inline), scroll(self inline), scroll(self inline);
+  animation-range: normal, 0px 24px, calc(100% - 24px) 100%;
+}
+
 .rally-mark {
   background: currentColor;
   color: var(--av-sys-color-brand-ink);
@@ -4990,6 +5089,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     scroll-behavior: auto !important;
     transition-delay: 0.001ms !important;
     transition-duration: 0.001ms !important;
+  }
+  /* The scroll-edge fade is not motion: `auto` is what lets the scroller's
+     timeline pace the near and far lengths. The kill switch above would pin
+     both animations at their 100% keyframes, so a list that overflows would
+     always fade its leading edge and never its trailing one. */
+  :is(.sidebar-scroll, .workstream-context-scroll), .sidebar .sidebar-automation-strip {
+    animation-duration: auto !important;
   }
   .status-running .status-dot { opacity: 1; }
   .plugin-face-active { opacity: 1; }
