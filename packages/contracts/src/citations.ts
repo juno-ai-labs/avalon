@@ -674,7 +674,8 @@ function markdownFormattingAsPlainText(markdown: string): string {
   const source = parkedMarkdown.replace(/\r\n/gu, "\n").split("\n");
   const kinds = notificationMarkdownLineKinds(source);
   let fenceQuoteDepth = 0;
-  for (const [index, raw] of source.entries()) {
+  for (let index = 0; index < source.length; index += 1) {
+    const raw = source[index]!;
     const kind = kinds[index]!;
     if (kind === "fence-open") {
       fenceQuoteDepth = blockquoteDepth(raw);
@@ -689,7 +690,7 @@ function markdownFormattingAsPlainText(markdown: string): string {
       continue;
     }
     if (kind === "indented-code") {
-      lines.push(raw.trimEnd());
+      lines.push(stripBlockquotePrefixes(raw).trimEnd());
       continue;
     }
     const line = stripBlockquotePrefixes(raw.trimEnd());
@@ -716,7 +717,18 @@ function markdownFormattingAsPlainText(markdown: string): string {
       lines.push(`${indent}${marker} ${stripInlineMarkdown(item)}`);
       continue;
     }
-    lines.push(stripInlineMarkdown(line));
+    const paragraph = [line];
+    const quoteDepth = blockquoteDepth(raw);
+    while (index + 1 < source.length && kinds[index + 1] === "prose") {
+      const nextRaw = source[index + 1]!;
+      const next = stripBlockquotePrefixes(nextRaw.trimEnd());
+      if (!next.trim()
+        || blockquoteDepth(nextRaw) !== quoteDepth
+        || isMarkdownBlockStart(next)) break;
+      paragraph.push(next);
+      index += 1;
+    }
+    lines.push(...stripInlineMarkdown(paragraph.join("\n")).split("\n"));
   }
   return lines.join("\n")
     .replace(/\n{3,}/gu, "\n\n")
@@ -736,7 +748,15 @@ function markdownFormattingAsPlainText(markdown: string): string {
  * references inside code remain literal.
  */
 function rewriteReferenceLinksAsPlainText(markdown: string): string {
-  const source = markdown.replace(/\r\n/gu, "\n").split("\n");
+  const inlineSpans: string[] = [];
+  const protectedMarkdown = mapNotificationProse(
+    markdown.replace(/\r\n/gu, "\n").split(REFERENCE_SPAN_PLACEHOLDER).join(""),
+    (prose) => replaceInlineCodeSpans(prose, (span) => {
+      inlineSpans.push(span);
+      return `${REFERENCE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${REFERENCE_SPAN_PLACEHOLDER}`;
+    }),
+  );
+  const source = protectedMarkdown.split("\n");
   const kinds = notificationMarkdownLineKinds(source);
   const definitions = new Set<string>();
   const definitionLines = new Set<number>();
@@ -750,17 +770,29 @@ function rewriteReferenceLinksAsPlainText(markdown: string): string {
       definitionLines.add(index + 1);
     }
   }
-  if (definitions.size === 0) return markdown;
+  if (definitions.size === 0) return restoreReferenceSpans(protectedMarkdown, inlineSpans);
   const withoutDefinitions = source
     .filter((_line, index) => !definitionLines.has(index))
     .join("\n");
-  return mapOutsideCode(withoutDefinitions, (prose) => prose
+  const rewritten = mapOutsideCode(withoutDefinitions, (prose) => prose
     .replace(FULL_REFERENCE_LINK, (match, _image: string, label: string, identifier: string) => {
       const reference = identifier || label;
       return definitions.has(normalizeReferenceIdentifier(reference)) ? label : match;
     })
     .replace(SHORTCUT_REFERENCE_LINK, (match, _image: string, label: string) =>
       definitions.has(normalizeReferenceIdentifier(label)) ? label : match));
+  return restoreReferenceSpans(rewritten, inlineSpans);
+}
+
+function restoreReferenceSpans(value: string, spans: readonly string[]): string {
+  return value.replace(
+    new RegExp(`${REFERENCE_SPAN_PLACEHOLDER}(\\d+)${REFERENCE_SPAN_PLACEHOLDER}`, "gu"),
+    (_match, index: string) => spans[Number(index)] ?? "",
+  );
+}
+
+function isMarkdownBlockStart(line: string): boolean {
+  return /^ {0,3}(?:#{1,6}\s|(?:[-*_]\s*){3,}$|(?:[-*+]|\d{1,3}[.)])\s+)/u.test(line);
 }
 
 function normalizeReferenceIdentifier(value: string): string {
@@ -862,6 +894,8 @@ function plainInline(content: string, plain: boolean): string {
 const SPAN_PLACEHOLDER = "\u0000";
 /** A separate placeholder for code spans parked across prose line boundaries. */
 const MULTILINE_SPAN_PLACEHOLDER = "\u0001";
+/** Reference scanning parks spans separately so a definition-shaped code line stays literal. */
+const REFERENCE_SPAN_PLACEHOLDER = "\u0002";
 
 /**
  * Applies a rewrite to everything except code.
