@@ -15,8 +15,15 @@ const state = vi.hoisted(() => ({
   invitations: vi.fn(), invite: vi.fn(), members: vi.fn(), connections: vi.fn(), connectors: vi.fn(),
   openSettings: vi.fn(), openExternal: vi.fn(), startProviderConnection: vi.fn(),
 }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ getAccountOnboarding: state.getAccount, updateAccountOnboarding: state.saveAccount,
-  openSettings: state.openSettings, openExternal: state.openExternal }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    getAccountOnboarding: state.getAccount,
+    updateAccountOnboarding: state.saveAccount,
+    openSettings: state.openSettings,
+    openExternal: state.openExternal,
+  }),
+  desktopServicesAvailable: () => false,
+}));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: state.signedIn ? { user: { id: 'user-1', email: 'person@example.com', name: 'Person' }, workspace: state.hasWorkspace ? { id: 'workspace-1' } : null } : null,
   api: { getWorkspaceInvitations: state.invitations, createWorkspaceInvitation: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
