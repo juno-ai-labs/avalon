@@ -600,14 +600,12 @@ describe('WorkspaceSocketProvider', () => {
 
   it('calls an offline transition during the ticket request what it is', async () => {
     const queryClient = new QueryClient();
-    let releaseTicket: (() => void) | null = null;
-    const getWorkspaceSocketTicket = vi.fn(async () => {
-      await new Promise<void>((resolve) => { releaseTicket = resolve; });
-      return {
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-        ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      };
+    let ticketSignal: AbortSignal | undefined;
+    const getWorkspaceSocketTicket = vi.fn((signal?: AbortSignal) => {
+      ticketSignal = signal;
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
     });
     render(
       <QueryClientProvider client={queryClient}>
@@ -620,16 +618,14 @@ describe('WorkspaceSocketProvider', () => {
       </QueryClientProvider>,
     );
     await flushPromises();
+    expect(ticketSignal?.aborted).toBe(false);
 
-    // The desktop drops off the network while the ticket is still in flight, so
-    // the offline handler finds no socket to close and records nothing.
+    // The desktop drops off the network while the ticket is still in flight.
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     window.dispatchEvent(new Event('offline'));
-    releaseTicket!();
     await flushPromises();
 
-    // Dialling anyway would have produced a transport error a moment later, and
-    // counted an ordinary walk out of Wi-Fi range as a broken connection.
+    expect(ticketSignal?.aborted).toBe(true);
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(socketTelemetry()).toEqual([{
       kind: 'realtime_socket_state',

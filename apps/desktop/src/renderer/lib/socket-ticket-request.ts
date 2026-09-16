@@ -4,9 +4,10 @@
  * those can remain pending after an abort, and a socket loop that awaits the
  * raw promise keeps its in-flight guard forever and never retries.
  *
- * Ten seconds is the existing first-attempt work-stream opening budget. This
- * primitive applies that already-chosen budget to the ticket step of every
- * socket attempt rather than introducing another defensive limit.
+ * Ten seconds is the default for persistent socket attempts without a wider
+ * owning deadline. A caller whose state machine already owns an escalating
+ * whole-open budget can pass that attempt's budget instead, and a short-lived
+ * caller can disable the deadline while retaining owner cancellation.
  */
 export const SOCKET_TICKET_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -25,6 +26,11 @@ export function isSocketTicketRequestTimeoutError(
   return error instanceof SocketTicketRequestTimeoutError;
 }
 
+interface SocketTicketRequestOptions {
+  ownerSignal?: AbortSignal;
+  timeoutMs?: number | null;
+}
+
 /**
  * Run one ticket request under an attempt-local deadline and optional owner
  * cancellation. The abort race is deliberate: aborting fetch does not settle
@@ -33,30 +39,34 @@ export function isSocketTicketRequestTimeoutError(
  */
 export async function requestSocketTicket<T>(
   request: (signal: AbortSignal) => Promise<T>,
-  ownerSignal?: AbortSignal,
+  options: SocketTicketRequestOptions = {},
 ): Promise<T> {
+  const { ownerSignal, timeoutMs = SOCKET_TICKET_REQUEST_TIMEOUT_MS } = options;
   ownerSignal?.throwIfAborted();
   const controller = new AbortController();
-  const abortFromOwner = (): void => controller.abort(ownerSignal?.reason);
-  ownerSignal?.addEventListener('abort', abortFromOwner, { once: true });
-  const timeout = window.setTimeout(() => {
-    controller.abort(new SocketTicketRequestTimeoutError());
-  }, SOCKET_TICKET_REQUEST_TIMEOUT_MS);
-
   let rejectAborted: ((reason: unknown) => void) | null = null;
   const aborted = new Promise<never>((_resolve, reject) => {
     rejectAborted = reject;
   });
-  const onAbort = (): void => {
-    rejectAborted?.(controller.signal.reason ?? new DOMException('The request was aborted.', 'AbortError'));
+  const abortUnderlyingRequest = (): void => {
+    controller.abort(new DOMException('The request was aborted.', 'AbortError'));
   };
-  controller.signal.addEventListener('abort', onAbort, { once: true });
+  const abortFromOwner = (): void => {
+    rejectAborted?.(ownerSignal?.reason);
+    abortUnderlyingRequest();
+  };
+  ownerSignal?.addEventListener('abort', abortFromOwner, { once: true });
+  const timeout = timeoutMs === null ? null : window.setTimeout(() => {
+    // The owner needs the precise retry cause, while fetch needs an AbortError
+    // so expected cancellation does not become a network-error diagnostic.
+    rejectAborted?.(new SocketTicketRequestTimeoutError());
+    abortUnderlyingRequest();
+  }, timeoutMs);
 
   try {
     return await Promise.race([request(controller.signal), aborted]);
   } finally {
-    window.clearTimeout(timeout);
-    controller.signal.removeEventListener('abort', onAbort);
+    if (timeout !== null) window.clearTimeout(timeout);
     ownerSignal?.removeEventListener('abort', abortFromOwner);
   }
 }

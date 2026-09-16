@@ -258,9 +258,9 @@ export function useWorkstreamControlSocket(
           ticketAbort.signal,
         );
         if (stopped) return;
-        // See `workspace-socket.tsx`: an offline transition during the ticket
-        // request is invisible to the offline handler, because there was no
-        // socket to close.
+        // The offline handler normally aborts an in-flight ticket. Keep the
+        // post-ticket check for the race where the request settles immediately
+        // before that handler runs, so it still cannot dial while offline.
         if (isOffline()) {
           clearBackgroundCount();
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });

@@ -554,6 +554,13 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(firstSignal?.aborted).toBe(true);
     expect(result.current.state).toBe('reconnecting');
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'zero',
+    });
 
     await act(async () => {
       resolveFirstTicket?.(ticket);
@@ -564,6 +571,47 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(750));
     expect(getSocketTicket).toHaveBeenCalledTimes(2);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('keeps the escalating cold-open budget authoritative for slow tickets', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000073b';
+    const ticket = {
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    };
+    const getSocketTicket = vi.fn((
+      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
+    ) => requestSocketTicket((signal) => new Promise<typeof ticket>((resolve, reject) => {
+      const timer = window.setTimeout(() => resolve(ticket), 15_000);
+      signal.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(signal.reason);
+      }, { once: true });
+    }), {
+      ownerSignal: args[5],
+      timeoutMs: args[6],
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, workstreamId, true),
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+
+    await act(async () => vi.advanceTimersByTimeAsync(WORKSTREAM_OPEN_TIMEOUT_BASE_MS));
+    expect(result.current.state).toBe('reconnecting');
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(getSocketTicket.mock.calls[1]?.[6]).toBe(WORKSTREAM_OPEN_TIMEOUT_BASE_MS * 2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(result.current.openingError).toBeUndefined();
   });
 
   it('times out a stranded reconnect ticket after the feed already opened', async () => {
@@ -1315,6 +1363,7 @@ describe('useWorkstreamSocket', () => {
       0,
       false,
       expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
     const first = FakeWebSocket.instances[0]!;
     act(() => first.open());
@@ -1748,6 +1797,7 @@ describe('useWorkstreamSocket', () => {
       0,
       false,
       expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
   });
 

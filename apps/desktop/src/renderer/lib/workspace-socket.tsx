@@ -402,11 +402,10 @@ export function WorkspaceSocketProvider({
       try {
         const ticket = await api.getWorkspaceSocketTicket(ticketAbort.signal);
         if (stopped) return;
-        // Going offline while the ticket was in flight left the offline handler
-        // nothing to close, so this is where that transition is noticed at all.
-        // Dialling anyway would fail and be recorded as a transport error,
-        // which is the one reading this event exists to keep apart from
-        // "the desktop lost its network".
+        // The offline handler normally aborts an in-flight ticket. This closes
+        // the narrower race where the ticket settles just before that handler:
+        // never dial after the network transition, and keep it distinct from a
+        // transport failure.
         if (isOffline()) {
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           setState('unavailable');

@@ -1802,6 +1802,7 @@ export class RallyApi {
     afterSequence?: number,
     speculative = false,
     signal?: AbortSignal,
+    timeoutMs?: number,
   ): Promise<SocketTicket> {
     const queryParams = new URLSearchParams();
     if (afterSequence !== undefined) queryParams.set('afterSequence', String(afterSequence));
@@ -1813,7 +1814,7 @@ export class RallyApi {
         `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
         { schema: socketTicketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
       ),
-      signal,
+      { ownerSignal: signal, timeoutMs },
     );
   }
 
@@ -1823,7 +1824,7 @@ export class RallyApi {
         schema: socketTicketSchema,
         signal: attemptSignal,
       }),
-      signal,
+      { ownerSignal: signal },
     );
   }
 
@@ -1838,7 +1839,7 @@ export class RallyApi {
         signal: attemptSignal,
         ...(requestId ? { requestId } : {}),
       }),
-      signal,
+      { ownerSignal: signal },
     );
   }
 
