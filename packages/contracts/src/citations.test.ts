@@ -326,6 +326,27 @@ describe("person mention hrefs", () => {
     ].join("\n"), { sources: "none" })).toBe("Read docs.");
   });
 
+  it("preserves escaped reference syntax while removing its definition", () => {
+    expect(rewriteMessageAsPlainText([
+      "See \\[docs].",
+      "",
+      "[docs]: /docs",
+    ].join("\n"), { sources: "none" })).toBe("See [docs].");
+  });
+
+  it("does not consume a reference title-shaped line in another container", () => {
+    expect(rewriteMessageAsPlainText([
+      "Read [docs][guide].",
+      "",
+      "[guide]: /docs",
+      "> \"Visible quote\"",
+    ].join("\n"), { sources: "none" })).toBe([
+      "Read docs.",
+      "",
+      "\"Visible quote\"",
+    ].join("\n"));
+  });
+
   it("reduces reference links and definitions inside blockquotes", () => {
     expect(rewriteMessageAsPlainText([
       "> Read [docs][guide].",
@@ -365,6 +386,11 @@ describe("person mention hrefs", () => {
       "    [plan](resource://plan)",
       "    **literal**",
     ].join("\n"));
+  });
+
+  it("treats list-leading triple-backtick spans with closing backticks as inline code", () => {
+    expect(rewriteMessageAsPlainText("- ```name``` then continue", { sources: "none" }))
+      .toBe("- name then continue");
   });
 
   it("preserves list depth and removes setext and thematic-break markup", () => {
