@@ -66,7 +66,7 @@ export const ATTACHMENT_LIST_RESOURCES_DESCRIPTION = [
   "List resources visible in this work stream. Filter with attachmentKind using exactly one of these values:",
   ...ATTACHMENT_KIND_ENTRIES.map((entry) => `- ${entry.kind} — ${entry.description}`),
   "Omit attachmentKind to list every kind. Do not use or guess MIME types.",
-  "Use nextCursor by itself to continue until it is null when complete coverage is required.",
+  "Use workstream_list_resources_next with pageId copied from nextPageId to continue. Stop when nextPageId is null.",
   // Two identifiers arrive per item and only one is an argument. Without this
   // the model is left to choose, and the wrong choice is rejected by every
   // other resource tool's schema — a wasted turn each time.
@@ -333,10 +333,10 @@ export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentTool
  */
 export const AttachmentListResourcesArgumentsSchema = z.strictObject({
   limit: z.number().int().min(1).max(50)
-    .describe("Maximum resources to return in one page. Defaults to 25. It belongs to the first page only; a later page keeps the limit its cursor was issued with.")
+    .describe("Maximum resources to return in one page. Defaults to 25. Set it on the first call; workstream_list_resources_next retains it automatically.")
     .optional(),
   attachmentKind: AttachmentKindSchema
-    .describe("Return only resources of this kind, using one of the values the tool description lists, for example spreadsheet. Omit it for every kind, and never send a MIME type. It belongs to the first page only; a later page keeps the filter its cursor was issued with.")
+    .describe("Return only resources of this kind, for example spreadsheet. Omit it for every kind, and never send a MIME type. Set it on the first call; workstream_list_resources_next retains it automatically.")
     .optional(),
   cursor: CursorSchema
     .describe("Continue an earlier listing: send the exact `nextCursor` that call returned, by itself and with no other argument. Omit it for the first page, and stop when `nextCursor` comes back null. It is an opaque token, not a page number, so never construct, shorten, or increment one.")
@@ -354,7 +354,7 @@ export const AttachmentListResourcesArgumentsSchema = z.strictObject({
 });
 export const AttachmentReadResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema
-    .describe("The resource to start reading, as the `resourceId` list_resources returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here. Send this or `cursor`, never both.")
+    .describe("The resource to start reading, as the `resourceId` list_resources returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here.")
     .optional(),
   startCharacter: NonNegativeIntegerSchema
     .describe("Begin the page at this character offset into the extracted text, counting from 0. Defaults to 0. Use it with `resourceId` to jump to an offset a search result reported. An offset beyond the end of the text is refused as `invalid_cursor`, so do not probe past the tail, and do not reuse an offset taken from an earlier version of the resource — read `charactersBefore` and `charactersAfter` to tell where the text ends.")
@@ -388,7 +388,7 @@ export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
     .describe("Maximum passages to return. Defaults to 5.")
     .optional(),
   maxPassageCharacters: z.number().int().min(500).max(4_000)
-    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or follow the passage's read cursor to read further.")
+    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or pass the passage's readPageId to workstream_read_resource_next to read further.")
     .optional(),
 });
 export const AttachmentViewResourceArgumentsSchema = z.strictObject({

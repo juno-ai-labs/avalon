@@ -911,7 +911,6 @@ describe("scoped agent memory", () => {
           title: "Launch notes",
         },
       }],
-      nextCursor: null,
     });
 
     const launchRow = (queried.output as {
@@ -974,7 +973,7 @@ describe("scoped agent memory", () => {
     expect(updated.output).toMatchObject({
       rows: [{ revision: 2, values: { title: "Launch notes revised", reported: true } }],
     });
-    const nextCursor = (updated.output as { nextCursor: string | null }).nextCursor;
+    const nextCursor = updated.pagination!.continuations[0]!.input.cursor;
     expect(nextCursor).toEqual(expect.any(String));
     const nextPage = await tableTool(env, firstRun, "query").execute({
       memoryTableId,

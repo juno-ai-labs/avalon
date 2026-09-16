@@ -77,7 +77,8 @@ describe("X connector", () => {
     // X omits the key entirely on this shape of last page, and the cursor
     // description tells the caller to stop when it is `null`. Left absent, that
     // stop signal is one the caller never sees.
-    expect(result.output).toMatchObject({ next_cursor: null });
+    expect(result.output).not.toHaveProperty("next_cursor");
+    expect(result.pagination).toEqual({ continuations: [] });
     expect(requested.map((url) => url.pathname)).toEqual([
       "/twitter/user/info",
       "/twitter/user/tweet_timeline",
@@ -121,7 +122,8 @@ describe("X connector", () => {
       ["get_tweet_thread_context", { tweetId: "302" }],
     ] as const) {
       const result = await execute(adapter, name, args);
-      expect(result.output).toMatchObject({ next_cursor: null });
+      expect(result.output).not.toHaveProperty("next_cursor");
+      expect(result.pagination).toEqual({ continuations: [] });
     }
   });
 

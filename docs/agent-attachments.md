@@ -26,7 +26,7 @@ and extracted text is labeled separately. See [session import](session-import.md
 | --- | --- |
 | `packages/contracts/src/attachment-contracts.ts` | Single registry for attachment kinds, MIME/extension classification, strict tool argument schemas, exact success-output schemas, and the complete list-tool description. |
 | `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
-| `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
+| `apps/api/src/lib/attachment-cursor.ts` | Legacy signed-cursor decoding for pre-pagination receipts. New continuations use receipt-owned private state. |
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives, then atomically selects their regional objects. |
 | `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
@@ -71,12 +71,17 @@ Zod schema because the harness does not enforce provider-facing JSON Schema.
 
 ### Continuations and recovery
 
-An attachment cursor contains a version, purpose, expiry, principal identity,
-owning scope, and operation-specific state. Rally signs it using a key derived
-for the attachment-cursor purpose from the regional Worker's configured session
-signing secret. A cursor presented to another operation, principal, or scope is
-the same bounded `invalid_cursor` failure as a malformed or tampered value;
-expiry is separately recoverable as `cursor_expired`.
+The model sees [friendly page IDs](tool-pagination.md), not opaque cursors.
+First/next tools store private continuation state with the producing receipt;
+reads expose both directions, and search passages and summary citations expose
+`readPageId`. Grounding tracks these IDs and still understands older receipts.
+
+New attachment continuation state contains purpose, principal identity, owning
+scope, and operation-specific state. It is not model input and needs neither
+HMAC signing nor a second expiry. The receipt authority fences redemption;
+the executor still checks resource visibility and derivative/inventory version.
+Historical signed tokens are still decoded for stored receipts and retain their
+original expiry behavior; new results never mint them.
 
 The common failed-tool sanitizer passes only fixed, bounded recovery fields. It
 understands attachment kind and one strict suggested read or view call, while
@@ -187,8 +192,8 @@ resource and message-attachment totals plus non-empty groups for the same eight
 natural-language kinds used by the list tool. The aggregate comes from a grouped
 query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
 type, or content, so its size is constant in the number of resources. Exact
-entries remain discoverable by paging `workstream_list_resources` until
-`nextCursor` is null.
+entries remain discoverable through `workstream_list_resources`, followed by
+`workstream_list_resources_next`, until `nextPageId` is null.
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
@@ -332,7 +337,7 @@ character envelope.
 - Provider-facing schemas and executor parsing remain strict, so an invented
   MIME filter, old field, or mixed cursor/first-call shape fails instead of being
   silently ignored.
-- A cursor is authenticated and bound to purpose, principal, and scope, but every
+- A page ID is receipt-owned and bound to purpose, principal, and scope, but every
   dereference still reauthorizes current state; stealing or guessing a cursor
   cannot preserve revoked access.
 - Structured failure data is allowlisted and bounded before it enters the model
@@ -372,7 +377,7 @@ character envelope.
 - The sidebar and agent inventory share one visibility predicate. Full sidebar,
   point, keyset-page, and grouped queries may differ only in result shape and
   bounds, never authorization semantics.
-- `nextCursor: null` is the only evidence that a filtered listing is exhausted,
+- `nextPageId: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
 - A version row's author identity matches its author kind, or the write that
   would have created it aborts. A wrong attribution is worse than none, because
@@ -422,7 +427,7 @@ generic tool execution/receipt loop is owned by
 
 ## Failure modes and limits
 
-- Opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
+- Legacy opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
   encoding, or shape returns `invalid_cursor`; an elapsed expiry returns
   `cursor_expired`.
 - List calls accept 1–50 items, defaulting to 25. View calls accept 1–8

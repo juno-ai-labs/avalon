@@ -1,4 +1,5 @@
 import type { RallyCheckpointPort } from "./evaluation";
+import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
 import type {
   AddressingClassification,
@@ -2710,6 +2711,7 @@ export interface HarnessToolContext {
 }
 
 export interface HarnessToolResult {
+  pagination?: ToolPaginationResult;
   output: unknown;
   summary: string;
   /**

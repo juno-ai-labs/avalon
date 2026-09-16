@@ -403,19 +403,21 @@ describe("work-stream attachment tools", () => {
 
     const ids: string[] = [];
     let result = await list.execute({ limit: 17 }, context());
-    const inventoryCursor = (result.output as { nextCursor: string }).nextCursor;
+    const inventoryCursor = result.pagination!.continuations[0]!.input.cursor;
     for (;;) {
       const output = result.output as { items: Array<{ resourceId: string }>; nextCursor: string | null; totalVisibleResources: number };
       expect(output.totalVisibleResources).toBe(63);
       ids.push(...output.items.map((item) => item.resourceId));
-      if (!output.nextCursor) break;
-      result = await list.execute({ cursor: output.nextCursor }, context());
+      const continuation = result.pagination!.continuations[0];
+      if (!continuation) break;
+      result = await list.execute(continuation.input, context());
     }
     expect(ids).toHaveLength(63);
     expect(new Set(ids).size).toBe(63);
 
     await expect(list.execute({ attachmentKind: "image" }, context())).resolves.toMatchObject({
-      output: { totalMatchingResources: 1, items: [{ resourceId: imageId, attachmentKind: "image", contentMode: "view" }], nextCursor: null },
+      output: { totalMatchingResources: 1, items: [{ resourceId: imageId, attachmentKind: "image", contentMode: "view" }] },
+      pagination: { continuations: [] },
     });
     for (const [attachmentKind, resourceId] of Object.entries(kindFixtures)) {
       await expect(list.execute({ attachmentKind }, context())).resolves.toMatchObject({
@@ -451,10 +453,21 @@ describe("work-stream attachment tools", () => {
       resourceId, charactersBefore: 7_000, charactersReturned: 12_000,
       range: { start: 7_000, end: 19_000 }, totalCharacters: 19_534, charactersAfter: 534,
     });
-    const firstOutput = first.output as { previousCursor: string; nextCursor: string };
+    const firstOutput = {
+      previousCursor: first.pagination!.continuations.find((page) => page.slot === "previousPageId")!.input.cursor,
+      nextCursor: first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input.cursor,
+    };
     await expect(read.execute({ cursor: firstOutput.previousCursor }, context())).resolves.toMatchObject({
       output: { range: { start: 0, end: 12_000 }, charactersBefore: 0 },
     });
+    const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * 60 * 60_000);
+    try {
+      await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).resolves.toMatchObject({
+        output: { range: { start: 19_000, end: 19_534 }, charactersAfter: 0 },
+      });
+    } finally {
+      later.mockRestore();
+    }
     await expect(read.execute({ cursor: `${firstOutput.nextCursor}tampered` }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
@@ -664,7 +677,7 @@ describe("work-stream attachment tools", () => {
       resourceId,
       prompt: "Focus on the evidence",
       summary: expect.stringContaining("Focused: Focus on the evidence"),
-      citations: [{ label: "Needle evidence", range: { start: 0, end: 40 }, readCursor: expect.any(String) }],
+      citations: [{ label: "Needle evidence", range: { start: 0, end: 40 } }],
       coverage: { status: "complete", totalCharacters: 19_534, consideredCharacters: 19_534, limitations: [] },
     });
 
