@@ -1,7 +1,14 @@
 import { parse as parseDomain } from "tldts";
 import type { FirecrawlClient } from "../lib/firecrawl";
+import { createDeadline } from "../lib/deadline";
 
 const FAVICON_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
+/**
+ * Bounds the complete origin image read: response headers and body.
+ * Set to 25 seconds by the team on 2026-09-16, matching Firecrawl's branding
+ * scrape budget and fitting inside Cloudflare's 30-second waitUntil window.
+ */
+export const FAVICON_ORIGIN_TIMEOUT_MS = 25_000;
 // A KV value cannot exceed 25 MiB. This is the platform's write boundary, not
 // a product-selected favicon limit: anything larger cannot be cached and is
 // therefore not a usable result for this service.
@@ -65,10 +72,15 @@ function transientFailure(hostname: string, phase: "branding" | "image", cause?:
   return new Error(`favicon_${phase}_fetch_failed for ${hostname}`, { cause });
 }
 
-async function fetchImage(url: URL, accept: string, fetcher: typeof fetch): Promise<Response | null> {
+async function fetchImage(
+  url: URL,
+  accept: string,
+  fetcher: typeof fetch,
+  signal: AbortSignal,
+): Promise<Response | null> {
   let response: Response;
   try {
-    response = await fetcher(url, { headers: { Accept: accept }, redirect: "manual" });
+    response = await fetcher(url, { headers: { Accept: accept }, redirect: "manual", signal });
   } catch (error) {
     throw transientFailure(url.hostname, "image", error);
   }
@@ -116,6 +128,7 @@ async function fetchHostFavicon(
   hostname: string,
   firecrawl: Pick<FirecrawlClient, "scrapeBranding">,
   fetcher: typeof fetch,
+  originTimeoutMs: number,
 ): Promise<ResolvedFavicon | null> {
   const discovered = await firecrawl.scrapeBranding(`https://${hostname}/`);
   if (transientStatus(discovered.statusCode)) throw transientFailure(hostname, "branding");
@@ -128,24 +141,30 @@ async function fetchHostFavicon(
   }
   if (faviconUrl.protocol !== "https:" || !publicHostname(faviconUrl.hostname)) return null;
 
-  const response = await fetchImage(
-    faviconUrl,
-    "image/avif,image/webp,image/svg+xml,image/png,image/*,*/*;q=0.2",
-    fetcher,
-  );
-  if (!response?.ok) {
-    await response?.body?.cancel();
-    return null;
-  }
-  let bytes: ArrayBuffer | null;
+  const deadline = createDeadline(originTimeoutMs);
   try {
-    bytes = await readImageBytes(response);
-  } catch (error) {
-    throw transientFailure(faviconUrl.hostname, "image", error);
+    const response = await fetchImage(
+      faviconUrl,
+      "image/avif,image/webp,image/svg+xml,image/png,image/*,*/*;q=0.2",
+      fetcher,
+      deadline.signal,
+    );
+    if (!response?.ok) {
+      await response?.body?.cancel();
+      return null;
+    }
+    let bytes: ArrayBuffer | null;
+    try {
+      bytes = await readImageBytes(response);
+    } catch (error) {
+      throw transientFailure(faviconUrl.hostname, "image", error);
+    }
+    if (!bytes || bytes.byteLength === 0) return null;
+    const contentType = contentTypeForImage(new Uint8Array(bytes), response.headers.get("content-type"));
+    return contentType ? { bytes, contentType } : null;
+  } finally {
+    deadline.dispose();
   }
-  if (!bytes || bytes.byteLength === 0) return null;
-  const contentType = contentTypeForImage(new Uint8Array(bytes), response.headers.get("content-type"));
-  return contentType ? { bytes, contentType } : null;
 }
 
 async function cachedHostFavicon(
@@ -153,6 +172,7 @@ async function cachedHostFavicon(
   hostname: string,
   firecrawl: Pick<FirecrawlClient, "scrapeBranding">,
   fetcher: typeof fetch,
+  originTimeoutMs: number,
 ): Promise<ResolvedFavicon | null> {
   const key = cacheKey(hostname);
   const cached = await cache.getWithMetadata<FaviconCacheMetadata>(key, "arrayBuffer");
@@ -161,7 +181,7 @@ async function cachedHostFavicon(
     return { bytes: cached.value, contentType: cached.metadata.contentType };
   }
 
-  const favicon = await fetchHostFavicon(hostname, firecrawl, fetcher);
+  const favicon = await fetchHostFavicon(hostname, firecrawl, fetcher, originTimeoutMs);
   if (favicon) {
     await cache.put(key, favicon.bytes, {
       expirationTtl: FAVICON_CACHE_TTL_SECONDS,
@@ -187,12 +207,13 @@ export async function resolveFavicon(
   firecrawl: Pick<FirecrawlClient, "scrapeBranding">,
   fetcher: typeof fetch = fetch,
   waitUntil?: (promise: Promise<unknown>) => void,
+  originTimeoutMs = FAVICON_ORIGIN_TIMEOUT_MS,
 ): Promise<ResolvedFavicon | null> {
   const chain = faviconHostChain(hostname);
   if (!chain) return null;
-  const exact = cachedHostFavicon(cache, chain[0]!, firecrawl, fetcher);
+  const exact = cachedHostFavicon(cache, chain[0]!, firecrawl, fetcher, originTimeoutMs);
   const fallback = chain[1]
-    ? cachedHostFavicon(cache, chain[1], firecrawl, fetcher)
+    ? cachedHostFavicon(cache, chain[1], firecrawl, fetcher, originTimeoutMs)
     : null;
   // The fallback has already started, but its failure must not become an
   // unhandled rejection when the exact-host icon lets this request return.

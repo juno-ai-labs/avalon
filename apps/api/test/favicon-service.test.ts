@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { faviconHostChain, resolveFavicon } from "../src/services/favicon-service";
+import {
+  FAVICON_ORIGIN_TIMEOUT_MS,
+  faviconHostChain,
+  resolveFavicon,
+} from "../src/services/favicon-service";
 import { createTestBinaryKvNamespace } from "./helpers/cloudflare-test";
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -200,6 +204,52 @@ describe("favicon host resolution", () => {
     await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
       .rejects.toThrow("favicon_image_fetch_failed");
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it.each(["headers", "body"] as const)("ends a stalled favicon-origin %s read at its deadline", async (phase) => {
+    const { cache, put } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: "/favicon.png", url, statusCode: 200 }));
+    let observedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      observedSignal = init?.signal as AbortSignal;
+      if (phase === "headers") {
+        return await new Promise<Response>((_resolve, reject) => {
+          observedSignal?.addEventListener("abort", () => reject(observedSignal?.reason), { once: true });
+        });
+      }
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          observedSignal?.addEventListener("abort", () => controller.error(observedSignal?.reason), { once: true });
+        },
+      });
+      return new Response(body, { headers: { "content-type": "image/png" } });
+    });
+
+    await expect(resolveFavicon(
+      cache,
+      "example.com",
+      { scrapeBranding },
+      fetchMock as unknown as typeof fetch,
+      undefined,
+      0,
+    )).rejects.toThrow("favicon_image_fetch_failed");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("keeps the team-selected origin deadline above an ordinary image response", async () => {
+    const { cache } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: "/favicon.png", url, statusCode: 200 }));
+    let observedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      observedSignal = init?.signal as AbortSignal;
+      return response(String(input), png, "image/png");
+    });
+
+    await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
+      .resolves.toMatchObject({ contentType: "image/png" });
+    expect(FAVICON_ORIGIN_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(observedSignal?.aborted).toBe(false);
   });
 
   it("stops reading an unbounded image body at the KV value boundary", async () => {
