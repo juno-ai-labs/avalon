@@ -276,6 +276,21 @@ the one id on the run the host supplied itself. `rememberAutomationPeopleSearchR
 restores `you` alongside the matches so a resumed run rebuilding the set from
 replayed tool output agrees with a fresh one.
 
+**A connection advertises only the events its own scope can receive.**
+`connectorActivityTriggerDescriptors` takes the connection's scope and returns
+nothing where the connector's activity cannot arrive in it, so a personal
+Granola, Fireflies or Ashby connection reports `activityTriggerCount: 0` —
+their webhooks belong to the workspace install, and `normalize` refuses every
+other connection. A zero count on a plugin that plainly has events reads as
+"this connector has no events", so the catalog entry also carries the scope
+those events *do* need: `plugins_list`, `plugins_search` and `plugin_inspect`
+turn it into one sentence saying a workspace connection is required, and
+`set_evaluator_rules` refuses a rule on such a plugin with the same sentence
+rather than the generic "no event of that name" — which reads as a typo to
+correct, and sent the run looking for another event and then a schedule. The
+model already saw `scope: "personal"` beside four healthy-looking triggers and
+reasonably concluded the connection was usable.
+
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
@@ -586,6 +601,12 @@ Sidekick's id, exactly what every Sidekick showed before the picker existed.
 - **Bindings are derived from the definition, never taken from a request.**
   `apply` carries an id and nothing else; a request field restating what the
   draft settled is a second source of truth for it.
+- **A trigger is advertised only to a connection that can receive it.** The
+  drafting catalog and the accept path both read a connection's triggers
+  through `connectorActivityTriggerDescriptors` with its scope, so neither can
+  offer an event the connection's scope cannot carry. A Sidekick built on one
+  drafts, applies and activates, and then differs from a working Sidekick with
+  nothing to do only in that it never fires.
 - **A room's automation is the room's.** Its scope is fixed at creation, its
   managers are the room's participants, it is listed only in the room's rail,
   and the room's archive pauses it. Authorship confers nothing on it.
@@ -680,9 +701,9 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
-| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, and the submission pre-check. |
+| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, the submission pre-check, and the sentence a scope-blocked connection carries into the catalog and into a refused rule. |
 | `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
-| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
+| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
 Traps worth knowing before writing one here. The `test-workers` D1 starts with
 no schema, so a test that exercises membership or sessions declares those tables
@@ -956,6 +977,38 @@ The primitive is there for the next one to adopt as it is touched; converting
 some hundred call sites blind is how a diagnostic fix becomes a risk.
 
 Shipped in the pull request for this change.
+
+### 2026-09-14 — A connection advertises only the events its scope can receive
+
+**What changed:** `connectorActivityTriggerDescriptors` takes the connection's
+scope and returns `[]` where the connector's events cannot arrive in it, from
+the new `activityConnectionScopes` declaration described in
+[`connectors.md`](connectors.md#activity-ingestion). The drafting catalog
+carries `activityRequiresScope` beside the emptied list, and the three
+discovery tools and `set_evaluator_rules` turn it into one sentence naming the
+scope a connection needs. `set_evaluator_rules` refuses a rule on a
+scope-blocked plugin outright, on the plugin rather than the event: a rule that
+names an event type outright is not otherwise checked against the catalog at
+drafting time, so without it the draft was accepted and the automation was
+silent for good.
+
+**Why:** A personal Granola or Fireflies connection advertised its connector's
+full trigger set while `normalize` refuses any connection that is not
+workspace-scoped, so the events were ones it could never receive. The model saw
+`scope: "personal"` beside four healthy triggers, built the Sidekick on them,
+and nothing in the product distinguished the silence that followed from a
+Sidekick with nothing to do yet. The first fix was the filter alone, and it
+moved the failure rather than removing it: a count of zero is what a drafting
+model reads as "this connector has no events", and the next thing it reaches
+for is a timer that runs forever and never does the thing it was asked for. The
+refusal has to name the scope, because that is the only correction the model
+can act on.
+
+**Consequences:** An existing Sidekick bound to a personal connection of one of
+these connectors is refused at accept instead of applying and going quiet;
+it never fired, so the refusal is the first honest answer it has had. A
+connector that later delivers events to personal connections declares it once,
+in its adapter, and both surfaces follow.
 
 ### 2026-09-14 — `matching` is the model's spelling; `all` stays the stored one
 

@@ -815,3 +815,69 @@ describe("a composed source binding key is enough on its own", () => {
     expect(described).toContain("no tool returns one");
   });
 });
+
+describe("a connection whose scope cannot receive its connector's events", () => {
+  /** A personal Granola connection: tools work, events do not. */
+  function scopeBlockedHost(): AutomationCreatorToolHost {
+    return host({
+      catalog: [{
+        pluginId: "plugin_granola",
+        displayName: "Granola",
+        icon: "plug",
+        description: "Granola meeting notes.",
+        scope: "personal",
+        searchAliases: [],
+        systemMessage: "",
+        activityTriggers: [],
+        activityRequiresScope: "workspace",
+        tools: [],
+      }],
+      inspectedPluginIds: new Set(["plugin_granola"]),
+      loadedPluginIds: new Set(["plugin_granola"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+      },
+    });
+  }
+
+  it("says so in the catalog rather than leaving a zero count to be read as 'no events'", async () => {
+    const tools = createAutomationsPlugin(scopeBlockedHost()).tools;
+
+    const listed = await toolNamed(tools, "plugins_list").execute({}, toolContext);
+    const entry = (listed.output as {
+      plugins: Array<{ activityTriggerCount: number; activityTriggersUnavailable?: string }>;
+    }).plugins[0]!;
+
+    // A count of zero beside a healthy plugin reads as "this connector has no
+    // events", which is false and sends the drafting run to a timer. The
+    // sentence is what it can relay to the person instead.
+    expect(entry.activityTriggerCount).toBe(0);
+    expect(entry.activityTriggersUnavailable).toMatch(/workspace connection.*this one is personal/u);
+
+    const inspected = await toolNamed(tools, "plugin_inspect")
+      .execute({ pluginId: "plugin_granola" }, toolContext);
+    expect((inspected.output as { plugin: { activityTriggersUnavailable?: string } }).plugin
+      .activityTriggersUnavailable).toMatch(/workspace connection/u);
+  });
+
+  it("refuses a rule on its events by naming the scope, not the event name", async () => {
+    const tools = createAutomationsPlugin(scopeBlockedHost()).tools;
+
+    // The generic refusal ("this plugin declares no event of that name") reads
+    // as a typo the model should correct, so it tries the next event type and
+    // then a schedule. Naming the scope is the only correction it can act on.
+    await expect(toolNamed(tools, "set_evaluator_rules").execute({
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "note_generated",
+        source: {
+          sourceBindingKey: "granola_notes",
+          suggestedSourcePluginId: "plugin_granola",
+          event: { kind: "event_type", eventType: "note.generated" },
+        },
+        when: { kind: "always" },
+      }],
+    }, toolContext)).rejects.toThrow(/Granola events reach Rally only through a workspace connection/u);
+  });
+});

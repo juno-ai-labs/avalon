@@ -2217,6 +2217,17 @@ export interface AutomationCreatorPluginCatalogEntry {
   searchAliases: string[];
   systemMessage: string;
   activityTriggers: ConnectorActivityTriggerDescriptor[];
+  /**
+   * The connection scope this connector's events need, set only when this
+   * connection does not have it.
+   *
+   * `activityTriggers` is empty in that case, and a count of zero is the one
+   * thing a drafting model reads as "this connector has no events" — which is
+   * false, and led it to build the automation on a timer instead. The scope is
+   * carried so the discovery tools can say what the connection is missing
+   * rather than leaving the model to infer it from an absence.
+   */
+  activityRequiresScope?: "personal" | "workspace";
   tools: Array<{
     name: string;
     /** Canonical adapter identity; `name` remains the exact model-facing wire name. */
@@ -2391,6 +2402,22 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   },
 };
 
+/**
+ * Why a connection advertises no activity trigger, when the answer is its
+ * scope rather than the connector.
+ *
+ * Written for the model to relay rather than act around: the drafting loop's
+ * instinct on an event it cannot have is to substitute the nearest schedule,
+ * which produces an automation that runs forever and never does the thing it
+ * was asked for.
+ */
+export function activityTriggerScopeRefusal(
+  plugin: Pick<AutomationCreatorPluginCatalogEntry, "displayName" | "scope" | "activityRequiresScope">,
+): string | null {
+  if (!plugin.activityRequiresScope || plugin.activityRequiresScope === plugin.scope) return null;
+  return `${plugin.displayName} events reach Rally only through a ${plugin.activityRequiresScope} connection, and this one is ${plugin.scope}, so no automation can be triggered by it. Tell the person a ${plugin.activityRequiresScope} connection is required and stop; do not substitute a schedule or another plugin's events.`;
+}
+
 export function executeAutomationCreatorDiscoveryTool(
   toolName: string,
   args: Record<string, unknown>,
@@ -2398,15 +2425,19 @@ export function executeAutomationCreatorDiscoveryTool(
 ): unknown {
   if (toolName === "plugins_list") {
     return {
-      plugins: catalog.map((plugin) => ({
-        pluginId: plugin.pluginId,
-        displayName: plugin.displayName,
-        description: plugin.description,
-        scope: plugin.scope,
-        aliases: plugin.searchAliases,
-        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
-        activityTriggerCount: plugin.activityTriggers.length,
-      })),
+      plugins: catalog.map((plugin) => {
+        const activityTriggersUnavailable = activityTriggerScopeRefusal(plugin);
+        return {
+          pluginId: plugin.pluginId,
+          displayName: plugin.displayName,
+          description: plugin.description,
+          scope: plugin.scope,
+          aliases: plugin.searchAliases,
+          tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
+          activityTriggerCount: plugin.activityTriggers.length,
+          ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
+        };
+      }),
     };
   }
   if (toolName === "plugins_search") {
@@ -2421,25 +2452,30 @@ export function executeAutomationCreatorDiscoveryTool(
     }).toLocaleLowerCase().includes(query));
     return {
       query,
-      plugins: matches.map((plugin) => ({
-        pluginId: plugin.pluginId,
-        displayName: plugin.displayName,
-        description: plugin.description,
-        scope: plugin.scope,
-        aliases: plugin.searchAliases,
-        tools: plugin.tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          capability: tool.capability,
-          mode: tool.mode,
-          ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
-        })),
-      })),
+      plugins: matches.map((plugin) => {
+        const activityTriggersUnavailable = activityTriggerScopeRefusal(plugin);
+        return {
+          pluginId: plugin.pluginId,
+          displayName: plugin.displayName,
+          description: plugin.description,
+          scope: plugin.scope,
+          aliases: plugin.searchAliases,
+          tools: plugin.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            capability: tool.capability,
+            mode: tool.mode,
+            ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
+          })),
+          ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
+        };
+      }),
     };
   }
   if (toolName === "plugin_inspect") {
     const pluginId = String(args.pluginId ?? "");
     const plugin = catalog.find((entry) => entry.pluginId === pluginId);
+    const activityTriggersUnavailable = plugin ? activityTriggerScopeRefusal(plugin) : null;
     return plugin ? {
       plugin: {
         pluginId: plugin.pluginId,
@@ -2479,6 +2515,7 @@ export function executeAutomationCreatorDiscoveryTool(
             : {}),
           ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
+        ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
       },
     } : { error: "plugin_not_found", pluginId };
   }

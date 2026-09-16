@@ -1,12 +1,27 @@
-import type { ConnectorActivityTriggerDescriptorV2 } from "@rally/contracts";
+import type { ConnectorActivityTriggerDescriptorV2, Scope } from "@rally/contracts";
+import { connectorActivitySupportsScope } from "@rally/connectors";
 
 
 /** The connector adapter shape this needs: its manifest's declared triggers. */
 interface TriggerSource {
   manifest: {
     type: string;
+    supportedScopes: readonly Scope[];
     activityTriggers: readonly ConnectorActivityTriggerDescriptorV2[];
   };
+  activityConnectionScopes?: readonly Scope[] | undefined;
+}
+
+/**
+ * A stored connection's scope, narrowed from the column it is read out of.
+ *
+ * Every caller of the helper below reads its connection straight from D1,
+ * where `scope` is a string; the column admits only the two values, so the
+ * narrowing is a cast with a name rather than a decision, and having one of
+ * them keeps the two read paths from spelling it differently.
+ */
+export function storedConnectionScope(scope: string): Scope {
+  return scope === "workspace" ? "workspace" : "personal";
 }
 
 /**
@@ -39,7 +54,16 @@ function configuredEventTypes(configJson: string | null | undefined, field: "eve
 export function connectorActivityTriggerDescriptors(
   adapter: TriggerSource,
   connectionConfigJson: string | null | undefined,
+  connectionScope: Scope,
 ): ConnectorActivityTriggerDescriptorV2[] {
+  // A connection whose scope cannot receive this connector's events advertises
+  // nothing, whatever its manifest declares. Granola, Fireflies and Ashby all
+  // throw `unauthorized` from `normalize` off workspace scope, so a trigger
+  // offered on a personal one is an event that can never arrive: a Sidekick
+  // built on it drafts, applies, activates and then stays silent forever,
+  // which nothing in the product distinguishes from a Sidekick that simply
+  // has nothing to do yet.
+  if (!connectorActivitySupportsScope(adapter, connectionScope)) return [];
   if (adapter.manifest.type === "ashby") {
     const selected = new Set(configuredEventTypes(connectionConfigJson, "selectedEvents"));
     return adapter.manifest.activityTriggers.filter((descriptor) => selected.has(descriptor.eventType));
