@@ -52,7 +52,10 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => sessionState }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => bridge }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => bridge,
+  desktopServicesAvailable: () => false,
+}));
 vi.mock('../lib/telemetry', () => ({
   reportTelemetryProductIntent: telemetry.reportTelemetryProductIntent,
   uuidV7: () => telemetry.operationId,

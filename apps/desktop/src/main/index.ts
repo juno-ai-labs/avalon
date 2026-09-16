@@ -33,6 +33,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  ShareMenu,
   net,
   nativeImage,
   nativeTheme,
@@ -112,6 +113,7 @@ import {
 import { ApplicationIconController } from './application-icon-controller';
 import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
 import { applicationMenuTemplate } from './application-menu';
+import { shareText, showDefinitionForSelection } from './text-services';
 import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import {
   readStoredApplicationSettings,
@@ -3305,6 +3307,19 @@ function registerIpc(): void {
       throw new Error('Invalid clipboard text');
     }
     clipboard.writeText(text);
+  });
+  ipcMain.handle('system:show-definition', (event) => {
+    assertTrustedIpcSender(event);
+    showDefinitionForSelection(process.platform, event.sender);
+  });
+  ipcMain.handle('system:share-text', (event, text: unknown) => {
+    assertTrustedIpcSender(event);
+    shareText(process.platform, text, {
+      popupShare: (sharingItem, window) => {
+        new ShareMenu(sharingItem).popup(window ? { window } : undefined);
+      },
+      window: BrowserWindow.fromWebContents(event.sender),
+    });
   });
   ipcMain.handle('window:set-conversation-details', (event, rawInput: unknown) => {
     assertMainWindowIpcSender(event);

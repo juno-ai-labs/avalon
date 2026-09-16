@@ -29,6 +29,11 @@ export interface SpeechApi {
   streamMessageSpeech(markdown: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>>;
 }
 
+/**
+ * One voice for the window. Every `speak` stops whatever is already playing
+ * before a new stream starts — the action row and the message-text menu share
+ * this mutex, so two clips cannot overlap.
+ */
 export function SpeechPlaybackProvider({ api, children, createPlayer = createPcmSpeechPlayer }: {
   api: SpeechApi;
   children: React.ReactNode;
@@ -47,6 +52,8 @@ export function SpeechPlaybackProvider({ api, children, createPlayer = createPcm
   }, []);
 
   const speak = useCallback((messageId: string, markdown: string): void => {
+    // The mutex: cancel the active player and its fetch before constructing
+    // another AudioContext. A second Speak from any surface rides this path.
     stop();
     const abort = new AbortController();
     // AudioContext construction and resume begin inside the click call stack;
@@ -71,7 +78,10 @@ export function SpeechPlaybackProvider({ api, children, createPlayer = createPcm
         ]);
         await player.play(stream);
       } catch (error) {
-        if (!abort.signal.aborted) logError('rally', 'could not speak this message', error);
+        if (!abort.signal.aborted) {
+          abort.abort('speech playback failed');
+          logError('rally', 'could not speak this message', error);
+        }
       } finally {
         if (activeRef.current === active) {
           activeRef.current = null;

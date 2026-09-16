@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamAutomationSummary } from '../lib/types';
 import { SidekickSection, workstreamSidekickRows } from './sidekick-section';
 const openSidekicks = vi.hoisted(() => vi.fn());
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openSidekicks }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ openSidekicks }),
+  desktopServicesAvailable: () => false,
+}));
 
 const owned: WorkstreamAutomationSummary = {
   id: 'owned-1', name: 'Release notes', description: 'Draft the notes.', loadable: true,
