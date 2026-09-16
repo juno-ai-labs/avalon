@@ -158,6 +158,12 @@ describe("person mention hrefs", () => {
       endOffset: markdown.indexOf(link) + link.length,
     }]);
   });
+
+  it("rejects a backslash-heavy noncanonical label without ambiguous matching", () => {
+    const markdown = `[@${"\\".repeat(42)}[x]](person://${id})`;
+
+    expect(personMentionMarkdownRanges(markdown)).toEqual([]);
+  });
 });
 
 describe("connector mention hrefs", () => {
