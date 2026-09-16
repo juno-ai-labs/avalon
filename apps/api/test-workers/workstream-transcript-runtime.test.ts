@@ -171,6 +171,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         now,
       });
       expect(reservation.outcome).toBe("reserved");
+      let deliveredUserIds: readonly string[] | undefined;
       await transcript.commitBindTransition({
         kind: "assistant_reserved",
         loopId: LOOP_ID,
@@ -207,7 +208,10 @@ describe("work-stream transcript on workerd SQLite", () => {
         executionEpoch: 1,
         leaseOwner: "workerd-test-owner",
         expectedBindStateRevision: 2,
+      }, (effects) => {
+        deliveredUserIds = effects[0]?.mentionedUserIds;
       });
+      expect(deliveredUserIds).toEqual([USER_ID]);
 
       const openingSnapshot = transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
       expect(openingSnapshot.ranges[0]!.turns[0]!.blocks.map((block) => block.type))

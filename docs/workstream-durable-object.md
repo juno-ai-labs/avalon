@@ -177,6 +177,8 @@ author for sender-attributed email or push notification. Attention order is
 conversation-wide: a Rally reply that contains an authoritative mention marks
 the thread unread for participants whose seen waterline is behind, while only
 the named participant receives the mention badge.
+The renderer binds chips to those exact stored ranges with a render-local token,
+so one authoritative occurrence cannot bless another link to the same person.
 
 Every Bind transition is committed before the adapter returns the accepted
 assistant or tool-result message to Bind. At every provider boundary the host
@@ -1636,6 +1638,8 @@ without inventing a human sender for sender-attributed notifications. Because
 the attention ordinal is conversation-wide, such a reply advances the thread's
 unread waterline for every participant; the mention waterline remains specific
 to the named participant.
+Rendering preserves the same occurrence boundary: matching a person ID alone is
+not authority for a different link elsewhere in the turn.
 
 ### 2026-09-14 — Keep slowdown notices scoped to a live inference
 

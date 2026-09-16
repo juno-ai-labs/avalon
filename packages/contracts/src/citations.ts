@@ -100,7 +100,7 @@ export function personIdFromMentionHref(href: string | undefined): string | unde
  */
 export function personMentionMarkdownPattern(): RegExp {
   return new RegExp(
-    String.raw`\[@((?:\\.|[^\]])+)\]\(person:(?:\/\/)?(${PERSON_UUID})\)`,
+    String.raw`\[@((?:\\.|[^\\\]])+)\]\(person:(?:\/\/)?(${PERSON_UUID})\)`,
     "giu",
   );
 }
