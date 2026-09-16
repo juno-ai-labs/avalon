@@ -72,6 +72,7 @@ vi.mock('./markdown-mermaid-theme', () => ({
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   optionalAppSession.mockReturnValue(null);
 });
 
@@ -889,6 +890,30 @@ describe('MessageBlock markdown', () => {
     expect(revokeObjectURL).toHaveBeenCalledTimes(2);
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();
+  });
+
+  it('waits for an HTTP link to enter the viewport before requesting its favicon', async () => {
+    const callbacks: IntersectionObserverCallback[] = [];
+    const disconnect = vi.fn();
+    class IntersectionObserverDouble {
+      constructor(callback: IntersectionObserverCallback) { callbacks.push(callback); }
+      disconnect = disconnect;
+      observe = vi.fn();
+      takeRecords = () => [];
+      unobserve = vi.fn();
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverDouble);
+    const getFavicon = vi.fn(async () => null);
+    optionalAppSession.mockReturnValue({ api: { getFavicon } });
+
+    render(<MarkdownBody>{'[Documentation](https://docs.example.com)'}</MarkdownBody>);
+
+    expect(getFavicon).not.toHaveBeenCalled();
+    act(() => callbacks[0]?.([
+      { isIntersecting: true } as IntersectionObserverEntry,
+    ], {} as IntersectionObserver));
+    await waitFor(() => expect(getFavicon).toHaveBeenCalledWith('docs.example.com'));
+    expect(disconnect).toHaveBeenCalled();
   });
 
   it('keeps a multiline connector mention as a chip', () => {

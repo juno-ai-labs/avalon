@@ -23,11 +23,11 @@ faviconRoutes.get("/:hostname", zValidator("param", FaviconParamsSchema), async 
     (promise) => c.executionCtx.waitUntil(promise),
   );
   if (!favicon) {
-    return c.body(null, 404, { "Cache-Control": "private, max-age=2592000" });
+    return c.body(null, 404, { "Cache-Control": "private, no-cache" });
   }
   return new Response(favicon.bytes, {
     headers: {
-      "Cache-Control": "private, max-age=2592000",
+      "Cache-Control": "private, no-cache",
       "Content-Type": favicon.contentType,
       "X-Content-Type-Options": "nosniff",
     },
