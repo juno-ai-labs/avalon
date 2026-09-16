@@ -268,9 +268,10 @@ fallback. Each candidate asks the shared Firecrawl client
 for uncached `branding.images.favicon` metadata, accepts only a public HTTPS
 image URL, rejects image redirects, reads no more than Cloudflare KV's 25 MiB
 value boundary through a stream limiter without retaining a second chunk copy,
-and applies one team-selected 25-second deadline across the image response
-headers and body. It validates the bytes as an image and stores either the icon
-or a confirmed miss in the dedicated platform-wide `FAVICON_CACHE`. A transient
+and applies one team-selected 25-second deadline across branding discovery plus
+the image response headers and body. It validates the bytes as an image and
+stores either the icon or a confirmed miss in the dedicated platform-wide
+`FAVICON_CACHE`. A transient
 Firecrawl, network, rate-limit, or server failure is not negative-cached, and a
 failure for one candidate cannot discard a valid result from the other. Each KV
 entry expires after 30 days; the next read fetches and overwrites it, so no stale
@@ -846,10 +847,10 @@ product contract selected.
 
 **Consequences:** Favicon discovery requires the regional `FIRECRAWL_API_KEY`.
 Only public HTTPS image URLs returned by Firecrawl are fetched, and image
-redirects are rejected rather than followed. The complete origin image read is
+redirects are rejected rather than followed. Each complete candidate lookup is
 bounded at 25 seconds, selected by the team to match Firecrawl's existing
 branding scrape budget and stay inside Cloudflare's 30-second `waitUntil`
-window.
+window; the same abort signal covers Firecrawl plus the image headers and body.
 Transient failures are not stored as 30-day misses, a missing mark is silent,
 browser responses revalidate against KV, and synchronous saved-message rendering
 intentionally omits this live decoration. The existing GFM autolinker remains
