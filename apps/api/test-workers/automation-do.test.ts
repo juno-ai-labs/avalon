@@ -486,6 +486,21 @@ describe("AutomationDO", () => {
     expect(after).not.toContain('[Recommended]');
     expect(after).toContain('sidekick-manual-helper');
     expect(after).not.toContain('Secret body loaded only on request.');
+    // Ownership recommends the Sidekick independently of the explicit table.
+    const ownedId = asAutomationId('00000000-0000-7000-8000-00000000ad98');
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workstream', owningWorkstreamId: workstreamId, automationId: ownedId });
+    const owned = env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(automationDOName('global', WORKSPACE_ID, ownedId)));
+    await owned.saveDefinition({ workspaceId: WORKSPACE_ID, automationId: ownedId,
+      draft: { ...DEFINITION, name: 'Owned helper', suggestedScope: 'workstream', definitionVersion: 2, triggers: [], instructions: 'Owned body loaded only on request.' },
+      evaluatorRules: null, submittedByRunId: null, actor: { ...actor(), participantOfOwningWorkstream: true } });
+    await deliverParentEffects(TEST_ENV, owned);
+    for (const agent of [root, first, sibling]) {
+      const prompt = await execute(agent);
+      expect(prompt.split('\n').find((line) => line.includes('sidekick-owned-helper'))).toContain('[Recommended]');
+      expect(prompt).not.toContain('Owned body loaded only on request.');
+    }
+    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } }, { name: 'sidekick_detach', arguments: { sidekickId: ownedId } }]);
+    expect((await execute(root)).split('\n').find((line) => line.includes('sidekick-owned-helper'))).toContain('[Recommended]');
   });
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();

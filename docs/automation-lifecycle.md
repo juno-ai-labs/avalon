@@ -54,11 +54,16 @@ can also attach non-archived workspace Sidekicks through the rail picker or the
 Sidekicks plugin's attach/detach tools. WorkstreamDO owns those explicit links.
 Workstream main and child agents receive only list/attach/detach from this
 plugin; drafting stays in the Sidekick's own authoring conversation.
+Management tools require a user execution principal. Workspace-principal runs
+still discover eligible skills but receive no person-authorized management tools.
 Each new execution snapshots eligible recommendations and marks their catalog
 lines `[Recommended]`, encouraging use when relevant without activating bodies.
 Detaching an explicit recommendation also removes the current substream's local
 attachment; sibling attachments survive. Workstream ownership itself cannot be
 detached. Workspace Sidekicks remain ordinarily discoverable after detachment.
+Both participant preconditions are checked before the shared delete. The two
+object removals remain idempotent, not a cross-object transaction. Executions
+with no eligible Sidekick sources skip recommendation authority reads entirely.
 
 A work stream's own rails list **Sidekicks**: the Sidekicks the room owns —
 `listWorkstreamAutomations`, read through `GET /sidekicks/workstream/:id`, which
@@ -811,6 +816,9 @@ ownership relation and one small attachment table compose those behaviors.
 
 **Consequences:** Recommendations affect future executions. Removing a workspace
 recommendation also clears its loaded attachment in the current substream.
+The service checks parent and local participation before removal; management
+tools are withheld from workspace-principal runs. Empty skill catalogs do not
+wake recommendation authorities just to intersect their results with nothing.
 
 ### 2026-09-15 — A rule can name Fireflies
 

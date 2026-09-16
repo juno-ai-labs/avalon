@@ -333,6 +333,9 @@ describe("conversation parent contract", () => {
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, true);
     expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items.map((item) => item.id)).toEqual([shared]);
     await expect(service.setSidekickRecommendation(WORKSPACE_ROOM_ID, personal, true)).rejects.toMatchObject({ code: 'sidekick_attachment_scope_invalid' });
+    const viewer = new WorkstreamService(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
+    await expect(viewer.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false)).rejects.toMatchObject({ status: 403, code: 'sidekick_attachment_forbidden' });
+    expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items.map((item) => item.id)).toEqual([shared]);
     await runInDurableObject(roomParent(WORKSPACE_ROOM_ID), async (instance) => {
       await expect(instance.setSidekickRecommendation({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_ROOM_ID,
         userId: MEMBER_ID, sidekickId: shared, attached: true })).rejects.toThrow('sidekick_attachment_participant_required');
