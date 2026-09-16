@@ -697,6 +697,8 @@ that looks like tidying reintroduces an unconditional fade. Do not paint a
 gradient over the scroller: these rows carry three fills, and an overlay
 matched to one is a bar in the other two.
 
+Shipped in #803.
+
 ### 2026-09-15 — The participant dialog stays open across roster changes
 
 **What changed:** Adding a person no longer closes `AddParticipantDialog`. The
