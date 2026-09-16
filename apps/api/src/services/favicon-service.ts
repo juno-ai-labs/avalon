@@ -222,7 +222,7 @@ export async function resolveFavicon(
   try {
     const result = await exact;
     if (result) {
-      if (fallback && waitUntil) waitUntil(fallback);
+      if (fallback && waitUntil) waitUntil(fallback.catch(() => undefined));
       return result;
     }
   } catch (error) {

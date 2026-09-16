@@ -118,6 +118,27 @@ describe("favicon host resolution", () => {
     await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(2), { timeout: 1_000 });
   });
 
+  it("settles a failed detached fallback before registering it with waitUntil", async () => {
+    const { cache } = cacheFixture();
+    const scrapeBranding = vi.fn(async (url: string) => {
+      if (url === "https://example.com/") throw new Error("parent provider unavailable");
+      return { faviconUrl: "/favicon.png", url, statusCode: 200 };
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => response(String(input), png, "image/png"));
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
+
+    await expect(resolveFavicon(
+      cache,
+      "docs.example.com",
+      { scrapeBranding },
+      fetchMock as unknown as typeof fetch,
+      waitUntil,
+    )).resolves.toMatchObject({ contentType: "image/png" });
+
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined();
+  });
+
   it("rejects image redirects and falls back to the registrable domain", async () => {
     const { cache } = cacheFixture();
     const scrapeBranding = vi.fn(async (url: string) => url.startsWith("https://docs.")
