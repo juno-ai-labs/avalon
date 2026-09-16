@@ -1,4 +1,5 @@
 import { AshbyEventLabels, type ConnectorInstallation } from "@rally/contracts";
+import { CircleAlert, CircleCheck } from 'lucide-react';
 import { useState, useSyncExternalStore } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RallyApi } from '../lib/api';
@@ -194,6 +195,32 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
   </Modal>;
 }
 
+/**
+ * The Test result as a verdict first and the details second.
+ *
+ * The result used to be one unstyled sentence under the buttons, the same
+ * weight as the caption above it, so "Granola authorization is healthy.
+ * Approved webhook configuration is verified" read like more instructions, and
+ * an administrator who had just fixed a connection could not tell they were
+ * done. A passed test is green with its own heading and a failed one is red;
+ * both keep the sentence, which is where the provider's own words land.
+ */
+function ConnectionTestOutcome({ kind, message }: { kind: 'passed' | 'failed' | 'unavailable'; message: string }) {
+  // `unavailable` is the request failing — offline, a timeout, a 5xx — not the
+  // connection failing the test. The test never ran, so a red "failed" would
+  // send someone off to fix a connection that may be fine.
+  const heading = { passed: 'Connection test passed', failed: 'Connection test failed', unavailable: 'Couldn’t run the connection test' }[kind];
+  return (
+    <div className={`connection-test-outcome is-${kind}`} role={kind === 'passed' ? 'status' : 'alert'}>
+      {kind === 'passed' ? <CircleCheck aria-hidden="true" size={18} /> : <CircleAlert aria-hidden="true" size={18} />}
+      <div>
+        <strong>{heading}</strong>
+        <p>{message}</p>
+      </div>
+    </div>
+  );
+}
+
 export function ConnectorInstallationDetails({ api, connectionId, connectionEnabled = false, onClose }: { api: RallyApi; connectionId: string; connectionEnabled?: boolean; onClose: () => void }) {
   const cache = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
@@ -225,34 +252,48 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
     {!online && <InlineError>Connection management is unavailable while offline. Saved status may be out of date.</InlineError>}
     {query.isPending && <p>Loading connection…</p>}
     {query.error && <InlineError>{query.error.message}</InlineError>}
-    {query.data && !installation && <><p>Test this connection to check that workspace events can reach Rally.</p>{connectionEnabled && <Button disabled={!online || test.isPending} onClick={() => test.mutate()}>Test</Button>}</>}
-    {installation && <>
-      <h3 role="status">{installationStatus[installation.state].title}</h3>
-      <p>{installationStatus[installation.state].description}</p>
-      {active && <>
-        <p>Last event received: {installation.lastReceivedAt ? new Date(installation.lastReceivedAt).toLocaleString() : 'None yet'}.</p>
-        <Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button>
-        <p>Test checks access and attempts to repair event delivery.</p>
-      </>}
-      {installation.state === 'cleanup_pending' && installation.registrations.every((registration) => !registration.providerId) && (
-        // Keyed on the registrations carrying no provider identity, which is
-        // what a provider with no webhook API leaves behind: there is nothing
-        // for Rally to delete, so Retry cleanup would be a button that cannot
-        // do anything. Say what the administrator has to do instead.
-        <p role="status">Rally can't remove the webhook from your provider for you. Delete it there, or leave it — deliveries to a removed connection are rejected.</p>
-      )}
-      {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten
-        && installation.registrations.some((registration) => registration.providerId)
-        && <Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button>}
-      {needsHelp && <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button>}
-    </>}
-    {test.data && <p role="status">{test.data.message}</p>}
-    {test.error && <InlineError>{test.error.message}</InlineError>}
-    {change.error && <InlineError>{change.error.message}</InlineError>}
-    {installation && <>
-      <div style={{ marginBlockStart: '1rem' }}><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button></div>
+    {/* Four groups with more space between them than within one — status,
+        the actions each beside its own caption, the verdict, Advanced — so a
+        caption reads as its button's and not as the next line of prose. The
+        old body was one column of equally spaced lines, and "Test checks
+        access…" sat as close to Get help below it as to Test above. */}
+    {query.data && !installation && <div className="installation-panel">
+      <section className="installation-status"><p>Test this connection to check that workspace events can reach Rally.</p></section>
+      {connectionEnabled && <section className="installation-actions">
+        <div className="installation-action"><Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button><p>Checks access and attempts to repair event delivery.</p></div>
+      </section>}
+      {test.data && <ConnectionTestOutcome kind={test.data.ok ? 'passed' : 'failed'} message={test.data.message} />}
+      {test.error && <ConnectionTestOutcome kind="unavailable" message={test.error.message} />}
+    </div>}
+    {installation && <div className="installation-panel">
+      <section className="installation-status">
+        <h3 role="status">{installationStatus[installation.state].title}</h3>
+        <p>{installationStatus[installation.state].description}</p>
+        {active && <p className="installation-status-meta">Last event received: {installation.lastReceivedAt ? new Date(installation.lastReceivedAt).toLocaleString() : 'None yet'}.</p>}
+        {installation.state === 'cleanup_pending' && installation.registrations.every((registration) => !registration.providerId) && (
+          // Keyed on the registrations carrying no provider identity, which is
+          // what a provider with no webhook API leaves behind: there is nothing
+          // for Rally to delete, so Retry cleanup would be a button that cannot
+          // do anything. Say what the administrator has to do instead.
+          <p role="status">Rally can't remove the webhook from your provider for you. Delete it there, or leave it — deliveries to a removed connection are rejected.</p>
+        )}
+      </section>
+      {(active || needsHelp) && <section className="installation-actions">
+        {active && <div className="installation-action"><Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button><p>Checks access and attempts to repair event delivery.</p></div>}
+        {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten
+          // Verified, because that is what the cleanup runner requires before
+          // it will remove a webhook; an unverified id would make this a
+          // button that does nothing.
+          && installation.registrations.some((registration) => registration.providerId && registration.providerIdVerified)
+          && <div className="installation-action"><Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button><p>Asks the provider again to remove the recorded webhook.</p></div>}
+        {needsHelp && <div className="installation-action"><Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button><p>Opens Rally support, for a problem Test does not fix.</p></div>}
+      </section>}
+      {test.data && <ConnectionTestOutcome kind={test.data.ok ? 'passed' : 'failed'} message={test.data.message} />}
+      {test.error && <ConnectionTestOutcome kind="unavailable" message={test.error.message} />}
+      {change.error && <InlineError>{change.error.message}</InlineError>}
+      <section className="installation-advanced">
+        <div className="installation-action"><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button><p>Technical details and recovery tools for workspace administrators and support.</p></div>
       {advanced && <section aria-label="Advanced connection settings">
-        <p>Technical details and recovery tools for workspace administrators and support.</p>
         <Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>
         {active && <details><summary>Replace workspace API key</summary>
           <p>Use a key from the same provider organization with webhook management access. Existing subscriptions and signing keys are preserved. Unknown provider outcomes still require inspection.</p>
@@ -268,7 +309,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
           <Button disabled={!online || !reconcilableRegistrations.some((registration) => registration.key === registrationKey) || !providerId.trim() || change.isPending} onClick={() => change.mutate('reconcile')}>Verify existing webhook</Button>
         </>}
         {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <>
-          <p>Forgetting the local cleanup credential leaves subscription removal to your provider administrator.</p>
+          <p>Forgetting the local cleanup credential leaves subscription removal to your provider administrator, and removes this connection from the list. Copy the provider IDs from Subscription details first if you plan to delete the webhooks there.</p>
           <Button disabled={!online || change.isPending} onClick={() => change.mutate('forget_cleanup')}>Forget local cleanup credential</Button>
         </>}
         <details><summary>Subscription details</summary>
@@ -284,6 +325,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
           </section>)}
         </details>
       </section>}
-    </>}
+      </section>
+    </div>}
   </Modal>;
 }
