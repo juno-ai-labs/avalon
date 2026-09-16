@@ -51,6 +51,13 @@ read-watermark and child projection writes do not. See
 
 ## Sidekick loading and attachment storage
 
+WorkstreamDO migration 13 adds `workstream_sidekick_attachments`, keyed by
+workspace Sidekick ID with its attachment time. Workstream-owned Sidekicks use
+their existing ownership relation. These relations recommend catalog entries
+in all substreams; `sidekick_attachments` remains local to each SubstreamAgent.
+Execution snapshots optionally contain `recommendedRefs` for compatibility with
+previously admitted executions.
+
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
 
 ## Where the code lives
@@ -952,6 +959,12 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Testing
 
+WorkstreamDO recommendation migration 13 is exercised on a populated v12 object
+by `apps/api/test-workers/conversation-parent-contract.test.ts`; the migration
+preserves parent identity and participants while adding the recommendation table.
+`apps/api/test-workers/automation-do.test.ts` verifies execution snapshots and
+substream-local attachment persistence across the tool-driven recommendation flow.
+
 `pnpm --filter @rally/db test` is the suite that covers the schema itself:
 
 - `packages/db/test/baseline-migration.test.ts` replays every `.sql` file in
@@ -1021,6 +1034,10 @@ one workspace intent and device. Notification content remains in WorkspaceDO,
 read through typed RPC. See [Apple push](push-notifications.md).
 
 ## Changelog
+
+### 2026-09-15 — Recommend Sidekicks at workstream scope
+
+WorkstreamDO migration 13 stores workspace Sidekick recommendation links once per workstream. Recommendations are execution-snapshot metadata, not active instructions: copying links into child attachment tables would conflate discovery with loading. Existing SubstreamAgent attachments remain local to each substream, including main, while recommendation removal clears only the currently addressed local attachment.
 
 ### 2026-09-14 — Retire built-in meeting data
 

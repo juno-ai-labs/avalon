@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  IdSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
@@ -68,6 +69,9 @@ export interface AutomationCreatorToolHost {
   /** The automations this conversation may edit, each with its current definition. */
   automationDirectoryPort?: {
     listAutomations(): Promise<unknown>;
+  };
+  attachmentPort?: {
+    setAttached(sidekickId: string, attached: boolean): Promise<unknown>;
   };
   draftMutationPort?: {
     /** `target` names an automation from `listAutomations`; null creates one. */
@@ -248,10 +252,30 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
         return {
           output: await input.automationDirectoryPort.listAutomations(),
-          summary: "Listed the Sidekicks this conversation can edit",
+          summary: "Listed editable and attachable Sidekicks",
         };
       },
     },
+    ...(["attach", "detach"] as const).filter(() => input.attachmentPort !== undefined).map((operation): HarnessTool => ({
+      definition: {
+        name: operation,
+        description: `${operation === "attach" ? "Attach" : "Detach"} a workspace Sidekick ${operation === "attach" ? "as a recommendation for" : "from"} this workstream. Use an ID returned by sidekicks_list.`,
+        capability: `rally.sidekick.${operation}`,
+        mode: "write",
+        idempotency: "record_before_execute",
+        inputSchema: { type: "object", additionalProperties: false, properties: { sidekickId: { type: "string" } }, required: ["sidekickId"] },
+      },
+      serial: true,
+      validateInput: (raw) => {
+        const parsed = z.strictObject({ sidekickId: IdSchema }).safeParse(raw);
+        return parsed.success ? null : parsed.error;
+      },
+      execute: async (raw) => {
+        const { sidekickId } = z.strictObject({ sidekickId: IdSchema }).parse(raw);
+        const result = await input.attachmentPort!.setAttached(sidekickId, operation === "attach");
+        return { output: { result, note: "Recommendations apply to future executions. Call load_skill to use the Sidekick in this execution." }, summary: `${operation === "attach" ? "Attached" : "Detached"} workstream Sidekick` };
+      },
+    })),
     {
       definition: creatorDefinition("submit_draft"),
       serial: true,
@@ -542,6 +566,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
 export const AUTOMATIONS_PLUGIN_ID = "rally:sidekicks";
 
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
+  "Workspace Sidekicks marked canAttach may be attached or detached proactively when useful for this workstream. Attachment recommends them in future executions; call load_skill separately to use them now. Only edit entries marked canEdit.",
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",

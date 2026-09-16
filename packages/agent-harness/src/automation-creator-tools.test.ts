@@ -1,5 +1,5 @@
 import { AutomationSetEvaluatorRulesInputV1Schema } from "@rally/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AUTOMATIONS_PLUGIN_ID,
@@ -71,6 +71,16 @@ function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], n
 }
 
 describe("the automations plugin", () => {
+  it("attaches and detaches workspace Sidekicks through the host", async () => {
+    const state = host();
+    const setAttached = vi.fn(async () => ({ items: [] }));
+    state.attachmentPort = { setAttached };
+    const tools = createAutomationsPlugin(state).tools;
+    const sidekickId = "00000000-0000-7000-8000-000000000111";
+    await toolNamed(tools, "attach").execute({ sidekickId }, toolContext);
+    await toolNamed(tools, "detach").execute({ sidekickId }, toolContext);
+    expect(setAttached.mock.calls).toEqual([[sidekickId, true], [sidekickId, false]]);
+  });
   it("rebuilds researched people and resources from replayed search output", () => {
     const people = new Set<string>();
     const resources: AutomationCreatorToolHost["resolvedResources"] = new Map();

@@ -6,6 +6,7 @@ import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationR
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import {
   UserIdSchema,
+  IdSchema,
   SubstreamIdSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -584,6 +585,12 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE private_child_preparations ADD COLUMN prepared_conversation_hash TEXT
       CHECK (prepared_conversation_hash IS NULL OR (length(prepared_conversation_hash) = 24 AND substr(prepared_conversation_hash, 1, 8) = 'fnv1a64:'))`,
   ],
+}, {
+  version: 13,
+  description: "workspace Sidekicks recommended for a workstream",
+  statements: [
+    `CREATE TABLE workstream_sidekick_attachments (sidekick_id TEXT PRIMARY KEY, attached_at INTEGER NOT NULL) STRICT`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -838,6 +845,32 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       });
     }
     return json({ error: "not_found" }, 404);
+  }
+
+  /** Internal catalog read; consumers authorize each Sidekick source. */
+  async recommendedSidekickIds(input: { workspaceId: string; parentId: string }): Promise<string[]> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }), input, "sidekick_recommendations");
+    this.assertParent(request.workspaceId, request.parentId);
+    return this.parentSql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM workstream_sidekick_attachments ORDER BY attached_at, sidekick_id`,
+    ).toArray().map((row) => row.sidekick_id);
+  }
+
+  /** The service validates workspace scope before adding a recommendation. */
+  async setSidekickRecommendation(input: { workspaceId: string; parentId: string; userId: string; sidekickId: string; attached: boolean }): Promise<string[]> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      userId: UserIdSchema, sidekickId: IdSchema, attached: z.boolean() }), input, "sidekick_recommendation");
+    this.assertParent(request.workspaceId, request.parentId);
+    if (!this.isParticipant(request.userId)) throw new Error("sidekick_attachment_participant_required");
+    if (this.metadataRow()?.archived_at !== null) throw new Error("sidekick_attachment_workstream_archived");
+    if (request.attached) {
+      this.parentSql.exec(`INSERT OR IGNORE INTO workstream_sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)`, request.sidekickId, Date.now());
+    } else {
+      this.parentSql.exec(`DELETE FROM workstream_sidekick_attachments WHERE sidekick_id = ?`, request.sidekickId);
+    }
+    return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
   }
 
   // ---------------------------------------------------------------------------
