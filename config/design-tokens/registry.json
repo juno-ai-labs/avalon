@@ -13,7 +13,7 @@
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
     "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
     "sys.color.accent": "The hue for links and selection; keyboard focus has its own role.",
-    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash.",
+    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash. `vivid` is the one saturated step, for a status indicator a few pixels across — the healthy dot beside a connection — where `base`, tuned for text and fills, read as grey.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
     "sys.color.palette-ink": "The two inks a palette fill can carry, absolute in both appearances. A fill does not change with the theme, so the ink over it must not either — the neutral ramp inverts and is the wrong source here. Which one a given fill takes is PALETTE_INK in @rally/contracts, not a judgement made in CSS.",
@@ -274,6 +274,9 @@
       "$type": "color"
     },
     "sys.color.success.edge": {
+      "$type": "color"
+    },
+    "sys.color.success.vivid": {
       "$type": "color"
     },
     "sys.color.warning.base": {

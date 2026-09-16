@@ -129,7 +129,9 @@
 
   /* Positive state. `fill` and `fill-edge` are a filled control — a switch
    * that is on, a selected preset — which is neither the vivid hue nor the
-   * wash. */
+   * wash. `vivid` is the one saturated step, for a status indicator a few
+   * pixels across — the healthy dot beside a connection — where `base`, tuned
+   * for text and fills, read as grey. */
   --av-sys-color-success-base: #4f8271;
   --av-sys-color-success-strong: #3d6a5b;
   --av-sys-color-success-fill: #dfeae5;
@@ -137,6 +139,7 @@
   --av-sys-color-success-soft: #5e8a7a;
   --av-sys-color-success-wash: #eef4f1;
   --av-sys-color-success-edge: #cfe0d8;
+  --av-sys-color-success-vivid: #1fa85c;
 
   /* Attention short of failure. */
   --av-sys-color-warning-base: #b8860b;
@@ -573,6 +576,7 @@
   --av-sys-color-success-soft: #8bb9a2;
   --av-sys-color-success-wash: #0e1712;
   --av-sys-color-success-edge: #1e2f26;
+  --av-sys-color-success-vivid: #34d276;
 
   --av-sys-color-warning-base: #d9b168;
   --av-sys-color-warning-soft: #cfa961;

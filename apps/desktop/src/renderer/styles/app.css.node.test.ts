@@ -14,6 +14,42 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('connections table', () => {
+  /**
+   * The row is a flex line: dot, provider mark, name. A name long enough to
+   * wrap shrank its siblings first, and the 7px status dot became a 3px sliver
+   * beside a two-line "Google Drive + Docs + Sheets · alex@…". jsdom lays
+   * nothing out, so the declaration is what a component test can hold onto.
+   */
+  it('keeps the status dot and provider mark their size when a long name wraps', () => {
+    expect(rule('.connection-provider-dot')).toContain('flex: none;');
+    expect(rule('.settings-connection-name .connector-mark')).toContain('flex: none;');
+  });
+
+  it('draws the healthy dot in the saturated success step, not the text-and-fill one', () => {
+    // `success-base` is a sage tuned for text and fills; at 7px on the dark
+    // surface it read as grey, and an administrator could not tell healthy
+    // from disabled at a glance.
+    expect(rule('.connection-provider-dot.healthy')).toContain('var(--av-sys-color-success-vivid)');
+    expect(rule('.connection-provider-dot.healthy')).not.toContain('success-base');
+  });
+
+  it('puts each Manage events button beside its own caption and spaces the groups apart', () => {
+    // One column of equally spaced lines put "Test checks access…" as close
+    // to Get help below it as to Test above it.
+    expect(rule('.installation-action')).toContain('grid-template-columns: auto minmax(0, 1fr);');
+    expect(rule('.installation-panel')).toContain('gap: 20px;');
+    expect(rule('.installation-actions')).toContain('gap: 10px;');
+  });
+
+  it('colours the Test verdict by its outcome', () => {
+    expect(rule('.connection-test-outcome.is-passed')).toContain('var(--av-sys-color-success-');
+    expect(rule('.connection-test-outcome.is-failed')).toContain('var(--av-sys-color-danger-');
+    // A request that never ran the test is neither verdict.
+    expect(rule('.connection-test-outcome.is-unavailable')).toContain('var(--av-sys-color-warning-');
+  });
+});
+
 describe('capsule composer stacking', () => {
   /**
    * Once the field spans the capsule's full width — wrapped text, or an

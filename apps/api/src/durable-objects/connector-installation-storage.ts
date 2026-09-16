@@ -6,6 +6,9 @@ export function readInstallation(storage: DurableObjectStorage, connectionId: st
   const row = storage.sql.exec<{ document_json: string }>("SELECT document_json FROM connector_installations WHERE connection_id = ?", connectionId).toArray()[0];
   return row ? ConnectorInstallationSchema.parse(JSON.parse(row.document_json)) : null;
 }
+export function readInstallations(storage: DurableObjectStorage, connectionIds: readonly string[]): ConnectorInstallation[] {
+  return connectionIds.flatMap((connectionId) => { const installation = readInstallation(storage, connectionId); return installation ? [installation] : []; });
+}
 function save(storage: DurableObjectStorage, installation: ConnectorInstallation) {
   installation.updatedAt = new Date().toISOString();
   storage.sql.exec("UPDATE connector_installations SET document_json = ?, generation = ? WHERE connection_id = ?",
@@ -245,8 +248,13 @@ export function changeInstallation(storage: DurableObjectStorage, input: Install
       storage.sql.exec("UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL, credential_iv = NULL, credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL, updated_at = ? WHERE id = ?", new Date().toISOString(), input.connectionId);
       installation.generation += 1; installation.state = "cleanup_pending";
       installation.registrations = installation.registrations.map((item) => item.state === "removed" ? item : ({ ...item,
-        action: "remove", afterRegistrationKeys: [], state: item.providerId ? item.providerIdVerified ? "pending" : "action_required" : item.state === "pending" ? "removed" : "action_required",
-        error: !item.providerId && item.state !== "pending" ? "Inspect the provider for a webhook whose create outcome is unknown." : null,
+        // No provider identity and never dispatched — `pending` was not yet
+        // sent, `failed` is a refusal or a failure before any request left —
+        // is nothing to remove, and settles as removed. `unknown` and
+        // `dispatched` are the cases a webhook may exist under an identity
+        // Rally never received; those wait for the administrator.
+        action: "remove", afterRegistrationKeys: [], state: item.providerId ? item.providerIdVerified ? "pending" : "action_required" : item.state === "pending" || item.state === "failed" ? "removed" : "action_required",
+        error: !item.providerId && item.state !== "pending" && item.state !== "failed" ? "Inspect the provider for a webhook whose create outcome is unknown." : null,
         stepId: uuidV7(),
       }));
     } else {
