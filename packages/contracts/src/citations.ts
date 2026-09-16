@@ -367,8 +367,6 @@ const FULL_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\]\[([^\]]*)\]/gu;
 const SHORTCUT_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\](?![[(])/gu;
 /** A title continued onto the line after a reference-link definition. */
 const REFERENCE_LINK_TITLE = /^ {0,3}(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/u;
-/** Blockquote containers removed only when classifying or presenting their contents. */
-const BLOCKQUOTE_PREFIX = /^(?: {0,3}>[ \t]?)+/u;
 /**
  * An inline code span, as every read in this module has to agree one looks.
  *
@@ -388,7 +386,7 @@ function replaceInlineCodeSpans(
   let output = "";
   let cursor = 0;
   while (cursor < value.length) {
-    const opening = value.indexOf("`", cursor);
+    const opening = nextUnescapedBacktick(value, cursor);
     if (opening < 0) return output + value.slice(cursor);
     let openingEnd = opening + 1;
     while (value[openingEnd] === "`") openingEnd += 1;
@@ -396,7 +394,7 @@ function replaceInlineCodeSpans(
     let closing = openingEnd;
     let matched = false;
     while (closing < value.length) {
-      closing = value.indexOf("`", closing);
+      closing = nextUnescapedBacktick(value, closing);
       if (closing < 0) return output + value.slice(cursor);
       let closingEnd = closing + 1;
       while (value[closingEnd] === "`") closingEnd += 1;
@@ -412,6 +410,19 @@ function replaceInlineCodeSpans(
     if (!matched) return output + value.slice(cursor);
   }
   return output;
+}
+
+function nextUnescapedBacktick(value: string, start: number): number {
+  let candidate = value.indexOf("`", start);
+  while (candidate >= 0) {
+    let backslashes = 0;
+    for (let index = candidate - 1; index >= 0 && value[index] === "\\"; index -= 1) {
+      backslashes += 1;
+    }
+    if (backslashes % 2 === 0) return candidate;
+    candidate = value.indexOf("`", candidate + 1);
+  }
+  return -1;
 }
 
 /**
@@ -445,7 +456,8 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
   for (const [index, line] of lines.entries()) {
     if (open === null && code[index]) continue;
 
-    const definition = FOOTNOTE_DEFINITION.exec(line);
+    const contentLine = stripBlockquotePrefixes(line);
+    const definition = FOOTNOTE_DEFINITION.exec(contentLine);
     if (definition) {
       open = normalizeFootnoteIdentifier(definition[1]!);
       // A repeated identifier keeps the first definition, which is what a GFM
@@ -459,9 +471,9 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
       // end it, because GFM allows a blank line inside a multi-paragraph one —
       // and a definition with a second paragraph is exactly what must not
       // qualify.
-      if (!line.trim()) continue;
-      if (/^(?: {4}|\t)/u.test(line)) {
-        definitions.set(open, `${definitions.get(open) ?? ""}\n\n${line.trim()}`);
+      if (!contentLine.trim()) continue;
+      if (/^(?: {4}|\t)/u.test(contentLine)) {
+        definitions.set(open, `${definitions.get(open) ?? ""}\n\n${contentLine.trim()}`);
         continue;
       }
       open = null;
@@ -649,32 +661,48 @@ export function rewriteMessageAsPlainText(
 
 /** Markdown structure reduced to readable plain text without flattening it. */
 function markdownFormattingAsPlainText(markdown: string): string {
+  const inlineSpans: string[] = [];
+  const references = rewriteReferenceLinksAsPlainText(markdown);
+  const parkedMarkdown = mapNotificationProse(
+    references.split(MULTILINE_SPAN_PLACEHOLDER).join(""),
+    (prose) => replaceInlineCodeSpans(prose, (_span, content) => {
+      inlineSpans.push(content);
+      return `${MULTILINE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${MULTILINE_SPAN_PLACEHOLDER}`;
+    }),
+  );
   const lines: string[] = [];
-  const source = rewriteReferenceLinksAsPlainText(markdown).replace(/\r\n/gu, "\n").split("\n");
+  const source = parkedMarkdown.replace(/\r\n/gu, "\n").split("\n");
   const kinds = notificationMarkdownLineKinds(source);
+  let fenceQuoteDepth = 0;
   for (const [index, raw] of source.entries()) {
     const kind = kinds[index]!;
-    if (kind === "fence-open" || kind === "fence-close") continue;
+    if (kind === "fence-open") {
+      fenceQuoteDepth = blockquoteDepth(raw);
+      continue;
+    }
+    if (kind === "fence-close") {
+      fenceQuoteDepth = 0;
+      continue;
+    }
     if (kind === "fence-content") {
-      lines.push(`    ${raw.replace(BLOCKQUOTE_PREFIX, "").trimEnd()}`);
+      lines.push(`    ${stripBlockquotePrefixes(raw, fenceQuoteDepth).trimEnd()}`);
       continue;
     }
     if (kind === "indented-code") {
       lines.push(raw.trimEnd());
       continue;
     }
-    let line = raw.trimEnd();
-    if (/^\s{0,3}(?:=+|-+)\s*$/u.test(line)
+    const line = stripBlockquotePrefixes(raw.trimEnd());
+    if (/^ {0,3}(?:=+|-+)\s*$/u.test(line)
       && index > 0
       && kinds[index - 1] === "prose"
       && source[index - 1]!.trim()) {
       continue;
     }
-    if (/^\s{0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
+    if (/^ {0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
       continue;
     }
-    line = line.replace(BLOCKQUOTE_PREFIX, "");
-    const heading = /^(#{1,6})\s+(.*?)(?:\s+#+)?$/u.exec(line);
+    const heading = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?$/u.exec(line);
     if (heading) {
       lines.push(stripInlineMarkdown(heading[2]!));
       continue;
@@ -690,7 +718,13 @@ function markdownFormattingAsPlainText(markdown: string): string {
     }
     lines.push(stripInlineMarkdown(line));
   }
-  return lines.join("\n").replace(/\n{3,}/gu, "\n\n").replace(/^\n+|\n+$/gu, "");
+  return lines.join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .replace(/^\n+|\n+$/gu, "")
+    .replace(
+      new RegExp(`${MULTILINE_SPAN_PLACEHOLDER}(\\d+)${MULTILINE_SPAN_PLACEHOLDER}`, "gu"),
+      (_match, index: string) => inlineSpans[Number(index)] ?? "",
+    );
 }
 
 /**
@@ -708,11 +742,13 @@ function rewriteReferenceLinksAsPlainText(markdown: string): string {
   const definitionLines = new Set<number>();
   for (const [index, line] of source.entries()) {
     if (isMarkdownCode(kinds[index]!)) continue;
-    const definition = REFERENCE_LINK_DEFINITION.exec(line);
+    const definition = REFERENCE_LINK_DEFINITION.exec(stripBlockquotePrefixes(line));
     if (!definition || definition[1]!.startsWith("^")) continue;
     definitions.add(normalizeReferenceIdentifier(definition[1]!));
     definitionLines.add(index);
-    if (REFERENCE_LINK_TITLE.test(source[index + 1] ?? "")) definitionLines.add(index + 1);
+    if (REFERENCE_LINK_TITLE.test(stripBlockquotePrefixes(source[index + 1] ?? ""))) {
+      definitionLines.add(index + 1);
+    }
   }
   if (definitions.size === 0) return markdown;
   const withoutDefinitions = source
@@ -786,12 +822,13 @@ function stripFootnoteDefinitions(markdown: string): string {
       kept.push(line);
       continue;
     }
-    if (FOOTNOTE_DEFINITION.test(line)) {
+    const contentLine = stripBlockquotePrefixes(line);
+    if (FOOTNOTE_DEFINITION.test(contentLine)) {
       dropping = true;
       continue;
     }
     if (dropping) {
-      if (!line.trim() || /^(?: {4}|\t)/u.test(line)) continue;
+      if (!contentLine.trim() || /^(?: {4}|\t)/u.test(contentLine)) continue;
       dropping = false;
     }
     kept.push(line);
@@ -823,6 +860,8 @@ function plainInline(content: string, plain: boolean): string {
  * model writing one cannot forge a placeholder and splice in a span of its own.
  */
 const SPAN_PLACEHOLDER = "\u0000";
+/** A separate placeholder for code spans parked across prose line boundaries. */
+const MULTILINE_SPAN_PLACEHOLDER = "\u0001";
 
 /**
  * Applies a rewrite to everything except code.
@@ -843,12 +882,9 @@ const SPAN_PLACEHOLDER = "\u0000";
  * choosing back in.
  */
 function mapOutsideCode(markdown: string, rewrite: (segment: string) => string): string {
-  const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
-  const kinds = notificationMarkdownLineKinds(lines);
-  return lines.map((line, index) => {
-    if (isMarkdownCode(kinds[index]!)) return line;
+  return mapNotificationProse(markdown.replace(/\r\n/gu, "\n"), (prose) => {
     const spans: string[] = [];
-    const parked = replaceInlineCodeSpans(line.split(SPAN_PLACEHOLDER).join(""), (span) => {
+    const parked = replaceInlineCodeSpans(prose.split(SPAN_PLACEHOLDER).join(""), (span) => {
       spans.push(span);
       return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
     });
@@ -856,7 +892,26 @@ function mapOutsideCode(markdown: string, rewrite: (segment: string) => string):
       new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
       (_match, index: string) => spans[Number(index)] ?? "",
     );
-  }).join("\n");
+  });
+}
+
+function mapNotificationProse(markdown: string, rewrite: (prose: string) => string): string {
+  const lines = markdown.split("\n");
+  const kinds = notificationMarkdownLineKinds(lines);
+  const runs: string[] = [];
+  let run: string[] = [];
+  let prose = true;
+  for (const [index, line] of lines.entries()) {
+    const lineIsProse = !isMarkdownCode(kinds[index]!);
+    if (lineIsProse !== prose && run.length > 0) {
+      runs.push(prose ? rewrite(run.join("\n")) : run.join("\n"));
+      run = [];
+    }
+    prose = lineIsProse;
+    run.push(line);
+  }
+  if (run.length > 0) runs.push(prose ? rewrite(run.join("\n")) : run.join("\n"));
+  return runs.join("\n");
 }
 
 /**
@@ -867,5 +922,29 @@ function mapOutsideCode(markdown: string, rewrite: (segment: string) => string):
  * raw container markers to build their own rendered block tree.
  */
 function notificationMarkdownLineKinds(lines: readonly string[]) {
-  return markdownLineKinds(lines.map((line) => line.replace(BLOCKQUOTE_PREFIX, "")));
+  return markdownLineKinds(lines.map((line) => stripBlockquotePrefixes(line)));
+}
+
+function blockquoteDepth(line: string): number {
+  let depth = 0;
+  let rest = line;
+  while (depth < line.length) {
+    const prefix = /^ {0,3}>[ \t]?/u.exec(rest)?.[0];
+    if (!prefix) return depth;
+    depth += 1;
+    rest = rest.slice(prefix.length);
+  }
+  return depth;
+}
+
+function stripBlockquotePrefixes(line: string, maximum = Number.POSITIVE_INFINITY): string {
+  let depth = 0;
+  let rest = line;
+  while (depth < maximum) {
+    const prefix = /^ {0,3}>[ \t]?/u.exec(rest)?.[0];
+    if (!prefix) break;
+    depth += 1;
+    rest = rest.slice(prefix.length);
+  }
+  return rest;
 }

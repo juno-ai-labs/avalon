@@ -759,9 +759,11 @@ these plain-text surfaces. Escaped punctuation and intraword underscores remain
 literal instead of being mistaken for formatting.
 Lists retain their source depth. Fenced, indented, and variable-backtick inline
 code retain literal content while their delimiters are removed, including a
-fence nested in a blockquote. Reference definitions are removed with a title
-continued onto the following line, and the renderer's supported `<br>` spellings
-become line breaks rather than literal tags. Citation and
+multiline code span and a fence nested in a blockquote; only the enclosing quote
+depth is removed from fenced content. Reference definitions are removed with a
+title continued onto the following line and when nested in a blockquote. The
+renderer's supported `<br>` spellings become line breaks rather than literal
+tags, and ATX headings accept CommonMark's three-space indent. Citation and
 person-mention syntax inside code remains literal; prose references reduce to
 their visible labels.
 
