@@ -49,6 +49,16 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+- `apps/desktop/src/renderer/components/message-text-menu.tsx` is the Radix
+  right-click menu on a feed `MarkdownBody` — assistant and human prose, not
+  glances, stills, the inspector, or the lightbox. Copy writes the rendered
+  HTML and plain text of the selection, or of the whole body if there is none,
+  keeping citation labels and dropping only chrome marked
+  `data-clipboard-exclude`. Copy as markdown writes the stored source. Speak
+  is the same toggle as the action row, hidden while the turn is still
+  streaming; a human body names it *Speak*, not *Speak response*. Look Up and
+  Share are macOS-only, behind trusted IPC. Share sends the selected or
+  whole-message rendered plain text, never the stored markdown.
 - `apps/desktop/src/renderer/components/primitives.tsx` owns `Tip` and
   `TipGroup`: a hover explanation, and the group a row of controls shares one
   delay and one provider through. A new tooltip comes from there rather than
@@ -534,8 +544,13 @@ one.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections. **New
-substream** closes that row, and every settled human turn — the reader's own and
+markdown even when the shared renderer has collapsed its sections. The same
+Speak / Stop speaking toggle is on the message-text context menu of a
+*settled* assistant turn, riding the same one-voice provider so a menu Speak
+and a row Speak cannot overlap. A human body's menu also offers Speak, named
+*Speak* rather than *Speak response*, because those words are not a Rally
+response.
+**New substream** closes that row, and every settled human turn — the reader's own and
 a colleague's alike — carries the same control alone in a row beneath its bubble,
 inset by the bubble's corner so it ends on the same vertical as the identity line
 above it. A settled turn carrying
@@ -664,6 +679,47 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-16 — Message text has a Radix right-click menu, including Speak
+
+**What changed:** Right-clicking assistant or human message prose in the feed
+opens the same Radix menu the sidebars use. The items are Copy (rendered
+HTML and plain text of the selection, or the whole body), Copy as markdown
+(the stored source the action-row Copy already writes), Speak / Stop speaking
+through the existing speech provider on a settled turn, then on macOS Look Up
+and Share. Writing Tools and Services are not offered. Glance, still,
+inspector, and lightbox bodies are unchanged. Whole-body Copy keeps citation
+chip labels and drops only chrome marked `data-clipboard-exclude`. Share
+sends rendered plain text. A streaming assistant body has no Speak item. A
+human body's Speak answers to *Speak*, not *Speak response*. macOS Share
+pops `ShareMenu` directly.
+
+**Why:** Electron does not ship a page context menu, so selecting a sentence
+and right-clicking it did nothing. The native Chromium menu would have brought
+Writing Tools and Services we do not want, and OS Speech instead of Rally's
+voice. The action row's Copy is markdown source, which is the wrong paste
+into a rich editor. Stripping every `button` from the clone deleted the
+model's own citation words; `innerText` on a detached clone has no line
+breaks; falling back to stored markdown for Share put `**bold**` in Messages;
+Speak during a stream would voice a truncated snapshot; *Speak response* on
+a person's own turn is the action-row sentence for the assistant.
+
+**Considered and rejected:** A native Electron `Menu.popup` built from
+`webContents` `context-menu` params. Once Writing Tools and Services were
+dropped, the remaining items belong in the Radix menu every other Rally
+right-click already uses. Also rejected: calling Electron `startSpeaking` /
+OS Speech; Speak has to be the same toggle and the same one-voice mutex as
+the action row, or two clips play over each other. Also rejected: wrapping
+share in a `Menu` whose only item is `role: 'shareMenu'`, which opens a
+second-level Share before the sheet.
+
+**Consequences:** Formatted Copy writes `ClipboardItem` from the renderer so
+it can carry HTML and is not bound by `system:copy-text`'s 4,000-character
+cap, which exists for short identifiers. Look Up restores the snapshot
+selection before `showDefinitionForSelection`; Share passes the selected or
+whole-message plain text to `ShareMenu`. Off macOS, and in the browser
+fallback, those two items are absent. Code-block copy controls and heading
+chevrons have to carry `data-clipboard-exclude` or they paste as chrome.
 
 ### 2026-09-16 — A rail fades the items it clips, and only the edge that is clipping them
 

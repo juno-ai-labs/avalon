@@ -55,6 +55,7 @@ vi.mock('../lib/platform', () => ({
       return () => applicationSettings.listeners.delete(listener);
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 /** The main-process broadcast a change in the Settings window arrives on. */

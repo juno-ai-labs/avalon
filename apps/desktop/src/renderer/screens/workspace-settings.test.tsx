@@ -110,6 +110,7 @@ vi.mock('../lib/platform', () => ({
       };
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' };

@@ -75,6 +75,7 @@ import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import { MessageByline } from './message-byline';
+import { MessageTextMenu } from './message-text-menu';
 import {
   MarkdownCollapseAllButton,
   MarkdownCollapseController,
@@ -287,6 +288,7 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
           <span className="markdown-code-language">{languageLabel}</span>
           <button
             aria-label={copyState === 'copied' ? 'Code copied' : copyState === 'failed' ? 'Copy failed — click to retry' : 'Copy code'}
+            data-clipboard-exclude=""
             onClick={() => void copy()}
             type="button"
           >
@@ -1041,6 +1043,7 @@ export function MarkdownBody({
   glance = false,
   mentions = NO_MENTIONS,
   preserveLineBreaks = false,
+  speechKind = 'response',
   still = false,
   streaming = false,
   telemetry,
@@ -1079,6 +1082,12 @@ export function MarkdownBody({
    * source list that the transcript trades away for the space.
    */
   still?: boolean;
+  /**
+   * Whether Speak's accessible name is *Speak response* (an assistant turn)
+   * or *Speak* (a person's own words). Human bodies keep the visible *Speak*
+   * and must not answer to *Speak response*.
+   */
+  speechKind?: 'response' | 'message';
   /**
    * The message is still growing. Rendering switches to settled segments plus
    * an open tail so a per-frame commit does not re-parse the whole body. When
@@ -1419,9 +1428,12 @@ export function MarkdownBody({
   // arrives mid-stream has to reach the pills, and a context update crosses a
   // `memo` boundary where a changed prop would have re-parsed everything under
   // it instead.
+  const bodyInner = <div className="markdown-body">{rendered}</div>;
   const body = (
     <CitationsProvider value={render}>
-      <div className="markdown-body">{rendered}</div>
+      {telemetry && !glance && !still ? (
+        <MessageTextMenu markdown={children} speechKind={speechKind} streaming={streaming} telemetry={telemetry}>{bodyInner}</MessageTextMenu>
+      ) : bodyInner}
     </CitationsProvider>
   );
   if (!collapseParts) return body;
@@ -2682,6 +2694,7 @@ export function MessageBlock({
               <MarkdownBody
                 mentions={message.mentions}
                 preserveLineBreaks
+                speechKind="message"
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
               >{message.text}</MarkdownBody>

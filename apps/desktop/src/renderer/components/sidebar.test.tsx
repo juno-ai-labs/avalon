@@ -43,6 +43,7 @@ vi.mock('../lib/platform', () => ({
       return () => applicationSettings.listeners.delete(listener);
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 vi.mock('../lib/telemetry', () => ({
