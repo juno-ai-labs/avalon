@@ -71,6 +71,7 @@
     "sys.color.success.soft": "#5e8a7a",
     "sys.color.success.wash": "#eef4f1",
     "sys.color.success.edge": "#cfe0d8",
+    "sys.color.success.vivid": "#1fa85c",
     "sys.color.warning.base": "#b8860b",
     "sys.color.warning.soft": "#8a6208",
     "sys.color.warning.wash": "#fbf3e0",

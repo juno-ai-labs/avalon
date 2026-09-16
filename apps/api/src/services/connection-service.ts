@@ -1,7 +1,7 @@
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -456,7 +456,7 @@ export class ConnectionService {
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
        ORDER BY c.display_name COLLATE NOCASE`,
     ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
-    const rows = result.results ?? [];
+    const rows = await this.listedConnectionRows(auth.workspaceId, result.results ?? []);
     const ownerIds = [...new Set(rows.flatMap((row) =>
       typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
     const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
@@ -474,6 +474,35 @@ export class ConnectionService {
         ? ownerNames.get(row.owner_user_id) ?? null
         : null,
     }, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  /**
+   * The rows the connections list shows: every enabled one, and a disabled one
+   * only while Rally still owes its provider a cleanup it can perform.
+   *
+   * `disable` marks a row rather than deleting it, and the list returned every
+   * row, so a connection an administrator had just removed stayed in the table
+   * for good — badge reading "disabled", tools reading "—", and a second press
+   * of the trash icon changing nothing. The one thing a disconnected connection
+   * can still be for is finishing the webhook removal its installation
+   * lifecycle owes, and only where Rally can actually do it: the installation
+   * is waiting on cleanup, its cleanup credential is retained, and a
+   * registration carries the provider identity to remove. That row stays, with
+   * its Manage events controls, until the removal settles. Every other disabled
+   * row has nothing left to offer and leaves the list.
+   */
+  private async listedConnectionRows(workspaceId: string, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    const candidates = rows.filter((row) => row.status === "disabled" && row.scope === "workspace"
+      && (ConnectorInstallationProviders as readonly string[]).includes(String(row.connector_type)));
+    const owed = new Set<string>();
+    if (candidates.length > 0) {
+      const object = await this.workspaceObject(workspaceId);
+      for (const row of candidates) {
+        const installation = await object.connectorInstallation({ workspaceId, connectionId: String(row.id) });
+        if (installation && cleanupStillOwed(installation)) owed.add(String(row.id));
+      }
+    }
+    return rows.filter((row) => row.status !== "disabled" || owed.has(String(row.id)));
   }
 
   async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
@@ -3901,6 +3930,17 @@ function unsupportedWebhookEvent(
     `Rally does not model the ${input.provider} event ${input.eventType}`,
     { provider: input.provider, eventType: input.eventType },
   );
+}
+
+/**
+ * Whether Rally can still remove a disconnected installation's webhook itself:
+ * the condition under which Manage events offers Retry cleanup, and the one
+ * under which a disabled connection is still worth a row in the list.
+ */
+export function cleanupStillOwed(installation: ConnectorInstallation): boolean {
+  return installation.state === "cleanup_pending"
+    && !installation.cleanupCredentialForgotten
+    && installation.registrations.some((registration) => registration.providerId !== null && registration.state !== "removed");
 }
 
 function installationActionError(error: unknown): unknown {

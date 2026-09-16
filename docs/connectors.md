@@ -1194,6 +1194,42 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-16 — A removed connection leaves the list, and Test says pass or fail
+
+**What changed:** `GET /connections` no longer returns a disabled connection
+unless its installation is waiting on a webhook cleanup Rally can still perform
+— the cleanup credential retained and a provider identity recorded — so the row
+stays only while Retry cleanup has something to do. The Manage events Test
+result is a verdict box: green with "Connection test passed" when the check
+passed, red with "Connection test failed" when it did not, the sentence beneath
+either way. In the connections table the status dot and provider mark no longer
+shrink when a long name wraps, and the healthy dot draws the new saturated
+`success-vivid` step with a faint halo instead of the sage `success-base`
+that read as grey at seven pixels.
+
+**Why:** `disable` marks a row rather than deleting it, and the list returned
+every row: an administrator who removed a connection watched it sit there,
+badge reading "disabled", tools reading "—", a trash icon that did nothing more.
+The Test result was one unstyled sentence at the same weight as the caption
+above it, so "Granola authorization is healthy. Approved webhook configuration
+is verified" read as more instructions and nobody could tell they were done.
+And a two-line name squeezed the 7px status dot to a 3px sliver.
+
+**Considered and rejected:** Hiding every disabled row. A disconnected
+installation whose webhook Rally can still delete needs its Manage events
+window to finish that, and hiding it would leave a live registration at the
+provider with no control to remove it. Also rejected: filtering in the desktop
+only, which would have left the API's list, and every count derived from it,
+saying otherwise.
+
+**Consequences:** A row that lingers after removal now means one thing: Rally
+can still remove the provider webhook and has not yet. Forget local cleanup
+credential, or a settled removal, makes it leave. Verified in a real window on
+the local stack: the removed Granola row gone, the wrapped-name dot intact at
+820px, and both Test verdicts.
+
+Shipped in the pull request for this change.
+
 ### 2026-09-15 — Granola registers the three events its API defines
 
 **What changed:** The webhook registration request, the installation facet's

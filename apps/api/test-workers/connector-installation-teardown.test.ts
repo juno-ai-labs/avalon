@@ -110,6 +110,37 @@ describe('connector installation teardown', () => {
       .toEqual({ actor_user_id: f.userId });
   });
 
+  it('keeps a disconnected connection in the list only while Rally still owes a cleanup it can run', async () => {
+    const f = await fixture();
+    const provider = vi.fn(); vi.stubGlobal('fetch', provider);
+    const listed = async () => (await f.service.list()).map((connection) => connection.id);
+    expect(await listed()).toContain(f.connectionId);
+    await f.service.disable(f.connectionId);
+    await f.assertDisabled();
+    // The registration carries a verified provider id and the cleanup credential
+    // is retained, so Retry cleanup can still remove the webhook: the row stays.
+    expect(await listed()).toContain(f.connectionId);
+    await f.service.changeInstallation(f.connectionId, { action: 'forget_cleanup' });
+    // Nothing Rally can do for it any more; a row would only say "disabled".
+    expect(await listed()).not.toContain(f.connectionId);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('drops a disconnected connection whose webhook was never registered', async () => {
+    const f = await fixture();
+    vi.stubGlobal('fetch', vi.fn());
+    // A refused create leaves no provider identity, and disconnect then records
+    // nothing for Rally to remove.
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(`UPDATE connector_installations SET document_json = json_set(document_json,
+        '$.registrations[0].providerId', null, '$.registrations[0].state', 'failed', '$.state', 'failed') WHERE connection_id = ?`, f.connectionId);
+    });
+    await f.service.disable(f.connectionId);
+    await f.assertDisabled();
+    expect((await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: f.connectionId }))?.state).toBe('cleanup_pending');
+    expect((await f.service.list()).map((connection) => connection.id)).not.toContain(f.connectionId);
+  });
+
   it('still clears local authority and schedules when legacy adoption cannot decrypt credentials', async () => {
     const f = await fixture(true);
     const provider = vi.fn(); vi.stubGlobal('fetch', provider);
