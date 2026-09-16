@@ -49,6 +49,12 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+- `apps/desktop/src/renderer/components/message-text-menu.tsx` is the Radix
+  right-click menu on a feed `MarkdownBody` — assistant and human prose, not
+  glances, stills, the inspector, or the lightbox. Copy writes the rendered
+  HTML and plain text of the selection, or of the whole body if there is none;
+  Copy as markdown writes the stored source; Speak is the same toggle as the
+  action row. Look Up and Share are macOS-only, behind trusted IPC.
 - `apps/desktop/src/renderer/components/primitives.tsx` owns `Tip` and
   `TipGroup`: a hover explanation, and the group a row of controls shares one
   delay and one provider through. A new tooltip comes from there rather than
@@ -534,8 +540,10 @@ one.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections. **New
-substream** closes that row, and every settled human turn — the reader's own and
+markdown even when the shared renderer has collapsed its sections. The same
+Speak / Stop speaking toggle is on the message-text context menu, riding the
+same one-voice provider so a menu Speak and a row Speak cannot overlap.
+**New substream** closes that row, and every settled human turn — the reader's own and
 a colleague's alike — carries the same control alone in a row beneath its bubble,
 inset by the bubble's corner so it ends on the same vertical as the identity line
 above it. A settled turn carrying
@@ -664,6 +672,36 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-09-16 — Message text has a Radix right-click menu, including Speak
+
+**What changed:** Right-clicking assistant or human message prose in the feed
+opens the same Radix menu the sidebars use. The items are Copy (rendered
+HTML and plain text of the selection, or the whole body), Copy as markdown
+(the stored source the action-row Copy already writes), Speak / Stop speaking
+through the existing speech provider, then on macOS Look Up and Share.
+Writing Tools and Services are not offered. Glance, still, inspector, and
+lightbox bodies are unchanged.
+
+**Why:** Electron does not ship a page context menu, so selecting a sentence
+and right-clicking it did nothing. The native Chromium menu would have brought
+Writing Tools and Services we do not want, and OS Speech instead of Rally's
+voice. The action row's Copy is markdown source, which is the wrong paste
+into a rich editor.
+
+**Considered and rejected:** A native Electron `Menu.popup` built from
+`webContents` `context-menu` params. Once Writing Tools and Services were
+dropped, the remaining items belong in the Radix menu every other Rally
+right-click already uses. Also rejected: calling Electron `startSpeaking` /
+OS Speech; Speak has to be the same toggle and the same one-voice mutex as
+the action row, or two clips play over each other.
+
+**Consequences:** Formatted Copy writes `ClipboardItem` from the renderer so
+it can carry HTML and is not bound by `system:copy-text`'s 4,000-character
+cap, which exists for short identifiers. Look Up restores the snapshot
+selection before `showDefinitionForSelection`; Share passes the selected or
+whole-message plain text to `shareMenu`. Off macOS, and in the browser
+fallback, those two items are absent.
 
 ### 2026-09-16 — A rail fades the items it clips, and only the edge that is clipping them
 
