@@ -26,6 +26,30 @@ function read(relative) {
   return readFileSync(join(iosRoot, relative), "utf8");
 }
 
+function topLevelSwiftUIViews(source) {
+  const views = [];
+  let current;
+
+  for (const line of source.split("\n")) {
+    const view = /^struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*View\s*\{/.exec(line);
+    const topLevelType = /^(?:struct|enum|class|final class|actor|protocol|extension)\b/.test(line);
+    if (topLevelType && current) {
+      views.push(current);
+      current = undefined;
+    }
+    if (view) {
+      current = { name: view[1], lines: [line] };
+    } else if (current) {
+      current.lines.push(line);
+    }
+  }
+  if (current) {
+    views.push(current);
+  }
+
+  return views;
+}
+
 test("apps/ios is a native Xcode project, not a cross-platform shell", () => {
   assert.equal(existsSync(join(iosRoot, "package.json")), false, "a package.json would be picked up by pnpm apps/*");
   assert.equal(existsSync(join(iosRoot, "Podfile")), false);
@@ -158,6 +182,28 @@ test("required Swift surfaces exist for a complete conversation client", () => {
   const model = read("Rally/App/AppModel.swift");
   assert.doesNotMatch(model, /openingMessage: text\.isEmpty \? " " : text/);
   assert.match(model, /openingMessage: text/);
+});
+
+test("SwiftUI views declare AppModel before using it", () => {
+  const swiftFiles = walkFiles(join(iosRoot, "Rally")).filter((path) => path.endsWith(".swift"));
+  const missingDeclarations = [];
+
+  for (const path of swiftFiles) {
+    const source = readFileSync(path, "utf8");
+    for (const view of topLevelSwiftUIViews(source)) {
+      const body = view.lines.join("\n");
+      if (!/\bmodel\./.test(body)) {
+        continue;
+      }
+      const bodyStart = view.lines.findIndex((line) => /^\s*var body\s*:\s*some View\s*\{/.test(line));
+      const declarations = view.lines.slice(0, bodyStart === -1 ? view.lines.length : bodyStart).join("\n");
+      if (!/\b(?:let|var)\s+model\b/.test(declarations)) {
+        missingDeclarations.push(`${path.slice(repoRoot.length + 1)}:${view.name}`);
+      }
+    }
+  }
+
+  assert.deepEqual(missingDeclarations, []);
 });
 
 test("iOS feed kinds and shell cover the Electron conversation and directory", () => {

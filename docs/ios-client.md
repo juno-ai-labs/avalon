@@ -303,7 +303,7 @@ it.
 
 | Suite | Command | What it can prove |
 | --- | --- | --- |
-| Packaging | `pnpm test:scripts` (file `scripts/ios-project.test.mjs`) | Native-only tree, bundle ID, team, entitlements, privacy manifest, 1024 RGB icon, required Swift files, Electron route coverage, feed-kind cases, substream switcher/launch strings. Runs on Linux. |
+| Packaging | `pnpm test:scripts` (file `scripts/ios-project.test.mjs`) | Native-only tree, bundle ID, team, entitlements, privacy manifest, 1024 RGB icon, required Swift files, declared `AppModel` dependencies in SwiftUI views, Electron route coverage, feed-kind cases, substream switcher/launch strings. Runs on Linux. |
 | XCTest | Xcode → RallyTests | PKCE lengths, deep-link parsing (including child path and `?substream=`), Apple push payload parse and PUT body, transcript mapping, feed kinds, branch provenance, member/search decode, REST vs nested snapshot decode, substream prepare/confirm/control metadata, work-stream appearance hash and catalog fallback, account initials/color decode and personal-color aliases, work-stream pin/recency directory order, navigation-shaped socket retain set, feed chrome while a substream opens. Needs iOS 26 SDK. |
 | UI tests | Xcode → RallyUITests | Intro chrome and Continue with Google. `testLocalDevelopmentAccountReachesChats` is skipped unless `RALLY_LOCAL_UI=1` and a local Worker is up — CI never sets that. Needs a simulator. |
 
