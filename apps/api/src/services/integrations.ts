@@ -224,6 +224,7 @@ import {
 } from "./workstream-wakeup-service";
 import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
+import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
@@ -727,6 +728,18 @@ class AttachmentGroundingGuard {
   }
 
   private recordReadCursorProvenance(capability: string, output: unknown): void {
+    // New results carry server-owned page IDs; retain the legacy parsers below
+    // for receipts written before the tool-surface cutover.
+    const page = z.object({ resourceId: z.string(),
+      nextPageId: z.string().nullable().optional(), previousPageId: z.string().nullable().optional(),
+      passages: z.array(z.object({ readPageId: z.string() })).optional(),
+      citations: z.array(z.object({ readPageId: z.string() })).optional(),
+    }).safeParse(output);
+    if (page.success) this.rememberReadCursors(page.data.resourceId, [
+      page.data.nextPageId ?? null, page.data.previousPageId ?? null,
+      ...(page.data.passages ?? []).map((item) => item.readPageId),
+      ...(page.data.citations ?? []).map((item) => item.readPageId),
+    ]);
     if (capability === "workstream.resources.read") {
       const parsed = WorkstreamReadResourceOutputSchema.safeParse(output);
       if (parsed.success) {
@@ -811,7 +824,7 @@ function attachmentResourceIds(value: unknown): string[] {
 
 function attachmentCursor(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const cursor = (value as Record<string, unknown>)["cursor"];
+  const cursor = (value as Record<string, unknown>)["pageId"] ?? (value as Record<string, unknown>)["cursor"];
   return typeof cursor === "string" && cursor.length > 0 ? cursor : null;
 }
 
@@ -1666,6 +1679,7 @@ function createAvalonAutomationsPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
   loadedPluginIds: Set<string>,
+  expandPages: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
 ): HarnessPlugin {
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
   const inspectedPluginIds = new Set<string>();
@@ -1723,6 +1737,7 @@ function createAvalonAutomationsPlugin(
           env,
           asWorkspaceId(input.workspaceId),
           asUserId(authorUserId),
+          expandPages,
         ));
       }
       // A receipt written before the Sidekick rename carries the capability
@@ -2064,6 +2079,7 @@ async function loadAutomationCreatorPluginCatalog(
   env: Env,
   workspaceId: WorkspaceId,
   userId: UserId,
+  expandPages?: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
 ): Promise<AutomationCreatorPluginCatalogEntry[]> {
   const result = await env.DB.prepare(
     `SELECT * FROM connector_connections
@@ -2189,7 +2205,17 @@ async function loadAutomationCreatorPluginCatalog(
       systemMessage: presentation.systemMessage,
       activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope),
       ...(activityRequiresScope ? { activityRequiresScope } : {}),
-      tools: definitions.map((definition) => ({
+      tools: definitions.flatMap((definition) => {
+        const tool: HarnessTool = {
+          definition,
+          execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
+            env, { workspaceId, userId }, frozen,
+            definition.providerOperationName ?? definition.name,
+            definition.capability, toolInput, context.signal, context.providerIdempotencyKey,
+          ),
+        };
+        const tools = !dynamicCapability && expandPages ? expandPages(tool, wirePrefix, connectionId) : [tool];
+        return tools.map(({ definition, execute }) => ({
           name: stableWireToolName(wirePrefix, definition.name),
           canonicalName: definition.name,
           description: definition.description,
@@ -2199,17 +2225,9 @@ async function loadAutomationCreatorPluginCatalog(
           ...(definition.timeoutMs === undefined ? {} : { timeoutMs: definition.timeoutMs }),
           ...(definition.longRunning === undefined ? {} : { longRunning: definition.longRunning }),
           inputSchema: definition.inputSchema,
-          execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
-            env,
-            { workspaceId, userId },
-            frozen,
-            definition.providerOperationName ?? definition.name,
-            definition.capability,
-            toolInput,
-            context.signal,
-            context.providerIdempotencyKey,
-          ),
-        })),
+          execute,
+        }));
+      }),
     });
   }
   return catalog.sort((left, right) =>
@@ -2624,7 +2642,7 @@ export async function runWorkstreamHarness(
   ));
   const toolsPreparation = new Preparation(() => loadHarnessTools(
     env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
-    runDefinitionPreparation, inventoryPreparation,
+    runDefinitionPreparation, inventoryPreparation, attemptLease,
   ));
   promptPreparation.get();
   toolsPreparation.get();
@@ -4934,6 +4952,7 @@ async function loadHarnessTools(
   runDefinitionPreparation = new Preparation(() => input.automationRun
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
   inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input)),
+  paginationLease?: AttemptLease,
 ): Promise<{
   coreTools: HarnessTool[];
   corePlugins: HarnessPlugin[];
@@ -4973,7 +4992,19 @@ async function loadHarnessTools(
   const registry = connectorRegistryForEnv(env);
   const routesAnswersToAgent = input.backgroundAgent
     || (input.parentKind === "automation" && !!input.agentExchange);
-  const coreTools = createAvalonTools(env, input).filter((tool) =>
+  const pageReceipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
+  const expandPages = (tool: HarnessTool, prefix: string, connectionId: string | null): HarnessTool[] => {
+    if (!tool.definition.pagination) return [tool];
+    return withToolPagination(tool, { receipts: pageReceipts,
+      fence: () => {
+        if (!paginationLease) throw new Error("pagination_attempt_lease_missing");
+        return { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner };
+      },
+      prefix, connectionId,
+    });
+  };
+  const coreTools = createAvalonTools(env, input).flatMap((tool) => expandPages(tool,
+    tool.definition.capability.startsWith("table.") ? "table" : "workstream", null)).filter((tool) =>
     !routesAnswersToAgent || tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name);
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
@@ -4996,7 +5027,7 @@ async function loadHarnessTools(
   const loadedAutomationPluginIds = new Set<string>();
   const sidekickPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
-    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds)
+    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
     : null;
   const automationsPlugin = sidekickPlugin && input.parentKind === "workstream"
     ? {
@@ -5140,9 +5171,9 @@ async function loadHarnessTools(
     const addPluginTool = (
       definition: ToolDefinition,
       includeStaticInputValidator = false,
-    ): HarnessTool | null => {
-      if (!grantedScopes.includes(definition.capability)) return null;
-      if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return null;
+    ): HarnessTool[] => {
+      if (!grantedScopes.includes(definition.capability)) return [];
+      if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return [];
       const tool: HarnessTool = {
         definition,
         ...(includeStaticInputValidator && adapter.validateToolInput
@@ -5164,23 +5195,26 @@ async function loadHarnessTools(
           context.providerIdempotencyKey,
         ),
       };
-      const wireName = stableWireToolName(shortWireName, definition.name);
-      connectionByTool.set(wireName, connectionId);
-      idempotencyByTool.set(wireName, definition.idempotency);
-      modeByTool.set(wireName, definition.mode);
-      // Preserve the old deterministic flattened selection for diagnostics;
-      // Bind itself can expose identical provider tools from many credentials.
-      if (!connectionByTool.has(definition.name)) {
-        tools.push(tool);
-        connectionByTool.set(definition.name, connectionId);
-        idempotencyByTool.set(definition.name, definition.idempotency);
-        modeByTool.set(definition.name, definition.mode);
+      const expanded = includeStaticInputValidator ? expandPages(tool, shortWireName, connectionId) : [tool];
+      for (const expandedTool of expanded) {
+        const definition = expandedTool.definition;
+        const wireName = stableWireToolName(shortWireName, definition.name);
+        connectionByTool.set(wireName, connectionId);
+        idempotencyByTool.set(wireName, definition.idempotency);
+        modeByTool.set(wireName, definition.mode);
+        // Preserve the old deterministic flattened selection for diagnostics;
+        // Bind itself can expose identical provider tools from many credentials.
+        if (!connectionByTool.has(definition.name)) {
+          tools.push(expandedTool);
+          connectionByTool.set(definition.name, connectionId);
+          idempotencyByTool.set(definition.name, definition.idempotency);
+          modeByTool.set(definition.name, definition.mode);
+        }
       }
-      return tool;
+      return expanded;
     };
     for (const definition of staticDefinitions) {
-      const tool = addPluginTool(definition, true);
-      if (tool) pluginTools.push(tool);
+      pluginTools.push(...addPluginTool(definition, true));
     }
     frozenConnections.set(pluginId, frozen);
     if (!dynamicCapability) {
@@ -5223,8 +5257,7 @@ async function loadHarnessTools(
                 ),
               );
               const discoveredTools = definitions
-                .map((definition) => addPluginTool(definition))
-                .filter((tool): tool is HarnessTool => tool !== null);
+                .flatMap((definition) => addPluginTool(definition));
               if (!discoveredTools.length) {
                 throw new ConnectorError("unsupported_capability", `${adapter.manifest.displayName} MCP exposed no usable tools`);
               }

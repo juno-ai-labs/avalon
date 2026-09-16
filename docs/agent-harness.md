@@ -472,6 +472,10 @@ not from the seeded context, so it is never seeded. Owned by
 
 ### Durable receipts and terminal state
 
+Authored pageable tools use [receipt-owned page IDs](tool-pagination.md). Their
+first-call schema has no cursor; `_next` accepts only a page ID. Private executor
+continuations are removed before output reaches Bind or the result receipt.
+
 Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. The owning `SubstreamAgent` stores canonical inputs, immutable plan hashes, plugin/connection identity, mode, idempotency policy, optional provider key, and append-only progress in `tool_effects` and `tool_effect_checkpoints`; there is no D1 compatibility owner. Completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
 
 If the object is evicted after `assistant_accepted` but before every

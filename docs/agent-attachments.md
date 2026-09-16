@@ -71,6 +71,11 @@ Zod schema because the harness does not enforce provider-facing JSON Schema.
 
 ### Continuations and recovery
 
+The model sees [friendly page IDs](tool-pagination.md), not the signed cursors
+described below. First/next tools store those cursors with the producing receipt;
+reads expose both directions, and search passages and summary citations expose
+`readPageId`. Grounding tracks these IDs and still understands older receipts.
+
 An attachment cursor contains a version, purpose, expiry, principal identity,
 owning scope, and operation-specific state. Rally signs it using a key derived
 for the attachment-cursor purpose from the regional Worker's configured session
@@ -187,8 +192,8 @@ resource and message-attachment totals plus non-empty groups for the same eight
 natural-language kinds used by the list tool. The aggregate comes from a grouped
 query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
 type, or content, so its size is constant in the number of resources. Exact
-entries remain discoverable by paging `workstream_list_resources` until
-`nextCursor` is null.
+entries remain discoverable through `workstream_list_resources`, followed by
+`workstream_list_resources_next`, until `nextPageId` is null.
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
@@ -372,7 +377,7 @@ character envelope.
 - The sidebar and agent inventory share one visibility predicate. Full sidebar,
   point, keyset-page, and grouped queries may differ only in result shape and
   bounds, never authorization semantics.
-- `nextCursor: null` is the only evidence that a filtered listing is exhausted,
+- `nextPageId: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
 - A version row's author identity matches its author kind, or the write that
   would have created it aborts. A wrong attribution is worse than none, because

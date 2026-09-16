@@ -556,6 +556,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   id is the child substream id, and `harness_run_id` is unique per run.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
   `(run_id, tool_call_id)` and stores input hashes plus side-effect state.
+- SubstreamAgent `tool_pages` maps `(run_id, page_id)` to private continuation
+  arguments, producing/consuming receipts, operation, principal, connection, and
+  forward ancestry. Migration 61 adds it alongside the receipt authority; the
+  lifecycle and scope checks are owned by [tool pagination](tool-pagination.md).
 - `transcript_compaction_checkpoints` references the model-only fact that owns
   the raw LLM continuation summary per execution principal and immutable
   run/sequence event, with its
