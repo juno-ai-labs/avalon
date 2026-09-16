@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  FAVICON_ORIGIN_TIMEOUT_MS,
+  FAVICON_CANDIDATE_TIMEOUT_MS,
   faviconHostChain,
   resolveFavicon,
 } from "../src/services/favicon-service";
@@ -209,6 +209,22 @@ describe("favicon host resolution", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  it("ends stalled branding discovery at the candidate deadline", async () => {
+    const { cache, put } = cacheFixture();
+    let observedSignal: AbortSignal | undefined;
+    const scrapeBranding = vi.fn(async (_url: string, options?: { signal?: AbortSignal }) => {
+      observedSignal = options?.signal;
+      return await new Promise<never>((_resolve, reject) => {
+        observedSignal?.addEventListener("abort", () => reject(observedSignal?.reason), { once: true });
+      });
+    });
+
+    await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetch, undefined, 0))
+      .rejects.toThrow("favicon_branding_fetch_failed");
+    expect(observedSignal?.aborted).toBe(true);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it.each([0, 429, 503])("does not cache transient Firecrawl status %i as missing", async (statusCode) => {
     const { cache, put } = cacheFixture();
     const scrapeBranding = vi.fn(async (url: string) => ({ faviconUrl: null, url, statusCode }));
@@ -269,7 +285,7 @@ describe("favicon host resolution", () => {
 
     await expect(resolveFavicon(cache, "example.com", { scrapeBranding }, fetchMock as unknown as typeof fetch))
       .resolves.toMatchObject({ contentType: "image/png" });
-    expect(FAVICON_ORIGIN_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(FAVICON_CANDIDATE_TIMEOUT_MS).toBeGreaterThan(0);
     expect(observedSignal?.aborted).toBe(false);
   });
 
