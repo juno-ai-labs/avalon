@@ -1,4 +1,4 @@
-import { personMentionMarkdownPattern, rewriteCitationsAsPlainText } from "@rally/contracts/citations";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { workstreamCanonicalUrl, type Region } from "@rally/contracts";
 
 import type { Env } from "../env";
@@ -99,10 +99,7 @@ export async function sendWorkstreamMentionEmail(
  * the sources.
  */
 function messageExcerpt(value: string): string {
-  const normalized = singleLine(rewriteCitationsAsPlainText(value, { sources: "none" }).replace(
-    personMentionMarkdownPattern(),
-    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
-  ));
+  const normalized = singleLine(rewriteMessageAsPlainText(value, { sources: "none" }));
   if (normalized.length <= MAX_MESSAGE_EXCERPT_LENGTH) return normalized;
   return `${normalized.slice(0, MAX_MESSAGE_EXCERPT_LENGTH - 1).trimEnd()}…`;
 }
