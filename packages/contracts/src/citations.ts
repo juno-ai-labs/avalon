@@ -365,7 +365,43 @@ const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?((?:[^\s()<>]|\([^\s(
  * rewrite disagreeing about what is code is not a visible bug in either, it is
  * a number in an email that does not match the number in the transcript.
  */
-const INLINE_CODE_SPAN = /`[^`\n]+`/gu;
+/**
+ * Replaces complete inline code spans without assuming their delimiter length.
+ * A run closes only on another run of exactly the same length; a longer run is
+ * content, not a closing prefix. Unclosed runs stay byte-for-byte unchanged.
+ */
+function replaceInlineCodeSpans(
+  value: string,
+  replace: (span: string, content: string) => string,
+): string {
+  let output = "";
+  let cursor = 0;
+  while (cursor < value.length) {
+    const opening = value.indexOf("`", cursor);
+    if (opening < 0) return output + value.slice(cursor);
+    let openingEnd = opening + 1;
+    while (value[openingEnd] === "`") openingEnd += 1;
+    const delimiterLength = openingEnd - opening;
+    let closing = openingEnd;
+    let matched = false;
+    while (closing < value.length) {
+      closing = value.indexOf("`", closing);
+      if (closing < 0) return output + value.slice(cursor);
+      let closingEnd = closing + 1;
+      while (value[closingEnd] === "`") closingEnd += 1;
+      if (closingEnd - closing === delimiterLength) {
+        output += value.slice(cursor, opening);
+        output += replace(value.slice(opening, closingEnd), value.slice(openingEnd, closing));
+        cursor = closingEnd;
+        matched = true;
+        break;
+      }
+      closing = closingEnd;
+    }
+    if (!matched) return output + value.slice(cursor);
+  }
+  return output;
+}
 
 /**
  * Reads a message's footnotes, and decides which of them are citations.
@@ -424,7 +460,7 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
     // citing anything. Counting one there appended a source list to a message
     // that cites nothing — and, worse, took the number the first real footnote
     // was owed, so the transcript said 1 where the delivered copy said 2.
-    for (const match of line.replace(INLINE_CODE_SPAN, " ").matchAll(FOOTNOTE_REFERENCE)) {
+    for (const match of replaceInlineCodeSpans(line, () => " ").matchAll(FOOTNOTE_REFERENCE)) {
       const identifier = normalizeFootnoteIdentifier(match[1]!);
       if (!referenced.includes(identifier)) referenced.push(identifier);
     }
@@ -593,10 +629,10 @@ export function rewriteMessageAsPlainText(
   markdown: string,
   options: CitationRewriteOptions = {},
 ): string {
-  const references = rewriteCitationsAsPlainText(markdown, options).replace(
+  const references = mapOutsideCode(rewriteCitationsAsPlainText(markdown, options), (prose) => prose.replace(
     personMentionMarkdownPattern(),
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
-  );
+  ));
   return markdownFormattingAsPlainText(references);
 }
 
@@ -612,9 +648,18 @@ function markdownFormattingAsPlainText(markdown: string): string {
       lines.push(`    ${raw.trimEnd()}`);
       continue;
     }
+    if (kind === "indented-code") {
+      lines.push(raw.trimEnd());
+      continue;
+    }
     let line = raw.trimEnd();
+    if (/^\s{0,3}(?:=+|-+)\s*$/u.test(line)
+      && index > 0
+      && kinds[index - 1] === "prose"
+      && source[index - 1]!.trim()) {
+      continue;
+    }
     if (/^\s{0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
-      lines.push("-".repeat(24));
       continue;
     }
     line = line.replace(/^\s{0,3}(?:>\s*)+/u, "");
@@ -625,7 +670,7 @@ function markdownFormattingAsPlainText(markdown: string): string {
     }
     const bullet = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/u.exec(line);
     if (bullet) {
-      const indent = markdownIndentWidth(bullet[1]!) >= 2 ? "    " : "  ";
+      const indent = " ".repeat(markdownIndentWidth(bullet[1]!));
       const marker = /\d/u.test(bullet[2]!) ? bullet[2]! : "-";
       const item = bullet[3]!.replace(/^\[([ xX])\]\s*/u, (_match, checked: string) =>
         (checked === " " ? "☐ " : "☑ "));
@@ -634,7 +679,7 @@ function markdownFormattingAsPlainText(markdown: string): string {
     }
     lines.push(stripInlineMarkdown(line));
   }
-  return lines.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
+  return lines.join("\n").replace(/\n{3,}/gu, "\n\n").replace(/^\n+|\n+$/gu, "");
 }
 
 function markdownIndentWidth(value: string): number {
@@ -643,16 +688,17 @@ function markdownIndentWidth(value: string): number {
 
 function stripInlineMarkdown(value: string): string {
   const spans: string[] = [];
-  const parked = value.split(SPAN_PLACEHOLDER).join("").replace(INLINE_CODE_SPAN, (span) => {
-    spans.push(span.slice(1, -1));
+  const parked = replaceInlineCodeSpans(value.split(SPAN_PLACEHOLDER).join(""), (_span, content) => {
+    spans.push(content);
     return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
   });
   return parked
-    .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) => alt || href)
-    .replace(/\[([^\][]+)\]\(([^)]*)\)/gu, "$1")
+    .replace(INLINE_LINK, (match, label: string, href: string) => (match.startsWith("!") ? label || href : label))
     .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/giu, "$1")
-    .replace(/(\*\*|__)([^*_]+)\1/gu, "$2")
-    .replace(/(^|[\s(])([*_])([^\s*_][^*_]*[^\s*_]|[^\s*_])\2(?=[\s.,;:)!?]|$)/gu, "$1$3")
+    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/gu, "$1")
+    .replace(/__(?=\S)([\s\S]*?\S)__/gu, "$1")
+    .replace(/(^|[^\p{L}\p{N}])\*(?=\S)([\s\S]*?\S)\*(?=$|[^\p{L}\p{N}])/gu, "$1$2")
+    .replace(/(^|[^\p{L}\p{N}])_(?=\S)([\s\S]*?\S)_(?=$|[^\p{L}\p{N}])/gu, "$1$2")
     .replace(/~~([^~]+)~~/gu, "$1")
     .replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, "$1")
     .replace(
@@ -746,7 +792,7 @@ const SPAN_PLACEHOLDER = "\u0000";
 function mapOutsideCode(markdown: string, rewrite: (segment: string) => string): string {
   return mapMarkdownProse(markdown.replace(/\r\n/gu, "\n"), (prose) => prose.split("\n").map((line) => {
     const spans: string[] = [];
-    const parked = line.split(SPAN_PLACEHOLDER).join("").replace(INLINE_CODE_SPAN, (span) => {
+    const parked = replaceInlineCodeSpans(line.split(SPAN_PLACEHOLDER).join(""), (span) => {
       spans.push(span);
       return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
     });
