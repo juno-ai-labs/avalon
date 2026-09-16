@@ -59,7 +59,8 @@ and messages do not replace it with a teammate's credentials.
 Creation reserves the child and obtains the current generation in one parent RPC.
 Child reservation refuses archived parents. Bootstrap, identity provisioning and
 background initialization use one child RPC while retaining their existing
-validation, projection and replay paths. Team setup starts concurrently with child reservation and initialization.
+validation, projection and replay paths. Initialization refusals retain the
+underlying authority error code, including provisioning failures. Team setup starts concurrently with child reservation and initialization.
 A shared promise reuses the same team within this execution; ownership registration
 still waits for both team setup and the child's background state. The initial assignment reuses the resolved
 team. Delivery checks parent authority and generation at the recipient, without

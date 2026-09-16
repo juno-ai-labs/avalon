@@ -1084,6 +1084,36 @@ describe("sidekick_post_result", () => {
     }
   });
 
+  it("preserves the authority refusal when delegated initialization is fenced", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: ROOM_ID,
+      substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`, harnessRunId: crypto.randomUUID(),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
+    });
+    let restore!: () => void;
+    await runInDurableObject(roomParent(), (instance: WorkstreamDO) => {
+      const reserve = instance.reserveAgentChild;
+      const spy = vi.spyOn(Object.getPrototypeOf(instance) as WorkstreamDO, "reserveAgentChild")
+        .mockImplementation(async function (this: WorkstreamDO, ...args) {
+          const result = await reserve.apply(this, args);
+          // Simulate a generation changing between reservation and bootstrap.
+          return { ...result, authorityGeneration: result.authorityGeneration + 1 };
+        });
+      restore = () => spy.mockRestore();
+    });
+    try {
+      await expect(new AgentCommunicationService(TEST_ENV, input).start({
+        name: "Researcher", description: "Compare deployments", message: "Compare deployments.", attachmentIds: [],
+      }, {
+        workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+        toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
+        signal: new AbortController().signal,
+      })).rejects.toMatchObject({ code: "workstream_runtime_bootstrap_fenced" });
+    } finally {
+      restore();
+    }
+  });
+
   it("starts a hidden independent agent idempotently and lists its name and description", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({
       region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: ROOM_ID,
