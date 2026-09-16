@@ -660,18 +660,19 @@ describe('MessageBlock markdown', () => {
 
   it('still resolves a stored bare person: mention to a chip', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
+    const link = `[@Ada Lovelace](person:${personId})`;
     const message: Message = {
       ...baseMessage,
       id: 'message-person-mention-legacy',
       authorType: 'agent',
       author: undefined,
-      text: `Ask [@Ada Lovelace](person:${personId}) for a review.`,
+      text: `Ask ${link} for a review.`,
       mentions: [{
         type: 'person',
         personId,
         displayName: 'Ada Lovelace',
         startOffset: 4,
-        endOffset: 65,
+        endOffset: 4 + link.length,
       }],
     };
 
@@ -696,6 +697,33 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByText('@Grace Hopper')).toHaveClass('mention-text-fallback');
     expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '@Grace Hopper' })).not.toBeInTheDocument();
+  });
+
+  it('does not let one authoritative range bless another link to the same person', () => {
+    const personId = '00000000-0000-7000-8000-000000000043';
+    const canonical = `[@Grace Hopper](person://${personId})`;
+    const other = `[not a canonical mention](person://${personId})`;
+    const text = `${canonical} then ${other}`;
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention-occurrence',
+      authorType: 'agent',
+      author: undefined,
+      text,
+      mentions: [{
+        type: 'person',
+        personId,
+        displayName: 'Grace Hopper',
+        startOffset: 0,
+        endOffset: canonical.length,
+      }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelectorAll('.mention-chip')).toHaveLength(1);
+    expect(screen.getByText('not a canonical mention')).toHaveClass('mention-text-fallback');
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('renders connection mentions as chips from their stored offsets', () => {

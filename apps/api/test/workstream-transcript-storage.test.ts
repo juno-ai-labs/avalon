@@ -2412,6 +2412,15 @@ describe("canonical ordered work-stream transcript", () => {
     const reserved = await reserveAssistantFixture({
       transcript, storage, content, now: NOW + 1,
     });
+    await expect(transcript.commitBindTransition(
+      reserved.transition,
+      NOW + 2,
+      reserved.executionFence,
+    )).rejects.toThrow("assistant_mention_effect_enqueue_required");
+    expect(transcript.participantTurn("run-1:turn:1")).toBeNull();
+    expect(transcript.readBindProjection("run-1")!.stateRevision).toBe(2);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM member_attention`).one()).toEqual({ count: 0 });
+
     const deliveries: PendingInputDeliveryEffectInput[] = [];
     await transcript.commitBindTransition(
       reserved.transition,

@@ -595,6 +595,9 @@ export class WorkstreamTranscriptStorage {
         if (!facts.appendedFactId) throw new Error("assistant_projection_fact_missing");
         const delivery = this.projectAssistantTurn(transition, facts.appendedFactId, now);
         if (delivery) {
+          if (!enqueueRegionalEffectsInTransaction) {
+            throw new Error("assistant_mention_effect_enqueue_required");
+          }
           invokeSynchronousEffectEnqueue(enqueueRegionalEffectsInTransaction, [delivery]);
         }
       }
