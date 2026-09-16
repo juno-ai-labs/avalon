@@ -35,6 +35,7 @@ vi.mock('./lib/platform', () => ({
         ? () => () => undefined
         : () => Promise.resolve(undefined)),
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 vi.mock('./lib/telemetry', async (importOriginal) => ({
