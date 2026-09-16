@@ -1,4 +1,4 @@
-import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
+import { codeShaped, describeZodIssues, isDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { Context } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -51,6 +51,9 @@ export type LogEnv = Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "
 // runtime falls back to the derived summary, which cannot carry it.
 export type LogFields = Record<string, unknown> & { message?: string };
 
+/** A developer-authored constant: the one shape a thrown message was always trusted in. */
+const STABLE_CODE = /^[a-z][a-z0-9_]{0,119}$/u;
+
 /**
  * Extract a stable error code without copying an arbitrary provider/runtime
  * message into an indexed log field.
@@ -58,20 +61,25 @@ export type LogFields = Record<string, unknown> & { message?: string };
  * Two errors carry structure that is safe to keep. A `ZodError` raised on this
  * side of any RPC hop still has its issues, and their paths and codes are
  * schema shape rather than content, so they ride behind the caller's own code
- * instead of being replaced by it: `external_event_delivery_failed` became
- * `external_event_delivery_failed:event.eventType:invalid_type`. And a message
- * that is already code-shaped is one somebody threw on purpose — a Durable
- * Object's `sidekick_missing`, or a `parseRpcInput` rejection naming its field
- * — which is why the test is the one class every such field shares. The
- * earlier `[a-z][a-z0-9_]*` refused the `:` and `.` such a rejection is built
- * from, and reduced it to the fallback one hop after it was named.
+ * instead of being replaced by it: `external_event_delivery_failed` becomes
+ * `external_event_delivery_failed:event.eventSequence:invalid_type`. And a
+ * message `parseRpcInput` composed — a label, `_invalid`, the issues — is how a
+ * Durable Object's rejection arrives across the hop, so `isDiagnosticCode`
+ * admits that family beside the bare constant this always admitted.
+ *
+ * Nothing wider. A message is not trusted because it is code-shaped: the
+ * tree throws `memory_table_value_type:${column.name}:string`, an R2 key
+ * after a colon, a target id, and `${component}_schema_hash_mismatch:${version}`,
+ * and each of those in an indexed field or the OTel `error.type` is either a
+ * member's value or one distinct grouping key per object. Those still reduce
+ * to the caller's fallback, as they always did.
  */
 export function diagnosticErrorCode(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.code;
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;
   const direct = error.message.trim();
-  if (isCodeShaped(direct)) return direct;
+  if (STABLE_CODE.test(direct) || isDiagnosticCode(direct)) return direct;
   const tagged = /\(([a-z][a-z0-9._]{0,119})\)/u.exec(direct)?.[1];
   return tagged?.replaceAll(".", "_") ?? fallback;
 }
@@ -118,7 +126,7 @@ export function logRequestEvent(
 // the caller's — a name that starts matching `sensitiveKey` reads `[REDACTED]`
 // in the summary too, instead of printing the plaintext beside the hidden
 // field.
-const SUMMARY_FIELDS = ["method", "path", "status", "code", "flow", "phase", "component"] as const;
+const SUMMARY_FIELDS = ["method", "path", "status", "code", "error_code", "flow", "phase", "component"] as const;
 
 // Workers Logs renders the log list's message column from the entry's `message`
 // field. An entry that omits one lists as a blank row that has to be expanded

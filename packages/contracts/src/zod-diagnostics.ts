@@ -103,6 +103,29 @@ export function isCodeShaped(text: string): boolean {
   return CODE_SHAPE.test(text);
 }
 
+/** The label-and-issues shape `zodDiagnosticCode` and `parseRpcInput` compose. */
+const DIAGNOSTIC_CODE = /^[a-z][a-z0-9_]*_invalid:/u;
+
+/**
+ * Whether a message is one this module composed, rather than merely
+ * code-shaped.
+ *
+ * `isCodeShaped` says a string cannot be prose. It does not say who wrote it:
+ * `memory_table_value_type:${column.name}:string` passes it with a member's
+ * column name in the middle, and so does an R2 key or a target id after a
+ * colon. A reporter that reads a *thrown message* therefore admits an
+ * arbitrary message only through the narrow constant class it always
+ * trusted, and a message with separators only when it has the shape that
+ * `zodDiagnosticCode` and `parseRpcInput` alone compose — a label,
+ * `_invalid`, then the issues. That is provenance by construction rather than
+ * proof: a thrown `x_invalid:${value}` would pass. It is the bound the first
+ * adoption's reviewers asked for, and the reason a character class is never a
+ * reason to trust a value, only a limit on what it can be.
+ */
+export function isDiagnosticCode(text: string): boolean {
+  return isCodeShaped(text) && DIAGNOSTIC_CODE.test(text);
+}
+
 /**
  * The failing paths and issue codes, and nothing else.
  *

@@ -1272,6 +1272,24 @@ describe("AutomationDO", () => {
     expect(message).toContain("event.eventSequence");
   });
 
+  it("names the offending field when a definition save is refused across the RPC boundary", async () => {
+    // `saveDefinition` takes the actor beside the definition, so a sweep of
+    // `.parse(input)` entry points missed its two parses; the service calls it
+    // through a stub, where a `ZodError` arrived as the bare word.
+    const rejection = await automationStub().saveDefinition({
+      ...addressed(),
+      draft: { ...DEFINITION, definitionVersion: 2, triggers: "none" },
+      evaluatorRules: null,
+      submittedByRunId: null,
+      actor: actor(),
+    } as never).then(() => null, (error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(Error);
+    const message = (rejection as Error).message;
+    expect(message).toContain("save_definition_invalid");
+    expect(message).toContain("draft.triggers");
+  });
+
   it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {
     await activeAutomation();
     const email = {

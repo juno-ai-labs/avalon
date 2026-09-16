@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { codeShaped, describeZodIssues, isCodeShaped, zodDiagnosticCode, DIAGNOSTIC_CODE_MAX_LENGTH } from "./zod-diagnostics";
+import { codeShaped, describeZodIssues, isCodeShaped, isDiagnosticCode, zodDiagnosticCode, DIAGNOSTIC_CODE_MAX_LENGTH } from "./zod-diagnostics";
 
 const Summary = z.looseObject({
   id: z.string().min(1),
@@ -108,5 +108,20 @@ describe("isCodeShaped", () => {
     expect(isCodeShaped('[{"code":"invalid_type","path":["id"]}]')).toBe(false);
     expect(isCodeShaped("")).toBe(false);
     expect(isCodeShaped("a".repeat(DIAGNOSTIC_CODE_MAX_LENGTH + 1))).toBe(false);
+  });
+});
+
+describe("isDiagnosticCode", () => {
+  it("admits only what this module composes, not every code-shaped message", () => {
+    // A code-shaped message can still carry a member's column name or an R2
+    // key after a colon; a reporter that copies thrown messages by shape alone
+    // would index them. Only the label-and-issues shape is this module's.
+    expect(isDiagnosticCode("admit_external_event_invalid:event.eventSequence:invalid_type")).toBe(true);
+    expect(isDiagnosticCode(zodDiagnosticCode(rejection({ summary: { topics_discussed: [] } }), "response")!)).toBe(true);
+    expect(isDiagnosticCode("memory_table_value_type:Customer_Email:string")).toBe(false);
+    expect(isDiagnosticCode("inference_lakehouse_payload_object_missing:2026/09/15/run.json")).toBe(false);
+    expect(isDiagnosticCode("workstream_do_schema_hash_mismatch:27")).toBe(false);
+    expect(isDiagnosticCode("sidekick_missing")).toBe(false);
+    expect(isDiagnosticCode("Provider included customer@example.com in its response")).toBe(false);
   });
 });
