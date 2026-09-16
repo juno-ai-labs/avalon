@@ -126,8 +126,8 @@ same as desktop.
   public domain names only, uses the existing Firecrawl client to discover a
   public HTTPS favicon URL, rejects image redirects, bounds the body read at
   Cloudflare KV's value limit without a second retained chunk copy, applies a
-  25-second deadline across the origin response headers and body, validates
-  image bytes, and keeps only a 30-day platform-wide KV entry. The renderer
+  25-second deadline across branding discovery and the origin response,
+  validates image bytes, and keeps only a 30-day platform-wide KV entry. The renderer
   requests only for anchors that enter the viewport, receives the cached bytes,
   and exposes them through a revocable local object URL.
 - Refresh material is encrypted in the main process. One versioned envelope
@@ -950,8 +950,8 @@ Associated Domains entitlements; helpers retain their existing entitlement set.
 sandboxed renderer obtains its bytes through the authenticated Rally API. The
 server accepts public domains only, asks the existing Firecrawl client for
 branding metadata, rejects image redirects, bounds and verifies image bytes,
-applies a 25-second deadline to the origin image request, and caches the result
-or confirmed miss for 30 days in dedicated KV. Transient
+applies a 25-second deadline to each complete candidate lookup, and caches the
+result or confirmed miss for 30 days in dedicated KV. Transient
 provider and image-origin failures are not negative-cached. A primary-domain
 fallback that outlives an exact-host response is retained through the request
 execution context rather than detached from the Worker lifecycle.
@@ -974,8 +974,9 @@ live decoration. Concurrent desktop requests for one normalized hostname share
 one API operation, off-screen anchors start none, and browser responses
 revalidate so the KV entry remains the one 30-day cache clock. The team selected
 25 seconds to match Firecrawl's branding scrape budget and remain within
-Cloudflare's 30-second `waitUntil` window; a deadline failure is transient and
-therefore never stored as a 30-day miss.
+Cloudflare's 30-second `waitUntil` window; one signal spans Firecrawl discovery,
+image headers, and the body. A deadline failure is transient and therefore never
+stored as a 30-day miss.
 
 ### 2026-09-12 — Authenticate once within each HTTP request
 
