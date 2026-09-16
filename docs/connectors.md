@@ -1197,9 +1197,11 @@ fixture table instead, where it is reviewable.
 ### 2026-09-16 — A removed connection leaves the list, and Test says pass or fail
 
 **What changed:** `GET /connections` no longer returns a disabled connection
-unless its installation is waiting on a webhook cleanup Rally can still perform
-— the cleanup credential retained and a provider identity recorded — so the row
-stays only while Retry cleanup has something to do. The Manage events Test
+whose installation is settled — every registration removed, or the cleanup
+credential forgotten — or that never had one, so a removed connection leaves
+the list as soon as its provider webhook is gone. A row whose installation is
+still unsettled stays, because Manage events is reachable only from the row;
+the object answers for every disabled candidate in one hop. The Manage events Test
 result is a verdict box: green with "Connection test passed" when the check
 passed, red with "Connection test failed" when it did not, the sentence beneath
 either way. In the connections table the status dot and provider mark no longer
@@ -1216,17 +1218,21 @@ is verified" read as more instructions and nobody could tell they were done.
 And a two-line name squeezed the 7px status dot to a 3px sliver.
 
 **Considered and rejected:** Hiding every disabled row. A disconnected
-installation whose webhook Rally can still delete needs its Manage events
-window to finish that, and hiding it would leave a live registration at the
-provider with no control to remove it. Also rejected: filtering in the desktop
-only, which would have left the API's list, and every count derived from it,
-saying otherwise.
+installation whose webhook Rally has not yet removed, or whose create outcome
+was never learned, needs its Manage events window, and hiding it would leave a
+live registration at the provider with no control to reach it. Also rejected:
+keeping only the rows Rally itself can clean up, which was the first cut and
+dropped exactly the rows where the administrator has to act. Also rejected:
+filtering in the desktop only, which would have left the API's list, and every
+count derived from it, saying otherwise.
 
-**Consequences:** A row that lingers after removal now means one thing: Rally
-can still remove the provider webhook and has not yet. Forget local cleanup
-credential, or a settled removal, makes it leave. Verified in a real window on
-the local stack: the removed Granola row gone, the wrapped-name dot intact at
-820px, and both Test verdicts.
+**Consequences:** A row that lingers after removal means its installation is
+not settled: a removal still queued or refused, a webhook only the administrator
+can find, or a disconnect that did not complete. A settled removal or Forget
+local cleanup credential makes it leave. A request that fails before the test
+runs is a warning box headed "Couldn’t run the connection test", not a verdict.
+Verified in a real window on the local stack: the removed Granola row gone, the
+wrapped-name dot intact at 820px, and both Test verdicts.
 
 Shipped in the pull request for this change.
 

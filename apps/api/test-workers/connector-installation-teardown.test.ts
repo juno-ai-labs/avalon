@@ -69,7 +69,8 @@ async function fixture(legacyGranola = false) {
     });
     expect(await env.DB.prepare('SELECT status FROM connector_ingress_routes WHERE connection_id = ?').bind(connectionId).first()).toEqual({ status: 'disabled' });
   }
-  return { stub, workspaceId, userId, connectionId, service, testEnv, assertDisabled };
+  const registrationProviderId = legacyGranola ? null : (await stub.connectorInstallation({ workspaceId, connectionId }))?.registrations[0]?.providerId ?? null;
+  return { stub, workspaceId, userId, connectionId, service, testEnv, assertDisabled, registrationProviderId };
 }
 
 describe('connector installation teardown', () => {
@@ -110,35 +111,82 @@ describe('connector installation teardown', () => {
       .toEqual({ actor_user_id: f.userId });
   });
 
-  it('keeps a disconnected connection in the list only while Rally still owes a cleanup it can run', async () => {
+  it('keeps a disconnected connection in the list until its cleanup settles or is forgotten', async () => {
     const f = await fixture();
     const provider = vi.fn(); vi.stubGlobal('fetch', provider);
     const listed = async () => (await f.service.list()).map((connection) => connection.id);
     expect(await listed()).toContain(f.connectionId);
     await f.service.disable(f.connectionId);
     await f.assertDisabled();
-    // The registration carries a verified provider id and the cleanup credential
-    // is retained, so Retry cleanup can still remove the webhook: the row stays.
+    // The removal is queued and not yet run: Manage events is the only way to
+    // retry it, and the row is the only way to Manage events.
     expect(await listed()).toContain(f.connectionId);
     await f.service.changeInstallation(f.connectionId, { action: 'forget_cleanup' });
-    // Nothing Rally can do for it any more; a row would only say "disabled".
+    // The explicit "I have dealt with this"; the row leaves with it.
     expect(await listed()).not.toContain(f.connectionId);
     expect(provider).not.toHaveBeenCalled();
   });
 
-  it('drops a disconnected connection whose webhook was never registered', async () => {
+  it('drops the row once the provider removal settles', async () => {
+    const f = await fixture();
+    const providerId = f.registrationProviderId;
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const target = new URL(url instanceof Request ? url.url : url); calls.push(target.pathname);
+      return Response.json({ success: true, results: { webhookId: providerId } });
+    }));
+    await f.service.disable(f.connectionId);
+    await f.assertDisabled();
+    expect((await f.service.list()).map((connection) => connection.id)).toContain(f.connectionId);
+    const settled = await runConnectorInstallation(f.testEnv, f.workspaceId, f.connectionId, new AbortController().signal);
+    expect(settled?.state).toBe('disconnected');
+    expect(calls).toEqual(['/webhook.delete']);
+    expect((await f.service.list()).map((connection) => connection.id)).not.toContain(f.connectionId);
+  });
+
+  it('drops a disconnected connection whose create the provider refused', async () => {
     const f = await fixture();
     vi.stubGlobal('fetch', vi.fn());
-    // A refused create leaves no provider identity, and disconnect then records
-    // nothing for Rally to remove.
+    // A refused create left no provider identity and dispatched nothing, so
+    // disconnect has nothing to remove and settles at once.
     await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
       state.storage.sql.exec(`UPDATE connector_installations SET document_json = json_set(document_json,
         '$.registrations[0].providerId', null, '$.registrations[0].state', 'failed', '$.state', 'failed') WHERE connection_id = ?`, f.connectionId);
     });
     await f.service.disable(f.connectionId);
     await f.assertDisabled();
-    expect((await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: f.connectionId }))?.state).toBe('cleanup_pending');
+    expect((await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: f.connectionId }))?.state).toBe('disconnected');
     expect((await f.service.list()).map((connection) => connection.id)).not.toContain(f.connectionId);
+  });
+
+  it('keeps a disconnected connection whose create outcome was never learned, with its notice reachable', async () => {
+    const f = await fixture();
+    vi.stubGlobal('fetch', vi.fn());
+    // A lost create response: a webhook may be live under an identity Rally
+    // never received, and only the administrator can find and remove it.
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(`UPDATE connector_installations SET document_json = json_set(document_json,
+        '$.registrations[0].providerId', null, '$.registrations[0].state', 'unknown', '$.state', 'action_required') WHERE connection_id = ?`, f.connectionId);
+    });
+    await f.service.disable(f.connectionId);
+    await f.assertDisabled();
+    const installation = await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: f.connectionId });
+    expect(installation).toMatchObject({ state: 'cleanup_pending', registrations: [{ providerId: null, state: 'action_required' }] });
+    expect((await f.service.list()).map((connection) => connection.id)).toContain(f.connectionId);
+    await f.service.changeInstallation(f.connectionId, { action: 'forget_cleanup' });
+    expect((await f.service.list()).map((connection) => connection.id)).not.toContain(f.connectionId);
+  });
+
+  it('keeps a row whose disconnect never reached the installation, rather than hiding live registrations', async () => {
+    const f = await fixture();
+    // `disable` marks the row in its `finally` whatever the object answered; a
+    // disabled row over a `current` installation is a stuck state that must
+    // stay visible.
+    await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = ?", f.connectionId);
+    });
+    expect((await f.stub.connectorInstallation({ workspaceId: f.workspaceId, connectionId: f.connectionId }))?.state).toBe('current');
+    expect((await f.service.list()).map((connection) => connection.id)).toContain(f.connectionId);
   });
 
   it('still clears local authority and schedules when legacy adoption cannot decrypt credentials', async () => {

@@ -205,12 +205,16 @@ export function FirefliesWorkspaceSetup({ api, attemptId, onSuccess, onClose, on
  * done. A passed test is green with its own heading and a failed one is red;
  * both keep the sentence, which is where the provider's own words land.
  */
-function ConnectionTestOutcome({ ok, message }: { ok: boolean; message: string }) {
+function ConnectionTestOutcome({ kind, message }: { kind: 'passed' | 'failed' | 'unavailable'; message: string }) {
+  // `unavailable` is the request failing — offline, a timeout, a 5xx — not the
+  // connection failing the test. The test never ran, so a red "failed" would
+  // send someone off to fix a connection that may be fine.
+  const heading = { passed: 'Connection test passed', failed: 'Connection test failed', unavailable: 'Couldn’t run the connection test' }[kind];
   return (
-    <div className={`connection-test-outcome ${ok ? 'is-passed' : 'is-failed'}`} role={ok ? 'status' : 'alert'}>
-      {ok ? <CircleCheck aria-hidden="true" size={18} /> : <CircleAlert aria-hidden="true" size={18} />}
+    <div className={`connection-test-outcome is-${kind}`} role={kind === 'passed' ? 'status' : 'alert'}>
+      {kind === 'passed' ? <CircleCheck aria-hidden="true" size={18} /> : <CircleAlert aria-hidden="true" size={18} />}
       <div>
-        <strong>{ok ? 'Connection test passed' : 'Connection test failed'}</strong>
+        <strong>{heading}</strong>
         <p>{message}</p>
       </div>
     </div>
@@ -258,8 +262,8 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
       {connectionEnabled && <section className="installation-actions">
         <div className="installation-action"><Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button><p>Checks access and attempts to repair event delivery.</p></div>
       </section>}
-      {test.data && <ConnectionTestOutcome ok={test.data.ok} message={test.data.message} />}
-      {test.error && <ConnectionTestOutcome ok={false} message={test.error.message} />}
+      {test.data && <ConnectionTestOutcome kind={test.data.ok ? 'passed' : 'failed'} message={test.data.message} />}
+      {test.error && <ConnectionTestOutcome kind="unavailable" message={test.error.message} />}
     </div>}
     {installation && <div className="installation-panel">
       <section className="installation-status">
@@ -277,12 +281,15 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
       {(active || needsHelp) && <section className="installation-actions">
         {active && <div className="installation-action"><Button className="button-primary" disabled={!online || test.isPending} onClick={() => test.mutate()}>{test.isPending ? 'Testing…' : 'Test'}</Button><p>Checks access and attempts to repair event delivery.</p></div>}
         {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten
-          && installation.registrations.some((registration) => registration.providerId)
+          // Verified, because that is what the cleanup runner requires before
+          // it will remove a webhook; an unverified id would make this a
+          // button that does nothing.
+          && installation.registrations.some((registration) => registration.providerId && registration.providerIdVerified)
           && <div className="installation-action"><Button disabled={!online || change.isPending} onClick={() => change.mutate('repair')}>Retry cleanup</Button><p>Asks the provider again to remove the recorded webhook.</p></div>}
         {needsHelp && <div className="installation-action"><Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/contact/')}>Get help</Button><p>Opens Rally support, for a problem Test does not fix.</p></div>}
       </section>}
-      {test.data && <ConnectionTestOutcome ok={test.data.ok} message={test.data.message} />}
-      {test.error && <ConnectionTestOutcome ok={false} message={test.error.message} />}
+      {test.data && <ConnectionTestOutcome kind={test.data.ok ? 'passed' : 'failed'} message={test.data.message} />}
+      {test.error && <ConnectionTestOutcome kind="unavailable" message={test.error.message} />}
       {change.error && <InlineError>{change.error.message}</InlineError>}
       <section className="installation-advanced">
         <div className="installation-action"><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button><p>Technical details and recovery tools for workspace administrators and support.</p></div>
@@ -302,7 +309,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
           <Button disabled={!online || !reconcilableRegistrations.some((registration) => registration.key === registrationKey) || !providerId.trim() || change.isPending} onClick={() => change.mutate('reconcile')}>Verify existing webhook</Button>
         </>}
         {installation.state === 'cleanup_pending' && !installation.cleanupCredentialForgotten && <>
-          <p>Forgetting the local cleanup credential leaves subscription removal to your provider administrator.</p>
+          <p>Forgetting the local cleanup credential leaves subscription removal to your provider administrator, and removes this connection from the list. Copy the provider IDs from Subscription details first if you plan to delete the webhooks there.</p>
           <Button disabled={!online || change.isPending} onClick={() => change.mutate('forget_cleanup')}>Forget local cleanup credential</Button>
         </>}
         <details><summary>Subscription details</summary>

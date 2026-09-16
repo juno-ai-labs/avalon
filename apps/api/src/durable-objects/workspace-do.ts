@@ -6,6 +6,8 @@ import {
 import {
   InstallationCreateSchema,
   InstallationReadSchema,
+  InstallationBatchReadSchema,
+  type InstallationBatchRead,
   InstallationClaimSchema,
   InstallationDeliverySchema,
   InstallationSettleSchema,
@@ -24,7 +26,7 @@ import {
   type InstallationMaintenanceCancel,
   type InstallationRotationPrepare,
 } from './connector-installation-protocol';
-import { createInstallation, readInstallation, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
+import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
 import { AgentIdSchema, type AgentId } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
@@ -7399,6 +7401,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized; const request = InstallationReadSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return readInstallation(this.state.storage, request.connectionId);
+  }
+  /** One hop for the connections list, which asks about every disabled row at once. */
+  async connectorInstallations(input: InstallationBatchRead) {
+    await this.initialized; const request = parseRpcInput(InstallationBatchReadSchema, input, "connector_installations_read");
+    this.assertWorkspace(request.workspaceId);
+    return readInstallations(this.state.storage, request.connectionIds);
   }
   async claimConnectorInstallationStep(input: InstallationClaim) {
     await this.initialized; const request = InstallationClaimSchema.parse(input);

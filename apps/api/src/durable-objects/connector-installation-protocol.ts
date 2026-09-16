@@ -2,6 +2,9 @@ import { ConnectorInstallationSchema, ConnectorRegistrationSchema } from "@rally
 import { z } from "zod";
 const Coordinates = z.strictObject({ workspaceId: z.string().uuid(), connectionId: z.string().uuid() });
 export const InstallationReadSchema = Coordinates;
+/** Every installation among these connections, in one hop; absent ones are simply not returned. */
+export const InstallationBatchReadSchema = z.strictObject({ workspaceId: z.string().uuid(), connectionIds: z.array(z.string().uuid()).min(1).max(200) });
+export type InstallationBatchRead = z.infer<typeof InstallationBatchReadSchema>;
 export const InstallationCreateSchema = z.strictObject({
   installation: ConnectorInstallationSchema, userId: z.string().uuid(), inputHash: z.string().min(1),
   credentials: z.strictObject({ ciphertext: z.string().min(1), iv: z.string().min(1), keyVersion: z.number().int().positive() }),
