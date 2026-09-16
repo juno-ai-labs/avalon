@@ -1,5 +1,6 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
 import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
 import { workstreamCanonicalUrl } from "@rally/contracts/workstream-links";
 import type { Env } from "../env";
@@ -33,7 +34,10 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
   const title = effect.kind === "mention_notification"
     ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
     : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`;
-  const body = effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "";
+  const body = rewriteMessageAsPlainText(
+    effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "",
+    { sources: "none" },
+  );
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
     workspaceId: id, userId: row.recipientUserId,
   }));

@@ -20,16 +20,17 @@
  * - **`embeddedResourceCitations`** — the image-syntax announcements the
  *   desktop auto-opens the inspector onto. Link-syntax chips, footnotes, and
  *   anything inside code are not announcements.
- * - **`rewriteCitationsAsPlainText`** — what Rally's two non-renderer delivery
- *   surfaces, outbound email and Slack, send instead. Both render agent Markdown
- *   with no renderer of ours in the path, so without this an announcement
- *   arrives as a broken image and a grounded answer as a page of `[^1]` markers.
+ * - **`rewriteCitationsAsPlainText`** and
+ *   **`rewriteMessageAsPlainText`** — what Rally's non-renderer
+ *   delivery surfaces send instead. Email, Slack, and Apple alerts have no
+ *   Rally renderer in the path, so without this an internal target arrives as
+ *   literal syntax.
  */
 
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { isMarkdownCode, mapMarkdownProse, markdownLineKinds } from "./markdown-code";
+import { isMarkdownCode, markdownLineKinds } from "./markdown-code";
 
 /** A citation target, once the scheme allowlist has decided what it is. */
 export type CitationTarget =
@@ -357,6 +358,15 @@ export function openFootnoteReferencePattern(): RegExp {
  * parenthesis, or not — so neither can backtrack over a long label or target.
  */
 const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?((?:[^\s()<>]|\([^\s()<>]*\))*)>?(?:\s+"[^"]*"|\s+'[^']*')?\s*\)/gu;
+
+/** A non-footnote link definition, used only by the plain-text boundary. */
+const REFERENCE_LINK_DEFINITION = /^ {0,3}\[((?:\\.|[^\]\\])+)\]\s*:\s*(?:<[^>\n]+>|\S+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/u;
+/** Full and collapsed reference links: `[label][id]`, `[label][]`, and image forms. */
+const FULL_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\]\[([^\]]*)\]/gu;
+/** Shortcut reference links: `[label]` and `![alt]`, when a matching definition exists. */
+const SHORTCUT_REFERENCE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\](?![[(])/gu;
+/** A title continued onto the line after a reference-link definition. */
+const REFERENCE_LINK_TITLE = /^ {0,3}(?:"[^"]*"|'[^']*'|\([^)]*\))[ \t]*$/u;
 /**
  * An inline code span, as every read in this module has to agree one looks.
  *
@@ -364,7 +374,56 @@ const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?((?:[^\s()<>]|\([^\s(
  * rewrite disagreeing about what is code is not a visible bug in either, it is
  * a number in an email that does not match the number in the transcript.
  */
-const INLINE_CODE_SPAN = /`[^`\n]+`/gu;
+/**
+ * Replaces complete inline code spans without assuming their delimiter length.
+ * A run closes only on another run of exactly the same length; a longer run is
+ * content, not a closing prefix. Unclosed runs stay byte-for-byte unchanged.
+ */
+function replaceInlineCodeSpans(
+  value: string,
+  replace: (span: string, content: string) => string,
+): string {
+  let output = "";
+  let cursor = 0;
+  while (cursor < value.length) {
+    const opening = nextUnescapedBacktick(value, cursor);
+    if (opening < 0) return output + value.slice(cursor);
+    let openingEnd = opening + 1;
+    while (value[openingEnd] === "`") openingEnd += 1;
+    const delimiterLength = openingEnd - opening;
+    let closing = openingEnd;
+    let matched = false;
+    while (closing < value.length) {
+      closing = nextUnescapedBacktick(value, closing);
+      if (closing < 0) return output + value.slice(cursor);
+      let closingEnd = closing + 1;
+      while (value[closingEnd] === "`") closingEnd += 1;
+      if (closingEnd - closing === delimiterLength) {
+        output += value.slice(cursor, opening);
+        output += replace(value.slice(opening, closingEnd), value.slice(openingEnd, closing));
+        cursor = closingEnd;
+        matched = true;
+        break;
+      }
+      closing = closingEnd;
+    }
+    if (!matched) return output + value.slice(cursor);
+  }
+  return output;
+}
+
+function nextUnescapedBacktick(value: string, start: number): number {
+  let candidate = value.indexOf("`", start);
+  while (candidate >= 0) {
+    let backslashes = 0;
+    for (let index = candidate - 1; index >= 0 && value[index] === "\\"; index -= 1) {
+      backslashes += 1;
+    }
+    if (backslashes % 2 === 0) return candidate;
+    candidate = value.indexOf("`", candidate + 1);
+  }
+  return -1;
+}
 
 /**
  * Reads a message's footnotes, and decides which of them are citations.
@@ -390,16 +449,20 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
   // Consulted only where no definition is open: inside one, an indented line is
   // the definition's own second block, which is what disqualifies it as a
   // citation — not an indented code block at the document's level.
-  const code = markdownLineKinds(lines).map(isMarkdownCode);
+  const code = notificationMarkdownLineKinds(lines).map(isMarkdownCode);
 
   /** The identifier whose definition the following indented lines continue. */
   let open: string | null = null;
+  let openQuoteDepth = 0;
   for (const [index, line] of lines.entries()) {
     if (open === null && code[index]) continue;
 
-    const definition = FOOTNOTE_DEFINITION.exec(line);
+    const contentLine = stripBlockquotePrefixes(line);
+    const quoteDepth = blockquoteDepth(line);
+    const definition = FOOTNOTE_DEFINITION.exec(contentLine);
     if (definition) {
       open = normalizeFootnoteIdentifier(definition[1]!);
+      openQuoteDepth = quoteDepth;
       // A repeated identifier keeps the first definition, which is what a GFM
       // parser does with one; the second would otherwise silently win here and
       // disagree with what the renderer shows.
@@ -411,9 +474,9 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
       // end it, because GFM allows a blank line inside a multi-paragraph one —
       // and a definition with a second paragraph is exactly what must not
       // qualify.
-      if (!line.trim()) continue;
-      if (/^(?: {4}|\t)/u.test(line)) {
-        definitions.set(open, `${definitions.get(open) ?? ""}\n\n${line.trim()}`);
+      if (quoteDepth === openQuoteDepth && !contentLine.trim()) continue;
+      if (quoteDepth === openQuoteDepth && /^(?: {4}|\t)/u.test(contentLine)) {
+        definitions.set(open, `${definitions.get(open) ?? ""}\n\n${contentLine.trim()}`);
         continue;
       }
       open = null;
@@ -423,7 +486,9 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
     // citing anything. Counting one there appended a source list to a message
     // that cites nothing — and, worse, took the number the first real footnote
     // was owed, so the transcript said 1 where the delivered copy said 2.
-    for (const match of line.replace(INLINE_CODE_SPAN, " ").matchAll(FOOTNOTE_REFERENCE)) {
+    const scannableLine = replaceInlineCodeSpans(line, () => " ");
+    for (const match of scannableLine.matchAll(FOOTNOTE_REFERENCE)) {
+      if (match.index !== undefined && isMarkdownEscaped(scannableLine, match.index)) continue;
       const identifier = normalizeFootnoteIdentifier(match[1]!);
       if (!referenced.includes(identifier)) referenced.push(identifier);
     }
@@ -439,7 +504,10 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
 /** One paragraph, exactly one link — or nothing, which is a classic footnote. */
 function asCitation(content: string): FootnoteCitation | null {
   if (content.includes("\n")) return null;
-  const links = [...content.matchAll(INLINE_LINK)];
+  const links = [...content.matchAll(INLINE_LINK)].filter((match) => {
+    const opener = (match.index ?? 0) + (match[0].startsWith("!") ? 1 : 0);
+    return !isMarkdownEscaped(content, opener);
+  });
   if (links.length !== 1) return null;
   const [match, label = "", href = ""] = links[0]!;
   const target = parseCitationHref(href);
@@ -550,12 +618,15 @@ export function rewriteCitationsAsPlainText(markdown: string, options: CitationR
     // scheme shows through. Asking the strict parser instead left
     // `[the deck](resource://Q3-deck.pdf)` verbatim in an email and
     // `![Plan](resource://plans/2026)` as a broken image in a channel.
-    .replace(INLINE_LINK, (match, label: string, href: string) =>
-      (citationScheme(href) === "resource" ? label : match))
+    .replace(INLINE_LINK, (match, label: string, href: string, offset: number, value: string) => {
+      const opener = offset + (match.startsWith("!") ? 1 : 0);
+      return !isMarkdownEscaped(value, opener) && citationScheme(href) === "resource" ? label : match;
+    })
     // Only a referenced *and* defined identifier is renumbered. A reference
     // whose definition never arrived is left exactly as written, because
     // rewriting it would invent a source that does not exist.
-    .replace(FOOTNOTE_REFERENCE, (match, identifier: string) => {
+    .replace(FOOTNOTE_REFERENCE, (match, identifier: string, offset: number, value: string) => {
+      if (isMarkdownEscaped(value, offset)) return match;
       // Folded, like every other read of an identifier in this module. The
       // definitions and the source list below key on the folded form, so
       // looking up the raw capture here left `[^Q3]` in the body above a
@@ -580,6 +651,240 @@ export function rewriteCitationsAsPlainText(markdown: string, options: CitationR
 }
 
 /**
+ * A message, written for a surface without Rally's renderer.
+ *
+ * Citation, person-mention, and general Markdown reduction are one outbound
+ * boundary: a client that cannot draw Rally's rich text must receive the words
+ * and useful structure, never the syntax behind them. Keeping the composition
+ * here prevents email, Slack, and push from disagreeing about the same stored
+ * message.
+ */
+export function rewriteMessageAsPlainText(
+  markdown: string,
+  options: CitationRewriteOptions = {},
+): string {
+  const inlineSpans: string[] = [];
+  const protectedMarkdown = mapNotificationProse(
+    markdown.split(MESSAGE_SPAN_PLACEHOLDER).join(""),
+    (prose) => replaceInlineCodeSpans(prose, (_span, content) => {
+      inlineSpans.push(content);
+      return `${MESSAGE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${MESSAGE_SPAN_PLACEHOLDER}`;
+    }),
+  );
+  const references = mapOutsideCode(rewriteCitationsAsPlainText(protectedMarkdown, options), (prose) => prose.replace(
+    personMentionMarkdownPattern(),
+    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
+  ));
+  return markdownFormattingAsPlainText(references).replace(
+    new RegExp(`${MESSAGE_SPAN_PLACEHOLDER}(\\d+)${MESSAGE_SPAN_PLACEHOLDER}`, "gu"),
+    (_match, index: string) => inlineSpans[Number(index)] ?? "",
+  );
+}
+
+/** Markdown structure reduced to readable plain text without flattening it. */
+function markdownFormattingAsPlainText(markdown: string): string {
+  const inlineSpans: string[] = [];
+  const references = rewriteReferenceLinksAsPlainText(markdown);
+  const parkedMarkdown = mapNotificationProse(
+    references.split(MULTILINE_SPAN_PLACEHOLDER).join(""),
+    (prose) => replaceInlineCodeSpans(prose, (_span, content) => {
+      inlineSpans.push(content);
+      return `${MULTILINE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${MULTILINE_SPAN_PLACEHOLDER}`;
+    }),
+  );
+  const lines: string[] = [];
+  const source = parkedMarkdown.replace(/\r\n/gu, "\n").split("\n");
+  const kinds = notificationMarkdownLineKinds(source);
+  let fenceQuoteDepth = 0;
+  let fenceListIndent = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    const raw = source[index]!;
+    const kind = kinds[index]!;
+    if (kind === "fence-open") {
+      fenceQuoteDepth = blockquoteDepth(raw);
+      fenceListIndent = listFenceOpening(stripBlockquotePrefixes(raw))?.contentIndent ?? 0;
+      continue;
+    }
+    if (kind === "fence-close") {
+      fenceQuoteDepth = 0;
+      fenceListIndent = 0;
+      continue;
+    }
+    if (kind === "fence-content") {
+      const content = stripListContinuationIndent(
+        stripBlockquotePrefixes(raw, fenceQuoteDepth),
+        fenceListIndent,
+      );
+      lines.push(`    ${content.trimEnd()}`);
+      continue;
+    }
+    if (kind === "indented-code") {
+      lines.push(stripBlockquotePrefixes(raw).trimEnd());
+      continue;
+    }
+    const line = stripBlockquotePrefixes(raw.trimEnd());
+    if (/^ {0,3}(?:=+|-+)\s*$/u.test(line)
+      && index > 0
+      && kinds[index - 1] === "prose"
+      && source[index - 1]!.trim()) {
+      continue;
+    }
+    if (/^ {0,3}(?:[-*_]\s*){3,}$/u.test(line)) {
+      continue;
+    }
+    const heading = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?$/u.exec(line);
+    if (heading) {
+      lines.push(stripInlineMarkdown(heading[2]!));
+      continue;
+    }
+    const bullet = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/u.exec(line);
+    if (bullet) {
+      const indent = " ".repeat(markdownIndentWidth(bullet[1]!));
+      const marker = /\d/u.test(bullet[2]!) ? bullet[2]! : "-";
+      const item = bullet[3]!.replace(/^\[([ xX])\]\s*/u, (_match, checked: string) =>
+        (checked === " " ? "☐ " : "☑ "));
+      const itemLines = [item];
+      const quoteDepth = blockquoteDepth(raw);
+      while (index + 1 < source.length && kinds[index + 1] === "prose") {
+        const nextRaw = source[index + 1]!;
+        const next = stripBlockquotePrefixes(nextRaw.trimEnd());
+        if (!next.trim()
+          || blockquoteDepth(nextRaw) !== quoteDepth
+          || /^(\s*)(?:[-*+]|\d{1,3}[.)])\s+/u.test(next)) break;
+        itemLines.push(next);
+        index += 1;
+      }
+      const reduced = stripInlineMarkdown(itemLines.join("\n")).split("\n");
+      lines.push(`${indent}${marker} ${reduced[0] ?? ""}`);
+      lines.push(...reduced.slice(1));
+      continue;
+    }
+    const paragraph = [line];
+    const quoteDepth = blockquoteDepth(raw);
+    while (index + 1 < source.length && kinds[index + 1] === "prose") {
+      const nextRaw = source[index + 1]!;
+      const next = stripBlockquotePrefixes(nextRaw.trimEnd());
+      if (!next.trim()
+        || blockquoteDepth(nextRaw) !== quoteDepth
+        || isMarkdownBlockStart(next)) break;
+      paragraph.push(next);
+      index += 1;
+    }
+    lines.push(...stripInlineMarkdown(paragraph.join("\n")).split("\n"));
+  }
+  return lines.join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .replace(/^\n+|\n+$/gu, "")
+    .replace(
+      new RegExp(`${MULTILINE_SPAN_PLACEHOLDER}(\\d+)${MULTILINE_SPAN_PLACEHOLDER}`, "gu"),
+      (_match, index: string) => inlineSpans[Number(index)] ?? "",
+    );
+}
+
+/**
+ * Reduces reference-style links after collecting their definitions.
+ *
+ * A reference is syntax only when its normalized label has a definition. This
+ * keeps ordinary bracketed prose intact while giving full, collapsed, and
+ * shortcut links the same label-only result as an inline link. Definitions and
+ * references inside code remain literal.
+ */
+function rewriteReferenceLinksAsPlainText(markdown: string): string {
+  const inlineSpans: string[] = [];
+  const protectedMarkdown = mapNotificationProse(
+    markdown.replace(/\r\n/gu, "\n").split(REFERENCE_SPAN_PLACEHOLDER).join(""),
+    (prose) => replaceInlineCodeSpans(prose, (span) => {
+      inlineSpans.push(span);
+      return `${REFERENCE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${REFERENCE_SPAN_PLACEHOLDER}`;
+    }),
+  );
+  const source = protectedMarkdown.split("\n");
+  const kinds = notificationMarkdownLineKinds(source);
+  const definitions = new Set<string>();
+  const definitionLines = new Set<number>();
+  for (const [index, line] of source.entries()) {
+    if (isMarkdownCode(kinds[index]!)) continue;
+    const definition = REFERENCE_LINK_DEFINITION.exec(stripBlockquotePrefixes(line));
+    if (!definition || definition[1]!.startsWith("^")) continue;
+    definitions.add(normalizeReferenceIdentifier(definition[1]!));
+    definitionLines.add(index);
+    const nextLine = source[index + 1] ?? "";
+    if (blockquoteDepth(nextLine) === blockquoteDepth(line)
+      && REFERENCE_LINK_TITLE.test(stripBlockquotePrefixes(nextLine))) {
+      definitionLines.add(index + 1);
+    }
+  }
+  if (definitions.size === 0) return restoreReferenceSpans(protectedMarkdown, inlineSpans);
+  const withoutDefinitions = source
+    .filter((_line, index) => !definitionLines.has(index))
+    .join("\n");
+  const rewritten = mapOutsideCode(withoutDefinitions, (prose) => prose
+    .replace(FULL_REFERENCE_LINK, (match, image: string, label: string, identifier: string, offset: number, value: string) => {
+      if (isMarkdownEscaped(value, offset + image.length)) return match;
+      const reference = identifier || label;
+      return definitions.has(normalizeReferenceIdentifier(reference)) ? label : match;
+    })
+    .replace(SHORTCUT_REFERENCE_LINK, (match, image: string, label: string, offset: number, value: string) =>
+      !isMarkdownEscaped(value, offset + image.length) && definitions.has(normalizeReferenceIdentifier(label))
+        ? label
+        : match));
+  return restoreReferenceSpans(rewritten, inlineSpans);
+}
+
+function restoreReferenceSpans(value: string, spans: readonly string[]): string {
+  return value.replace(
+    new RegExp(`${REFERENCE_SPAN_PLACEHOLDER}(\\d+)${REFERENCE_SPAN_PLACEHOLDER}`, "gu"),
+    (_match, index: string) => spans[Number(index)] ?? "",
+  );
+}
+
+function isMarkdownBlockStart(line: string): boolean {
+  return /^ {0,3}(?:#{1,6}\s|(?:[-*_]\s*){3,}$|(?:[-*+]|\d{1,3}[.)])\s+)/u.test(line);
+}
+
+function normalizeReferenceIdentifier(value: string): string {
+  return value.replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, "$1").trim().replace(/\s+/gu, " ").toLowerCase();
+}
+
+function markdownIndentWidth(value: string): number {
+  return [...value].reduce((width, character) => width + (character === "\t" ? 4 : 1), 0);
+}
+
+function isMarkdownEscaped(value: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function stripInlineMarkdown(value: string): string {
+  const spans: string[] = [];
+  const parked = replaceInlineCodeSpans(value.split(SPAN_PLACEHOLDER).join(""), (_span, content) => {
+    spans.push(content);
+    return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
+  });
+  const escaped = parked.replace(/\\([\\`*_[\]{}()#+.!|>~-])/gu, (_match, character: string) => {
+    spans.push(character);
+    return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
+  });
+  return escaped
+    .replace(INLINE_LINK, (match, label: string, href: string) => (match.startsWith("!") ? label || href : label))
+    .replace(/<br\s*\/?>/giu, "\n")
+    .replace(/<((?:https?:\/\/|mailto:)[^>]+)>/giu, "$1")
+    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/gu, "$1")
+    .replace(/(^|[^\p{L}\p{N}])__(?=\S)([\s\S]*?\S)__(?=$|[^\p{L}\p{N}])/gu, "$1$2")
+    .replace(/(^|[^\p{L}\p{N}])\*(?=\S)([\s\S]*?\S)\*(?=$|[^\p{L}\p{N}])/gu, "$1$2")
+    .replace(/(^|[^\p{L}\p{N}_])_(?=\S)([\s\S]*?\S)_(?=$|[^\p{L}\p{N}_])/gu, "$1$2")
+    .replace(/~~(?=\S)([^~]*?\S)~~/gu, "$1")
+    .replace(
+      new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
+      (_match, index: string) => spans[Number(index)] ?? "",
+    )
+    .trimEnd();
+}
+
+/**
  * One source, named so a reader can follow it on the surface it lands on.
  *
  * An external source has to carry its URL — it is the only way a reader outside
@@ -594,9 +899,10 @@ function sourceLine(label: string, target: CitationTarget, plain: boolean): stri
 /** The definitions themselves, now that their content lives in the source list. */
 function stripFootnoteDefinitions(markdown: string): string {
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
-  const code = markdownLineKinds(lines).map(isMarkdownCode);
+  const code = notificationMarkdownLineKinds(lines).map(isMarkdownCode);
   const kept: string[] = [];
   let dropping = false;
+  let definitionQuoteDepth = 0;
   for (const [index, line] of lines.entries()) {
     // Same rule as the scan: a `[^1]:` line inside code is the syntax being
     // shown, not a definition to remove.
@@ -604,12 +910,16 @@ function stripFootnoteDefinitions(markdown: string): string {
       kept.push(line);
       continue;
     }
-    if (FOOTNOTE_DEFINITION.test(line)) {
+    const contentLine = stripBlockquotePrefixes(line);
+    const quoteDepth = blockquoteDepth(line);
+    if (FOOTNOTE_DEFINITION.test(contentLine)) {
       dropping = true;
+      definitionQuoteDepth = quoteDepth;
       continue;
     }
     if (dropping) {
-      if (!line.trim() || /^(?: {4}|\t)/u.test(line)) continue;
+      if (quoteDepth === definitionQuoteDepth
+        && (!contentLine.trim() || /^(?: {4}|\t)/u.test(contentLine))) continue;
       dropping = false;
     }
     kept.push(line);
@@ -620,7 +930,9 @@ function stripFootnoteDefinitions(markdown: string): string {
 /** A footnote's own words, with the marks a plain list would show verbatim removed. */
 function plainInline(content: string, plain: boolean): string {
   return content
-    .replace(INLINE_LINK, (match, label: string, href: string) => {
+    .replace(INLINE_LINK, (match, label: string, href: string, offset: number, value: string) => {
+      const opener = offset + (match.startsWith("!") ? 1 : 0);
+      if (isMarkdownEscaped(value, opener)) return match;
       const target = parseCitationHref(href);
       if (target.scheme !== "external") return label;
       return plain ? sourceLine(label, target, true) : match;
@@ -641,6 +953,12 @@ function plainInline(content: string, plain: boolean): string {
  * model writing one cannot forge a placeholder and splice in a span of its own.
  */
 const SPAN_PLACEHOLDER = "\u0000";
+/** A separate placeholder for code spans parked across prose line boundaries. */
+const MULTILINE_SPAN_PLACEHOLDER = "\u0001";
+/** Reference scanning parks spans separately so a definition-shaped code line stays literal. */
+const REFERENCE_SPAN_PLACEHOLDER = "\u0002";
+/** The outer boundary protects inline code before citation and footnote scans run. */
+const MESSAGE_SPAN_PLACEHOLDER = "\u0003";
 
 /**
  * Applies a rewrite to everything except code.
@@ -661,9 +979,9 @@ const SPAN_PLACEHOLDER = "\u0000";
  * choosing back in.
  */
 function mapOutsideCode(markdown: string, rewrite: (segment: string) => string): string {
-  return mapMarkdownProse(markdown.replace(/\r\n/gu, "\n"), (prose) => prose.split("\n").map((line) => {
+  return mapNotificationProse(markdown.replace(/\r\n/gu, "\n"), (prose) => {
     const spans: string[] = [];
-    const parked = line.split(SPAN_PLACEHOLDER).join("").replace(INLINE_CODE_SPAN, (span) => {
+    const parked = replaceInlineCodeSpans(prose.split(SPAN_PLACEHOLDER).join(""), (span) => {
       spans.push(span);
       return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
     });
@@ -671,5 +989,109 @@ function mapOutsideCode(markdown: string, rewrite: (segment: string) => string):
       new RegExp(`${SPAN_PLACEHOLDER}(\\d+)${SPAN_PLACEHOLDER}`, "gu"),
       (_match, index: string) => spans[Number(index)] ?? "",
     );
-  }).join("\n"));
+  });
+}
+
+function mapNotificationProse(markdown: string, rewrite: (prose: string) => string): string {
+  const lines = markdown.split("\n");
+  const kinds = notificationMarkdownLineKinds(lines);
+  const runs: string[] = [];
+  let run: string[] = [];
+  let prose = true;
+  for (const [index, line] of lines.entries()) {
+    const lineIsProse = !isMarkdownCode(kinds[index]!);
+    if (lineIsProse !== prose && run.length > 0) {
+      runs.push(prose ? rewrite(run.join("\n")) : run.join("\n"));
+      run = [];
+    }
+    prose = lineIsProse;
+    run.push(line);
+  }
+  if (run.length > 0) runs.push(prose ? rewrite(run.join("\n")) : run.join("\n"));
+  return runs.join("\n");
+}
+
+/**
+ * The shared code classifier applied after removing blockquote containers.
+ *
+ * A fenced example remains code when it is quoted. Keeping this adaptation at
+ * the notification boundary avoids changing structural consumers that need the
+ * raw container markers to build their own rendered block tree.
+ */
+function notificationMarkdownLineKinds(lines: readonly string[]) {
+  let activeListFence: { readonly contentIndent: number; readonly delimiter: string } | null = null;
+  const normalized = lines.map((raw) => {
+    const line = stripBlockquotePrefixes(raw);
+    if (activeListFence) {
+      const content = stripListContinuationIndent(line, activeListFence.contentIndent);
+      const closing = /^ {0,3}(`{3,}|~{3,})/u.exec(content)?.[1];
+      if (closing?.startsWith(activeListFence.delimiter[0]!)
+        && closing.length >= activeListFence.delimiter.length) activeListFence = null;
+      return content;
+    }
+    const opening = listFenceOpening(line);
+    if (!opening) return line;
+    activeListFence = { contentIndent: opening.contentIndent, delimiter: opening.delimiter };
+    return opening.content;
+  });
+  return markdownLineKinds(normalized);
+}
+
+function listFenceOpening(line: string): {
+  readonly content: string;
+  readonly contentIndent: number;
+  readonly delimiter: string;
+} | null {
+  const match = /^(\s*)(?:[-+*]|\d{1,3}[.)])([ \t]+)(`{3,}|~{3,})(.*)$/u.exec(line);
+  if (!match) return null;
+  const delimiter = match[3]!;
+  if (delimiter.startsWith("`") && match[4]!.includes("`")) return null;
+  return {
+    content: `${delimiter}${match[4]!}`,
+    contentIndent: match[0]!.indexOf(delimiter),
+    delimiter,
+  };
+}
+
+function stripListContinuationIndent(line: string, width: number): string {
+  let index = 0;
+  let removed = 0;
+  while (index < line.length && removed < width) {
+    if (line[index] === " ") {
+      removed += 1;
+      index += 1;
+      continue;
+    }
+    if (line[index] === "\t") {
+      removed += 4;
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return removed >= width ? line.slice(index) : line;
+}
+
+function blockquoteDepth(line: string): number {
+  let depth = 0;
+  let rest = line;
+  while (depth < line.length) {
+    const prefix = /^ {0,3}>[ \t]?/u.exec(rest)?.[0];
+    if (!prefix) return depth;
+    depth += 1;
+    rest = rest.slice(prefix.length);
+  }
+  return depth;
+}
+
+function stripBlockquotePrefixes(line: string, maximum = Number.POSITIVE_INFINITY): string {
+  let depth = 0;
+  let rest = line;
+  while (depth < maximum) {
+    const prefix = /^ {0,3}>[ \t]?/u.exec(rest)?.[0];
+    if (!prefix) break;
+    depth += 1;
+    rest = rest.slice(prefix.length);
+  }
+  return rest;
 }
