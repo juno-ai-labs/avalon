@@ -1,3 +1,4 @@
+import { rpcResultBody } from "../durable-objects/rpc-result";
 import { Preparation } from "./harness-preparation";
 import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId,
@@ -84,7 +85,7 @@ export class AgentCommunicationService {
         throw error;
       });
     const child = await this.conversation(childId);
-    const boot = await child.initializeDelegatedAgent({ bootstrap: { workspaceId: this.input.workspaceId, parentKind: this.input.parentKind,
+    const initialized = await child.initializeDelegatedAgent({ bootstrap: { workspaceId: this.input.workspaceId, parentKind: this.input.parentKind,
       parentId: this.input.parentId, substreamId: asSubstreamId(id), generation: reservation.authorityGeneration }, provision: {
       title: args.name, objective: args.description, scope: identity.scope,
       createdByUserId: identity.created_by_user_id,
@@ -92,7 +93,12 @@ export class AgentCommunicationService {
       harnessStatus: "idle", titleStatus: "settled", emailAddress: null, emailRouteStatus: null,
       systemKind: null, modelOverride: identity.model_override, now: Date.now(),
     }, executionPrincipal: this.input.executionPrincipal });
-    if (boot.status !== 200) throw new AgentCommunicationError("agent_bootstrap_failed");
+    if (initialized.status !== 200) {
+      const body = rpcResultBody(initialized);
+      const code = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+        ? body.error : "agent_initialization_failed";
+      throw new AgentCommunicationError(code);
+    }
     const teamId = await teamPromise;
     const registered = await (await this.workspace()).registerAgentDelegation({ workspaceId: this.input.workspaceId,
       teamId, ownerAgentId: this.senderId, agentId: childId });
