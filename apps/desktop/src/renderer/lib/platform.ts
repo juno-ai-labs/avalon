@@ -568,6 +568,20 @@ export function desktopBridge(): RallyDesktopBridge {
   throw new Error('Rally desktop services did not load. Reopen the application.');
 }
 
+let runtimeConfigPromise: Promise<RuntimeConfig> | null = null;
+
+/**
+ * One `getRuntimeConfig()` for the window. Platform cannot change for the
+ * life of the process, so each feed body must not open its own IPC.
+ */
+export function desktopRuntimeConfig(): Promise<RuntimeConfig> {
+  runtimeConfigPromise ??= desktopBridge().getRuntimeConfig().catch((error: unknown) => {
+    runtimeConfigPromise = null;
+    throw error;
+  });
+  return runtimeConfigPromise;
+}
+
 /**
  * Whether the privileged bridge is actually there. Only for affordances that a
  * browser cannot honour at all — saving a file to a chosen place is the one — so

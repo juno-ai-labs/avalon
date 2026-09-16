@@ -78,7 +78,10 @@ export function SpeechPlaybackProvider({ api, children, createPlayer = createPcm
         ]);
         await player.play(stream);
       } catch (error) {
-        if (!abort.signal.aborted) logError('rally', 'could not speak this message', error);
+        if (!abort.signal.aborted) {
+          abort.abort('speech playback failed');
+          logError('rally', 'could not speak this message', error);
+        }
       } finally {
         if (activeRef.current === active) {
           activeRef.current = null;

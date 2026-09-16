@@ -33,6 +33,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  ShareMenu,
   net,
   nativeImage,
   nativeTheme,
@@ -3314,7 +3315,9 @@ function registerIpc(): void {
   ipcMain.handle('system:share-text', (event, text: unknown) => {
     assertTrustedIpcSender(event);
     shareText(process.platform, text, {
-      buildMenu: (template) => Menu.buildFromTemplate(template),
+      popupShare: (sharingItem, window) => {
+        new ShareMenu(sharingItem).popup(window ? { window } : undefined);
+      },
       window: BrowserWindow.fromWebContents(event.sender),
     });
   });
