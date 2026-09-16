@@ -170,18 +170,15 @@ captions and shrink to the work-stream rows' 54px square with 9px padding and
 The tiles change shape over the sidebar's own collapse motion, so they arrive
 with the edge rather than a frame ahead of it. Enabled means lifecycle
 `active`, not a run currently in progress and not the stored `loadable` capability.
-Draft, paused, and workstream-owned Sidekicks are excluded. A workspace that has
-**no Sidekick of any kind** gets one **New Sidekick** tile in the strip instead,
-which opens the library window on `/sidekicks/new`. That is a stricter test than
-"nothing qualifies for the strip", deliberately: `/sidekicks/new` creates a draft
-as it opens, so a tile keyed on the strip being empty would still be on screen
-afterwards and would create another draft on every press, and it would also tell
-somebody whose Sidekicks are all paused that they have none. A workspace with
-only drafts, paused, or workstream-owned Sidekicks therefore sees no strip at
-all, as it did before the tile existed; those are reached from the library. The
-strip is likewise absent while the workspace answer carrying the Sidekicks has
-not arrived, which the list itself reports by being `undefined` rather than
-empty. Each tile reuses the rounded hexagon, stable identity
+Draft, paused, and workstream-owned Sidekicks are excluded. A workspace with
+**no active personal or workspace Sidekick** gets one **New Sidekick** tile in
+the strip instead, which opens the library window on `/sidekicks/new`. Draft,
+paused, and workstream-owned Sidekicks remain reachable from the library, but
+they do not occupy this strip; if they are the only Sidekicks available, the
+new-Sidekick tile keeps the sidebar from leaving the slot blank. The strip is
+absent while the workspace answer carrying the Sidekicks has not arrived, which
+the list itself reports by being `undefined` rather than empty. Each tile reuses
+the rounded hexagon, stable identity
 color, and centered symbol introduced for automation shortcuts. A running
 Sidekick — lifecycle `active`, which is every Sidekick the strip shows — carries
 a **play** in `success-base` at the bottom right, cut out of the hexagon's own
@@ -747,6 +744,34 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-15 — The empty Sidekick slot stays visible until an active shortcut occupies it
+
+**What changed:** The sidebar shows its dashed **New Sidekick** tile whenever
+the loaded Sidekick directory has no active personal or workspace Sidekick.
+Draft, paused, and workstream-owned Sidekicks still do not become shortcuts,
+but they no longer suppress the empty-slot action and leave this part of the
+sidebar blank.
+
+**Why:** The strip is a visual slot for active standalone Sidekicks. Basing its
+empty state on whether any Sidekick record existed made a draft count as though
+it occupied that slot even though drafts are deliberately filtered from the
+strip. The result was neither a shortcut nor an action. The slot's own occupancy
+is the smaller and more legible authority for whether to show its empty state.
+The same rule deliberately applies to a paused-only workspace: the tile names
+the empty active-shortcut slot, not the absence of every Sidekick, and a blank
+slot was judged less useful than keeping the library entry point available.
+
+**Consequences:** The tile remains absent while the directory is loading and
+disappears as soon as one active standalone Sidekick can occupy the strip.
+When a personal draft already exists, the tile resumes the most recently
+updated one rather than routing through `/sidekicks/new` and multiplying
+abandoned drafts. A workspace draft is not a resume candidate because the
+directory summary proves visibility but not whether this viewer may manage it;
+with only workspace drafts, paused, or workstream-owned Sidekicks the tile still
+opens `/sidekicks/new`. This reverses the stricter record-existence rule
+documented by the 2026-09-10 **The empty strip makes the first Sidekick** entry
+below.
 
 ### 2026-09-15 — A rule can name Fireflies
 
