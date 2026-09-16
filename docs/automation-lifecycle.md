@@ -764,11 +764,14 @@ slot was judged less useful than keeping the library entry point available.
 
 **Consequences:** The tile remains absent while the directory is loading and
 disappears as soon as one active standalone Sidekick can occupy the strip.
-When a standalone draft already exists, the tile resumes the most recently
-updated draft rather than routing through `/sidekicks/new` and multiplying
-abandoned drafts. With only paused or workstream-owned Sidekicks it still opens
-`/sidekicks/new`. This reverses the stricter record-existence rule documented by
-the 2026-09-10 **The empty strip makes the first Sidekick** entry below.
+When a personal draft already exists, the tile resumes the most recently
+updated one rather than routing through `/sidekicks/new` and multiplying
+abandoned drafts. A workspace draft is not a resume candidate because the
+directory summary proves visibility but not whether this viewer may manage it;
+with only workspace drafts, paused, or workstream-owned Sidekicks the tile still
+opens `/sidekicks/new`. This reverses the stricter record-existence rule
+documented by the 2026-09-10 **The empty strip makes the first Sidekick** entry
+below.
 
 ### 2026-09-15 — A rule can name Fireflies
 

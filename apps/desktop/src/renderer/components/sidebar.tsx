@@ -1175,8 +1175,8 @@ export function Sidebar({
   const onNewStreamRoute = location.pathname === '/workstreams/new';
   const standaloneSidekicks = useMemo(() => (automations ?? []).filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'active'), [automations]);
   const sidekickShortcutsLoaded = automations !== undefined;
-  const resumableDraft = useMemo(() => (automations ?? [])
-    .filter((sidekick) => sidekick.scope !== 'workstream' && sidekick.status === 'draft')
+  const resumablePersonalDraft = useMemo(() => (automations ?? [])
+    .filter((sidekick) => sidekick.scope === 'you' && sidekick.status === 'draft')
     .reduce<AutomationSummary | undefined>((latest, sidekick) => {
       if (!latest) return sidekick;
       const recency = sidekick.updatedAt.localeCompare(latest.updatedAt);
@@ -1680,7 +1680,7 @@ export function Sidebar({
     >
       {standaloneSidekicks.length > 0
         ? standaloneSidekicks.map((sidekick) => <SidekickTile key={sidekick.id} sidekick={sidekick} />)
-        : <NewSidekickTile target={resumableDraft?.id ?? NEW_SIDEKICK_TARGET} />}
+        : <NewSidekickTile target={resumablePersonalDraft?.id ?? NEW_SIDEKICK_TARGET} />}
     </section>
   );
 
