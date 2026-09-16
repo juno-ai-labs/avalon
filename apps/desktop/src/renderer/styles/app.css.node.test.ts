@@ -553,6 +553,80 @@ describe('clipped lines in both navigation rails', () => {
   });
 });
 
+/**
+ * The work-stream list, the work-stream sidebar, and the Sidekick strip fade
+ * their overflowing edges the same way a clipped line does — and only those
+ * edges, only when they overflow. jsdom lays nothing out, so the condition
+ * lives entirely in these declarations.
+ */
+describe('clipped scroll edges on both navigation rails', () => {
+  const BLOCK_SCROLLERS = ':is(.sidebar-scroll, .workstream-context-scroll)';
+  const INLINE_SCROLLER = '.sidebar .sidebar-automation-strip';
+  const COVER = 'clipped-scroll-fade-block linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both';
+  const INLINE_COVER = 'clipped-scroll-fade-inline linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both';
+
+  function fadeRule(selector: string): string {
+    const declarations = rule(selector);
+    expect(declarations, selector).not.toBeNull();
+    return declarations!;
+  }
+
+  it('fades the work-stream scrollers from their own block overflow', () => {
+    const fade = fadeRule(BLOCK_SCROLLERS);
+
+    expect(fade).toContain('scroll-padding-block: 24px;');
+    expect(fade).toContain(`animation: ${COVER};`);
+    const shorthand = fade.indexOf('animation: clipped-scroll-fade-block');
+    expect(fade.indexOf('animation-duration: auto, auto, auto;')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-timeline: scroll(self block), scroll(self block), scroll(self block);')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-range: normal, 0px 24px, calc(100% - 24px) 100%;')).toBeGreaterThan(shorthand);
+  });
+
+  it('fades the Sidekick strip from its own inline overflow', () => {
+    const fade = fadeRule(INLINE_SCROLLER);
+
+    expect(fade).toContain('scroll-padding-inline: 24px;');
+    expect(fade).toContain(`animation: ${INLINE_COVER};`);
+    const shorthand = fade.indexOf('animation: clipped-scroll-fade-inline');
+    expect(fade.indexOf('animation-duration: auto, auto, auto;')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-timeline: scroll(self inline), scroll(self inline), scroll(self inline);')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-range: normal, 0px 24px, calc(100% - 24px) 100%;')).toBeGreaterThan(shorthand);
+  });
+
+  it('holds one mask on the cover, and moves only the near and far lengths', () => {
+    const block = stylesheet.match(/@keyframes clipped-scroll-fade-block \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+    const inline = stylesheet.match(/@keyframes clipped-scroll-fade-inline \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+    const start = stylesheet.match(/@keyframes clipped-scroll-fade-start \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+    const end = stylesheet.match(/@keyframes clipped-scroll-fade-end \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+
+    expect(block).toContain('0%, 100% {');
+    expect(block).toContain('#000 var(--clipped-scroll-fade-start)');
+    expect(block).toContain('#000 calc(100% - var(--clipped-scroll-fade-end))');
+    expect(block).toContain('to bottom');
+    expect(inline).toContain('to right');
+    expect(start).toContain('--clipped-scroll-fade-start: 0px;');
+    expect(start).toContain('--clipped-scroll-fade-start: 24px;');
+    expect(end).toContain('--clipped-scroll-fade-end: 24px;');
+    expect(end).toContain('--clipped-scroll-fade-end: 0px;');
+  });
+
+  it('registers the fade lengths so they interpolate as lengths', () => {
+    expect(rule('@property --clipped-scroll-fade-start')).toContain("syntax: '<length>';");
+    expect(rule('@property --clipped-scroll-fade-start')).toContain('inherits: false;');
+    expect(rule('@property --clipped-scroll-fade-start')).toContain('initial-value: 0px;');
+    expect(rule('@property --clipped-scroll-fade-end')).toContain("syntax: '<length>';");
+    expect(rule('@property --clipped-scroll-fade-end')).toContain('initial-value: 0px;');
+  });
+
+  it('keeps the scroll-edge durations on the scroller timeline under reduced motion', () => {
+    const restore = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\*,\s*\*::before,\s*\*::after \{[\s\S]*?:is\(\.sidebar-scroll, \.workstream-context-scroll\), \.sidebar \.sidebar-automation-strip \{([^}]*)\}/u,
+    )?.[1] ?? null;
+
+    expect(restore).toContain('animation-duration: auto !important;');
+  });
+});
+
 /** The declarations inside one rule within an already bounded stylesheet fragment. */
 function ruleWithin(source: string, selector: string): string | null {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
