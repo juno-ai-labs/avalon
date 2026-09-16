@@ -26,6 +26,9 @@
  *   arrives as a broken image and a grounded answer as a page of `[^1]` markers.
  */
 
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { isMarkdownCode, mapMarkdownProse, markdownLineKinds } from "./markdown-code";
 
 /** A citation target, once the scheme allowlist has decided what it is. */
@@ -108,6 +111,16 @@ export interface PersonMentionMarkdownRange {
   readonly endOffset: number;
 }
 
+interface PositionedMarkdownNode {
+  readonly type: string;
+  readonly url?: unknown;
+  readonly children?: readonly PositionedMarkdownNode[];
+  readonly position?: {
+    readonly start: { readonly offset?: number };
+    readonly end: { readonly offset?: number };
+  };
+}
+
 /**
  * Identity-bearing person links in rendered Markdown prose, with exact source
  * offsets. Code examples are not mentions: fenced, indented and inline code
@@ -117,27 +130,24 @@ export interface PersonMentionMarkdownRange {
  * still resolve `personId` against its own current participant set.
  */
 export function personMentionMarkdownRanges(markdown: string): PersonMentionMarkdownRange[] {
-  const lines = markdown.split("\n");
-  const kinds = markdownLineKinds(lines);
   const ranges: PersonMentionMarkdownRange[] = [];
-  let documentOffset = 0;
-  for (const [lineIndex, line] of lines.entries()) {
-    if (!isMarkdownCode(kinds[lineIndex]!)) {
-      const codeSpans = [...line.matchAll(new RegExp(INLINE_CODE_SPAN.source, INLINE_CODE_SPAN.flags))]
-        .map((match) => ({ start: match.index, end: match.index + match[0].length }));
-      for (const match of line.matchAll(personMentionMarkdownPattern())) {
-        const start = match.index;
-        const end = start + match[0].length;
-        if (codeSpans.some((span) => start < span.end && end > span.start)) continue;
-        ranges.push({
-          personId: match[2]!.toLowerCase(),
-          startOffset: documentOffset + start,
-          endOffset: documentOffset + end,
-        });
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown) as PositionedMarkdownNode;
+  const visit = (node: PositionedMarkdownNode): void => {
+    if (node.type === "link" && typeof node.url === "string") {
+      const personId = personIdFromMentionHref(node.url);
+      const startOffset = node.position?.start.offset;
+      const endOffset = node.position?.end.offset;
+      if (personId !== undefined && startOffset !== undefined && endOffset !== undefined) {
+        const source = markdown.slice(startOffset, endOffset);
+        const match = [...source.matchAll(personMentionMarkdownPattern())][0];
+        if (match?.index === 0 && match[0].length === source.length && match[2]?.toLowerCase() === personId) {
+          ranges.push({ personId, startOffset, endOffset });
+        }
       }
     }
-    documentOffset += line.length + (lineIndex < lines.length - 1 ? 1 : 0);
-  }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
   return ranges;
 }
 

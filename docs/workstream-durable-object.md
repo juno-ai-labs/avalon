@@ -173,7 +173,10 @@ an identity but cannot grant access or resurrect a removed participant. Mention
 rows, attention order, member mention state, semantic realtime, and regional
 viewer/activity effects commit with the assistant transition. Because Rally is
 the actor rather than a user identity, this path does not fabricate a human
-author for sender-attributed email or push notification.
+author for sender-attributed email or push notification. Attention order is
+conversation-wide: a Rally reply that contains an authoritative mention marks
+the thread unread for participants whose seen waterline is behind, while only
+the named participant receives the mention badge.
 
 Every Bind transition is committed before the adapter returns the accepted
 assistant or tool-result message to Bind. At every provider boundary the host
@@ -1629,7 +1632,10 @@ only a candidate. The conversation object is the authority that validates
 current participation and commits all mention state with the accepted turn.
 Removed and unknown identities, malformed links, and links shown as code stay
 plain text. Rally-authored mentions produce mention state and activity targeting
-without inventing a human sender for sender-attributed notifications.
+without inventing a human sender for sender-attributed notifications. Because
+the attention ordinal is conversation-wide, such a reply advances the thread's
+unread waterline for every participant; the mention waterline remains specific
+to the named participant.
 
 ### 2026-09-14 — Keep slowdown notices scoped to a live inference
 

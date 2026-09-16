@@ -133,6 +133,31 @@ describe("person mention hrefs", () => {
       },
     ]);
   });
+
+  it("matches the rendered link grammar before granting a person range", () => {
+    const link = `[@Ada](person://${id})`;
+    const nested = `Plan:\n\n1. First\n\n    - Ask ${link}`;
+
+    expect(personMentionMarkdownRanges(`Write \\${link} to show syntax.`)).toEqual([]);
+    expect(personMentionMarkdownRanges(`!${link}`)).toEqual([]);
+    expect(personMentionMarkdownRanges(`Use \`\` ${link} \`\` here.`)).toEqual([]);
+    expect(personMentionMarkdownRanges(nested)).toEqual([{
+      personId: id,
+      startOffset: nested.indexOf(link),
+      endOffset: nested.indexOf(link) + link.length,
+    }]);
+  });
+
+  it("locates a canonical person link whose label wraps a line", () => {
+    const link = `[@Ada\nLovelace](person://${id})`;
+    const markdown = `Ask ${link} please.`;
+
+    expect(personMentionMarkdownRanges(markdown)).toEqual([{
+      personId: id,
+      startOffset: markdown.indexOf(link),
+      endOffset: markdown.indexOf(link) + link.length,
+    }]);
+  });
 });
 
 describe("connector mention hrefs", () => {
