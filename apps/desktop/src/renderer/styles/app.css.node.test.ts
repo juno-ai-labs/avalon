@@ -34,6 +34,14 @@ describe('connections table', () => {
     expect(rule('.connection-provider-dot.healthy')).not.toContain('success-base');
   });
 
+  it('puts each Manage events button beside its own caption and spaces the groups apart', () => {
+    // One column of equally spaced lines put "Test checks access…" as close
+    // to Get help below it as to Test above it.
+    expect(rule('.installation-action')).toContain('grid-template-columns: auto minmax(0, 1fr);');
+    expect(rule('.installation-panel')).toContain('gap: 20px;');
+    expect(rule('.installation-actions')).toContain('gap: 10px;');
+  });
+
   it('colours the Test verdict by its outcome', () => {
     expect(rule('.connection-test-outcome.is-passed')).toContain('var(--av-sys-color-success-');
     expect(rule('.connection-test-outcome.is-failed')).toContain('var(--av-sys-color-danger-');
