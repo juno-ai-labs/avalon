@@ -391,7 +391,10 @@ three-stop far-fade into a three-stop near-fade does not produce both fades in
 the middle. Those two animations are clocks, so the global reduced-motion kill
 switch would pin them at their 100% keyframes; their durations stay `auto`
 under that preference, restored next to the kill switch, because a fade that
-says "there is more this way" is not motion.
+says "there is more this way" is not motion. The mask does not spare a focus
+ring, so the same 24px is `scroll-padding` on each scroller: Tab and the rail's
+own `scrollIntoView({ block: 'nearest' })` would otherwise park a row flush
+with the faded edge.
 
 The fade appears only where something is actually clipped, and nothing measures
 anything to decide that. The mask rides a scroll-driven animation whose timeline
@@ -695,7 +698,10 @@ list to a leading fade and no trailing one. `animation-range` joins
 `animation-duration` and `animation-timeline` below the shorthand; a reorder
 that looks like tidying reintroduces an unconditional fade. Do not paint a
 gradient over the scroller: these rows carry three fills, and an overlay
-matched to one is a bar in the other two.
+matched to one is a bar in the other two. `scroll-padding` of the same 24px
+keeps a focused row out of the mask band; without it, Tab and
+`scrollIntoView({ block: 'nearest' })` fade the indicator they just scrolled
+into view.
 
 Shipped in #803.
 
