@@ -62,25 +62,30 @@ and Rally keeps running unchanged when Flagship is unreachable.
 
 ### One flag per agent
 
-Each model-using agent type uses a flag keyed `agent-model-<agent>`. Background
-agents use the work-stream agent type and inherit the source conversation's
-model override:
+Each adjustable model-using agent type uses a flag keyed
+`agent-model-<agent>`. Background agents use the work-stream agent type and
+inherit the source conversation's model override:
 
 | Agent | Flag key | Default model | Fallback models |
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
-The work-stream entry matches the `AgentInferenceSource` value written to the
+Message addressing is deliberately absent from this table and from Ace. Its
+evaluated cascade fixes JEV as primary and
+`deepseek/deepseek-v4-flash-0731` through `wafer/fast` as the low-reasoning
+fallback, with no model or provider fallbacks. Changing either side requires a
+new evaluation and deploy; leaving an editable Flagship value in front of the
+measured route would let production silently diverge from its evidence. The
+work-stream entry matches the `AgentInferenceSource` value written to the
 inference ledger, so a ledger row and its flag key name the same agent; an
 automation run and the conversation that drafts one are `workstream` runs on
 the work-stream agent's flag. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness classifier helper; work-stream naming, the two halves of suggested work, and the
+agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
 Durable-memory query and document embeddings use the same gateway's native
 OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
@@ -1087,6 +1092,28 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-09-17 — Addressing leaves the model-flag catalog
+
+**What changed:** Message addressing no longer has an
+`agent-model-addressing-classifier` Flagship role, Worker model variable, Ace
+editor row, or provisioning entry. The agent harness owns one fixed JEV primary
+and exact DeepSeek/`wafer/fast` fallback as a single measured cascade.
+
+**Why:** The JEV request, `0.5` threshold, fallback model, provider, and low
+reasoning effort were evaluated together. Keeping only the fallback model
+editable would make the operator surface claim a supported degree of freedom
+that invalidates the accuracy and latency evidence behind the cascade.
+
+**Considered and rejected:** Retaining a disabled or empty-default flag for
+emergency substitution. An emergency edit would still create an unmeasured
+route, while provider failures already take the explicit fallback path and a
+real model change can ship as one reviewed constant after evaluation.
+
+**Consequences:** Existing remote copies of the retired flag are inert and may
+be deleted independently; runtime code never evaluates them. Ace catalog parity
+now guards only genuinely adjustable roles, and addressing model changes require
+an eval-backed code change.
 
 ### 2026-09-14 — Retire built-in meeting controls
 

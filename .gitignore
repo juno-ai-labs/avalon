@@ -1,5 +1,6 @@
 .env
 .env.local
+packages/agent-harness/evals/addressing/results/
 .dev.vars
 .dev.vars.*
 node_modules/

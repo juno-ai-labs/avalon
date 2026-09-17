@@ -170,14 +170,13 @@ describe('Ace managed model protocol', () => {
   it('catalogs every model-using role with its concrete Flagship key', () => {
     expect(MANAGED_MODELS.map(({ role, key }) => ({ role, key }))).toEqual([
       { role: 'workstream', key: 'agent-model-workstream' },
-      { role: 'addressing_classifier', key: 'agent-model-addressing-classifier' },
       { role: 'inline_child', key: 'agent-model-inline-child' },
       { role: 'workstream_description', key: 'agent-model-workstream-description' },
       { role: 'workstream_naming', key: 'agent-model-workstream-naming' },
       { role: 'work_opportunity_admission', key: 'agent-model-work-opportunity-admission' },
       { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
     ]);
-    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);
@@ -207,7 +206,6 @@ describe('Ace managed model protocol', () => {
     expect(AZURE_ROUTED_MODEL_ROLES).toEqual(['inline_child']);
     expect(modelChoicesForRole('inline_child')).toContain(GPT_5_6_SOL_MODEL_ID);
     expect(modelChoicesForRole('workstream')).not.toContain(GPT_5_6_SOL_MODEL_ID);
-    expect(modelChoicesForRole('addressing_classifier')).not.toContain(GPT_5_6_SOL_MODEL_ID);
 
     expect(ManagedModelUpdateSchema.safeParse({
       role: 'inline_child',
