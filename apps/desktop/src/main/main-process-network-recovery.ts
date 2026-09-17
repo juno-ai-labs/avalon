@@ -2,10 +2,18 @@ export const ELECTRON_CONNECTION_RESET = 'ERR_CONNECTION_RESET' as const;
 
 export type MainProcessFatalOrigin = 'uncaughtException' | 'unhandledRejection';
 
-interface MainProcessNetworkRecoveryDependencies {
+export interface MainProcessNetworkRecoveryDependencies {
   readonly recovered: (error: Error, code: typeof ELECTRON_CONNECTION_RESET) => void;
   readonly reportFatal: (error: Error, origin: MainProcessFatalOrigin) => void;
   readonly deferFatal: (fatal: () => never) => void;
+}
+
+interface MainProcessExceptionEvents {
+  on(
+    event: 'uncaughtExceptionMonitor',
+    listener: (error: Error, origin: MainProcessFatalOrigin) => void,
+  ): unknown;
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): unknown;
 }
 
 function errorCode(error: Error): string | null {
@@ -81,4 +89,19 @@ export class MainProcessNetworkRecovery {
     this.deferredFatals.delete(error);
     return true;
   }
+}
+
+/** Register the paired rejection and fatal-monitor boundaries exactly once. */
+export function installMainProcessNetworkRecovery(
+  events: MainProcessExceptionEvents,
+  dependencies: MainProcessNetworkRecoveryDependencies,
+): void {
+  const recovery = new MainProcessNetworkRecovery();
+  events.on('uncaughtExceptionMonitor', (error, origin) => {
+    if (recovery.consumeDeferredFatal(error)) return;
+    dependencies.reportFatal(error, origin);
+  });
+  events.on('unhandledRejection', (reason) => {
+    recovery.handleUnhandledRejection(reason, dependencies);
+  });
 }
