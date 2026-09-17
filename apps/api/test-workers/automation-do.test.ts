@@ -1256,7 +1256,8 @@ describe("AutomationDO", () => {
     // A Granola note reaches the workspace as `note.access_granted` when it
     // is shared and as `note.generated` when its summary is written, in
     // either order; the connector keys both on the note and the Sidekick runs
-    // for the note once. An event that names no usable key admits on its id.
+    // for the note once. An event that names no key admits on its id, in a
+    // key space a named one cannot reach.
     await seedSlackConnection();
     await createDraft();
     await submit();
@@ -1276,9 +1277,9 @@ describe("AutomationDO", () => {
       payloadHash: `sha256:${"b".repeat(64)}`,
     };
     const occurrenceKey = "granola:connection:note:not_1234567890abcd:transcript";
-    const shared = { ...base, id: "00000000-0000-7000-8000-00000000ad62", eventSequence: 2, metadata: { occurrenceKey } };
-    const generated = { ...base, id: "00000000-0000-7000-8000-00000000ad63", eventSequence: 3, metadata: { occurrenceKey } };
-    const unnamed = { ...base, id: "00000000-0000-7000-8000-00000000ad64", eventSequence: 4, metadata: { occurrenceKey: "  " } };
+    const shared = { ...base, id: "00000000-0000-7000-8000-00000000ad62", eventSequence: 2, metadata: {}, occurrenceKey };
+    const generated = { ...base, id: "00000000-0000-7000-8000-00000000ad63", eventSequence: 3, metadata: {}, occurrenceKey };
+    const unnamed = { ...base, id: "00000000-0000-7000-8000-00000000ad64", eventSequence: 4, metadata: { occurrenceKey } };
 
     expect(await automationStub().admitExternalEvent({ ...admission, event: shared }))
       .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
@@ -1286,10 +1287,11 @@ describe("AutomationDO", () => {
       .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_replayed" });
     expect(await automationStub().admitExternalEvent({ ...admission, event: unnamed }))
       .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
-    expect((await runRows()).map((run) => run.occurrence_key)).toEqual([
-      `external:${occurrenceKey}`,
+    // Two runs admitted in the same millisecond have no order to assert.
+    expect((await runRows()).map((run) => run.occurrence_key).sort()).toEqual([
       `external:${unnamed.id}`,
-    ]);
+      `occurrence:${occurrenceKey}`,
+    ].sort());
   });
 
   it("names the offending field when an admission is refused across the RPC boundary", async () => {

@@ -699,7 +699,7 @@ Granola has two intentionally separate connection modes. A personal connection u
 
 A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events — the three events Granola's API defines; a regenerated summary arrives as `note.edited`, and a verified delivery naming any other event is refused with 400 `unsupported_webhook_event`. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting immediately disables local access and queues removal of the exact recorded remote endpoint. Pending cleanup retains separate encrypted removal authority; repeated disconnect does not erase it. Test and disconnect adopt an existing connection without changing its subscription, destination or signing secret. A workspace connection whose webhook endpoint was never registered, no longer exists, or is disabled reports healthy with a warning naming the condition, because its read tools work; delivery is restored only through Test and the installation lifecycle, never by the health check.
 
-Granola sends `note.generated` only when a note's first summary is written while the workspace endpoint can already read the note, and a workspace endpoint reads public workspace notes and spaces with API access turned on. A note generated in a person's own space and moved into a shared folder afterwards — the ordinary way a note reaches one, because a note cannot be started inside a team space — arrives as `note.access_granted` instead, and Granola never sends the other. So the ingress asks Granola for the note before storing anything: when its summary exists, a `note.generated` activity is stored beside the share, from the same delivery and payload with its own dedupe key and `derivedFrom` naming the share, and a Sidekick whose trigger is "Transcript added" runs for it. Both that derived event and the `note.generated` Granola sends itself carry an `occurrenceKey` in their metadata naming the note, and a Sidekick admits an external event under that key when one is present, so a note reported twice — shared before its summary existed, or moved between two shared folders — runs once. A share of a note whose summary does not exist yet derives nothing, because Granola will send `note.generated` when the summary is written; a note the workspace key cannot read (403 or 404) derives nothing either; and a share Granola will not answer about in time is reported anyway, marked `summaryVerified: false` in its metadata and by a `granola_shared_note_lookup_failed` warning, because a run that finds no summary says so and a share nobody hears about says nothing. The read is bounded to eight seconds inside Granola's fifteen-second delivery window. `note.access_granted` remains a trigger of its own, labelled "Note shared", for a person who asks for every share.
+Granola sends `note.generated` only when a note's first summary is written while the workspace endpoint can already read the note, and a workspace endpoint reads public workspace notes and spaces with API access turned on. A note generated in a person's own space and moved into a shared folder afterwards — the ordinary way a note reaches one, because a note cannot be started inside a team space — arrives as `note.access_granted` instead, and Granola never sends the other. So the ingress asks Granola for the note before storing anything: when its summary exists, a `note.generated` activity is stored beside the share, from the same delivery and payload with its own dedupe key and `derivedFrom` naming the share, and a Sidekick whose trigger is "Transcript added" runs for it. Both that derived event and the `note.generated` Granola sends itself carry an occurrence key naming the note — `occurrenceKey`, a field of the normalized activity that adapter code sets and namespaces by provider and connection, which the workspace store lifts onto the delivery as its own field and never from provider metadata, so no payload can plant one — and a Sidekick admits an external event under that key when one is present, so a note reported twice — shared before its summary existed, or moved between two shared folders — runs once. A share of a note whose summary does not exist yet derives nothing, because Granola will send `note.generated` when the summary is written; a note the workspace key cannot read (401, 403 or 404) derives nothing either and is logged as `connector_webhook_derive_refused` with the status; and a share Granola will not answer about — a timeout, a 5xx, a note shape this connector does not recognise — is reported anyway, marked `summaryVerified: false` in its metadata and logged as `connector_webhook_derive_unverified` with the failure code, but under its own delivery's identity rather than the note's key, so the `note.generated` Granola may still send for it is not turned into a replay. Every outcome that stores nothing has its own word in the wrapper's log (`pending_summary`, `unreadable`, `credential_unavailable`, `not_applicable`). Rally sets no deadline of its own on that read: `WEBHOOK_DERIVE_TIMEOUT_MS` is open until the team sets it, and Granola allows fifteen seconds for the whole delivery and retries one that overruns it. `note.access_granted` remains a trigger of its own, labelled "Note shared", for a person who asks for every share.
 
 The workspace key and webhook signing secret are encrypted in the owning
 WorkspaceDO connector row with AES-GCM and connection-ID additional
@@ -1204,19 +1204,27 @@ fixture table instead, where it is reviewable.
 ### 2026-09-17 — A note shared into the workspace after it was generated is a transcript added
 
 **What changed:** A Granola `note.access_granted` delivery on a workspace
-connection now asks Granola for the note before anything is stored. When the
-note's summary exists, the ingress stores a `note.generated` activity beside
+connection now asks Granola for the note before any activity row exists. When
+the note's summary exists, the ingress stores a `note.generated` activity beside
 the share — same delivery, same payload, its own dedupe key, `derivedFrom`
 naming the share — and a Sidekick whose trigger is "Transcript added" runs for
 it. That derived event and the `note.generated` Granola sends itself both carry
-an `occurrenceKey` naming the note, and a Sidekick admits an external event
-under that key when one is present, so a note reported twice runs once. The
+an occurrence key naming the note, and a Sidekick admits an external event under
+that key when one is present, so a note reported twice runs once. The key is a
+field of the normalized activity that adapter code sets, namespaced by provider;
+the workspace store drops a same-named key from provider metadata at ingest and
+lifts only the activity's own onto the delivery, in a key space
+(`occurrence:<key>`) an event id's (`external:<id>`) cannot reach. A transcript
+reported on a read Granola did not answer carries no key, so the
+`note.generated` Granola may still send is not turned into a replay. The
 trigger descriptions say what each Granola event now means; `note.access_granted`
 stays available, labelled "Note shared", for a person who asks for every share.
-The webhook source interface gains an optional `derive`, and the observability
-wrapper carries it through: that wrapper is the only copy of a source the host
-ever sees, and it rebuilt the source by naming `verify` and `normalize` — the
-first `derive` existed in the adapter and nowhere the ingress could reach it.
+The webhook source interface gains an optional `derive` that answers with the
+activities it decided and the outcome by name, honoured by every ingress that
+persists through the workspace object, and the observability wrapper carries
+it through: that wrapper is the only copy of a source the host ever sees, and
+it rebuilt the source by naming `verify` and `normalize` — the first `derive`
+existed in the adapter and nowhere the ingress could reach it.
 
 **Why:** Granola sends `note.generated` only while the endpoint can read the
 note. Notes start in a person's own space and are moved into a shared folder
@@ -1236,13 +1244,25 @@ drafting model to pick the family. Sidekicks already active keep their single
 event until re-drafted, and a person who says "when a note is generated" gets
 exactly that and nothing for the notes they share. Also rejected: answering a
 share Granola will not tell us about with nothing, which is the failure this
-entry exists to end.
+entry exists to end — and, on review, keying that unverified answer on the note,
+which would have re-created the rejected first alternative through the error
+path. Also rejected: reading the key out of the event's metadata, where the
+generic webhook copies whatever a caller posted; a caller must not pick the key
+a Sidekick dedupes on.
 
 **Consequences:** Every `note.access_granted` on a workspace connection costs
-one Granola read inside the delivery window, bounded at eight seconds. The
-activity log shows "Granola note generated" beside the share. Sidekicks already
-active on "Transcript added" need no change; the two in BetaBeta-demo that never
-fired will fire on the next note shared into the workspace.
+one Granola read inside the delivery. `WEBHOOK_DERIVE_TIMEOUT_MS` is an open
+limit handed to the team: Granola allows fifteen seconds for the whole delivery
+and retries with backoff for four days, verification and the payload write are
+spent before the read and the receipt claim, both persists and the queue sends
+after it, and the trip stores the share, reports the transcript unverified, and
+logs `timeout`. The activity log shows "Granola note generated" beside the
+share. Sidekicks already active on "Transcript added" need no change; the two
+in BetaBeta-demo that never fired will fire on the next note shared into the
+workspace. Which note shape Granola returns is transcribed from its OpenAPI
+document beside the parser, and a note with neither summary field is reported
+and logged as `unexpected_shape` rather than passed off as a summary not yet
+written.
 
 PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
 

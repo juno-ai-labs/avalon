@@ -242,7 +242,9 @@ describe("connector observability", () => {
       webhookActivity: {
         ...base.webhookActivity!,
         async derive(_connection, _activity, event) {
-          return event.eventType === "note.access_granted" ? [derived] : [];
+          return event.eventType === "note.access_granted"
+            ? { activities: [derived], outcome: "derived" }
+            : { activities: [], outcome: "not_applicable" };
         },
       },
     }, observer);
@@ -256,7 +258,7 @@ describe("connector observability", () => {
     };
 
     await expect(adapter.webhookActivity!.derive!(connection(), activityShape(), envelope, new AbortController().signal))
-      .resolves.toEqual([derived]);
+      .resolves.toEqual({ activities: [derived], outcome: "derived" });
     expect(observations).toContainEqual([
       "debug",
       "connector_operation_started",
