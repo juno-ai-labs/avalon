@@ -1244,6 +1244,8 @@ activity log shows "Granola note generated" beside the share. Sidekicks already
 active on "Transcript added" need no change; the two in BetaBeta-demo that never
 fired will fire on the next note shared into the workspace.
 
+PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
+
 ### 2026-09-16 — A removed connection leaves the list, and Test says pass or fail
 
 **What changed:** `GET /connections` no longer returns a disabled connection
