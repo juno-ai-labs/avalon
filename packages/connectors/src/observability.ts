@@ -312,6 +312,30 @@ function instrumentWebhook(
         }),
       );
     },
+    // Carried through by name, like the two above. This wrapper is the only
+    // copy of the source the host ever sees, so an optional method left out
+    // here is silently absent everywhere — the first `derive` was.
+    ...(source.derive ? {
+      derive(connection, activity, event, signal) {
+        registerConnectionObservation(connection, connectorType, observer);
+        return observeAsync(
+          observer,
+          connectorType,
+          "webhook_derive",
+          {
+            ...connectionFields(connection),
+            delivery_id: event.deliveryId,
+            provider_account_id: event.providerAccountId,
+            event_type: event.eventType,
+          },
+          () => source.derive!(connection, activity, event, signal),
+          (derived) => ({
+            outcome: derived.length === 0 ? "none" : "derived",
+            derived_event_types: derived.map((entry) => entry.eventType),
+          }),
+        );
+      },
+    } : {}),
   };
 }
 

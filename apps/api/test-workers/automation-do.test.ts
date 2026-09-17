@@ -1252,6 +1252,46 @@ describe("AutomationDO", () => {
     expect(parsed?.resourceId).toBeNull();
   });
 
+  it("admits two deliveries for one occurrence once, when the connector names it", async () => {
+    // A Granola note reaches the workspace as `note.access_granted` when it
+    // is shared and as `note.generated` when its summary is written, in
+    // either order; the connector keys both on the note and the Sidekick runs
+    // for the note once. An event that names no usable key admits on its id.
+    await seedSlackConnection();
+    await createDraft();
+    await submit();
+    await apply();
+    const base = {
+      eventType: "slack.message.posted",
+      title: "New message",
+      summary: "",
+      textSnippet: "",
+      occurredAt: Date.parse(NOW),
+      audienceUserIds: [],
+      audienceKind: "workspace" as const,
+    };
+    const admission = {
+      ...addressed(),
+      registrationId: "00000000-0000-7000-8000-00000000ad61",
+      payloadHash: `sha256:${"b".repeat(64)}`,
+    };
+    const occurrenceKey = "granola:connection:note:not_1234567890abcd:transcript";
+    const shared = { ...base, id: "00000000-0000-7000-8000-00000000ad62", eventSequence: 2, metadata: { occurrenceKey } };
+    const generated = { ...base, id: "00000000-0000-7000-8000-00000000ad63", eventSequence: 3, metadata: { occurrenceKey } };
+    const unnamed = { ...base, id: "00000000-0000-7000-8000-00000000ad64", eventSequence: 4, metadata: { occurrenceKey: "  " } };
+
+    expect(await automationStub().admitExternalEvent({ ...admission, event: shared }))
+      .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
+    expect(await automationStub().admitExternalEvent({ ...admission, event: generated }))
+      .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_replayed" });
+    expect(await automationStub().admitExternalEvent({ ...admission, event: unnamed }))
+      .toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
+    expect((await runRows()).map((run) => run.occurrence_key)).toEqual([
+      `external:${occurrenceKey}`,
+      `external:${unnamed.id}`,
+    ]);
+  });
+
   it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {
     await activeAutomation();
     const email = {

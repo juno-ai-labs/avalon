@@ -211,6 +211,102 @@ describe("Granola connector", () => {
     )).toMatchObject({ eventType: "note.edited", title: "Granola note edited" });
   });
 
+  it("reports a note shared into the workspace after it was generated as the transcript Granola never announced", async () => {
+    // Granola sends `note.generated` only while the endpoint can read the
+    // note. A note generated privately and shared into the workspace later
+    // arrives as `note.access_granted` and nothing else, so `derive` asks
+    // the note whether its summary exists and, when it does, stores the
+    // `note.generated` beside the share, keyed so a second delivery for the
+    // same note is one run and not two.
+    const requested: URL[] = [];
+    const adapter = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+      fetch: async (input, init) => {
+        const url = requestUrl(input);
+        requested.push(url);
+        expect(init?.method ?? "GET").toBe("GET");
+        expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${workspaceApiKey}`);
+        if (url.pathname === "/v1/notes/not_generated000aa") {
+          return jsonResponse({ id: "not_generated000aa", summary_markdown: "## Recap", summary_text: "Recap" });
+        }
+        if (url.pathname === "/v1/notes/not_pendinggen00aa") {
+          return jsonResponse({ id: "not_pendinggen00aa", summary_markdown: null, summary_text: "" });
+        }
+        if (url.pathname === "/v1/notes/not_hidden000000aa") return jsonResponse({ error: "not found" }, 404);
+        return jsonResponse({ error: "upstream" }, 503);
+      },
+    });
+    const source = adapter.webhookActivity!;
+    const shared = (noteId: string, eventId: string) => {
+      const verified = {
+        event_id: eventId,
+        event_type: "note.access_granted",
+        note_id: noteId,
+        occurred_at: "2026-09-16T12:51:00.000Z",
+        signatureHash: "sig",
+      };
+      const envelope = {
+        deliveryId: eventId,
+        eventType: "note.access_granted",
+        providerAccountId: null,
+        bodyHash: "body-hash",
+        receiptKey: "sig",
+        event: verified,
+      };
+      return { envelope, activity: source.normalize(workspaceConnection(), envelope, "payload-ref")! };
+    };
+
+    const generated = shared("not_generated000aa", "11111111-1111-4111-8111-111111111111");
+    const derived = await source.derive!(workspaceConnection(), generated.activity, generated.envelope, neverAborts());
+    expect(derived).toEqual([{
+      ...generated.activity,
+      eventType: "note.generated",
+      title: "Granola note generated",
+      dedupeKey: "11111111-1111-4111-8111-111111111111:generated",
+      metadata: {
+        changedFields: [],
+        occurrenceKey: `granola:${generated.activity.connectionId}:note:not_generated000aa:transcript`,
+        derivedFrom: "note.access_granted",
+      },
+    }]);
+    // The share itself is not the transcript and names no occurrence; the
+    // `note.generated` Granola sends for a note it could read admits under
+    // the same key as the derived one.
+    expect(generated.activity.metadata).toEqual({ changedFields: [] });
+    const announced = source.normalize(workspaceConnection(), {
+      ...generated.envelope,
+      eventType: "note.generated",
+      event: { ...generated.envelope.event, event_type: "note.generated" },
+    }, "payload-ref")!;
+    expect(announced.metadata).toEqual({ changedFields: [], occurrenceKey: derived[0]!.metadata.occurrenceKey });
+
+    // Shared before its summary exists: Granola sends `note.generated` itself
+    // once the summary is written, so nothing is derived now.
+    const pending = shared("not_pendinggen00aa", "22222222-2222-4222-8222-222222222222");
+    expect(await source.derive!(workspaceConnection(), pending.activity, pending.envelope, neverAborts())).toEqual([]);
+    // A note the workspace key cannot read: no run could read it either.
+    const hidden = shared("not_hidden000000aa", "33333333-3333-4333-8333-333333333333");
+    expect(await source.derive!(workspaceConnection(), hidden.activity, hidden.envelope, neverAborts())).toEqual([]);
+    // Granola not answering: the transcript is reported anyway and marked. A
+    // run that finds no summary says so; a share nobody hears about says nothing.
+    const unanswered = shared("not_unanswered00aa", "44444444-4444-4444-8444-444444444444");
+    expect(await source.derive!(workspaceConnection(), unanswered.activity, unanswered.envelope, neverAborts()))
+      .toMatchObject([{ eventType: "note.generated", metadata: { derivedFrom: "note.access_granted", summaryVerified: false } }]);
+    // Only a share asks Granola anything.
+    const edited = {
+      ...generated.envelope,
+      eventType: "note.edited",
+      event: { ...generated.envelope.event, event_type: "note.edited" },
+    };
+    expect(await source.derive!(workspaceConnection(), source.normalize(workspaceConnection(), edited, null)!, edited, neverAborts())).toEqual([]);
+    expect(requested.map((url) => url.pathname)).toEqual([
+      "/v1/notes/not_generated000aa",
+      "/v1/notes/not_pendinggen00aa",
+      "/v1/notes/not_hidden000000aa",
+      "/v1/notes/not_unanswered00aa",
+    ]);
+  });
+
   it("accepts ISO offsets and rejects replayed, missing, or header-mismatched webhook identities", async () => {
     const event = {
       event_id: "11111111-1111-4111-8111-111111111111",

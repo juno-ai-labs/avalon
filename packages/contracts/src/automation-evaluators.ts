@@ -370,6 +370,21 @@ export const WorkspaceExternalEventSchema = z.strictObject({
 });
 export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema>;
 
+/**
+ * What an automation admits an event under.
+ *
+ * The event id, unless the connector named an `occurrenceKey` in the event's
+ * metadata: one thing in the world that more than one delivery can report — a
+ * Granola note arrives as `note.access_granted` when it is shared and as
+ * `note.generated` when its summary is written — and the automation runs for
+ * it once. Bounded so a connector cannot hand the run table an unbounded key.
+ */
+export function externalEventOccurrenceKey(event: Pick<WorkspaceExternalEvent, "id" | "metadata">): string {
+  const key = event.metadata.occurrenceKey;
+  const named = typeof key === "string" ? key.trim() : "";
+  return named.length > 0 && named.length <= 300 ? `external:${named}` : `external:${event.id}`;
+}
+
 export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.strictObject({
   type: z.literal("workspace_external_event_delivery_v1"),
   schemaVersion: z.literal(1),
