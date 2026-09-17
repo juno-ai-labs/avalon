@@ -367,6 +367,9 @@ const authorizationCallbackSchema = z.strictObject({
   code: z.string().min(1).max(2_000),
   codeVerifier: z.string().min(20).max(256),
   connectionScope: z.enum(["personal", "workspace"]),
+  // The shared callback forwards adapter state; the sealed connectionScope
+  // above remains the authority for actor selection.
+  authorizationState: z.unknown().optional(),
 });
 
 const issueFields = `
