@@ -570,7 +570,7 @@ async function reconcileTerminalSandbox(
     return terminalReconcileOutcome(result.transition);
   }
   const repository = await port(ctx.workspaceId, workstreamId).selectedRepository();
-  await emitProductUsageTelemetry(ctx.env, {
+  emitProductUsageTelemetry(ctx.env, {
     workspaceId: asWorkspaceId(ctx.workspaceId),
     name: "terminal_workspace_terminal",
     properties: {
@@ -584,7 +584,7 @@ async function reconcileTerminalSandbox(
     },
     operationId: workstreamId,
     eventId: newId(),
-  }).catch(() => undefined);
+  });
   return terminalReconcileOutcome(result.transition);
 }
 

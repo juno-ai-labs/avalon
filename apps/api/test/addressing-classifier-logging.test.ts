@@ -9,8 +9,11 @@ import {
   createTestEnv,
 } from "./helpers/cloudflare-test";
 
-function fixture() {
+function fixture(options: {
+  beforePayloadPut?: () => Promise<void>;
+} = {}) {
   const objects = new Map<string, string>();
+  const deferred: Promise<unknown>[] = [];
   const getObjectDetails = vi.fn(async () => {
     throw new Error("addressing_flag_should_not_be_evaluated");
   });
@@ -27,6 +30,7 @@ function fixture() {
     FLAGS: createCloudflareTestBinding<Flagship>({ getObjectDetails }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({
       async put(key: string, value: string) {
+        await options.beforePayloadPut?.();
         objects.set(key, value);
       },
       async delete(key: string) {
@@ -40,7 +44,17 @@ function fixture() {
       async send() {},
     }),
   });
-  return { env, getObjectDetails, objects };
+  return {
+    env,
+    getObjectDetails,
+    objects,
+    defer(promise: Promise<unknown>) {
+      deferred.push(promise);
+    },
+    async settleDeferred() {
+      await Promise.all(deferred);
+    },
+  };
 }
 
 const input = {
@@ -65,7 +79,7 @@ afterEach(() => {
 
 describe("addressing classifier logging", () => {
   it("logs an accepted JEV outcome and archives the exact inference response", async () => {
-    const { env, getObjectDetails, objects } = fixture();
+    const { env, getObjectDetails, objects, defer, settleDeferred } = fixture();
     const response = {
       model: "jev-1.13.0",
       answers: {
@@ -81,10 +95,11 @@ describe("addressing classifier logging", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(response)));
     const logged = vi.spyOn(console, "info").mockImplementation(() => {});
 
-    await expect(classifyWorkstreamMessage(env, input)).resolves.toMatchObject({
+    await expect(classifyWorkstreamMessage(env, { ...input, defer })).resolves.toMatchObject({
       classification: "agent_action",
       confidence: 0.91,
     });
+    await settleDeferred();
     expect(getObjectDetails).not.toHaveBeenCalled();
 
     const entries = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>);
@@ -121,7 +136,7 @@ describe("addressing classifier logging", () => {
   });
 
   it("counts a low-confidence JEV response separately from fallback success", async () => {
-    const { env, objects } = fixture();
+    const { env, objects, defer, settleDeferred } = fixture();
     const typesafeResponse = {
       model: "jev-1.13.0",
       answers: {
@@ -151,10 +166,11 @@ describe("addressing classifier logging", () => {
     }));
     const logged = vi.spyOn(console, "info").mockImplementation(() => {});
 
-    await expect(classifyWorkstreamMessage(env, input)).resolves.toMatchObject({
+    await expect(classifyWorkstreamMessage(env, { ...input, defer })).resolves.toMatchObject({
       classification: "agent_action",
       confidence: 0.82,
     });
+    await settleDeferred();
 
     const outcome = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
       .find((entry) => entry.event === "addressing_classifier_outcome");
@@ -176,15 +192,16 @@ describe("addressing classifier logging", () => {
   });
 
   it("names the deterministic floor when both remote cascade stages fail", async () => {
-    const { env } = fixture();
+    const { env, defer, settleDeferred } = fixture();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "unavailable" }, { status: 503 })));
     const logged = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await expect(classifyWorkstreamMessage(env, input)).resolves.toMatchObject({
+    await expect(classifyWorkstreamMessage(env, { ...input, defer })).resolves.toMatchObject({
       classification: "agent_action",
       rationaleCode: "imperative",
     });
+    await settleDeferred();
 
     const outcome = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
       .find((entry) => entry.event === "addressing_classifier_outcome");
@@ -196,5 +213,39 @@ describe("addressing classifier logging", () => {
       fallback_attempted: true,
       classification: "agent_action",
     });
+  });
+
+  it("starts JEV without waiting for inference archive staging", async () => {
+    let releasePayloadPut!: () => void;
+    const payloadPutReleased = new Promise<void>((resolve) => {
+      releasePayloadPut = resolve;
+    });
+    const { env, defer, settleDeferred } = fixture({
+      beforePayloadPut: async () => { await payloadPutReleased; },
+    });
+    const fetcher = vi.fn(async () => Response.json({
+      model: "jev-1.13.0",
+      answers: {
+        addressing: {
+          type: "choice",
+          choice: "rally_should_act",
+          confidence: 0.91,
+          probabilities: { rally_should_act: 0.91, people_only: 0.09 },
+        },
+      },
+    }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const classification = classifyWorkstreamMessage(env, { ...input, defer });
+    try {
+      await Promise.resolve();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await expect(classification).resolves.toMatchObject({
+        classification: "agent_action",
+      });
+    } finally {
+      releasePayloadPut();
+      await settleDeferred();
+    }
   });
 });

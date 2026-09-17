@@ -23,6 +23,20 @@ const workspaceInvocationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d6';
 const automationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903';
 const automationRunId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904';
 
+function workDeferral() {
+  const pending: Promise<unknown>[] = [];
+  return {
+    defer(promise: Promise<unknown>) {
+      pending.push(promise);
+    },
+    async settle() {
+      for (let index = 0; index < pending.length; index += 1) {
+        await pending[index];
+      }
+    },
+  };
+}
+
 function fixture() {
   const database = preRetirementProductSqliteDatabase();
   database.exec(`
@@ -49,7 +63,8 @@ function fixture() {
 describe('agent tool usage telemetry', () => {
   it('attributes a user-owned invocation to the person and workspace without content', async () => {
     const { database, env } = fixture();
-    await emitAgentToolStartedTelemetry(env, {
+    const lifecycle = workDeferral();
+    emitAgentToolStartedTelemetry(env, {
       workspaceId,
       workstreamId,
       harnessRunId,
@@ -60,7 +75,11 @@ describe('agent tool usage telemetry', () => {
       capability: 'workstream.search',
       mode: 'read',
       runKind: 'workstream',
-    });
+    }, lifecycle.defer);
+    expect(database.prepare(
+      'SELECT event_id FROM telemetry_accepted_events WHERE event_id = ?',
+    ).get(userInvocationId)).toBeUndefined();
+    await lifecycle.settle();
 
     const row = database.prepare(
       `SELECT envelope_json, subject_user_id, workspace_analytics_id
@@ -93,7 +112,8 @@ describe('agent tool usage telemetry', () => {
 
   it('uses a personless workspace identity for an automation invocation', async () => {
     const { database, env } = fixture();
-    await emitAgentToolStartedTelemetry(env, {
+    const lifecycle = workDeferral();
+    emitAgentToolStartedTelemetry(env, {
       workspaceId,
       workstreamId,
       harnessRunId,
@@ -105,7 +125,8 @@ describe('agent tool usage telemetry', () => {
       capability: 'linear.issue.create',
       mode: 'write',
       runKind: 'automation',
-    });
+    }, lifecycle.defer);
+    await lifecycle.settle();
 
     const row = database.prepare(
       `SELECT envelope_json, analytics_subject_id, subject_user_id, workspace_analytics_id
@@ -193,9 +214,11 @@ describe('agent tool usage telemetry', () => {
       automationId,
       automationRunId,
     };
+    const lifecycle = workDeferral();
 
-    await emitAgentToolTerminalTelemetry(routedEnv, terminal);
-    await emitAgentToolTerminalTelemetry(routedEnv, terminal);
+    emitAgentToolTerminalTelemetry(routedEnv, terminal, lifecycle.defer);
+    emitAgentToolTerminalTelemetry(routedEnv, terminal, lifecycle.defer);
+    await lifecycle.settle();
 
     const row = database.prepare(
       `SELECT envelope_json, subject_user_id FROM telemetry_accepted_events

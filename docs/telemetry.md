@@ -234,6 +234,12 @@ telemetry ingest.
 Each durable invocation also produces one terminal result with latency and replay
 state, while each root run produces an authoritative terminal event with trigger,
 time-to-first-output, turns, tool/write counts, model route, and fallback state.
+These observational reads and regional analytics writes are registered on the
+current Cloudflare invocation with the shared lifecycle deferral. Tool execution,
+run settlement, and user actions therefore do not wait for receipt rereads,
+analytics identity lookup, D1 acceptance, or lakehouse Queue staging. The
+canonical tool/run receipts and the product mutations that precede emission stay
+awaited; only the derived telemetry continuation moves off their critical path.
 The established requested/completed pair remains a separately named admission
 funnel for correlated desktop runs; it is not mapped to the same reserved event.
 
@@ -595,8 +601,10 @@ alone would hand every token in its map every route.
 
 The route gate is the only telemetry work allowed before the first renderer and is
 bounded to two seconds. Normal desktop collection writes small validated files and
-flushes in batches of 50 every 30 seconds. Regional acceptance performs only
-validation plus a D1 batch; destination calls and symbolication are deferred.
+flushes in batches of 50 every 30 seconds. API telemetry ingest awaits validation
+plus its durable D1 acceptance boundary. Telemetry derived from product actions
+registers that whole acceptance flow on the current Worker invocation, while
+destination calls and symbolication remain deferred as before.
 Crash processing selects ten reports per pass and Global delivery selects five.
 
 The engineering budgets remain: API ingest p95 under 25 ms, typical desktop
@@ -1873,6 +1881,19 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-17 — Product actions no longer await observational telemetry
+
+API-generated product, tool, and run telemetry now uses one shared Cloudflare
+lifecycle deferral. Product behavior no longer waits for authoritative receipt
+rereads made only to derive telemetry, analytics identity lookup, D1 acceptance,
+or lakehouse Queue staging; failures are named in structured operational logs.
+The product mutation and canonical run/tool receipts remain awaited before an
+observation is scheduled. Making every caller hand-roll `waitUntil` was rejected
+because it had already produced both synchronous latency and untracked floating
+promises, while a larger telemetry job abstraction would duplicate the existing
+D1 outbox and Queue recovery design. Direct telemetry ingest still awaits its
+durable acceptance result because that result is the endpoint's product.
 
 ### 2026-09-17 — Recover Electron connection resets across sleep and wake
 

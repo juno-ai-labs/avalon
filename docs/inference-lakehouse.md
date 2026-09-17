@@ -191,9 +191,9 @@ as proof that a model call committed product state.
 
 - A capture archive or Queue-send failure emits `inference_lakehouse_stage_failed`
   and does not fail the inference. The object is removed when Queue acceptance
-  itself fails. The harness does await the Global archive and Queue acceptance,
-  so their latency is added before or after the provider call; Pipeline and sink
-  work is fully off the inference path.
+  itself fails. Exact request and attempt capture is registered with the owning
+  Worker invocation through `waitUntil`; hashing, R2, Queue, Pipeline, and sink
+  work are all off the provider and result critical paths.
 - Invalid or cross-region pointers are poison: the consumer logs and acknowledges
   them so they cannot retry forever. Missing, corrupt, or schema-invalid archived
   bytes and Pipeline failures retry and eventually reach the Global DLQ.
@@ -541,6 +541,21 @@ becomes product-state repair authority.
 
 
 ## Changelog
+
+### 2026-09-17 — Exact inference archives leave provider critical paths
+
+Streaming requests and attempts, standalone structured requests and responses,
+and addressing-classifier diagnostics now register exact-envelope lakehouse
+capture on the current Cloudflare invocation instead of awaiting R2 and Queue
+staging inside provider callbacks. The operational log and durable inference
+ledger remain synchronous where they are authoritative. A production addressing
+trace showed archive staging consuming about 1.8 seconds before a roughly
+400-millisecond JEV call, which made observational persistence the dominant
+controlled latency. Dropping exact archives was rejected because they are the
+evidence used for evals and incident diagnosis; bare floating promises were
+rejected because Workers may end an invocation after its response. Future
+inference callers must use the shared lifecycle deferral rather than recreating
+either failure mode.
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 

@@ -312,7 +312,7 @@ export function createTerminalRepositorySelector(
         triggerMessageId,
         executionPrincipal: context.executionPrincipal,
       }, new Date(), terminalPortFactory);
-      await emitProductUsageTelemetry(env, {
+      emitProductUsageTelemetry(env, {
         workspaceId: asWorkspaceId(context.workspaceId),
         userId: context.executionPrincipal.userId,
         name: "terminal_workspace_terminal",
@@ -327,7 +327,7 @@ export function createTerminalRepositorySelector(
         },
         operationId: context.harnessRunId,
         eventId: newId(),
-      }).catch(() => undefined);
+      });
       return output("selected", backup);
 
       function output(
