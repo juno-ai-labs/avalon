@@ -66,6 +66,18 @@ describe('main-process network recovery', () => {
     expect(isElectronConnectionReset(separateFrames)).toBe(false);
   });
 
+  it('does not let multiline error text impersonate a stack frame', () => {
+    const error = electronReset() as Error & { code: string };
+    error.code = ELECTRON_CONNECTION_RESET;
+    error.message = [
+      'request failed',
+      '    at SimpleURLLoaderWrapper.<anonymous> (node:electron/js2c/browser_init:2:138087)',
+    ].join('\n');
+    error.stack = `Error: ${error.message}\n    at application.js:1:1`;
+
+    expect(isElectronConnectionReset(error)).toBe(false);
+  });
+
   it('does not classify a different Electron network failure as this incident', () => {
     const error = electronReset();
     error.message = 'net::ERR_TIMED_OUT';
