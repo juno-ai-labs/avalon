@@ -658,7 +658,7 @@ export class WorkstreamObjectProductService {
     return "pending_input_preparation_failed";
   }
 
-  private async runInputPreparation<T>(
+  private async runInputPreparation<T extends { activationRequest: WorkstreamLoopActivationRequest | null }>(
     preparation: PendingInputPreparationRow,
     work: () => Promise<T>,
   ): Promise<T> {
@@ -669,10 +669,10 @@ export class WorkstreamObjectProductService {
       throw new Error(`pending_input_preparation_${preparation.state}`);
     }
     this.beginInputPreparation(preparation.input_id, Date.now());
-    let completed = false;
+    let callerOwnsActivation = false;
     try {
       const result = await work();
-      completed = true;
+      callerOwnsActivation = result.activationRequest !== null;
       return result;
     } catch (error) {
       this.loops.failInputPreparation({
@@ -683,12 +683,14 @@ export class WorkstreamObjectProductService {
       throw error;
     } finally {
       this.endInputPreparation(preparation.input_id);
-      // A failed preparation can expose later ready inputs without returning an
-      // activation request to the SubstreamAgent. Successful preparation does
-      // return one, so its caller is the sole owner of the eager activation
-      // wake. The reservation's longer cancellation-recovery alarm remains
-      // armed before the durable row either way.
-      if (!completed && (this.loops.pendingInputs().length > 0
+      // Settling a preparation can expose later ready inputs without handing
+      // this invocation an activation request: failures do, but so do
+      // successful non-invoking messages and messages admitted while another
+      // execution owns the loop. Only an actual activation handoff makes the
+      // caller the owner of the eager wake. The reservation's longer
+      // cancellation-recovery alarm remains armed before the durable row
+      // either way.
+      if (!callerOwnsActivation && (this.loops.pendingInputs().length > 0
         || this.nextRecoverableInputPreparationAt() !== null)) {
         await ensureStorageAlarmNoLaterThan(this.storage, Date.now() + 1);
       }

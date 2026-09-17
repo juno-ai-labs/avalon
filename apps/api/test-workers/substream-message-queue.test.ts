@@ -694,16 +694,23 @@ describe("a message queued behind an unsettled admission", () => {
       }).product;
       // `env` is a constructor parameter property: private to the compiler, an
       // ordinary writable field to the runtime this test replaces it in.
-      const held = holdFirstWorkspaceRead(service as unknown as { env: Env });
-      void service.createMessage(AUTH, {
+      return holdFirstWorkspaceRead(service as unknown as { env: Env });
+    });
+    // Enter through the same binding endpoint as production. The successful
+    // preparation returns an activation request to the SubstreamAgent; calling
+    // the product service directly here would discard that handoff and invent
+    // a wake-up failure that the real caller cannot have.
+    void product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
         text: input.text,
         clientMessageId: input.clientMessageId,
         mentions: (input.mentions ?? []) as never,
         confirmedParticipantUserIds: [],
         attachmentIds: [],
-      }).catch(() => undefined);
-      return held;
-    });
+      },
+    }).catch(() => undefined);
     const reserved = (): Promise<string | null> => runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ input_id: string }>(
         `SELECT input_id FROM pending_loop_input_mailbox

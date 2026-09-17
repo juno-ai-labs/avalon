@@ -1005,6 +1005,17 @@ describe('message mention resolution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('refreshes a supplied roster once when it cannot resolve a typed person', async () => {
+    const fetchMock = stubRoster();
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.messageMentionPayload('Ask @Adam', [], [])).resolves.toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
+  });
+
   it('resolves a typed member name and leaves a typed connection name alone', async () => {
     stubRoster();
     const api = new RallyApi('https://api.rally.test', session);

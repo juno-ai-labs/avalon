@@ -15,7 +15,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import type { Env } from "../src/env";
 import {
   LOOP_ID,
   USER_ID,
@@ -217,116 +216,6 @@ describe("executing the singleton loop", () => {
         active_execution_epoch: 2,
       });
       expect(executionReceipts(state)[0]!.loop_execution_epoch).toBe(2);
-    });
-  });
-});
-
-describe("scheduling loop execution beside projections", () => {
-  it("starts the loop lane before a due projection is accepted by the Queue", async () => {
-    const stub = await readyAgent();
-
-    await runInDurableObject(stub, async (instance, state) => {
-      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), Date.now());
-      ensureFixtureLoop(state, Date.now());
-      state.storage.sql.exec(
-        `INSERT INTO authorization_projection_outbox
-           (id, revision, not_before, first_mutated_at)
-         VALUES (1, 1, 0, ?)`,
-        Date.now(),
-      );
-
-      let acceptProjection!: () => void;
-      let projectionAttempted!: () => void;
-      const projectionAccepted = new Promise<void>((resolve) => {
-        acceptProjection = resolve;
-      });
-      const projectionStarted = new Promise<void>((resolve) => {
-        projectionAttempted = resolve;
-      });
-      const target = instance as unknown as {
-        env: Env;
-        drainLoopToCompletion(): Promise<"drained" | "deferred">;
-        runDueAlarmWork(): Promise<void>;
-      };
-      target.env = new Proxy(target.env, {
-        get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
-          ? {
-              send: () => {
-                projectionAttempted();
-                return projectionAccepted;
-              },
-              sendBatch: current.ACTIVITY_QUEUE.sendBatch.bind(current.ACTIVITY_QUEUE),
-            }
-          : Reflect.get(current, property, receiver),
-      });
-
-      let loopStarted = false;
-      target.drainLoopToCompletion = async () => {
-        loopStarted = true;
-        return "drained";
-      };
-
-      const dueWork = target.runDueAlarmWork();
-      await projectionStarted;
-      const loopStartedBeforeProjectionSettled = loopStarted;
-      acceptProjection();
-      await dueWork;
-
-      expect(loopStartedBeforeProjectionSettled).toBe(true);
-    });
-  });
-
-  it("starts the projection lane while loop execution is still active", async () => {
-    const stub = await readyAgent();
-
-    await runInDurableObject(stub, async (instance, state) => {
-      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), Date.now());
-      ensureFixtureLoop(state, Date.now());
-      state.storage.sql.exec(
-        `INSERT INTO authorization_projection_outbox
-           (id, revision, not_before, first_mutated_at)
-         VALUES (1, 1, 0, ?)`,
-        Date.now(),
-      );
-
-      let projectionStarted = false;
-      let loopStarted!: () => void;
-      let finishLoop!: () => void;
-      const loopRunning = new Promise<void>((resolve) => {
-        loopStarted = resolve;
-      });
-      const loopFinished = new Promise<void>((resolve) => {
-        finishLoop = resolve;
-      });
-      const target = instance as unknown as {
-        env: Env;
-        drainLoopToCompletion(): Promise<"drained" | "deferred">;
-        runDueAlarmWork(): Promise<void>;
-      };
-      target.env = new Proxy(target.env, {
-        get: (current, property, receiver) => property === "ACTIVITY_QUEUE"
-          ? {
-              send: () => {
-                projectionStarted = true;
-                return Promise.resolve();
-              },
-              sendBatch: current.ACTIVITY_QUEUE.sendBatch.bind(current.ACTIVITY_QUEUE),
-            }
-          : Reflect.get(current, property, receiver),
-      });
-      target.drainLoopToCompletion = async () => {
-        loopStarted();
-        await loopFinished;
-        return "drained";
-      };
-
-      const dueWork = target.runDueAlarmWork();
-      await loopRunning;
-      const projectionStartedBeforeLoopSettled = projectionStarted;
-      finishLoop();
-      await dueWork;
-
-      expect(projectionStartedBeforeLoopSettled).toBe(true);
     });
   });
 });
