@@ -343,8 +343,9 @@ flow for the HTTP path, distinguished by `rally.transport`; the old
 using the rollout-compatibility handler.
 The renderer's `resolve_mentions` phase reads the already-owned
 `['workspace-members']` roster when the outgoing text contains `@` or
-`person://`, falling back to a workspace-roster request only when that cache is
-absent. Ordinary text proceeds directly to the socket command round trip.
+`person://`, falling back to a workspace-roster request when that cache is
+absent or cannot resolve any typed person. Ordinary text proceeds directly to
+the socket command round trip.
 
 ### What `room_upgrade` contains
 
@@ -695,7 +696,7 @@ a Worker exports when its own config names one.
 **What changed:** The socket send path passes React Query's existing
 `['workspace-members']` value into `messageMentionPayload`. Mention-bearing text
 uses that roster without another HTTP request and retains the API fetch as a
-fallback when the shared roster has not loaded.
+fallback when the shared roster has not loaded or cannot resolve a typed person.
 
 **Why:** The application root already owns a stable workspace-member roster for
 the composer and conversation surfaces. Fetching the same authority again at
@@ -707,8 +708,11 @@ a second invalidation contract for the same roster. Resolving from selected
 chips alone would still miss typed names and pasted durable mention Markdown.
 
 **Consequences:** `resolve_mentions` is local on the normal loaded-workspace
-path. A cold or isolated caller remains correct through the existing roster
-endpoint, and plain text still performs neither lookup nor fetch.
+path. A cold, isolated, or observably stale caller remains correct through one
+refresh from the existing roster endpoint, and plain text still performs
+neither lookup nor fetch.
+
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
 
 ### 2026-09-09 — Keep socket timing attribution explicit
 
@@ -925,9 +929,9 @@ its `workspaceSocketState` field for telemetry-schema continuity, but the value
 now describes the message-carrying SubstreamAgent socket.
 
 On the client, `messageMentionPayload` returns an empty mention payload without
-consulting a roster unless the outgoing text contains `@` or the durable
-`person://` mention scheme. Once either marker is present, it uses a supplied
-workspace roster or falls back to `/workspace/members` when none is available.
+calling `/workspace/members` unless the outgoing text contains `@` or the
+durable `person://` mention scheme. The existing resolution path is unchanged
+once either marker is present.
 
 **Why:** The selected substream socket already carries the exact route and
 admitted identity. The parent trace described work the product no longer needs:

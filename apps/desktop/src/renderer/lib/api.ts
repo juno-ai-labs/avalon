@@ -1437,7 +1437,26 @@ export class RallyApi {
     const discovered = members
       .filter((member) => (member.status ?? 'active') === 'active')
       .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
-    return resolveMentionPayload(text, selected, discovered);
+    const resolved = resolveMentionPayload(text, selected, discovered);
+    // Workspace socket invalidation normally keeps the shared roster current.
+    // If a supplied snapshot cannot resolve any person at all, refresh once so
+    // a newly added member is not silently sent as plain text. Selected chips
+    // remain authoritative here; the server still validates their membership.
+    if (existingRoster !== undefined
+      && !resolved.some((mention) => mention.type === 'person')
+      && !selected.some((mention) => mention.type === 'person')) {
+      const freshMembers = await this.getWorkspaceMembers();
+      const freshDiscovered = freshMembers
+        .filter((member) => (member.status ?? 'active') === 'active')
+        .map((member) => ({
+          type: 'person' as const,
+          label: member.name,
+          userId: member.id,
+          connectorType: null,
+        }));
+      return resolveMentionPayload(text, selected, freshDiscovered);
+    }
+    return resolved;
   }
 
   async uploadResource(

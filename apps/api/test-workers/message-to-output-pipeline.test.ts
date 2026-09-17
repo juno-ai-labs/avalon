@@ -2376,17 +2376,21 @@ describe("a member's message travels the whole pipeline", () => {
       { timeout: LOOP_RELEASE_TIMEOUT_MS, interval: 50, message: "the object never quiesced" },
     ).toBeNull();
 
-    const alarmWrites = await runInDurableObject(stub, async (instance) => {
+    let alarmWrites = 0;
+    let activationCalls = 0;
+    let activationAlarm: number | null = null;
+    await runInDurableObject(stub, async (instance, state) => {
       const target = instance as unknown as {
-        alarm: () => Promise<void>;
         product: WorkstreamObjectProductService;
         requestPersistentLoopActivation: (request: unknown) => Promise<void>;
       };
-      // Keep the due-now wake from racing this ownership observation. The test
-      // invokes the activation owner directly below.
-      target.alarm = async () => {};
       const storage = (target.product as unknown as { storage: DurableObjectStorage }).storage;
-      let writes = 0;
+      const activate = target.requestPersistentLoopActivation.bind(target);
+      target.requestPersistentLoopActivation = async (request: unknown) => {
+        activationCalls += 1;
+        await activate(request);
+        activationAlarm = await state.storage.getAlarm();
+      };
       (target.product as unknown as { storage: DurableObjectStorage }).storage =
         createCloudflareTestBinding<DurableObjectStorage>(new Proxy(storage, {
           get: (current, property) => {
@@ -2395,37 +2399,32 @@ describe("a member's message travels the whole pipeline", () => {
               return typeof value === "function" ? value.bind(current) : value;
             }
             return (scheduledTime: number | Date) => {
-              writes += 1;
+              alarmWrites += 1;
               return storage.setAlarm(scheduledTime);
             };
           },
         }));
-      const result = await target.product.createMessageForAdmittedSocket(AUTH, {
+    });
+
+    const result = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
         text: "please continue",
         clientMessageId: "pipeline-activation-owner-1",
         mentions: [],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
-        forcedHarnessOrigin: "test",
-      });
-      const afterPreparation = writes;
-      const recoveryAlarm = await storage.getAlarm();
-      expect(result.activationRequest).not.toBeNull();
-      await target.requestPersistentLoopActivation(result.activationRequest);
-      return {
-        afterPreparation,
-        recoveryAlarm,
-        activationAlarm: await storage.getAlarm(),
-      };
+      },
     });
-
+    expect(result.status).toBe(200);
     // Preparation pre-arms one recoverability alarm before its durable row.
-    // Only the outer activation owner adds the eager due-now wake on success.
-    expect(alarmWrites.afterPreparation).toBe(1);
-    expect(alarmWrites.recoveryAlarm).not.toBeNull();
-    expect(alarmWrites.activationAlarm).not.toBeNull();
-    expect(alarmWrites.activationAlarm!).toBeLessThan(alarmWrites.recoveryAlarm!);
-    expect(alarmWrites.activationAlarm!).toBeLessThanOrEqual(Date.now() + 1_000);
+    // The public product endpoint must route the returned request through the
+    // single outer activation owner, which pulls that recovery wake due now.
+    expect(alarmWrites).toBe(1);
+    expect(activationCalls).toBe(1);
+    expect(activationAlarm).not.toBeNull();
+    expect(activationAlarm!).toBeLessThanOrEqual(Date.now() + 1_000);
   });
 
   it("message writes are idempotent across the whole path", async () => {
