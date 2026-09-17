@@ -128,6 +128,10 @@ its own is a boundary that drifts.
 | `apps/api/src/lib/rpc-input.ts` | `parseRpcInput` throws a message that survives an RPC hop |
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |
+| `packages/connectors/src/observability.ts` | the `poll` wrapper logs `stream_error_codes`, one per distinct failed stream, beside the count that used to be all it said; the `validateToolInput` wrapper logs the returned rejection's paths as `code` beside `outcome: "invalid"` |
+| `packages/connectors/src/types.ts` | `streamFailure` names a provider's off-schema poll body as `schema_invalid:<path>:<code>` where it said `poll_failed`, the word a network fault also says; the code reaches the connection row as the stream's degradation reason |
+| `packages/connectors/src/granola.ts`, `packages/connectors/src/slack.ts` | the OAuth stage helpers attach `responseIssues` — the failing paths — to a `provider_error` whose body did not parse, beside `responseInvalid` |
+| `apps/api/src/lib/connector-oauth-error.ts` | `connector_oauth_callback_failed` carries `response_issues` from that detail, admitted only in code shape, and from a raw `ZodError` |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
 | `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
@@ -184,6 +188,52 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-09-15 — A connector's returned rejection is named like its thrown one
+
+**What changed:** The connectors package names a schema rejection it returns
+rather than throws. A poll stream whose provider answered off-schema reports
+`schema_invalid:<path>:<code>` instead of `poll_failed`; the `poll`
+wrapper logs the distinct codes of the streams that failed, not only their
+count; the `validateToolInput` wrapper logs the returned `ZodError`'s paths
+beside `outcome: "invalid"`; and the Slack and Granola OAuth stage helpers
+attach `responseIssues` to a `provider_error` whose body did not parse, which
+`connector_oauth_callback_failed` carries as `response_issues`.
+
+**Why:** The first entry named a rejection at the boundary where it is
+thrown — `connectorObservationErrorCode` — and left the same rejection
+unnamed at the boundaries where an adapter returns it. `streamFailure`
+reduced a provider's off-schema body to `poll_failed`, the word an outage
+also says, and that word is what reached the connection row as the stream's
+reason. The `validateToolInput` wrapper held the whole `ZodError` and logged
+the word `invalid`. The OAuth stage helpers already knew a body had not
+parsed and said only that it had not.
+
+**Considered and rejected:** Logging a stream's `message` beside its code.
+The message is built from the provider's own error text and already reaches
+the connection row; an indexed field is not where it belongs. Also rejected:
+adding a `reason` to the `repair` wrapper for symmetry with `healthCheck`.
+No adapter declares `repair` today, so the wrapper drops nothing; the live
+repair runs in `connection-service.ts` outside the wrapper, and is listed in
+the pull request as found and not changed.
+
+**Consequences:** A stream's `code` is no longer a closed set: a caller
+that matched `poll_failed` exactly sees a longer value for the schema case,
+and `connector_activity_streams_degraded` on the connection row carries it.
+`response_issues` on the callback log is admitted only through
+`isCodeShaped`, so an adapter that put anything but paths in that detail
+would see it dropped, not logged — which is why every source shapes it with
+`codeShaped` first: a three-issue nested rejection measures past the gate's
+bound, and unshaped it would have been dropped for exactly the rejection an
+operator most wants named, where shaped it truncates. `responseIssues` is the
+one new key the OAuth stage helpers attach; an adapter adding a stage helper
+of its own should attach the same key, shaped, or its rejection stays unnamed
+at the log. The poll workflow's result contract admits a stream code as long
+as the primitive produces; at its old cap of 100 one deep path failed the
+whole poll result, and the step recorded the connection failing for a
+degradation the result had already described.
+
+Shipped in #769.
 
 ### 2026-09-15 — The reporters read what the primitive writes
 
