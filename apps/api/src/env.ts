@@ -171,6 +171,7 @@ export interface Env {
   DAYTONA_TERMINAL_SNAPSHOT?: string;
 
   OPENROUTER_API_KEY: string;
+  TYPESAFE_API_KEY?: string;
   OPENROUTER_PRIMARY_MODEL: string;
   OPENROUTER_FALLBACK_MODELS: string;
   OPENROUTER_CLASSIFIER_MODEL: string;
@@ -487,11 +488,11 @@ const EnvContractSchema = z.object({
  * answering `ok`. A contract that demands what the architecture forbids does not
  * catch a misconfiguration; it manufactures one, silently.
  *
- * `OPENROUTER_API_KEY` is required in both regions, and belongs here for a second
+ * The TypeSafe and OpenRouter keys are required in both regions. They belong here for a second
  * reason: `scripts/seed-sandbox-env.mjs` leaves it empty whenever no real key is
  * available, which is every sandbox session, and outside production the app
  * models its absence as a supported state rather than a fault — `/health`
- * reports `openRouter: not configured` and still answers. Requiring it
+ * reports the provider as not configured and still answers. Requiring either
  * unconditionally at the entrypoint turned that into a 503 on every route of
  * both regions, `/health` included, so the one endpoint whose job is to report
  * which key is missing was the one endpoint that could not answer.
@@ -514,6 +515,7 @@ const productionOnlySecrets = [
   { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
   { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
   { key: "OPENROUTER_API_KEY", regions: configuredRegions },
+  { key: "TYPESAFE_API_KEY", regions: configuredRegions },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 const productionOnlyBindings = [

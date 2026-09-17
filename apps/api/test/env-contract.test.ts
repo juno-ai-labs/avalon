@@ -309,6 +309,14 @@ describe("environment contract", () => {
     expect(() => assertEnvContract({ ...withoutKey, APP_ENV: "development" })).not.toThrow();
   });
 
+  it("requires the TypeSafe key only in hosted deployments", () => {
+    const withoutKey = contractCompleteEnv();
+    delete (withoutKey as Partial<Env>).TYPESAFE_API_KEY;
+
+    expect(() => assertEnvContract(withoutKey)).toThrow(/TYPESAFE_API_KEY is missing/u);
+    expect(() => assertEnvContract({ ...withoutKey, APP_ENV: "development" })).not.toThrow();
+  });
+
   it("validates a given environment object once", () => {
     const env = contractCompleteEnv();
     assertEnvContract(env);
