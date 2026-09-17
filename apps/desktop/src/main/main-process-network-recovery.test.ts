@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ELECTRON_CONNECTION_RESET,
+  installMainProcessNetworkRecovery,
   isElectronConnectionReset,
   MainProcessNetworkRecovery,
 } from './main-process-network-recovery';
@@ -139,5 +140,34 @@ describe('main-process network recovery', () => {
       [second, 'unhandledRejection'],
     ]);
     expect(dependencies.deferFatal).toHaveBeenCalledTimes(2);
+  });
+
+  it('registers executable process boundaries that recover resets and deduplicate deferred fatals', () => {
+    const dependencies = {
+      recovered: vi.fn(),
+      reportFatal: vi.fn(),
+      deferFatal: vi.fn(),
+    };
+    const on = vi.fn();
+    installMainProcessNetworkRecovery({ on }, dependencies);
+    const monitor = on.mock.calls.find(([event]) => event === 'uncaughtExceptionMonitor')?.[1];
+    const reject = on.mock.calls.find(([event]) => event === 'unhandledRejection')?.[1];
+    expect(monitor).toBeTypeOf('function');
+    expect(reject).toBeTypeOf('function');
+
+    const reset = electronReset();
+    reject!(reset);
+    expect(dependencies.recovered).toHaveBeenCalledWith(reset, ELECTRON_CONNECTION_RESET);
+
+    const programmingError = new Error('programming error');
+    reject!(programmingError);
+    expect(dependencies.reportFatal).toHaveBeenCalledWith(programmingError, 'unhandledRejection');
+    expect(dependencies.deferFatal).toHaveBeenCalledTimes(1);
+    monitor!(programmingError, 'uncaughtException');
+    expect(dependencies.reportFatal).toHaveBeenCalledTimes(1);
+
+    const directException = new Error('direct exception');
+    monitor!(directException, 'uncaughtException');
+    expect(dependencies.reportFatal).toHaveBeenLastCalledWith(directException, 'uncaughtException');
   });
 });
