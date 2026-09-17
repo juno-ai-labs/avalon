@@ -140,7 +140,9 @@ retired stays marked for the rest of the session — the mark is held in the app
 so it survives a switch to another tab — because the directory it searches does
 not know. A regional refusal reaches the page as the API's own code and
 message, and an answer the shared contract refuses is named
-`regional_api_contract_mismatch` rather than read as an outage.
+`regional_api_contract_mismatch` rather than read as an outage, with the
+field the contract refused in the message — which says whether Ace or the
+regional API is the one behind.
 
 `GET /api/queues/dead-letters` lists account Queues through Cloudflare's REST
 API. A Queue is classified as a dead-letter queue only when a live consumer's

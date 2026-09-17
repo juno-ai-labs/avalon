@@ -621,6 +621,9 @@ describe('connector installation authority', () => {
     const completed = await connectorMaintenanceStatus(testEnv, preview.id);
     expect(completed.state).toBe('complete');
     expect(completed.targets[0]?.state).toBe('action_required');
+    // The receipt's own sentence for the uncertain write, not a pointer to go
+    // and read the receipt.
+    expect(completed.targets[0]?.reason).toBe('The provider operation may have completed. Inspect the exact recorded webhook before retrying.');
     const installation = (await stub.connectorInstallation({ workspaceId, connectionId }))!;
     expect(installation.registrations.some((registration) => registration.action === 'create' && registration.state === 'unknown')).toBe(true);
     expect(installation.registrations.find((registration) => registration.providerId === original.providerId)).toMatchObject({ action: 'remove', state: 'pending' });
