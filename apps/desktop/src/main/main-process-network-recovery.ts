@@ -27,6 +27,10 @@ function errorCode(error: Error): string | null {
  */
 export function isElectronConnectionReset(error: unknown): error is Error {
   if (!(error instanceof Error) || errorCode(error) === null) return false;
+  // V8 copies newlines from the rendered name and message into `stack` before
+  // its real frames. Refuse those shapes so text cannot inject an `at ...`
+  // line that impersonates Electron's loader frame.
+  if (/[\r\n\u2028\u2029]/u.test(error.name) || /[\r\n\u2028\u2029]/u.test(error.message)) return false;
   return (error.stack ?? '').split('\n').slice(1).some((line) => (
     /^\s*at\s/u.test(line)
       && line.includes('SimpleURLLoaderWrapper')
