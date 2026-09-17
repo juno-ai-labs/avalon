@@ -5270,6 +5270,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // a personal automation's evaluator probe content its author cannot see.
     const restrictedUserIds = restrictedActivityUserIds(event);
     const visibility = JSON.parse(event.visibility_json) as { kind?: unknown; scope?: unknown };
+    // The host wrote the occurrence key beside the provider's metadata at
+    // ingest; the destination gets it as its own field and dedupes on it.
+    const { occurrenceKey, ...eventMetadata } = metadata;
     const workspaceEvent = {
       id: event.event_id,
       eventSequence: event.event_sequence,
@@ -5277,7 +5280,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       title: event.title,
       summary: event.summary,
       textSnippet: event.text_snippet ?? "",
-      metadata,
+      metadata: eventMetadata,
+      ...(typeof occurrenceKey === "string" && occurrenceKey.length > 0 ? { occurrenceKey } : {}),
       occurredAt: event.occurred_at,
       audienceUserIds: JSON.parse(event.target_user_ids_json) as string[],
       audienceKind: visibility.kind === "workspace" || visibility.scope === "workspace"
@@ -5681,8 +5685,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const authorPersonIds = [...new Set(resolvedPeople
       .filter((person) => person.role === "author" || person.role === "actor")
       .map((person) => person.userId))];
+    // The occurrence key is the adapter's, never the provider payload's: a
+    // same-named key in the activity's metadata is dropped here — the generic
+    // webhook copies a caller's metadata whole — and the one the contract
+    // carries is written under the host's name for the matcher to lift.
+    const providerMetadata = Object.fromEntries(
+      Object.entries(activity.metadata).filter(([key]) => key !== "occurrenceKey"),
+    );
     const evaluatorMetadata = {
-      ...activity.metadata,
+      ...providerMetadata,
+      ...(activity.occurrenceKey ? { occurrenceKey: activity.occurrenceKey } : {}),
       ...(relatedResourceIds.length > 0 ? { resourceIds: relatedResourceIds } : {}),
       ...(participantPersonIds.length > 0 ? { participantPersonIds } : {}),
       ...(authorPersonIds.length > 0 ? { authorPersonIds } : {}),
