@@ -1,11 +1,9 @@
 import {
   ActivityQueueMessageSchema,
   ConnectorPollWorkflowInputSchema,
-  IdSchema,
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { z } from "zod";
 
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -18,17 +16,7 @@ import {
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
 
-const PollResultSchema = z.object({
-  activityIds: z.array(IdSchema).max(5_000),
-  cursor: z.record(z.string(), z.unknown()),
-  baseCursorJson: z.string().min(2).max(1_000_000),
-  nextPollAt: z.string().datetime({ offset: true }).nullable().optional(),
-  streamErrors: z.array(z.object({
-    streamId: z.string().min(1).max(200),
-    code: z.string().min(1).max(100),
-    message: z.string().min(1).max(500),
-  })).max(100).optional(),
-});
+import { PollResultSchema } from "./connector-poll-result";
 
 interface StoredPollResult {
   activityIds: string[];

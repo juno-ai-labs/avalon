@@ -108,9 +108,14 @@ children; even delayed child jobs check the current parent registry.
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
 discovery followed by child inventories; `status` reports completion receipts.
-An incomplete attachment lookup automatically schedules missing discovery without
-resetting in-progress jobs, and returns retryable `projection_incomplete` until
-a canonical grant or complete negative evidence can be established. Explicit
+An incomplete attachment lookup automatically schedules missing discovery and
+returns retryable `projection_incomplete` until a canonical grant or complete
+negative evidence can be established. That path re-queues exactly the discovery
+that is missing and nothing else: a parent whose own discovery has not
+completed, or, under a parent that has completed, each individual child receipt
+still at `completed = 0`. It writes nothing for a receipt that finished and
+nothing for one whose delivery row is still queued, so a retryable failure
+cannot reset a workspace or turn repeated reads into repeated writes. Explicit
 backfill can refresh existing receipts. Source mutations also queue inventory
 updates through their transactional outbox.
 
@@ -174,11 +179,16 @@ reach the configured activity dead-letter queue; incomplete receipts prevent
 discovery. An unprovisioned registered child therefore requires repair before
 negative attachment evidence is complete; it cannot silently disappear from the backfill.
 
-A dead-lettered projection after discovery completes can leave a newly shared
-resource denied indefinitely, until that projection is repaired or another source
-mutation republishes it. There is no age-triggered self-heal. Repair the failing
-consumer or source first, then replay the reference-only authorization jobs from
-the regional activity dead-letter queue. For a workspace-wide rebuild, trusted
+A dead-lettered projection leaves a receipt at `completed = 0` with no delivery
+row behind it, and coverage is workspace-wide, so one such receipt denies every
+attachment-gated resource in the workspace to everyone but each resource's own
+uploader. The read path re-queues that receipt on every `projection_incomplete`,
+which restores coverage without operator action once the underlying consumer or
+source is healthy again. That is a retry, not an age-triggered self-heal: the
+trigger is the missing receipt, never elapsed time, and a job that keeps failing
+keeps dead-lettering. Repair the failing consumer or source first, then replay
+the reference-only authorization jobs from the regional activity dead-letter
+queue. For a workspace-wide rebuild, trusted
 operator tooling can call `AuthorizationControl.execute({ workspaceId, action:
 "backfill" })`; it invokes `beginAuthorizationBackfill` with refresh enabled by
 default and queues fresh canonical inventories. Poll `action: "status"` until
@@ -333,6 +343,50 @@ among them, keep the inline fill because nothing hands them a deferral. Content
 and display now come from the index, so the content RPC contract above is inert;
 see the text-search changelog for the read path. A future change must not put an
 owner read back into a member search request to close the first-search gap.
+
+### 2026-09-10 — Retry missing authorization discovery from the unavailable read
+
+`beginAuthorizationBackfill({ refresh: false })` skipped every parent already
+present in `authorization_backfill`, complete or not, and only ever queued
+parent-level jobs. The unavailable read path is its only `refresh: false`
+caller, so any discovery receipt left at `completed = 0` with no delivery row
+behind it was never retried. Coverage is workspace-wide, so one such receipt
+returned `authorization_unavailable` for every attachment-gated resource in the
+workspace, to every member except each resource's own uploader, permanently.
+
+The dominant way to reach that state is a child receipt, not a parent one. A
+parent job always returns at the `registerAuthorizationChildren` branch, which
+marks the parent complete; `authorization_projection_conversation_not_ready` is
+below that return and is therefore reachable only on a child job. The stuck
+workspace is thus a *completed* parent with one incomplete child, which the
+parent-only guard could never have reached.
+
+The read path now re-queues the specific missing receipt: the parent when its
+own discovery is incomplete, otherwise each child still at `completed = 0`. It
+skips any receipt whose delivery row is still present, because work already
+scheduled — including work waiting out a backoff — does not need requesting
+again.
+
+**Considered and rejected:** re-running the parent job to recover a stuck child,
+which is the smaller diff, was rejected because a parent job runs with
+`refreshExisting` enabled and resets every sibling receipt to `completed = 0`.
+That would widen the same workspace-wide outage it is meant to close, for as
+long as the re-registered children take to drain. Also rejected: an age or
+retry-count trigger, which would introduce the time-based self-heal this design
+deliberately does not have, and repairing inside the evaluator, which would put
+a write on the read path.
+
+**What a future change has to respect:** the delivery-row check is what keeps
+this path from amplifying client retries into writes on the workspace object,
+which is single-threaded and is also what has to drain the backlog. Re-queueing
+must stay idempotent through `enqueueAuthorizationDiscovery`, which upserts on
+`[parentId, substreamId]` and preserves an existing `not_before`. The
+child-registration guard is deliberately not changed to match; it is reached
+from parent jobs that legitimately refresh their whole child set. This extends
+the write-owned recovery of the 2026-09-09 entry below to the receipts that
+recovery leaves behind.
+
+Reported in production in a Global workspace.
 
 ### 2026-09-09 — Make projection recovery write-owned
 

@@ -3857,6 +3857,10 @@ describe("Durable Objects in the Workers runtime", () => {
       processingLeaseId: recovered.processingLeaseId,
       outcome: "failed",
       error: "injected retry",
+      // The code the settler derived beside the message a person reads; the
+      // entry point parses through `parseRpcInput`, so a code outside the
+      // class would refuse the settlement naming the field.
+      errorCode: "connector_event_processing_failed:event.eventType:invalid_type",
     });
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,

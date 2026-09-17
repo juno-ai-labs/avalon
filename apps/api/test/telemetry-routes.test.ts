@@ -1,12 +1,13 @@
 import "../../../tests/isolated-region";
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { TELEMETRY_BATCH_MAX_BYTES } from '@rally/contracts/telemetry';
 import type { HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from '../src/routes/telemetry';
 import { requireIdentityAuth } from '../src/middleware/auth';
-import { coarseTelemetryRoute } from '../src/telemetry/bootstrap';
+import { coarseTelemetryRoute, TelemetryBootstrapService } from '../src/telemetry/bootstrap';
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -188,6 +189,37 @@ describe('telemetry HTTP bounds', () => {
     }, createTestEnv({ AVALON_REGION: 'enterprise', LOG_LEVEL: 'error' }));
     expect(enterprise.status).toBe(404);
     database.close();
+  });
+
+  it('logs the field a bootstrap that failed its own contract rejected, and still answers internal_error', async () => {
+    // The route mapped every unknown error to `ApiError(500, 'internal_error')`,
+    // so a `ZodError` from the service reached the log as that code and the
+    // class name `ApiError`, and nothing said which field. Rethrown as itself,
+    // the error handler answers the same 500 and logs the route and the paths.
+    const rejection = z.strictObject({ routingBasis: z.enum(['geolocation_fallback']) }).safeParse({ routingBasis: 'guess' });
+    if (rejection.success) throw new Error('expected a rejection');
+    vi.spyOn(TelemetryBootstrapService.prototype, 'bootstrap').mockRejectedValueOnce(rejection.error);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const database = migratedSqliteDatabase();
+
+    const response = await publicApp().request('/telemetry/bootstrap', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
+      body: JSON.stringify({ anonymousEpochId: epochId }),
+    }, createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
+    }));
+    database.close();
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'internal_error' } });
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'request_failed',
+      code: 'internal_error',
+      route: '/telemetry/bootstrap',
+      validation_issues: [{ path: 'routingBasis', code: 'invalid_value' }],
+    }));
+    logged.mockRestore();
   });
 
   it('maps a tampered anonymous capability to a stable public rejection', async () => {

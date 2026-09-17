@@ -1,3 +1,4 @@
+import { describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
 import { RegionSchema } from "@rally/contracts/regions";
 import { nextCursorPage, paginatedResult } from "./tool-pagination";
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@rally/contracts";
@@ -1407,7 +1408,13 @@ async function slackApiResponse<M extends SlackWebApiMethod>(
   }
   const response = definition.response.safeParse(payload);
   if (!response.success) {
-    throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, response.error.flatten());
+    // Every reason helper on the API side reads `responseIssues` before
+    // falling back to `provider_error`; without it a malformed body reached
+    // the ingress job and the connection row as the word `provider_error`.
+    throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, {
+      ...response.error.flatten(),
+      responseIssues: codeShaped(describeZodIssues(response.error)),
+    });
   }
   const rawScopes = responseWithMetadata.headers.get("x-oauth-scopes");
   return {
@@ -1563,7 +1570,15 @@ function parseSlackSuccess<T extends z.ZodType>(
     );
   }
   const result = schema.safeParse(payload);
-  if (!result.success) throw new ConnectorError("provider_error", fallbackMessage, result.error.flatten());
+  // The flatten's shape is what tells a schema mismatch from a provider
+  // refusal downstream; the paths say which field the body was missing. The
+  // values, which on this surface are tokens and identity, are in neither.
+  if (!result.success) {
+    throw new ConnectorError("provider_error", fallbackMessage, {
+      ...result.error.flatten(),
+      responseIssues: codeShaped(describeZodIssues(result.error)),
+    });
+  }
   return result.data;
 }
 
@@ -1592,10 +1607,12 @@ async function slackOAuthCallbackStage<T>(
       throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
     }
     if (error instanceof z.ZodError) {
+      // The paths say which field the response was missing; the values, which
+      // on this surface are tokens and account identity, stay behind.
       throw new ConnectorError(
         "provider_error",
         "Slack returned an unexpected OAuth response",
-        { oauthStage, responseInvalid: true },
+        { oauthStage, responseInvalid: true, responseIssues: codeShaped(describeZodIssues(error)) },
       );
     }
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {

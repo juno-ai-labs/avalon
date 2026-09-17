@@ -602,6 +602,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
           processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
+          errorCode,
         });
         const attempts = Math.max(1, message.attempts);
         const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
