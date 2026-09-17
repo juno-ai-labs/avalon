@@ -1,4 +1,4 @@
-import { ConnectorConnectionCardCatalog } from '@rally/contracts';
+import { ConnectorConnectionCardCatalog, type OnboardingConnectorId } from '@rally/contracts';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { ServerCog, Webhook } from 'lucide-react';
@@ -133,6 +133,15 @@ export const connectorProviders = [
 ] as const;
 
 export type ConnectorProviderCatalogEntry = (typeof connectorProviders)[number];
+
+/**
+ * Every tile the onboarding picker draws must be a selection the journey schema
+ * accepts. Fireflies once was not, and the picker offered it anyway: choosing it
+ * failed the whole save, so the person could connect nothing. This is that check,
+ * at compile time.
+ */
+const _onboardingSelectable: readonly OnboardingConnectorId[] = connectorProviders.map((provider) => provider.id);
+void _onboardingSelectable;
 export type OAuthConnectorProviderCatalogEntry = Exclude<
   ConnectorProviderCatalogEntry,
   { provider: 'custom_mcp' | 'generic_webhook' | 'x' }

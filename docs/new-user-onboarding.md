@@ -110,6 +110,25 @@ Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
+### 2026-09-17 — Derive the selectable connector ids from the connection-card catalog
+
+The journey's connector enum was a hand-kept copy of the ids in the
+connection-card catalog. Fireflies was added to that catalog and to the picker
+but never to the enum, so its tile was offered and then refused: the selection is
+saved as one array, so a new account that chose Fireflies had every other choice
+rejected with it and could connect nothing at all. The enum is now derived from
+`ConnectorConnectionCardIds` plus the three identities that have no card — Custom
+MCP, inbound webhook, and X — and the renderer catalog asserts at compile time
+that every tile it draws is a selection the schema accepts. The alternative, just
+adding `fireflies` to the list, leaves the next connector to break the same way.
+A connector that must be offered in onboarding but not as a connection card needs
+a second derived source rather than a return to a hand-kept list.
+
+While picking, tiles now share one row height (`grid-auto-rows: 1fr`), because a
+name that wraps to two lines made its entire row taller than the rows below it.
+Configuring keeps intrinsic heights: those cards carry descriptions of genuinely
+different lengths.
+
 ### 2026-09-09 — Keep pending onboarding from admitting conversations
 
 Review confirmed that mounting the workspace early also mounted its feed consumer,
