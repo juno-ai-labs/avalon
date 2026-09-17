@@ -150,6 +150,7 @@ import {
   javascriptErrorProcessHealthState,
   normalizeJavascriptErrorCandidate,
 } from './javascript-error-candidate';
+import { recoverMainProcessNetworkRejection } from './main-process-network-recovery';
 import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import { LockdownModeController } from './lockdown-mode';
 import {
@@ -4591,6 +4592,18 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
     errorCode: javascriptErrorCode(error, origin === 'unhandledRejection' ? 'unhandled_rejection' : 'unknown'),
     frames,
   }).catch(() => undefined);
+});
+
+process.on('unhandledRejection', (reason) => {
+  recoverMainProcessNetworkRejection(reason, (error, code) => {
+    // Chromium can reject an in-flight URL load while macOS is changing the
+    // network underneath a sleeping or waking app. The request's owner has
+    // already lost this result; keeping the process alive lets each background
+    // subsystem use its existing reconnect or retry path instead of showing
+    // Electron's fatal JavaScript dialog. Unknown rejections are rethrown by
+    // the boundary above and retain the ordinary fatal behavior.
+    logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+  });
 });
 
 app.on('browser-window-focus', () => {
