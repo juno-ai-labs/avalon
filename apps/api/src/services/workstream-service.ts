@@ -649,9 +649,12 @@ export class WorkstreamService {
 
   async sidekickAttachments(id: string, removeId?: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
     const conversation = new ConversationService(this.env, this.auth);
-    if (removeId) await conversation.writableClient(id, substreamId);
-    else await conversation.client(id, false, substreamId);
-    if ((await conversation.resolveParent(id)).kind !== "workstream") {
+    await requireOpenWorkstreamAuthority(this.env);
+    const parent = await conversation.authorizeViewer(id, substreamId);
+    if (removeId && parent.archived) {
+      throw new ApiError(409, "conversation_parent_archived", "This conversation belongs to something that is archived");
+    }
+    if (parent.kind !== "workstream") {
       throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick attachments belong to workstreams");
     }
     if (removeId) await this.requireSidekickParticipant(id, substreamId);

@@ -1727,6 +1727,7 @@ queue rather than in Bind, because Bind is right to refuse the shape and only
 the object knows which pending row would fix it. A room wedged before this
 shipped recovers on its own: the answer is still in the queue, and the next wake
 promotes it.
+
 ### 2026-09-12 — Remove the second parent round trip from opening
 
 **What changed:** `resolveViewer` returns parent existence, authority generation,
@@ -1751,6 +1752,10 @@ profiles.
 **Consequences:** private-child membership and archive decisions remain part of
 admission; the full snapshot remains schema-validated. Prewarming was rejected
 because it retains the duplicate dependency on every cold open.
+
+The September 17 rebase also moves the newer Sidekick attachment caller onto
+that combined decision. It retains the open-authority and archived-write gates
+without restoring the retired resolver or adding another parent lookup.
 
 Shipped in #734.
 
