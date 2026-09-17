@@ -2774,6 +2774,16 @@ export const NormalizedActivitySchema = z.object({
   dedupeKey: z.string().min(1),
   rawContentHash: z.string().nullable(),
   metadata: z.record(z.string(), z.unknown()),
+  /**
+   * The occurrence this activity reports, when more than one delivery can
+   * report it: a Granola note arrives as `note.access_granted` when it is
+   * shared and as `note.generated` when its summary is written. An automation
+   * admits the event under this key, once, instead of under the event id.
+   * Adapter code sets it, namespaced by provider; it never comes from a
+   * provider payload, and the workspace store drops a same-named key found in
+   * `metadata` so no caller can stand one in.
+   */
+  occurrenceKey: z.string().min(1).optional(),
   externalPeople: z.array(z.strictObject({
     provider: z.string().min(1).max(80),
     providerTenantId: z.string().min(1).max(200).nullable(),
