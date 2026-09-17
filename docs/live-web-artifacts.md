@@ -83,6 +83,13 @@ The bitmap font transliterates accented Latin text and gives titles with no
 supported glyphs a stable visible site code; an authored card remains the right
 answer for non-Latin branding.
 
+Assets within a version upload through at most six whole-upload workers. That is
+a conservative per-invocation budget based on Cloudflare's six connections
+waiting for response headers; it is neither a hard transfer cap nor an
+account-wide limit. Every writer settles before publication can continue; any
+failed asset prevents the manifest write. This preserves the assets-before-manifest
+barrier without adding each independent R2 round trip to the publication latency.
+
 ### Revising
 
 A run asked to change a site it did not build — or built in a session that has
@@ -457,6 +464,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
+| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
 
 Two traps:
@@ -566,6 +574,28 @@ pruned on navigation rather than on inspection, which creates no sessions to
 consume them.
 
 Shipped in #731.
+
+### 2026-09-12 — Overlap independent artifact asset writes
+
+**What changed:** Asset writers now share the platform's six-connection ceiling,
+stop claiming new assets after a failed write, and all settle before the manifest
+is written.
+
+**Why:** Serial R2 writes made multi-file publication pay every asset's network
+latency in succession. Independent versioned asset keys do not need that
+serialization.
+
+**Considered and rejected:** Unbounded fan-out was rejected because it would
+only queue inside the platform; early manifest publication was rejected because
+it could expose an incomplete version.
+
+**Consequences:** Six is a conservative whole-upload worker budget derived from
+Cloudflare's per-invocation header-phase connection ceiling; it is neither a
+hard transfer cap nor an account-wide limit. Any writer added to this path runs
+beside five siblings and must settle before the assets-before-manifest barrier
+can continue.
+
+Shipped in #732.
 
 ### 2026-09-11 — A link in a site preview leaves through the person who clicked it
 

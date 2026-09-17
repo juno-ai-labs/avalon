@@ -120,16 +120,40 @@ export async function writeArtifactVersion(
   };
 
   try {
-    for (const file of storedFiles) {
-      await env.PAYLOADS.put(
-        artifactAssetKey(artifactId, input.version, file.path),
-        file.bytes,
-        {
-          httpMetadata: { contentType: assetContentType(file.path) },
-          customMetadata: { source: "artifact", artifactId, version: String(input.version) },
-        },
-      );
-    }
+    // Cloudflare permits six outgoing connections awaiting response headers per
+    // top-level invocation, including R2; a seventh queues. This uses six whole
+    // upload jobs as a conservative per-invocation worker budget, not as a
+    // claim about the header-phase limit or an account-wide transfer cap.
+    // Transcribed 2026-09-12:
+    // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
+    const simultaneousConnections = 6;
+    const files = storedFiles.values();
+    let uploadFailed = false;
+    const uploads = Array.from({ length: Math.min(storedFiles.length, simultaneousConnections) }, async () => {
+      for (const file of files) {
+        // A failed version will never publish, so drain writes already begun
+        // by sibling workers but do not start another asset after a failure.
+        if (uploadFailed) return;
+        try {
+          await env.PAYLOADS.put(
+            artifactAssetKey(artifactId, input.version, file.path),
+            file.bytes,
+            {
+              httpMetadata: { contentType: assetContentType(file.path) },
+              customMetadata: { source: "artifact", artifactId, version: String(input.version) },
+            },
+          );
+        } catch (error) {
+          uploadFailed = true;
+          throw error;
+        }
+      }
+    });
+    // Drain every writer even on failure: no upload outlives this attempt, and
+    // the manifest cannot make a version visible until all its assets exist.
+    const results = await Promise.allSettled(uploads);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   } catch {
     throw new TerminalToolError(
       "resource_publish_failed",
