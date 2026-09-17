@@ -472,6 +472,23 @@ export interface ConnectorWebhookActivitySource {
     event: ConnectorVerifiedActivityWebhook,
     payloadRef: string | null,
   ): Omit<NormalizedActivity, "id"> | null;
+  /**
+   * Activities a verified delivery implies but cannot decide on its own.
+   *
+   * Runs after `normalize` accepted the delivery and before anything is
+   * persisted, with an authorized connection, because the decision needs a
+   * provider read: Granola reports a note shared into the workspace as
+   * `note.access_granted` whether or not its summary exists yet, and only
+   * the note says which. Returns whole activities to store beside the one the
+   * delivery named, or nothing when the delivery meant exactly what it said.
+   * Absent for every connector whose deliveries always do.
+   */
+  derive?(
+    connection: AuthorizedConnectorConnection,
+    activity: Omit<NormalizedActivity, "id">,
+    event: ConnectorVerifiedActivityWebhook,
+    signal: AbortSignal,
+  ): Promise<Array<Omit<NormalizedActivity, "id">>>;
 }
 
 export interface ConnectorActivityStreamError {

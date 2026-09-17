@@ -1,3 +1,4 @@
+import type { NormalizedActivity } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -14,6 +15,35 @@ import {
 } from "./index";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000201");
+
+function activityShape(): Omit<NormalizedActivity, "id"> {
+  return {
+    workspaceId: WORKSPACE_ID,
+    region: "global",
+    connectionId: "connection-201",
+    connectionScope: "workspace",
+    connectionOwnerUserId: null,
+    provider: "granola",
+    providerEventId: "delivery-301",
+    eventType: "note.access_granted",
+    resourceType: "granola_note",
+    providerResourceId: "not_1234567890abcd",
+    actor: {},
+    subject: {},
+    occurredAt: "2026-09-16T12:51:00.000Z",
+    receivedAt: "2026-09-16T12:51:01.000Z",
+    title: "Granola note access granted",
+    summary: "",
+    textSnippet: "",
+    payloadRef: null,
+    visibility: { scope: "workspace" },
+    targetUserIds: [],
+    entityKeys: [],
+    dedupeKey: "delivery-301",
+    rawContentHash: null,
+    metadata: {},
+  };
+}
 
 function connection() {
   return authorizedConnection({
@@ -195,6 +225,49 @@ describe("connector observability", () => {
     ]);
     expect(JSON.stringify(observations)).not.toContain("provider content must not be logged");
     expect(JSON.stringify(observations)).not.toContain("connector content must remain absent");
+  });
+
+  it("carries a webhook source's derive through the wrapper and observes it, and adds none where there was none", async () => {
+    // The wrapper is the only copy of a source the host sees. Its first
+    // version rebuilt `verify` and `normalize` by name and nothing else, so a
+    // connector's `derive` existed in the adapter and nowhere the ingress
+    // could reach it.
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const base = createGenericWebhookConnector();
+    const derived = { ...activityShape(), eventType: "note.generated" };
+    const adapter = instrumentConnectorAdapter({
+      ...base,
+      manifest: { ...base.manifest, type: "granola" },
+      webhookActivity: {
+        ...base.webhookActivity!,
+        async derive(_connection, _activity, event) {
+          return event.eventType === "note.access_granted" ? [derived] : [];
+        },
+      },
+    }, observer);
+    const envelope = {
+      deliveryId: "delivery-301",
+      eventType: "note.access_granted",
+      providerAccountId: null,
+      bodyHash: "hash",
+      receiptKey: "receipt",
+      event: {},
+    };
+
+    await expect(adapter.webhookActivity!.derive!(connection(), activityShape(), envelope, new AbortController().signal))
+      .resolves.toEqual([derived]);
+    expect(observations).toContainEqual([
+      "debug",
+      "connector_operation_started",
+      expect.objectContaining({ connector_type: "granola", operation: "webhook_derive", delivery_id: "delivery-301", event_type: "note.access_granted" }),
+    ]);
+    expect(observations).toContainEqual([
+      "info",
+      "connector_operation_finished",
+      expect.objectContaining({ operation: "webhook_derive", outcome: "derived", derived_event_types: ["note.generated"] }),
+    ]);
+    expect(instrumentConnectorAdapter(base, observer).webhookActivity!.derive).toBeUndefined();
   });
 
   it("retains identifiers from real Google and Linear tool shapes without adjacent content", async () => {

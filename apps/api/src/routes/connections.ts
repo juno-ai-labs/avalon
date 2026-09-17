@@ -181,6 +181,8 @@ const WebhookIngestionSchema = z.object({
 const ConnectorWebhookIngestionSchema = z.object({
   duplicate: z.boolean(),
   activityId: IdSchema.nullable().optional(),
+  /** Activities the delivery implied and the adapter derived, stored beside the named one. */
+  derivedActivityIds: z.array(IdSchema).optional(),
 });
 /** A Fireflies delivery is an activity, or the dashboard's test event answered on its own. */
 const FirefliesWebhookResponseSchema = z.union([z.strictObject({ ping: z.literal(true) }), ConnectorWebhookIngestionSchema]);
