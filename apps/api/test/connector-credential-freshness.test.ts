@@ -12,6 +12,7 @@ import {
 } from "@rally/connectors";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { encryptString } from "../src/lib/crypto";
 import {
   seedWorkstreamObjectRoot,
@@ -27,6 +28,7 @@ import type {
   PluginAuthorizationInput,
 } from "../src/services/integrations";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import { ObjectPortError } from "../src/runtime/object-port";
 
 /**
  * A connection reaches a provider only through `withAuthorizedConnection`,
@@ -1302,3 +1304,48 @@ function recordingLeasedDatabase(
     },
   });
 }
+
+describe("the row behind an indeterminate reauthorization", () => {
+  it("names the field a schema rejection rejected, the way it names a connector's own code", () => {
+    // The verdict this becomes is `indeterminate`, which tells the model to
+    // retry once the authorization service is available. The row is where a
+    // deterministic cause is told apart from a service that was down, and for
+    // a schema rejection it carried the issue list as prose and no code.
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejection = z.strictObject({ account: z.strictObject({ id: z.string() }) })
+      .safeParse({ account: { id: 7 } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    __integrationTesting.logPluginAuthorizationFailure(
+      { LOG_LEVEL: "warn", AVALON_REGION: "global", APP_VERSION: "test", BUILD_SHA: null } as never,
+      { harnessRunId: "run", workspaceId: "workspace", parentId: "parent" } as never,
+      { pluginId: "plugin_granola", connectionId: "connection", workspaceId: "workspace", connectorType: "granola" } as never,
+      rejection.error,
+    );
+
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_plugin_reauthorization_failed",
+      plugin_id: "plugin_granola",
+      code: "reauthorization_failed:account.id:invalid_type",
+    }));
+    warning.mockRestore();
+  });
+
+  it("names the authority that refused an identity read, which the port's sentence never does", () => {
+    // The identity and run-state ports answer a refusal with one fixed
+    // sentence and the authority's reason on `.code`; the row carried the
+    // sentence and became `indeterminate` — retry later — for a version skew.
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    __integrationTesting.logPluginAuthorizationFailure(
+      { LOG_LEVEL: "warn", AVALON_REGION: "global", APP_VERSION: "test", BUILD_SHA: null } as never,
+      { harnessRunId: "run", workspaceId: "workspace", parentId: "parent" } as never,
+      { pluginId: "plugin_granola", connectionId: "connection", workspaceId: "workspace", connectorType: "granola" } as never,
+      new ObjectPortError("workstream_identity_refused", "Rally's work-stream identity authority rejected an internal request."),
+    );
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_plugin_reauthorization_failed",
+      code: "workstream_identity_refused",
+    }));
+    warning.mockRestore();
+  });
+});

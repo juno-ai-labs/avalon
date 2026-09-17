@@ -331,6 +331,67 @@ describe("Granola personal automation catalog", () => {
       }),
     ]);
   });
+
+  it("names the tool and field a drifted catalog failed, and lists nothing from it", async () => {
+    const { database, env } = fixture();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const connectionId = "00000000-0000-4000-8000-000000000011";
+    const encrypted = await encryptString(
+      JSON.stringify({ accessToken: "personal-token" }),
+      CREDENTIAL_KEY,
+      connectionId,
+    );
+    database.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+        display_name, encrypted_credentials, credential_iv, credential_key_version,
+        granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
+        created_at, updated_at)
+       VALUES (?, ?, 'granola', 'personal', ?, 'granola:person', 'Granola', ?, ?, 1,
+               '["granola.personal.read"]', 'plugin_granola', 'healthy', '{}', '{}',
+               '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run(connectionId, WORKSPACE_ID, USER_ID, encrypted.ciphertext, encrypted.iv);
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      const id = request.id as string;
+      if (request.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: { protocolVersion: "2025-06-18", capabilities: {} },
+        }, { headers: { "mcp-session-id": "session-1" } });
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          tools: [
+            // The catalog drifted: a schema that is not an object schema.
+            { name: "query_granola_meetings", inputSchema: { type: "array" } },
+            { name: "list_meetings", inputSchema: { type: "object" } },
+          ],
+        },
+      });
+    }));
+
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(
+      env,
+      WORKSPACE_ID,
+      USER_ID,
+    );
+
+    // The plugin is left out of the catalog, and the row names the tool and
+    // the field rather than the class name `ZodError`.
+    expect(catalog).toEqual([]);
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "dynamic_connector_tools_unavailable",
+      surface: "automation_creator",
+      error_code: expect.stringMatching(/^dynamic_connector_tools_unavailable:tools\.0\.inputSchema/u),
+    }));
+    warning.mockRestore();
+  });
 });
 
 function fixture() {

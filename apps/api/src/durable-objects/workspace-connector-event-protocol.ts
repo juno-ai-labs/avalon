@@ -123,6 +123,11 @@ export const WorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEven
   processingLeaseId: z.string().min(1).max(100).optional(),
   outcome: z.enum(["processed", "failed"]),
   error: z.string().max(1_000).nullable(),
+  // The code the settler derived from its failure, for the terminal row.
+  // `error` is the message a person reads and may quote the provider; this
+  // is what `diagnosticErrorCode` reduced it to, and it is what the row
+  // indexes.
+  errorCode: z.string().regex(/^[A-Za-z0-9_:.-]{1,120}$/u).optional(),
 }).strict();
 
 export const LegacyWorkspaceConnectorEventSettleRequestSchema = WorkspaceConnectorEventRequestSchema.extend({

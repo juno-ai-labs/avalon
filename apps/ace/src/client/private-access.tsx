@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AccessRequestPageSchema, DownloadGrantListSchema, DownloadGrantResultSchema, type AccessRequestListItem, type DownloadGrantListItem } from '@rally/contracts/private-access';
 import { Button, EmptyState, Field, Panel } from './components/ui';
+import { responseBody } from './response';
 
 const acknowledgementLabels = {
   pending: 'Pending', sending: 'In progress', sent: 'Accepted by provider', failed: 'Retry available',
@@ -59,11 +60,12 @@ export function AccessView(): React.JSX.Element {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId: request?.id, ...(timed ? { expiresAt: new Date(expiry).toISOString() } : {}) }),
       });
-      if (!response.ok) throw new Error('Generation failed');
-      const grant = DownloadGrantResultSchema.parse(await response.json());
+      // The route says which field it refused; the page shows that sentence
+      // rather than one of its own, the way `recover()` already does.
+      const grant = await responseBody(response, (value) => DownloadGrantResultSchema.parse(value));
       setLink({ id: grant.id, url: grant.url, expiresAt: grant.expiresAt, recipient: request?.email ?? 'Standalone link' });
       refresh();
-    } catch { setError('Could not generate a link. Check the expiry and try again.'); }
+    } catch (error) { setError(error instanceof Error ? error.message : 'Could not generate a link. Check the expiry and try again.'); }
     finally { setBusy(false); }
   }
   async function revoke(id: string): Promise<void> {
