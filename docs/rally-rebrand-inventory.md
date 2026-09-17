@@ -245,6 +245,13 @@ the provider registration. Its public directory contact is the same confirmed
 `help@rallywith.ai` catch-all used by the site; `support@with-avalon.com` and
 other role aliases are not published as parallel external contact paths.
 
+Workspace invitation emails and their accepted/declined follow-ups identify
+Rally and use white backgrounds, neutral text, and black primary actions. Their
+headers pair the name with `rally-mark-email.png`, a 96px raster export of
+`rally-mark-ink.svg` displayed at 32px for email compatibility. Publish that site
+asset with the API templates. The invitation-specific macOS download links and
+delivery idempotency keys retain their existing behavior.
+
 ### 8. Internal prose — cheapest, and safe to move alone
 
 - **`docs/`: 538 occurrences across 64 files.** Heaviest: `runbook.md` (67),
@@ -303,7 +310,7 @@ Linear native-agent plugin, and the core plugin's own utilities line all moved;
 the four Slack connector labels moved earlier, in the Slack cut-over.
 
 **Not section 9, and deliberately left here:** the remaining transactional email
-copy (`invitation-email-service.ts`, `digest-email-content.ts`) and the API error
+copy (`digest-email-content.ts`) and the API error
 strings surfaced in the client UI. Those are user-facing copy the public-site
 pass did not reach, and they are section 7's remainder rather than this
 section's.
