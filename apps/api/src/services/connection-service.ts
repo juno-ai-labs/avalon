@@ -363,6 +363,12 @@ async function reportConnectorRepair(
   }
 }
 
+/**
+ * How long a Granola delivery may spend asking Granola about the note it
+ * names. Granola allows fifteen seconds for the whole delivery.
+ */
+const GRANOLA_DERIVE_TIMEOUT_MS = 8_000;
+
 export class ConnectionService {
   private env: Env;
   private readonly auth: AuthContext | undefined;
@@ -2972,6 +2978,34 @@ export class ConnectionService {
     if (!normalized) throw unsupportedWebhookEvent(this.env, {
       provider: "granola", connectionId: connection.id, eventType: envelope.eventType,
     });
+    // What the delivery implies but could not say: a note shared into the
+    // workspace after it was generated is the transcript Granola will never
+    // announce as `note.generated`. Decided before anything is stored, so a
+    // failure here leaves nothing half-written; the adapter answers a share it
+    // cannot resolve with the event anyway and marks it, and the log says so.
+    const deriveSignal = AbortSignal.timeout(GRANOLA_DERIVE_TIMEOUT_MS);
+    const derived = source.derive
+      ? await withAuthorizedConnection(
+          this.env,
+          { connection: context, adapter: this.registry().get("granola"), signal: deriveSignal },
+          (authorized) => source.derive!(authorized, normalized, envelope, deriveSignal),
+        )
+      : [];
+    for (const activity of derived) {
+      if (activity.metadata.summaryVerified === false) {
+        logWarn(this.env, "granola_shared_note_lookup_failed", {
+          workspace_id: connection.workspace_id,
+          connection_id: connection.id,
+          event_id: verified.event_id,
+          note_id: verified.note_id,
+          derived_event_type: activity.eventType,
+        });
+      }
+    }
+    const activities = [normalized, ...derived].map((activity) => ({
+      ...activity,
+      rawContentHash: activity.rawContentHash ?? envelope.bodyHash,
+    }));
     if (this.env.WORKSPACE_DOS) {
       const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
         await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
@@ -2983,17 +3017,17 @@ export class ConnectionService {
           expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
         }),
       );
-      const persisted = await persistNormalizedActivity(this.env, {
-        ...normalized,
-        rawContentHash: normalized.rawContentHash ?? envelope.bodyHash,
-      }, "granola");
+      const [persisted, ...rest] = await Promise.all(
+        activities.map((activity) => persistNormalizedActivity(this.env, activity, "granola")),
+      );
       return {
-        duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
-        activityId: persisted.activityId,
+        duplicate: receipt.outcome === "duplicate" || persisted!.duplicate,
+        activityId: persisted!.activityId,
+        ...(rest.length > 0 ? { derivedActivityIds: rest.map((entry) => entry.activityId) } : {}),
       };
     }
-    const activityId = newId();
     const receiptId = newId();
+    const activityIds = activities.map(() => newId());
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
@@ -3005,7 +3039,7 @@ export class ConnectionService {
         receivedAt,
         new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
       ),
-      this.env.DB.prepare(
+      ...activities.map((activity, index) => this.env.DB.prepare(
         `INSERT INTO activities
          (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
           provider, provider_event_id, event_type, resource_type, provider_resource_id,
@@ -3017,47 +3051,55 @@ export class ConnectionService {
                  '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
-        activityId,
+        activityIds[index],
         connection.workspace_id,
         connection.id,
-        verified.event_id,
-        normalized.eventType,
-        normalized.providerResourceId,
-        JSON.stringify(normalized.subject),
-        normalized.occurredAt,
+        activity.providerEventId,
+        activity.eventType,
+        activity.providerResourceId,
+        JSON.stringify(activity.subject),
+        activity.occurredAt,
         receivedAt,
-        normalized.title,
+        activity.title,
         payloadKey,
-        JSON.stringify(normalized.visibility),
-        JSON.stringify(normalized.entityKeys),
-        normalized.dedupeKey,
-        normalized.rawContentHash,
-        JSON.stringify(normalized.targetUserIds),
-        JSON.stringify(normalized.externalPeople ?? []),
-        JSON.stringify(normalized.metadata),
-      ),
+        JSON.stringify(activity.visibility),
+        JSON.stringify(activity.entityKeys),
+        activity.dedupeKey,
+        activity.rawContentHash,
+        JSON.stringify(activity.targetUserIds),
+        JSON.stringify(activity.externalPeople ?? []),
+        JSON.stringify(activity.metadata),
+      )),
     ]);
+    const canonicalIds: string[] = [];
+    for (const [index, activity] of activities.entries()) {
+      const inserted = Number(results[index + 1]?.meta.changes ?? 0) > 0;
+      const canonical = inserted
+        ? { id: activityIds[index]! }
+        : await this.env.DB.prepare(
+            `SELECT id FROM activities
+             WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
+             ORDER BY received_at DESC LIMIT 1`,
+          ).bind(connection.id, activity.providerEventId, activity.eventType).first<{ id: string }>();
+      if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
+      canonicalIds.push(canonical.id);
+    }
     const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
-    const canonical = insertedActivity
-      ? { id: activityId }
-      : await this.env.DB.prepare(
-          `SELECT id FROM activities
-           WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
-           ORDER BY received_at DESC LIMIT 1`,
-        ).bind(connection.id, verified.event_id, verified.event_type).first<{ id: string }>();
-    if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
-    // Re-enqueue the canonical row on retries as crash-window recovery. If a
+    // Re-enqueue the canonical rows on retries as crash-window recovery. If a
     // previous request committed D1 but failed before queue delivery, Granola's
-    // retry must still make the durable activity visible to the consumer.
-    await this.env.ACTIVITY_QUEUE.send({
-      region: this.env.AVALON_REGION,
-      workspaceId: connection.workspace_id,
-      activityId: canonical.id,
-      attempt: 0,
-    });
+    // retry must still make the durable activities visible to the consumer.
+    for (const activityId of canonicalIds) {
+      await this.env.ACTIVITY_QUEUE.send({
+        region: this.env.AVALON_REGION,
+        workspaceId: connection.workspace_id,
+        activityId,
+        attempt: 0,
+      });
+    }
     return {
       duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
-      activityId: canonical.id,
+      activityId: canonicalIds[0]!,
+      ...(canonicalIds.length > 1 ? { derivedActivityIds: canonicalIds.slice(1) } : {}),
     };
   }
 

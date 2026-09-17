@@ -308,6 +308,30 @@ function isGranolaWebhookEvent(value: string): value is GranolaWebhookEvent {
   return (GRANOLA_WEBHOOK_EVENTS as readonly string[]).includes(value);
 }
 
+/**
+ * What an automation admits a note's arrival under, whichever event carried it.
+ *
+ * Granola sends `note.generated` only when a note's first summary is written
+ * while the endpoint can already read the note. A note generated in someone's
+ * personal space and shared into the workspace afterwards — the ordinary way a
+ * note reaches a shared folder — arrives as `note.access_granted` instead, and
+ * `derive` turns that into the `note.generated` the workspace never got. The
+ * two can also both arrive for one note, shared before its summary existed or
+ * moved between shared folders later, so both carry this key and an automation
+ * runs once per note rather than once per delivery.
+ */
+function transcriptOccurrenceKey(connectionId: string, noteId: string): string {
+  return `granola:${connectionId}:note:${noteId}:transcript`;
+}
+
+/** Whether a note Granola returned has a generated summary to work from. */
+function noteHasSummary(note: Record<string, unknown>): boolean {
+  const markdown = note.summary_markdown;
+  const text = note.summary_text;
+  return (typeof markdown === "string" && markdown.trim().length > 0)
+    || (typeof text === "string" && text.trim().length > 0);
+}
+
 const GranolaWebhookEndpointSchema = z.looseObject({
   id: z.string().regex(/^whe_[A-Za-z0-9]{14}$/u),
   signing_secret: z.string().regex(/^whsec_[A-Za-z0-9+/=_-]+$/u),
@@ -647,8 +671,56 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           entityKeys: [`granola:note:${verified.note_id}`],
           dedupeKey: verified.event_id,
           rawContentHash: event.bodyHash,
-          metadata: { changedFields: verified.data?.changed_fields ?? [] },
+          metadata: {
+            changedFields: verified.data?.changed_fields ?? [],
+            ...(verified.event_type === "note.generated"
+              ? { occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id) }
+              : {}),
+          },
         };
+      },
+      async derive(connection, activity, event, signal) {
+        const verified = event.event as VerifiedGranolaWebhook;
+        if (verified.event_type !== "note.access_granted") return [];
+        // A note shared into the workspace. Granola sends `note.generated`
+        // only while the endpoint can read the note, so for a note generated
+        // privately and shared afterwards this delivery is the only one the
+        // workspace gets — and Granola's own docs say so: an already-generated
+        // note shared later arrives as `note.access_granted` instead. Whether
+        // it is a transcript yet is the note's to say; a note shared before its
+        // summary exists gets its `note.generated` from Granola later.
+        let note: Record<string, unknown> | null = null;
+        let summaryVerified = true;
+        try {
+          note = await granolaApi(
+            fetcher,
+            apiBaseUrl,
+            requireWorkspaceApiKey(connection),
+            `/v1/notes/${encodeURIComponent(verified.note_id)}`,
+            {},
+            signal,
+          );
+        } catch (error) {
+          // The key cannot read this note, so no run could either.
+          const status = error instanceof ConnectorError && isRecord(error.details) ? Number(error.details.status) : NaN;
+          if (status === 403 || status === 404) return [];
+          // Anything else is Granola not answering. A run that reads a note
+          // without a summary says so; a share nobody hears about says nothing.
+          summaryVerified = false;
+        }
+        if (note && !noteHasSummary(note)) return [];
+        return [{
+          ...activity,
+          eventType: "note.generated",
+          title: "Granola note generated",
+          dedupeKey: `${verified.event_id}:generated`,
+          metadata: {
+            changedFields: [],
+            occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id),
+            derivedFrom: "note.access_granted",
+            ...(summaryVerified ? {} : { summaryVerified: false }),
+          },
+        }];
       },
     },
     manifest: {
@@ -664,7 +736,10 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       // later pass over the same note is Granola improving its own output —
       // Granola reports a regenerated summary as `note.edited` — and being
       // granted access to an existing note is a permission change rather than
-      // something that happened.
+      // something that happened. A note shared into the workspace after its
+      // summary was written is the one exception, and `derive` above reports
+      // it as `note.generated`, so "Transcript added" is what a person means
+      // by "after a Granola meeting" whichever event Granola sent.
       activityTriggers: defineConnectorActivityTriggers(
         "Granola",
         {
@@ -674,7 +749,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         {
           "note.generated": {
             label: "Transcript added",
-            description: "A new Granola transcript was generated.",
+            description: "A Granola note with a generated summary became available to the workspace: generated in a shared space, or generated privately and shared into one afterwards. Use this for anything that should happen after a meeting.",
             eventFamilies: ["granola.transcript.created"],
             filterFields: [{
               key: "participantPersonIds",
@@ -683,6 +758,14 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
               valueType: "person_id_array",
             }],
             resourceRelationships: [{ relationship: "folder", resourceType: "granola_folder" }],
+          },
+          "note.access_granted": {
+            label: "Note shared",
+            description: "A note was shared with the workspace, whether or not its summary exists yet. Transcript added already covers a finished note shared after it was generated; choose this only when a person asks for every share.",
+          },
+          "note.edited": {
+            label: "Note edited",
+            description: "A note's summary was edited or regenerated after it was first written.",
           },
         },
         [{ key: "changedFields", label: "Changed fields", description: "Granola note fields reported as changed.", valueType: "string_array" }],
