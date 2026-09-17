@@ -23,6 +23,7 @@ import { asSubstreamId, type Region, type WorkspaceId } from "@rally/contracts";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ScheduledDurableObject } from "./scheduled-alarms";
@@ -331,7 +332,7 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
   /** Native-RPC entrypoint for ordered child projection delivery. */
   async receiveChildEffects(input: ReceiveChildEffectsRequest): Promise<ReceiveChildEffectsResult> {
     await this.migrationsReady();
-    const request = ReceiveChildEffectsRequestSchema.parse(input);
+    const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     const accepted: ReceiveChildEffectsResult["accepted"] = [];
     for (const envelope of request.envelopes) {
       if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");

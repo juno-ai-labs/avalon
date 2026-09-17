@@ -91,6 +91,12 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       latestVersion: 27,
     }, () => Promise.reject(failure))).rejects.toBe(failure);
 
+    // The mismatch is thrown as a code with the version appended, and the
+    // span and the row keep the phase's own constant rather than it: the OTel
+    // `error.type` and the row's `code` are grouping keys, and one value per
+    // version — or per object key, or per member-chosen name, in the other
+    // messages the tree interpolates after a colon — defeats what they exist
+    // for. The message is on the row's `message`; the code stays bounded.
     expect(recordedSpans()[0]).toMatchObject({
       name: "durable_object.schema_migrate",
       ended: true,
@@ -104,6 +110,7 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       event: "durable_object_schema_migration",
       component: "workstream_do",
       status: "failed",
+      code: "durable_object_schema_migrate_failed",
       duration_ms: 80,
     });
   });
