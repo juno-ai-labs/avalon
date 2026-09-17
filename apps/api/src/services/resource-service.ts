@@ -621,7 +621,7 @@ export class ResourceService {
       throw error;
     }
     await this.refreshScheduler();
-    void emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: 'workstream_resource_action_completed',
@@ -637,7 +637,7 @@ export class ResourceService {
       },
       operationId: id,
       eventId: newId(),
-    }).catch(() => undefined);
+    });
     return { watchEnabled: true };
   }
 
@@ -678,7 +678,7 @@ export class ResourceService {
       throw error;
     }
     await this.refreshScheduler();
-    void emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: 'workstream_resource_action_completed',
@@ -694,7 +694,7 @@ export class ResourceService {
       },
       operationId: id,
       eventId: newId(),
-    }).catch(() => undefined);
+    });
   }
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {

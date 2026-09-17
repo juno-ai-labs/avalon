@@ -469,6 +469,7 @@ export class WorkstreamObjectProductService {
     private readonly transcript = new WorkstreamTranscriptStorage(storage),
     private readonly loops = new SubstreamLoopStorage(storage),
     private readonly externalSubstreamId: () => SubstreamId = () => asSubstreamId("0"),
+    private readonly defer: (promise: Promise<unknown>) => void = (promise) => { void promise; },
   ) {}
 
   private conversationLoopId(root: RootRow): string {
@@ -4179,6 +4180,7 @@ export class WorkstreamObjectProductService {
         } & Record<string, SqlStorageValue>>(
           `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
         ).one().next_transcript_sequence)),
+        defer: this.defer,
       });
       shouldInvoke = classification.classification === "agent_action"
         || classification.classification === "both"

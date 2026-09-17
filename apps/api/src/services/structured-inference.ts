@@ -8,6 +8,7 @@ import {
 import { AgentModelRoutingSchema } from "@rally/contracts";
 import type { Env } from "../env";
 import { createDeadline } from "../lib/deadline";
+import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
 import { logStructuredEvent } from "../observability/logger";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -167,6 +168,8 @@ export async function runStructuredInference<T>(
     reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal;
     onModelResolved?: (model: string) => void;
+    /** Test or host override for exact-envelope archive lifecycle. */
+    defer?: WorkDeferral;
   } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: { model: string; fallbackModels: string[] } }),
 ): Promise<{
   result: T;
@@ -211,7 +214,7 @@ export async function runStructuredInference<T>(
   const signal = input.signal
     ? AbortSignal.any([input.signal, deadline.signal])
     : deadline.signal;
-  const onDiagnostic = async (diagnostic: StructuredModelDiagnostic): Promise<void> => {
+  const onDiagnostic = (diagnostic: StructuredModelDiagnostic): void => {
     logStructuredEvent(
       env,
       diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
@@ -249,7 +252,7 @@ export async function runStructuredInference<T>(
         validation_issues: diagnostic.validationIssues,
       },
     );
-    await captureStructuredInferenceDiagnostic(env, {
+    (input.defer ?? runtimeDeferral)(captureStructuredInferenceDiagnostic(env, {
       source: input.role,
       ...(input.context.workspaceId ? { workspaceId: input.context.workspaceId } : {}),
       ...(input.context.userId ? { userId: input.context.userId } : {}),
@@ -257,7 +260,7 @@ export async function runStructuredInference<T>(
       ...(substreamId ? { substreamId } : {}),
       ...(input.requestId ? { requestId: input.requestId } : {}),
       ...(diagnostic.traceId ? { traceId: diagnostic.traceId } : {}),
-    }, diagnostic);
+    }, diagnostic));
     if (diagnostic.stage === "complete" && diagnostic.success) completion.diagnostic = diagnostic;
   };
   try {
