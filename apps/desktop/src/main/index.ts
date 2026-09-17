@@ -150,6 +150,10 @@ import {
   javascriptErrorProcessHealthState,
   normalizeJavascriptErrorCandidate,
 } from './javascript-error-candidate';
+import {
+  installMainProcessNetworkRecovery,
+  type MainProcessFatalOrigin,
+} from './main-process-network-recovery';
 import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import { LockdownModeController } from './lockdown-mode';
 import {
@@ -4576,7 +4580,7 @@ if (!singleInstanceLock) {
   });
 }
 
-process.on('uncaughtExceptionMonitor', (error, origin) => {
+function reportMainProcessFatal(error: Error, origin: MainProcessFatalOrigin): void {
   const frames = safeJavascriptFrames(error.stack);
   if (frames.length === 0) {
     void telemetryReporter?.processHealth(
@@ -4591,6 +4595,20 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
     errorCode: javascriptErrorCode(error, origin === 'unhandledRejection' ? 'unhandled_rejection' : 'unknown'),
     frames,
   }).catch(() => undefined);
+}
+
+installMainProcessNetworkRecovery(process, {
+  recovered: (error, code) => {
+    // Preserve the payload-free fleet signal this rejection emitted before
+    // it became recoverable; a packaged app's local warning is not observable.
+    void telemetryReporter?.processHealth('main', 'rejection', 'unknown').catch(() => undefined);
+    logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+  },
+  reportFatal: reportMainProcessFatal,
+  // Throw only after Node has delivered every rejection already pending in
+  // this microtask batch. The fatal monitor consumes the marker above so the
+  // scheduled throw is not double-counted as an ordinary exception.
+  deferFatal: (fatal) => { setImmediate(fatal); },
 });
 
 app.on('browser-window-focus', () => {
