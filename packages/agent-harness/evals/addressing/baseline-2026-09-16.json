@@ -1,0 +1,213 @@
+{
+  "generatedAt": "2026-09-16T22:28:20.522Z",
+  "dataset": {
+    "calls": 153,
+    "labeledCalls": 152,
+    "workspaces": 5,
+    "sha256": "d0c22c7e9d885ea12d1ebd514e5bf14850c8ae6ba14a44238d3cd794190635f4",
+    "labelMeaning": "Production structured outputs; regression labels, not human-reviewed ground truth."
+  },
+  "models": [
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "cases": 153,
+      "labeledCases": 152,
+      "completed": 153,
+      "errors": 0,
+      "successRate": 1,
+      "classificationAccuracy": 0.875,
+      "endToEndAccuracy": 0.875,
+      "rationaleAgreement": 0.6052631578947368,
+      "confidenceMeanAbsoluteError": 0.06427631578947372,
+      "macroF1": 0.5871240367884663,
+      "latencyMs": {
+        "p50": 696,
+        "p90": 866,
+        "p99": 1069
+      },
+      "byClassification": {
+        "agent_action": {
+          "support": 71,
+          "precision": 0.8292682926829268,
+          "recall": 0.9577464788732394,
+          "f1": 0.8888888888888888
+        },
+        "human_only": {
+          "support": 79,
+          "precision": 0.9285714285714286,
+          "recall": 0.8227848101265823,
+          "f1": 0.87248322147651
+        },
+        "both": {
+          "support": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        "uncertain": {
+          "support": 2,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      },
+      "disagreementConfusion": {
+        "human_only->agent_action": 14,
+        "agent_action->human_only": 3,
+        "uncertain->human_only": 2
+      },
+      "errorCases": []
+    },
+    {
+      "model": "google/gemini-3.7-flash",
+      "cases": 153,
+      "labeledCases": 152,
+      "completed": 152,
+      "errors": 1,
+      "successRate": 0.9934640522875817,
+      "classificationAccuracy": 1,
+      "endToEndAccuracy": 1,
+      "rationaleAgreement": 0.8947368421052632,
+      "confidenceMeanAbsoluteError": 0.007039473684210527,
+      "macroF1": 1,
+      "latencyMs": {
+        "p50": 2584,
+        "p90": 4989,
+        "p99": 12435
+      },
+      "byClassification": {
+        "agent_action": {
+          "support": 71,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "human_only": {
+          "support": 79,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "both": {
+          "support": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        "uncertain": {
+          "support": 2,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        }
+      },
+      "disagreementConfusion": {},
+      "errorCases": [
+        {
+          "error": "OpenRouterError: OpenRouter returned no structured content"
+        }
+      ]
+    },
+    {
+      "model": "google/gemini-3.8-flash",
+      "cases": 153,
+      "labeledCases": 152,
+      "completed": 153,
+      "errors": 0,
+      "successRate": 1,
+      "classificationAccuracy": 0.9605263157894737,
+      "endToEndAccuracy": 0.9605263157894737,
+      "rationaleAgreement": 0.8618421052631579,
+      "confidenceMeanAbsoluteError": 0.012763157894736843,
+      "macroF1": 0.8663419913419913,
+      "latencyMs": {
+        "p50": 1435,
+        "p90": 2179,
+        "p99": 4276
+      },
+      "byClassification": {
+        "agent_action": {
+          "support": 71,
+          "precision": 0.9452054794520548,
+          "recall": 0.971830985915493,
+          "f1": 0.9583333333333334
+        },
+        "human_only": {
+          "support": 79,
+          "precision": 1,
+          "recall": 0.9493670886075949,
+          "f1": 0.974025974025974
+        },
+        "both": {
+          "support": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        "uncertain": {
+          "support": 2,
+          "precision": 0.5,
+          "recall": 1,
+          "f1": 0.6666666666666666
+        }
+      },
+      "disagreementConfusion": {
+        "human_only->agent_action": 4,
+        "agent_action->uncertain": 2
+      },
+      "errorCases": []
+    },
+    {
+      "model": "openai/gpt-5.6-terra",
+      "cases": 153,
+      "labeledCases": 152,
+      "completed": 153,
+      "errors": 0,
+      "successRate": 1,
+      "classificationAccuracy": 0.875,
+      "endToEndAccuracy": 0.875,
+      "rationaleAgreement": 0.7302631578947368,
+      "confidenceMeanAbsoluteError": 0.04500000000000002,
+      "macroF1": 0.7292618492618493,
+      "latencyMs": {
+        "p50": 1455,
+        "p90": 2824,
+        "p99": 4752
+      },
+      "byClassification": {
+        "agent_action": {
+          "support": 71,
+          "precision": 0.8607594936708861,
+          "recall": 0.9577464788732394,
+          "f1": 0.9066666666666667
+        },
+        "human_only": {
+          "support": 79,
+          "precision": 0.984375,
+          "recall": 0.7974683544303798,
+          "f1": 0.8811188811188811
+        },
+        "both": {
+          "support": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        "uncertain": {
+          "support": 2,
+          "precision": 0.25,
+          "recall": 1,
+          "f1": 0.4
+        }
+      },
+      "disagreementConfusion": {
+        "human_only->agent_action": 11,
+        "human_only->uncertain": 5,
+        "agent_action->human_only": 1,
+        "agent_action->uncertain": 1,
+        "agent_action->both": 1
+      },
+      "errorCases": []
+    }
+  ]
+}

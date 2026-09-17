@@ -26,6 +26,7 @@ import {
   AVALON_WEB_PLUGIN_ID,
   AVALON_WORKSTREAM_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
+  ADDRESSING_FALLBACK_MODEL,
   BUILT_IN_SKILLS,
   RequestElicitationInputSchema,
   classifyAddressing,
@@ -162,7 +163,6 @@ import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
   AGENT_MODEL_FLAG_KEYS,
-  resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
 import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
@@ -1593,64 +1593,128 @@ export async function classifyWorkstreamMessage(
     userId: string;
   },
 ): Promise<AddressingClassification> {
-  const routing = await resolveAgentModelRouting(env, "addressing_classifier", {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-  });
-  return classifyAddressing({
-    apiKey: env.OPENROUTER_API_KEY,
-    model: routing.model,
-    fallbackModels: routing.fallbackModels,
-    message: input.message,
-    activeTask: input.activeTask,
-    connectorMentions: input.connectorMentions,
-    humanMentions: input.humanMentions,
-    recentMessages: input.recentMessages,
-    traceContext: {
-      source: "addressing_classifier",
-      feature: AGENT_MODEL_FLAG_KEYS.addressing_classifier,
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      substreamId: "0",
-      contextUserId: input.userId,
-      region: env.AVALON_REGION,
-      environment: env.APP_ENV,
-      ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
-    },
-    // Without this the classifier is the one model caller that leaves no trace:
-    // a provider rejection here is silently absorbed into the heuristic result.
-    onDiagnostic: async (diagnostic) => {
-      logStructuredEvent(
-        env,
-        diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
-        "structured_inference",
-        {
-          workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
-          role: "addressing_classifier",
-          stage: diagnostic.stage,
-          schema_name: diagnostic.schemaName,
-          provider: "openrouter",
-          model: diagnostic.model,
-          attempt: diagnostic.attempt,
-          fallback_attempt: diagnostic.fallbackAttempt,
-          repair_attempt: diagnostic.repairAttempt,
-          latency_ms: diagnostic.latencyMs,
-          success: diagnostic.success,
-          failure_kind: diagnostic.failureKind,
-          provider_error_code: diagnostic.providerError?.code,
-          provider_error_provider: diagnostic.providerError?.providerName,
-          provider_error_detail: diagnostic.providerError?.detail,
-          validation_issues: diagnostic.validationIssues,
-        },
-      );
-      await captureStructuredInferenceDiagnostic(env, {
+  const traceId = crypto.randomUUID();
+  let typesafeStatus: "not_attempted" | "success" | "failure" = "not_attempted";
+  let openRouterStatus: "not_attempted" | "success" | "failure" = "not_attempted";
+  const outcome = (): string => {
+    if (typesafeStatus === "success") {
+      if (openRouterStatus === "failure") return "typesafe_low_confidence_terminal_heuristic";
+      return openRouterStatus === "success" ? "typesafe_low_confidence_fallback" : "typesafe_accepted";
+    }
+    if (typesafeStatus === "failure") {
+      return openRouterStatus === "failure"
+        ? "typesafe_and_openrouter_failure_terminal_heuristic"
+        : "typesafe_failure_fallback";
+    }
+    return openRouterStatus === "not_attempted" ? "development_heuristic" : "openrouter_only";
+  };
+  const selectedProvider = (): "typesafe" | "openrouter" | "heuristic" => {
+    if (openRouterStatus === "failure") return "heuristic";
+    if (openRouterStatus === "success") return "openrouter";
+    return typesafeStatus === "not_attempted" ? "heuristic" : "typesafe";
+  };
+  try {
+    const classification = await classifyAddressing({
+      apiKey: env.OPENROUTER_API_KEY,
+      ...(env.TYPESAFE_API_KEY ? { typesafeApiKey: env.TYPESAFE_API_KEY } : {}),
+      model: ADDRESSING_FALLBACK_MODEL,
+      fallbackModels: [],
+      message: input.message,
+      activeTask: input.activeTask,
+      connectorMentions: input.connectorMentions,
+      humanMentions: input.humanMentions,
+      recentMessages: input.recentMessages,
+      traceContext: {
         source: "addressing_classifier",
+        feature: "addressing-classifier",
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
-      }, diagnostic);
-    },
-  });
+        substreamId: "0",
+        contextUserId: input.userId,
+        requestId: traceId,
+        region: env.AVALON_REGION,
+        environment: env.APP_ENV,
+        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+      },
+      // Both cascade stages share one diagnostic sink, so a JEV failure remains
+      // visible even when the OpenRouter fallback returns a usable decision.
+      onDiagnostic: async (diagnostic) => {
+        const provider = diagnostic.provider ?? "openrouter";
+        if (provider === "typesafe" && diagnostic.stage === "complete") {
+          typesafeStatus = diagnostic.success ? "success" : "failure";
+        }
+        if (provider === "openrouter" && diagnostic.stage === "model_request") {
+          openRouterStatus = "success";
+        }
+        if (provider === "openrouter" && diagnostic.stage === "complete") {
+          openRouterStatus = diagnostic.success ? "success" : "failure";
+        }
+        logStructuredEvent(
+          env,
+          diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
+          "structured_inference",
+          {
+            workspace_id: input.workspaceId,
+            workstream_id: input.workstreamId,
+            trace_id: diagnostic.traceId,
+            inference_request_id: diagnostic.inferenceRequestId,
+            role: "addressing_classifier",
+            stage: diagnostic.stage,
+            schema_name: diagnostic.schemaName,
+            provider,
+            model: diagnostic.model,
+            attempt: diagnostic.attempt,
+            fallback_attempt: diagnostic.fallbackAttempt,
+            repair_attempt: diagnostic.repairAttempt,
+            latency_ms: diagnostic.latencyMs,
+            response_bytes: diagnostic.responseBytes,
+            input_tokens: diagnostic.inputTokens,
+            output_tokens: diagnostic.outputTokens,
+            success: diagnostic.success,
+            failure_kind: diagnostic.failureKind,
+            provider_error_code: diagnostic.providerError?.code,
+            provider_error_provider: diagnostic.providerError?.providerName,
+            provider_error_detail: diagnostic.providerError?.detail,
+            validation_issues: diagnostic.validationIssues,
+          },
+        );
+        await captureStructuredInferenceDiagnostic(env, {
+          source: "addressing_classifier",
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          traceId,
+          requestId: traceId,
+        }, diagnostic);
+      },
+    });
+    logStructuredEvent(env, "info", "addressing_classifier_outcome", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      trace_id: traceId,
+      success: true,
+      outcome: outcome(),
+      selected_provider: selectedProvider(),
+      typesafe_status: typesafeStatus,
+      fallback_attempted: openRouterStatus !== "not_attempted",
+      classification: classification.classification,
+      confidence: classification.confidence,
+      rationale_code: classification.rationaleCode,
+    });
+    return classification;
+  } catch (error) {
+    logStructuredEvent(env, "warn", "addressing_classifier_outcome", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      trace_id: traceId,
+      success: false,
+      outcome: outcome(),
+      selected_provider: selectedProvider(),
+      typesafe_status: typesafeStatus,
+      fallback_attempted: openRouterStatus !== "not_attempted",
+      failure_kind: diagnosticErrorCode(error, "addressing_classifier_failed"),
+    });
+    throw error;
+  }
 }
 
 /**
