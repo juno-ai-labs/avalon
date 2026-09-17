@@ -280,6 +280,17 @@ coalesced to one report per five minutes through a 100-entry in-memory table. A
 handled network failure is diagnostic only: unlike a real JavaScript exception or
 rejection, it does not emit an essential `process_health` transition.
 
+The main process also owns one deliberately narrow last-resort recovery case for
+Electron's internal `SimpleURLLoaderWrapper`: an unhandled
+`ERR_CONNECTION_RESET` whose stack names Electron's built-in URL loader. macOS
+can reset an established connection while Rally is asleep or waking; treating
+that transport interruption as a fatal JavaScript defect leaves Electron's
+generic error dialog over an otherwise recoverable app. Rally logs the reset and
+keeps running, allowing the socket, polling, and telemetry owners to take their
+existing reconnect or retry paths. The loader frame and exact code are both
+required. Every other unhandled rejection is rethrown and remains fatal, so an
+application error with similar text cannot disappear behind this boundary.
+
 ### Route and identity
 
 The desktop persists one random installation ID and one rotating anonymous login
@@ -1858,6 +1869,19 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-17 — Recover Electron connection resets across sleep and wake
+
+The desktop main process now contains the exact unhandled rejection Electron's
+URL loader can emit when macOS resets an established connection during sleep or
+wake. Previously Node promoted that transient rejection to an uncaught exception
+and Electron showed its generic fatal JavaScript dialog even though Rally's live
+network owners subsequently reconnected. Retrying the lost request at a global
+boundary was rejected because its method and side effects are no longer known;
+the process instead survives so each owning subsystem's existing recovery path
+can run. Future changes must keep both the `ERR_CONNECTION_RESET` code and the
+internal `SimpleURLLoaderWrapper` frame as admission conditions and must rethrow
+every unknown rejection.
 
 ### 2026-09-16 — Keep renderer crashes from becoming blank windows
 
