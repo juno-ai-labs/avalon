@@ -28,6 +28,52 @@ The eval host restores configuration and isolated tool state, and allocates a fr
 loop identity per fork. Production without checkpoint capture keeps the existing
 ledger path. See [prepared conversations and session import](session-import.md).
 
+Production message addressing is a two-stage cascade. JEV receives every
+message passed to the classifier using the optimized TypeSafe choice question and
+structured state recorded by the eval. A choice is accepted only when its
+confidence is strictly greater than `0.5`; exactly `0.5`, lower confidence, an
+HTTP failure, or an invalid response falls through to the fixed addressing
+fallback, `deepseek/deepseek-v4-flash-0731`, at low
+reasoning, pinned to the exact `wafer/fast` endpoint with provider fallback
+disabled. The JEV stage has a one-second owned deadline, about three times the
+measured 346 ms p95; caller cancellation terminates the cascade, while the
+owned deadline permits fallback. The OpenRouter leg has a 15-second owned
+deadline, above the measured 10.0-11.6 second p99 range. If both providers fail
+or stall, the conservative deterministic classifier is the terminal availability
+floor so addressing cannot prevent the user's message from being persisted. The cascade has no
+Flagship role or Worker model variable: changing
+its model, provider, prompt, or threshold requires a new evaluation and deploy.
+The OpenRouter fallback model list is deliberately not used on this path.
+Production and staging require `TYPESAFE_API_KEY`; development without it
+retains the pre-cascade heuristic/OpenRouter path so local Workers can boot
+without a TypeSafe credential.
+See [`jev-best-practices.md`](jev-best-practices.md) for the request-design,
+evaluation, confidence-calibration, and fallback methodology behind this
+cascade.
+
+Every cascade emits one `addressing_classifier_outcome` log row with `success`,
+the selected provider, final classification and confidence, and an outcome that
+distinguishes accepted JEV answers from low-confidence and failed-primary
+fallbacks. Each provider request also emits correlated `structured_inference`
+rows with its request id, success, latency, and response size. The inference
+lakehouse retains exact provider request and response envelopes plus usage,
+including schema-invalid JEV responses, under the shared trace id; Workers Logs
+keep indexed operational fields rather than duplicating message content or
+credential-shaped fields.
+
+The addressing classifier has a production-replay eval at
+`packages/agent-harness/evals/addressing`. The raw JSONL is a caller-supplied,
+ignored file that stays in an access-controlled scratch directory; only
+content-free aggregate evidence belongs in Git. The runner can invoke the exact
+JEV request, an OpenRouter candidate without fallback, or the production
+cascade. Reports bind themselves to the corpus SHA-256 and distinguish provider
+success, conditional agreement, and failure-inclusive end-to-end accuracy.
+Sol adjudication also binds to the exact source-report hash so stale artifacts
+cannot be joined by case ID. The provider benchmark samples the UTF-8 bytes of
+the rendered provider messages and counterbalances provider order while keeping
+provider fallback disabled. Provider pins in the runtime are explicit per model,
+so a configured candidate cannot silently escape to an unmeasured endpoint.
+
 ## Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction
@@ -1258,6 +1304,35 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-17 — Use JEV first and a measured exact fallback for addressing
+
+Message addressing now sends the optimized choice/state contract to JEV and
+accepts only confidence above `0.5`. Everything else falls through to one
+low-reasoning OpenRouter model; the selected DeepSeek V4 Flash 0731 route is
+pinned to `wafer/fast`. Provider failure and schema diagnostics share the
+structured-inference lakehouse contract, while a distinct addressing model
+constant avoids changing the work-stream naming model. Keeping deterministic
+fast paths ahead of JEV was rejected because it would make production differ
+from the measured cascade, and OpenRouter model/provider fallback was rejected
+because it would route traffic to combinations the evaluation did not measure.
+Development without a TypeSafe key preserves the previous path; hosted regions
+fail their environment contract when the primary credential is absent.
+One terminal outcome row per cascade makes overall completion and primary
+acceptance rates directly countable, while exact provider responses remain in
+the inference lakehouse rather than indexed logs.
+JEV's owned one-second deadline is derived from the measured 346 ms p95 and
+keeps the fallback reachable; external cancellation does not start fallback.
+The OpenRouter leg's 15-second bound is derived from its two measured p99 tails
+and keeps the local floor reachable without cutting through observed requests.
+If both remote stages fail, the existing deterministic classifier preserves
+message admission and the terminal outcome names that floor explicitly.
+Production replay content remains outside Git, and eval artifacts are bound by
+corpus and report hashes while reporting both success and failure-inclusive
+accuracy.
+The addressing Flagship role and Worker model variable were removed in the same
+change because an editable fallback would let production depart from the
+evaluated cascade without review or fresh evidence.
 
 ### 2026-09-15 — Share independent preparation promises
 
