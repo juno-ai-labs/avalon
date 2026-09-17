@@ -1238,6 +1238,73 @@ describe('useWorkstreamSocket', () => {
     await expect(admission).resolves.toEqual(acceptedTurn);
   });
 
+  it('sends each new command once on a healthy socket', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000605';
+    const queryClient = new QueryClient();
+    const roster = [{
+      id: '00000000-0000-7000-8000-000000000606',
+      name: 'Adam',
+      email: 'adam@example.com',
+      timezone: 'America/Los_Angeles',
+      status: 'active' as const,
+    }];
+    queryClient.setQueryData(['workspace-members'], roster);
+    const messageMentionPayload = vi.fn(async () => []);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      messageMentionPayload,
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const first = result.current.createMessage({
+      text: 'Ask @Adam first.',
+      clientId: 'client-message-healthy-1',
+    });
+    await flushPromises();
+    const second = result.current.createMessage({
+      text: 'Then continue.',
+      clientId: 'client-message-healthy-2',
+    });
+    await flushPromises();
+
+    const commands = sentFrames(socket).filter((frame): frame is Extract<ClientSocketEvent, {
+      type: 'create_message';
+    }> => frame.type === 'create_message');
+    expect(commands).toHaveLength(2);
+    expect(commands.map((command) => command.payload.clientMessageId)).toEqual([
+      'client-message-healthy-1',
+      'client-message-healthy-2',
+    ]);
+    expect(messageMentionPayload).toHaveBeenNthCalledWith(1, 'Ask @Adam first.', undefined, roster);
+
+    for (const command of commands) {
+      act(() => socket.message({
+        type: 'client_command_succeeded',
+        command: 'create_message',
+        operationId: command.operationId,
+        clientMessageId: command.payload.clientMessageId,
+        turn: {
+          turnId: `${command.payload.clientMessageId}-turn`,
+          clientMessageId: command.payload.clientMessageId,
+          createdAt: '2026-09-17T12:00:00.000Z',
+        },
+        deliveryState: 'canonical',
+      }));
+    }
+    await Promise.all([first, second]);
+  });
+
   it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000631';

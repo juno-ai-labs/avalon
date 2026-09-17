@@ -75,7 +75,7 @@ import {
   upsertTranscriptOverlay,
   upsertTranscriptMessage,
 } from './transcript';
-import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
@@ -159,6 +159,8 @@ interface PendingSubstreamCommand {
   command: SubstreamMutationCommand;
   resolve: (result: SuccessfulSubstreamMutation) => void;
   reject: (error: Error) => void;
+  /** The live connection which already received this unresolved command. */
+  sentOn: RealtimeSocket | null;
 }
 
 const HEARTBEAT_BASE_MS = 45_000;
@@ -921,8 +923,14 @@ export function useWorkstreamSocket(
     const sendPendingSubstreamCommands = (target: RealtimeSocket | null = socket): void => {
       if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
       for (const pending of pendingSubstreamCommands.values()) {
+        // A command remains pending until its private receipt arrives, but a
+        // later command must not replay it onto the same healthy connection.
+        // A reconnect creates a different socket object and deliberately sends
+        // every unresolved command again.
+        if (pending.sentOn === target) continue;
         try {
           target.send(JSON.stringify(pending.command));
+          pending.sentOn = target;
         } catch {
           // The readyState check and send are not atomic. Preserve every entry
           // for the next connection; the close path owns reconnect scheduling.
@@ -967,7 +975,12 @@ export function useWorkstreamSocket(
         ));
       }
       return new Promise((resolve, reject) => {
-        pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
+        pendingSubstreamCommands.set(command.operationId, {
+          command,
+          resolve,
+          reject,
+          sentOn: null,
+        });
         sendPendingSubstreamCommands();
         void connect();
       });
@@ -1099,6 +1112,7 @@ export function useWorkstreamSocket(
         const mentions = await trace.step('resolve_mentions', () => api.messageMentionPayload(
           input.text,
           input.mentions,
+          queryClient.getQueryData<WorkspaceMember[]>(['workspace-members']),
         ));
         if (closedByEffect || accessRevoked) {
           throw new ApiError(
