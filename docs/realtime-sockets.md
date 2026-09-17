@@ -741,6 +741,8 @@ needed.
 receipt still causes safe reconnect replay, so server-side operation IDs and
 mutation idempotency remain required.
 
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
+
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 
 An appearance query flag caused installed desktop validation to block the entire

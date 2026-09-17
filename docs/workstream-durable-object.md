@@ -1644,10 +1644,11 @@ regional projection delivery. Preparation, claim, and settlement request a new
 pass when they can have committed effects, and the alarm awaits the loop plus
 the final projection chain. The duplicate regional drain before every execution
 claim is removed. Canonical semantic realtime delivery remains ordered ahead of
-activation. Successful input preparation now returns its activation request to
-the SubstreamAgent without also scheduling a due-now alarm in the product
-service; failure-only re-arming and the pre-reservation cancellation-recovery
-alarm remain.
+activation. Successful input preparation returns its activation request to the
+SubstreamAgent without also scheduling a due-now alarm in the product service
+when that request actually transfers activation ownership. A failure or a
+successful no-activation result re-arms if settling the preparation exposed
+more queue work; the pre-reservation cancellation-recovery alarm remains.
 
 **Why:** Queue acceptance is external projection work, not evidence that a
 durably admitted execution is ready. Awaiting it in front of every claim added
@@ -1660,19 +1661,25 @@ request already has a single owner.
 **Considered and rejected:** Removing the outboxes would trade a small scheduler
 duplication for lossy cross-object delivery. Starting projection sends under
 `waitUntil` without awaiting them would repeat the cancellation failure that the
-durable alarm loop exists to prevent. Moving canonical semantic realtime into
-the concurrent lane was also rejected because it could publish a new run's
-ephemeral frames ahead of committed transcript events.
+durable alarm loop exists to prevent. A per-alarm promise chain was also
+rejected: one failed pass poisoned every later pass, and a loop continuation
+could outlive the drain that owned it. Moving canonical semantic realtime into
+the concurrent lane was rejected because it could publish a new run's ephemeral
+frames ahead of committed transcript events.
 
 **Consequences, and what a future change has to respect:** Execution readiness
 and cross-authority delivery due-time are independent. Projection passes must
-remain serialized, be requested as executions settle, and be awaited by the
-alarm invocation; their durable rows must remain the source of retry. Canonical
+remain serialized on the object, recover after a failed pass, be requested as
+executions settle only while the requesting drain still owns execution, and be
+awaited by the alarm invocation; their durable rows must remain the source of retry. Canonical
 semantic realtime is deliberately different and must retain its pre-activation
 ordering barrier unless the publication protocol itself gains an equivalent
-fence. The product may pre-arm recovery before a preparing row or re-arm after a
-failure, but successful eager activation stays with the SubstreamAgent that
-validates the returned loop/input fence.
+fence. The product may pre-arm recovery before a preparing row or re-arm after
+any settlement that returns no activation request, but successful eager
+activation stays with the SubstreamAgent that validates the returned loop/input
+fence.
+
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
 
 ### 2026-09-15 — Assistant person links become authoritative mentions at acceptance
 
