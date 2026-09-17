@@ -41,6 +41,7 @@ import { AutomationDO } from "../src/durable-objects/automation-do";
 import {
   automationDOName,
   conversationObjectName,
+  substreamLoopId,
   workspaceDOName,
   workstreamDOName,
 } from "../src/durable-objects/names";
@@ -993,7 +994,9 @@ describe("conversation parent contract", () => {
     });
     expect(refusal).toContain("private_child_participant_required");
     const child = conversation(PERSONAL_ROOM_ID, substreamId);
-    await runInDurableObject(child, (_instance, state) => { holdLoopExecuting(state, { loopId: state.storage.sql.exec<{ loop_id: string }>(`SELECT loop_id FROM substream_loops WHERE id = 1`).one().loop_id }); });
+    await runInDurableObject(child, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(PERSONAL_ROOM_ID, asSubstreamId(substreamId)) });
+    });
     // Any participant may archive the shared child.
     expect(await parent.setPrivateChildArchived({ ...address, actorUserId: PARTICIPANT_ID, archived: true }))
       .toMatchObject({ outcome: "archived", archivedAt: expect.any(Number) });

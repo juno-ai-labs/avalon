@@ -341,9 +341,11 @@ binding call on the current desktop path. `POST /:id/messages` traces the same
 flow for the HTTP path, distinguished by `rally.transport`; the old
 `workstream.message.send` WorkspaceDO trace now identifies a released desktop
 using the rollout-compatibility handler.
-The renderer's `resolve_mentions` phase performs a workspace-roster request only
-when the outgoing text contains `@` or `person://`; ordinary text proceeds
-directly to the socket command round trip.
+The renderer's `resolve_mentions` phase reads the already-owned
+`['workspace-members']` roster when the outgoing text contains `@` or
+`person://`, falling back to a workspace-roster request when that cache is
+absent or cannot resolve any typed person. Ordinary text proceeds directly to
+the socket command round trip.
 
 ### What `room_upgrade` contains
 
@@ -688,6 +690,29 @@ Note also how an export is scoped, because it is easy to get backwards. The
 destination is account configuration; the **attachment is per Worker**, through
 `observability.<signal>.destinations`. Creating a destination exports nothing —
 a Worker exports when its own config names one.
+
+### 2026-09-17 — Mention resolution reuses the workspace roster
+
+**What changed:** The socket send path passes React Query's existing
+`['workspace-members']` value into `messageMentionPayload`. Mention-bearing text
+uses that roster without another HTTP request and retains the API fetch as a
+fallback when the shared roster has not loaded or cannot resolve a typed person.
+
+**Why:** The application root already owns a stable workspace-member roster for
+the composer and conversation surfaces. Fetching the same authority again at
+send time put independent network latency in front of an otherwise ready room
+socket.
+
+**Considered and rejected:** Adding another mention-specific cache would create
+a second invalidation contract for the same roster. Resolving from selected
+chips alone would still miss typed names and pasted durable mention Markdown.
+
+**Consequences:** `resolve_mentions` is local on the normal loaded-workspace
+path. A cold, isolated, or observably stale caller remains correct through one
+refresh from the existing roster endpoint, and plain text still performs
+neither lookup nor fetch.
+
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
 
 ### 2026-09-09 — Keep socket timing attribution explicit
 

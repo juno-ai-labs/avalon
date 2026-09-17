@@ -2366,6 +2366,67 @@ describe("a member's message travels the whole pipeline", () => {
       ).one().count), { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
   });
 
+  it("leaves successful activation alarm ownership with the SubstreamAgent", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await externallySettledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()),
+      { timeout: LOOP_RELEASE_TIMEOUT_MS, interval: 50, message: "the object never quiesced" },
+    ).toBeNull();
+
+    let alarmWrites = 0;
+    let activationCalls = 0;
+    let activationAlarm: number | null = null;
+    await runInDurableObject(stub, async (instance, state) => {
+      const target = instance as unknown as {
+        product: WorkstreamObjectProductService;
+        requestPersistentLoopActivation: (request: unknown) => Promise<void>;
+      };
+      const storage = (target.product as unknown as { storage: DurableObjectStorage }).storage;
+      const activate = target.requestPersistentLoopActivation.bind(target);
+      target.requestPersistentLoopActivation = async (request: unknown) => {
+        activationCalls += 1;
+        await activate(request);
+        activationAlarm = await state.storage.getAlarm();
+      };
+      (target.product as unknown as { storage: DurableObjectStorage }).storage =
+        createCloudflareTestBinding<DurableObjectStorage>(new Proxy(storage, {
+          get: (current, property) => {
+            const value = Reflect.get(current, property) as unknown;
+            if (property !== "setAlarm") {
+              return typeof value === "function" ? value.bind(current) : value;
+            }
+            return (scheduledTime: number | Date) => {
+              alarmWrites += 1;
+              return storage.setAlarm(scheduledTime);
+            };
+          },
+        }));
+    });
+
+    const result = await product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
+        text: "please continue",
+        clientMessageId: "pipeline-activation-owner-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    });
+    expect(result.status).toBe(200);
+    // Preparation pre-arms one recoverability alarm before its durable row.
+    // The public product endpoint must route the returned request through the
+    // single outer activation owner, which pulls that recovery wake due now.
+    expect(alarmWrites).toBe(1);
+    expect(activationCalls).toBe(1);
+    expect(activationAlarm).not.toBeNull();
+    expect(activationAlarm!).toBeLessThanOrEqual(Date.now() + 1_000);
+  });
+
   it("message writes are idempotent across the whole path", async () => {
     const stub = agentStub();
     await initializeWorkstream(stub, "first message");
