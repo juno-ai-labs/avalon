@@ -90,4 +90,48 @@ describe("response contract failures", () => {
     expect(entry).not.toHaveProperty("validation_issues");
     expect(entry).not.toHaveProperty("path");
   });
+
+  it("keeps a code a Durable Object threw across the RPC hop on the row, and only a code", async () => {
+    // A plain `Error` arrives from the hop with its message and nothing else,
+    // and the row withheld it: `internal_error`, `Error`, no reason. A message
+    // with the shape of a code cannot be prose, so it is carried; one without
+    // — provider text, a member's words — still is not.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = new Hono<HonoAppEnv>();
+    app.onError(errorHandler);
+    app.get("/refused", () => {
+      throw new Error("admit_external_event_invalid:event.eventSequence:invalid_type");
+    });
+    app.get("/prose", () => {
+      throw new Error("Provider included customer@example.com in its response");
+    });
+    app.get("/interpolated", () => {
+      throw new Error("memory_table_value_type:Customer_Email:string");
+    });
+
+    const refused = await app.request("https://api.example.com/refused", { method: "GET" }, testEnv());
+    expect(refused.status).toBe(500);
+    expect(await refused.json()).toMatchObject({ error: { code: "internal_error" } });
+    expect(logged.mock.calls[0]![0]).toMatchObject({
+      code: "internal_error",
+      error_name: "Error",
+      error_code: "admit_external_event_invalid:event.eventSequence:invalid_type",
+    });
+
+    await app.request("https://api.example.com/prose", { method: "GET" }, testEnv());
+    const prose = logged.mock.calls[1]![0] as Record<string, unknown>;
+    expect(prose).toMatchObject({ code: "internal_error", error_name: "Error" });
+    expect(prose).not.toHaveProperty("error_code");
+    expect(JSON.stringify(prose)).not.toContain("customer@example.com");
+    // The list row reads the code without expanding the entry.
+    expect(logged.mock.calls[0]![0]).toMatchObject({
+      message: "request_failed 500 internal_error admit_external_event_invalid:event.eventSequence:invalid_type",
+    });
+
+    // Code-shaped is not trusted: a member-chosen name after a colon stays off.
+    await app.request("https://api.example.com/interpolated", { method: "GET" }, testEnv());
+    const interpolated = logged.mock.calls[2]![0] as Record<string, unknown>;
+    expect(interpolated).not.toHaveProperty("error_code");
+    expect(JSON.stringify(interpolated)).not.toContain("Customer_Email");
+  });
 });

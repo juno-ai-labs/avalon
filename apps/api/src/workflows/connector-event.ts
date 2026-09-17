@@ -112,6 +112,7 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
           processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
+          errorCode,
         });
       });
       logStructuredEvent(this.env, "error", "connector_event_workflow_failed", {

@@ -1761,7 +1761,17 @@ export class ConnectionService {
           const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
           await this.recordInstallationAudit(repaired, "connector.installation.repair");
           const installation = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
-          return { repaired: installation?.state === "current", message: installation?.state === "current" ? "Approved webhook configuration is verified" : "Webhook repair needs attention; inspect installation details" };
+          // An installation still in flight — `setting_up`, `updating` — is not
+          // one that needs attention, and a Test whose health check passed must
+          // not say so. Only a stopped one has a sentence to surface; an
+          // uncertain provider write is a registration state, and the receipt
+          // carries it.
+          const state = installation?.state;
+          return state === "current"
+            ? { repaired: true, message: "Approved webhook configuration is verified" }
+            : state === "failed" || state === "action_required"
+              ? { repaired: false, message: "Webhook repair needs attention; inspect installation details" }
+              : { repaired: false };
         });
         context = await this.context(await this.loadAuthorized(id));
       }

@@ -4863,7 +4863,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async applyAutomationDirectory(input: unknown): Promise<{ applied: boolean }> {
     await this.initialized;
-    const request = WorkspaceAutomationDirectoryApplyRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceAutomationDirectoryApplyRequestSchema, input, "apply_automation_directory");
     this.assertWorkspace(request.workspaceId);
     const envelope = request.envelope;
     const effect = envelope.effect;
@@ -5219,7 +5219,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async matchExternalEventDestinations(input: unknown) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).parse(input);
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }), input, "match_external_event_destinations");
     this.assertWorkspace(request.workspaceId);
     const event = this.state.storage.sql.exec<{
       event_id: string;
@@ -5646,7 +5646,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceConnectorEventIngestRequest,
   ): Promise<WorkspaceConnectorEventIngestResult> {
     await this.initialized;
-    const request = WorkspaceConnectorEventIngestRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceConnectorEventIngestRequestSchema, input, "ingest_connector_event");
     if (!this.workspaceId()) {
       this.ensureIdentity(
         request.workspaceId,
@@ -5857,7 +5857,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceConnectorEventClaimRpcRequest,
   ): Promise<WorkspaceConnectorEventClaimRpcResult> {
     await this.initialized;
-    const rpcRequest = WorkspaceConnectorEventClaimRpcRequestSchema.parse(input);
+    const rpcRequest = parseRpcInput(WorkspaceConnectorEventClaimRpcRequestSchema, input, "claim_connector_event");
     const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
     const request: WorkspaceConnectorEventClaimRequest = legacyWorkflowContract
       ? {
@@ -5975,7 +5975,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async settleConnectorEvent(input: WorkspaceConnectorEventSettleRpcRequest): Promise<void> {
     await this.initialized;
-    const rpcRequest = WorkspaceConnectorEventSettleRpcRequestSchema.parse(input);
+    const rpcRequest = parseRpcInput(WorkspaceConnectorEventSettleRpcRequestSchema, input, "settle_connector_event");
     const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
     const request: WorkspaceConnectorEventSettleRequest = legacyWorkflowContract
       ? {
@@ -6015,6 +6015,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_committed",
+        // `reason` says the write landed. What the settler was told went
+        // wrong is `error`, persisted above and written for a person; the
+        // code the settler derived from it is what the row indexes.
+        ...(request.outcome === "failed" && "errorCode" in request && request.errorCode
+          ? { error_code: request.errorCode }
+          : {}),
       });
       return;
     }
@@ -8287,7 +8293,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Create a memory scope if it is missing; answer with the stored row either way. */
   async ensureMemoryScope(input: WorkspaceMemoryScopeEnsureRequest): Promise<WorkspaceMemoryScope> {
     await this.initialized;
-    const request = WorkspaceMemoryScopeEnsureRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryScopeEnsureRequestSchema, input, "ensure_memory_scope");
     this.assertWorkspace(request.workspaceId);
     return ensureWorkspaceMemoryScope(this.state.storage, request);
   }
@@ -8472,7 +8478,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableRequest,
   ): Promise<WorkspaceMemoryTableResult> {
     await this.initialized;
-    const request = WorkspaceMemoryTableRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableRequestSchema, input, "memory_table_with_columns");
     this.assertWorkspace(request.workspaceId);
     return workspaceMemoryTableWithColumns(this.state.storage, request);
   }
@@ -8517,7 +8523,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryReceiptRequest,
   ): Promise<WorkspaceMemoryReceiptResult> {
     await this.initialized;
-    const request = WorkspaceMemoryReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryReceiptRequestSchema, input, "memory_table_mutation_receipt");
     this.assertWorkspace(request.workspaceId);
     return workspaceMemoryTableMutationReceipt(this.state.storage, request);
   }
@@ -8530,7 +8536,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableCreateRequest,
   ): Promise<WorkspaceMemoryTableCreateResult> {
     await this.initialized;
-    const request = WorkspaceMemoryTableCreateRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableCreateRequestSchema, input, "create_memory_table");
     this.assertWorkspace(request.workspaceId);
     return createWorkspaceMemoryTable(this.state.storage, request);
   }
@@ -8540,7 +8546,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableOpenReceiptRequest,
   ): Promise<void> {
     await this.initialized;
-    const request = WorkspaceMemoryTableOpenReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableOpenReceiptRequestSchema, input, "record_memory_table_open_receipt");
     this.assertWorkspace(request.workspaceId);
     recordWorkspaceMemoryTableOpenReceipt(this.state.storage, request);
   }
@@ -9309,18 +9315,51 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM workspace_workstream_directory
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
+      const workspaceId = asWorkspaceId(input.workspaceId);
       for (const parent of parents) {
-        if (input.refresh === false && this.state.storage.sql.exec(
-          'SELECT 1 FROM authorization_backfill WHERE parent_id = ?', parent.parent_id,
-        ).toArray().length) continue;
-        this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
-          ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
-        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: asWorkspaceId(input.workspaceId), parentId: IdSchema.parse(parent.parent_id) });
+        const parentId = IdSchema.parse(parent.parent_id);
+        if (input.refresh !== false) {
+          this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
+            ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
+          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            workspaceId, parentId });
+          continue;
+        }
+        // The unavailable-read path repairs only discovery that is missing, never work that finished
+        // or is already scheduled: a retryable 503 must not reset a workspace or amplify into writes.
+        const tracked = this.state.storage.sql.exec<{ completed: number }>(
+          'SELECT completed FROM authorization_backfill WHERE parent_id = ?', parent.parent_id).toArray()[0];
+        if (!tracked) {
+          this.state.storage.sql.exec('INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)',
+            parent.parent_id, parent.parent_kind);
+        }
+        if (!tracked || !tracked.completed) {
+          if (!this.authorizationDeliveryScheduled(parent.parent_id, null)) {
+            this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+              workspaceId, parentId });
+          }
+          continue;
+        }
+        // A parent completes when its children are registered, so a child whose own discovery died
+        // leaves the parent complete. Re-queue that child directly: re-running the parent would
+        // reset its siblings' finished receipts and widen the very outage being repaired.
+        for (const child of this.state.storage.sql.exec<{ substream_id: string }>(
+          'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? AND completed = 0',
+          parent.parent_id).toArray()) {
+          if (this.authorizationDeliveryScheduled(parent.parent_id, child.substream_id)) continue;
+          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            workspaceId, parentId, substreamId: SubstreamIdSchema.parse(child.substream_id) });
+        }
       }
     });
     await this.armNextAlarm();
     return this.authorizationBackfillStatus(input);
+  }
+
+  /** Work already queued (including one waiting out a delivery backoff) needs no second request. */
+  private authorizationDeliveryScheduled(parentId: string, substreamId: string | null): boolean {
+    return this.state.storage.sql.exec('SELECT 1 FROM authorization_delivery WHERE job_key = ?',
+      JSON.stringify([parentId, substreamId])).toArray().length > 0;
   }
 
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {

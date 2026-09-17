@@ -1748,7 +1748,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: string;
   }> {
     await this.initialized;
-    const request = z.strictObject({
+    const request = parseRpcInput(z.strictObject({
       schemaVersion: z.literal(1),
       workspaceId: z.string().min(1),
       workstreamId: z.string().min(1),
@@ -1767,7 +1767,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         audienceKind: z.enum(["workspace", "restricted"]),
         audienceUserIds: z.array(z.string().min(1)),
       }),
-    }).parse(input);
+    }), input, "append_watched_resource_event");
     // The receipt is the event and the registration that matched it: the same
     // event redelivered for the same watch is one row, and the same event
     // matched by a second watch on another resource is another.
