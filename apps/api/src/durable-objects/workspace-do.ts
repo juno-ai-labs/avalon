@@ -4863,7 +4863,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async applyAutomationDirectory(input: unknown): Promise<{ applied: boolean }> {
     await this.initialized;
-    const request = WorkspaceAutomationDirectoryApplyRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceAutomationDirectoryApplyRequestSchema, input, "apply_automation_directory");
     this.assertWorkspace(request.workspaceId);
     const envelope = request.envelope;
     const effect = envelope.effect;
@@ -5219,7 +5219,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async matchExternalEventDestinations(input: unknown) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).parse(input);
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }), input, "match_external_event_destinations");
     this.assertWorkspace(request.workspaceId);
     const event = this.state.storage.sql.exec<{
       event_id: string;
@@ -5646,7 +5646,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceConnectorEventIngestRequest,
   ): Promise<WorkspaceConnectorEventIngestResult> {
     await this.initialized;
-    const request = WorkspaceConnectorEventIngestRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceConnectorEventIngestRequestSchema, input, "ingest_connector_event");
     if (!this.workspaceId()) {
       this.ensureIdentity(
         request.workspaceId,
@@ -5857,7 +5857,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceConnectorEventClaimRpcRequest,
   ): Promise<WorkspaceConnectorEventClaimRpcResult> {
     await this.initialized;
-    const rpcRequest = WorkspaceConnectorEventClaimRpcRequestSchema.parse(input);
+    const rpcRequest = parseRpcInput(WorkspaceConnectorEventClaimRpcRequestSchema, input, "claim_connector_event");
     const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
     const request: WorkspaceConnectorEventClaimRequest = legacyWorkflowContract
       ? {
@@ -5975,7 +5975,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async settleConnectorEvent(input: WorkspaceConnectorEventSettleRpcRequest): Promise<void> {
     await this.initialized;
-    const rpcRequest = WorkspaceConnectorEventSettleRpcRequestSchema.parse(input);
+    const rpcRequest = parseRpcInput(WorkspaceConnectorEventSettleRpcRequestSchema, input, "settle_connector_event");
     const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
     const request: WorkspaceConnectorEventSettleRequest = legacyWorkflowContract
       ? {
@@ -8287,7 +8287,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Create a memory scope if it is missing; answer with the stored row either way. */
   async ensureMemoryScope(input: WorkspaceMemoryScopeEnsureRequest): Promise<WorkspaceMemoryScope> {
     await this.initialized;
-    const request = WorkspaceMemoryScopeEnsureRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryScopeEnsureRequestSchema, input, "ensure_memory_scope");
     this.assertWorkspace(request.workspaceId);
     return ensureWorkspaceMemoryScope(this.state.storage, request);
   }
@@ -8472,7 +8472,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableRequest,
   ): Promise<WorkspaceMemoryTableResult> {
     await this.initialized;
-    const request = WorkspaceMemoryTableRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableRequestSchema, input, "memory_table_with_columns");
     this.assertWorkspace(request.workspaceId);
     return workspaceMemoryTableWithColumns(this.state.storage, request);
   }
@@ -8517,7 +8517,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryReceiptRequest,
   ): Promise<WorkspaceMemoryReceiptResult> {
     await this.initialized;
-    const request = WorkspaceMemoryReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryReceiptRequestSchema, input, "memory_table_mutation_receipt");
     this.assertWorkspace(request.workspaceId);
     return workspaceMemoryTableMutationReceipt(this.state.storage, request);
   }
@@ -8530,7 +8530,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableCreateRequest,
   ): Promise<WorkspaceMemoryTableCreateResult> {
     await this.initialized;
-    const request = WorkspaceMemoryTableCreateRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableCreateRequestSchema, input, "create_memory_table");
     this.assertWorkspace(request.workspaceId);
     return createWorkspaceMemoryTable(this.state.storage, request);
   }
@@ -8540,7 +8540,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableOpenReceiptRequest,
   ): Promise<void> {
     await this.initialized;
-    const request = WorkspaceMemoryTableOpenReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableOpenReceiptRequestSchema, input, "record_memory_table_open_receipt");
     this.assertWorkspace(request.workspaceId);
     recordWorkspaceMemoryTableOpenReceipt(this.state.storage, request);
   }
