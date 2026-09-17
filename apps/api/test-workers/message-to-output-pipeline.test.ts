@@ -2366,6 +2366,68 @@ describe("a member's message travels the whole pipeline", () => {
       ).one().count), { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
   });
 
+  it("leaves successful activation alarm ownership with the SubstreamAgent", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await externallySettledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()),
+      { timeout: LOOP_RELEASE_TIMEOUT_MS, interval: 50, message: "the object never quiesced" },
+    ).toBeNull();
+
+    const alarmWrites = await runInDurableObject(stub, async (instance) => {
+      const target = instance as unknown as {
+        alarm: () => Promise<void>;
+        product: WorkstreamObjectProductService;
+        requestPersistentLoopActivation: (request: unknown) => Promise<void>;
+      };
+      // Keep the due-now wake from racing this ownership observation. The test
+      // invokes the activation owner directly below.
+      target.alarm = async () => {};
+      const storage = (target.product as unknown as { storage: DurableObjectStorage }).storage;
+      let writes = 0;
+      (target.product as unknown as { storage: DurableObjectStorage }).storage =
+        createCloudflareTestBinding<DurableObjectStorage>(new Proxy(storage, {
+          get: (current, property) => {
+            const value = Reflect.get(current, property) as unknown;
+            if (property !== "setAlarm") {
+              return typeof value === "function" ? value.bind(current) : value;
+            }
+            return (scheduledTime: number | Date) => {
+              writes += 1;
+              return storage.setAlarm(scheduledTime);
+            };
+          },
+        }));
+      const result = await target.product.createMessageForAdmittedSocket(AUTH, {
+        text: "please continue",
+        clientMessageId: "pipeline-activation-owner-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+        forcedHarnessOrigin: "test",
+      });
+      const afterPreparation = writes;
+      const recoveryAlarm = await storage.getAlarm();
+      expect(result.activationRequest).not.toBeNull();
+      await target.requestPersistentLoopActivation(result.activationRequest);
+      return {
+        afterPreparation,
+        recoveryAlarm,
+        activationAlarm: await storage.getAlarm(),
+      };
+    });
+
+    // Preparation pre-arms one recoverability alarm before its durable row.
+    // Only the outer activation owner adds the eager due-now wake on success.
+    expect(alarmWrites.afterPreparation).toBe(1);
+    expect(alarmWrites.recoveryAlarm).not.toBeNull();
+    expect(alarmWrites.activationAlarm).not.toBeNull();
+    expect(alarmWrites.activationAlarm!).toBeLessThan(alarmWrites.recoveryAlarm!);
+    expect(alarmWrites.activationAlarm!).toBeLessThanOrEqual(Date.now() + 1_000);
+  });
+
   it("message writes are idempotent across the whole path", async () => {
     const stub = agentStub();
     await initializeWorkstream(stub, "first message");
