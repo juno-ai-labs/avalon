@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { codeShaped, describeZodIssues, zodDiagnosticCode, DIAGNOSTIC_CODE_MAX_LENGTH } from "./zod-diagnostics";
+import { codeShaped, describeZodIssues, isCodeShaped, isDiagnosticCode, zodDiagnosticCode, DIAGNOSTIC_CODE_MAX_LENGTH } from "./zod-diagnostics";
 
 const Summary = z.looseObject({
   id: z.string().min(1),
@@ -93,5 +93,35 @@ describe("zod diagnostics", () => {
 
   it("truncates rather than emitting a code too long for its narrowest consumer", () => {
     expect(codeShaped("a".repeat(500))).toHaveLength(DIAGNOSTIC_CODE_MAX_LENGTH);
+  });
+});
+
+describe("isCodeShaped", () => {
+  it("accepts what codeShaped produces, separators included, and refuses anything that could be prose", () => {
+    // The alarm notice accepted `:` and `.`; the logger's own test did not,
+    // so a rejection named on one side of an RPC hop was reduced to its
+    // fallback on the other. One class, shared.
+    expect(isCodeShaped(codeShaped("projection_invalid:evaluators.0.source.connectorType:invalid_value"))).toBe(true);
+    expect(isCodeShaped("sidekick_missing")).toBe(true);
+    expect(isCodeShaped("handler_error:ZodError")).toBe(true);
+    expect(isCodeShaped("Provider included customer@example.com in its response")).toBe(false);
+    expect(isCodeShaped('[{"code":"invalid_type","path":["id"]}]')).toBe(false);
+    expect(isCodeShaped("")).toBe(false);
+    expect(isCodeShaped("a".repeat(DIAGNOSTIC_CODE_MAX_LENGTH + 1))).toBe(false);
+  });
+});
+
+describe("isDiagnosticCode", () => {
+  it("admits only what this module composes, not every code-shaped message", () => {
+    // A code-shaped message can still carry a member's column name or an R2
+    // key after a colon; a reporter that copies thrown messages by shape alone
+    // would index them. Only the label-and-issues shape is this module's.
+    expect(isDiagnosticCode("admit_external_event_invalid:event.eventSequence:invalid_type")).toBe(true);
+    expect(isDiagnosticCode(zodDiagnosticCode(rejection({ summary: { topics_discussed: [] } }), "response")!)).toBe(true);
+    expect(isDiagnosticCode("memory_table_value_type:Customer_Email:string")).toBe(false);
+    expect(isDiagnosticCode("inference_lakehouse_payload_object_missing:2026/09/15/run.json")).toBe(false);
+    expect(isDiagnosticCode("workstream_do_schema_hash_mismatch:27")).toBe(false);
+    expect(isDiagnosticCode("sidekick_missing")).toBe(false);
+    expect(isDiagnosticCode("Provider included customer@example.com in its response")).toBe(false);
   });
 });
