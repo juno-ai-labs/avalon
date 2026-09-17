@@ -65,15 +65,6 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 2,
-    rankReason: 'Critical path · message admission',
-    role: 'addressing_classifier',
-    key: 'agent-model-addressing-classifier',
-    label: 'Addressing classifier',
-    description: 'Decides whether a message is for the agent, people, both, or uncertain before a work-stream run starts.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 3,
     rankReason: 'Core path · delegated work',
     role: 'inline_child',
     key: 'agent-model-inline-child',
@@ -82,7 +73,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 4,
+    rank: 3,
     rankReason: 'Frequent · terminal runs',
     role: 'workstream_description',
     key: 'agent-model-workstream-description',
@@ -91,7 +82,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 5,
+    rank: 4,
     rankReason: 'Frequent · new work streams',
     role: 'workstream_naming',
     key: 'agent-model-workstream-naming',
@@ -100,7 +91,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 6,
+    rank: 5,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -109,7 +100,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 7,
+    rank: 6,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',

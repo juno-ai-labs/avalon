@@ -68,6 +68,8 @@ Set these shared Worker secrets separately in each regional deployment:
 
 - `OPENROUTER_API_KEY`
 
+- `TYPESAFE_API_KEY`
+
 - `AZURE_OPENAI_ENDPOINT`
 
 - `AZURE_OPENAI_API_KEY`
