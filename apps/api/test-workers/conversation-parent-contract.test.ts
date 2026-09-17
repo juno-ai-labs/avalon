@@ -356,6 +356,21 @@ describe("conversation parent contract", () => {
     await service.setSidekickRecommendation(WORKSPACE_ROOM_ID, shared, false);
     expect((await service.recommendedSidekicks(WORKSPACE_ROOM_ID)).items).toEqual([]);
   });
+
+  it("reads Sidekick attachments through one parent decision and refuses archived writes", async () => {
+    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
+    const service = new WorkstreamService(TEST_ENV, AUTH);
+    const resolveViewer = vi.spyOn(WorkstreamDO.prototype, "resolveViewer");
+    expect(await service.sidekickAttachments(PERSONAL_ROOM_ID)).toEqual({ items: [] });
+    expect(resolveViewer).toHaveBeenCalledTimes(1);
+    await expect(new WorkstreamService(TEST_ENV, { ...AUTH, userId: MEMBER_ID })
+      .sidekickAttachments(PERSONAL_ROOM_ID)).rejects.toMatchObject({ status: 404 });
+    await archiveRoom(PERSONAL_ROOM_ID);
+    expect(await service.sidekickAttachments(PERSONAL_ROOM_ID)).toEqual({ items: [] });
+    await expect(service.sidekickAttachments(PERSONAL_ROOM_ID, PERSONAL_ROOM_ID))
+      .rejects.toMatchObject({ status: 409, code: "conversation_parent_archived" });
+  });
+
   it("opens through one combined parent decision and retains archive and visibility", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
     const legacyAuthority = vi.spyOn(WorkstreamDO.prototype, "authority");

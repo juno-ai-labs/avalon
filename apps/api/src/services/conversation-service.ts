@@ -26,10 +26,10 @@ export interface ResolvedConversationParent {
  * The conversation surface: one parent's substreams, whichever kind of parent.
  *
  * A work stream and an automation are addressed the same way here. The Worker
- * resolves which kind a parent id names, asks that parent whether this person
- * may read its conversations, seats them on the conversation object, and only
- * then hands out a ticket or a client. What differs between the two kinds is
- * inside the parent's own `authorizeViewer`; nothing here branches on it.
+ * resolves parent identity and viewer access in one decision, seats the reader
+ * on the conversation object, and only then hands out a ticket or a client.
+ * Each parent's `resolveViewer` owns its visibility rules; this service probes
+ * automation only when no work stream exists for the id.
  */
 export class ConversationService {
   constructor(
