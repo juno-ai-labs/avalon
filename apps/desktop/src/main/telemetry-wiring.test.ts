@@ -14,6 +14,18 @@ describe('Electron telemetry wiring', () => {
     expect(handler).not.toContain('preloadPath');
   });
 
+  it('preserves original rejection telemetry while containing only Electron resets', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+
+    expect(source).toContain('const mainProcessNetworkRecovery = new MainProcessNetworkRecovery();');
+    expect(source).toContain('if (mainProcessNetworkRecovery.consumeDeferredFatal(error)) return;');
+    expect(source).toContain('reportMainProcessFatal(error, origin);');
+    expect(source).toContain('mainProcessNetworkRecovery.handleUnhandledRejection(reason, {');
+    expect(source).toContain('reportFatal: reportMainProcessFatal');
+    expect(source).toContain('deferFatal: (fatal) => { setImmediate(fatal); }');
+    expect(source).toContain("processHealth('main', 'rejection', 'unknown')");
+  });
+
   it('offers native recovery when the primary renderer exits unexpectedly', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
     const mainWindowCrashHandler = source.match(

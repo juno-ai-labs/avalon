@@ -15,6 +15,7 @@ embedded in the renderer or a source of product truth.
 | `apps/desktop/src/main/application-open-observer.ts` | Closed cold-start attribution and activation coalescing so explicit deep-link/menu sources outrank Electron's generic Dock/reopen callback. |
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
 | `apps/desktop/src/main/renderer-crash-recovery.ts`, `apps/desktop/src/main/renderer-window-availability.ts` | Native primary-window renderer-crash notice and application relaunch choice, plus the shared live-renderer filter for main-process broadcasts. |
+| `apps/desktop/src/main/main-process-network-recovery.ts` | Exact Electron URL-loader reset admission, original-origin reporting for every other rejection, and next-turn fatal scheduling that preserves sibling rejection delivery. |
 | `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | Device-only macOS Unified Logging for the closed renderer performance projection; it is not an upload path. |
 | `apps/desktop/src/main/product-analytics-settings.ts` | Local-first disable, fail-closed enable/refresh, preference synchronization, crash invalidation, and spool purge. |
 | `apps/desktop/src/main/index.ts` | Startup ordering, Crashpad start, process observers, IPC sender validation, upload scheduling, and product integration points. |
@@ -285,11 +286,14 @@ Electron's internal `SimpleURLLoaderWrapper`: an unhandled
 `ERR_CONNECTION_RESET` whose stack names Electron's built-in URL loader. macOS
 can reset an established connection while Rally is asleep or waking; treating
 that transport interruption as a fatal JavaScript defect leaves Electron's
-generic error dialog over an otherwise recoverable app. Rally logs the reset and
-keeps running, allowing the socket, polling, and telemetry owners to take their
-existing reconnect or retry paths. The loader frame and exact code are both
-required. Every other unhandled rejection is rethrown and remains fatal, so an
-application error with similar text cannot disappear behind this boundary.
+generic error dialog over an otherwise recoverable app. Rally keeps the existing
+payload-free `process_health` rejection signal, logs the reset locally, and keeps
+running, allowing the socket, polling, and telemetry owners to take their
+existing reconnect or retry paths. The exact code and a single real stack frame
+containing both the loader and Electron `browser_init` markers are required.
+Every other unhandled rejection is reported with its original rejection origin,
+then thrown fatally on the next event-loop turn so sibling rejections already
+pending in the same batch are not discarded.
 
 ### Route and identity
 
@@ -506,7 +510,7 @@ pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/t
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts
 pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
-pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/main-process-network-recovery.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts
 pnpm --filter @rally/desktop test:release
 pnpm --filter @rally/desktop test:crashpad
 pnpm --filter @rally/site test
@@ -1879,9 +1883,11 @@ and Electron showed its generic fatal JavaScript dialog even though Rally's live
 network owners subsequently reconnected. Retrying the lost request at a global
 boundary was rejected because its method and side effects are no longer known;
 the process instead survives so each owning subsystem's existing recovery path
-can run. Future changes must keep both the `ERR_CONNECTION_RESET` code and the
-internal `SimpleURLLoaderWrapper` frame as admission conditions and must rethrow
-every unknown rejection.
+can run while retaining a payload-free fleet signal. Future changes must keep
+the exact `ERR_CONNECTION_RESET` code and one real frame carrying both the
+`SimpleURLLoaderWrapper` and `node:electron/js2c/browser_init` markers as
+admission conditions. Unknown rejections must retain their original telemetry
+origin, allow sibling rejection delivery to finish, and remain fatal.
 
 ### 2026-09-16 — Keep renderer crashes from becoming blank windows
 
