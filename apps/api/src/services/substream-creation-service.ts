@@ -24,6 +24,7 @@ import { provisionalWorkstreamDescription } from "./workstream-description-servi
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
+import { noFlowSpan, type FlowSpan } from "../observability/tracing";
 
 /**
  * The title preparation reserves a child under.
@@ -67,12 +68,14 @@ export class SubstreamCreationService {
       workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(parentId)));
   }
 
-  async prepare(parentId: string, input: { operationId: string; title?: string | undefined; throughTurnId: string | null }): Promise<PrivateChildPreparationOperation> {
+  async prepare(parentId: string, input: { operationId: string; title?: string | undefined; throughTurnId: string | null }, span: FlowSpan = noFlowSpan): Promise<PrivateChildPreparationOperation> {
     const reservedTitle = input.title ?? RESERVED_SUBSTREAM_TITLE;
-    const parent = await this.parent(parentId);
+    const parent = await span.step("substream.prepare.parent.authorize", () => this.parent(parentId));
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId: input.operationId };
     // Look up first: a retry after a deployment keeps its old policy revision.
-    const prior = PrivateChildPreparationOperationSchema.nullable().parse(await parent.readPrivateChildPreparation(address));
+    const prior = PrivateChildPreparationOperationSchema.nullable().parse(
+      await span.step("substream.prepare.receipt.read", () => parent.readPrivateChildPreparation(address)),
+    );
     if (prior && (prior.creatorUserId !== this.auth.userId || prior.title !== reservedTitle
       || prior.sourceThroughTurnId !== input.throughTurnId)) {
       throw new ApiError(409, "substream_operation_conflict", "This creation request already has different inputs.");
@@ -85,34 +88,40 @@ export class SubstreamCreationService {
         creator: this.auth.userId,
         config: membershipConfig,
       });
-      operation = PrivateChildPreparationOperationSchema.parse(await parent.beginPrivateChildPreparation({
+      operation = PrivateChildPreparationOperationSchema.parse(await span.step("substream.prepare.receipt.reserve", () => parent.beginPrivateChildPreparation({
         ...address, creatorUserId: this.auth.userId, title: reservedTitle, sourceSubstreamId: "0",
         sourceThroughTurnId: input.throughTurnId, recipe: substreamContextPipeline.plan(SUBSTREAM_CONTEXT_POLICY),
         membershipInitializer: { ...SUBSTREAM_MEMBERSHIP_POLICY, memberUserIds: [...memberUserIds] },
-      }));
+      })));
     }
     if (operation.status === "failed") throw new ApiError(409, "substream_creation_cancelled", "This creation request is no longer active.");
     if (operation.preparedContext) return operation;
     if (operation.recipe.capture === "source" && !operation.capture) {
       const source = { workspaceId: this.auth.workspaceId, workstreamId: asWorkstreamId(parentId), substreamId: asSubstreamId("0") };
-      const main = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
-        conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, "0"));
-      const capture = await main.captureInitialSubstreamContext({
-        source, operationId: input.operationId, userId: this.auth.userId, throughTurnId: input.throughTurnId,
+      const capture = await span.step("substream.prepare.source.capture", async () => {
+        const main = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+          conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, "0"));
+        return main.captureInitialSubstreamContext({
+          source, operationId: input.operationId, userId: this.auth.userId, throughTurnId: input.throughTurnId,
+        });
       });
-      operation = PrivateChildPreparationOperationSchema.parse(await parent.savePrivateChildCapture({ ...address, capture }));
+      operation = PrivateChildPreparationOperationSchema.parse(
+        await span.step("substream.prepare.capture.save", () => parent.savePrivateChildCapture({ ...address, capture })),
+      );
     }
-    const preparedContext = await substreamContextPipeline.prepare({
+    const preparedContext = await span.step("substream.prepare.context.transform", () => substreamContextPipeline.prepare({
       recipe: operation.recipe, capture: operation.capture, completedParts: operation.completedParts,
       services: createSubstreamContextTransformServicesWithGateway(this.summaryGateway ?? substreamSummaryGateway(this.env), {
         workspaceId: this.auth.workspaceId, workstreamId: asWorkstreamId(parentId), substreamId: operation.substreamId,
         userId: this.auth.userId, requestId: operation.operationId,
       }),
       onPartPrepared: async (part) => { await parent.savePrivateChildPart({ ...address, part }); },
-    });
+    }));
     // Recheck authority after inference, before exposing the captured content.
-    await this.parent(parentId);
-    return PrivateChildPreparationOperationSchema.parse(await parent.savePreparedPrivateChildContext({ ...address, preparedContext }));
+    await span.step("substream.prepare.authority.recheck", () => this.parent(parentId));
+    return PrivateChildPreparationOperationSchema.parse(
+      await span.step("substream.prepare.context.save", () => parent.savePreparedPrivateChildContext({ ...address, preparedContext })),
+    );
   }
 
   /**
@@ -145,19 +154,23 @@ export class SubstreamCreationService {
      */
     modelOverride: AgentModelOverride | null = null,
     preparedConversation?: PreparedConversation,
+    span: FlowSpan = noFlowSpan,
+    requestReceivedAt?: number,
   ): Promise<SubstreamCreationResult> {
-    const parent = await this.parent(parentId);
+    const parent = await span.step("substream.create.parent.authorize", () => this.parent(parentId));
     const address = { workspaceId: this.auth.workspaceId, parentId, operationId };
-    const existing = PrivateChildPreparationOperationSchema.nullable().parse(await parent.readPrivateChildPreparation(address));
+    const existing = PrivateChildPreparationOperationSchema.nullable().parse(
+      await span.step("substream.create.preparation.read", () => parent.readPrivateChildPreparation(address)),
+    );
     if (!existing || existing.creatorUserId !== this.auth.userId) {
       throw new ApiError(404, "substream_preparation_not_found", "Creation request not found.");
     }
     let operation: PrivateChildPreparationOperation;
     try {
-      operation = PrivateChildPreparationOperationSchema.parse(await parent.claimPrivateChildConfirmation({
+      operation = PrivateChildPreparationOperationSchema.parse(await span.step("substream.create.confirmation.claim", () => parent.claimPrivateChildConfirmation({
         ...address, actorUserId: this.auth.userId,
         preparedConversationHash: preparedConversation ? workstreamImportHash(preparedConversation) : null,
-      }));
+      })));
     } catch (error) {
       if (error instanceof Error && error.message.includes("private_child_initialization_conflict")) {
         throw new ApiError(409, "private_child_initialization_conflict", "This preparation already has different content");
@@ -171,8 +184,11 @@ export class SubstreamCreationService {
       throw error;
     }
     if (operation.status === "ready") {
-      if (preparedConversation) await this.installConversation(parentId, operation, preparedConversation);
-      return this.openSubstream(parentId, operation, opening);
+      if (preparedConversation) {
+        await span.step("substream.create.conversation.install", () =>
+          this.installConversation(parentId, operation, preparedConversation));
+      }
+      return this.openSubstream(parentId, operation, opening, undefined, span, requestReceivedAt);
     }
     if (operation.status !== "confirming" || !operation.preparedContext) {
       throw new ApiError(409, "substream_context_not_prepared", "Prepare the starting context first.");
@@ -183,15 +199,15 @@ export class SubstreamCreationService {
     // was told to fix. The check is the parent's own, asked one question
     // earlier: mentioning a colleague who is not on this work stream is a
     // mistake to answer with an empty composer, not with an empty substream.
-    await this.assertParticipantsAdmitted(parent, parentId, opening);
+    await span.step("substream.create.participants.preflight", () => this.assertParticipantsAdmitted(parent, parentId, opening));
     // A child created with an instruction is named from it, exactly as a work
     // stream is: the first line stands while the naming pass runs, and
     // `naming` is what puts the skeleton in its header. A child created
     // without one keeps the title its caller reserved and is settled, because
     // nothing will ever arrive to name it from.
     const title = opening ? provisionalWorkstreamTitle(opening.text, operation.title) : operation.title;
-    await bootstrapConversationChildRuntime(this.env, this.auth.workspaceId, "workstream", parentId, operation.substreamId);
-    await provisionWorkstreamObject(this.env, {
+    await span.step("substream.create.child.bootstrap", () => bootstrapConversationChildRuntime(this.env, this.auth.workspaceId, "workstream", parentId, operation.substreamId));
+    await span.step("substream.create.child.provision", () => provisionWorkstreamObject(this.env, {
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId,
       title, titleStatus: opening ? "naming" : "settled",
       // The opening *line*, through the same helper the work-stream path uses,
@@ -205,20 +221,21 @@ export class SubstreamCreationService {
       participantUserIds: operation.membershipInitializer.memberUserIds,
       harnessStatus: "idle",
       emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride, now: operation.createdAt,
-    });
-    const target = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
-      conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, operation.substreamId));
-    await target.installPreparedSubstreamContext({
+    }));
+    const target = await span.step("substream.create.target.resolve", () =>
+      durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+        conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, parentId, operation.substreamId)));
+    await span.step("substream.create.context.install", () => target.installPreparedSubstreamContext({
       workspaceId: this.auth.workspaceId, workstreamId: parentId, substreamId: operation.substreamId, operationId,
-    });
-    if (preparedConversation) await this.installConversation(parentId, operation, preparedConversation);
-    await this.parent(parentId);
+    }));
+    if (preparedConversation) await span.step("substream.create.conversation.install", () => this.installConversation(parentId, operation, preparedConversation));
+    await span.step("substream.create.authority.recheck", () => this.parent(parentId));
     // Readiness is the publication fence, so it is the last thing that happens:
     // it is what puts the child in every member's sidebar, and nobody may see
     // one before the turn that caused it is durable. `POST /workstreams` fences
     // the same way with its route activation.
     return this.openSubstream(parentId, operation, opening, () =>
-      parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title }));
+      parent.setPrivateChildTerminalStatus({ ...address, status: "ready", errorCode: null, title }), span, requestReceivedAt);
   }
 
   private async installConversation(parentId: string, operation: PrivateChildPreparationOperation, conversation: PreparedConversation) {
@@ -287,13 +304,15 @@ export class SubstreamCreationService {
      * exists to not produce.
      */
     publish?: () => Promise<unknown>,
+    span: FlowSpan = noFlowSpan,
+    requestReceivedAt?: number,
   ): Promise<SubstreamCreationResult> {
     const title = opening ? provisionalWorkstreamTitle(opening.text, operation.title) : operation.title;
     if (!opening) {
-      await publish?.();
+      await span.step("substream.create.child.publish", async () => { await publish?.(); });
       return { substreamId: operation.substreamId, title, opening: null };
     }
-    const receipt = await new WorkstreamObjectClient(
+    const receipt = await span.step("substream.create.opening.admit", () => new WorkstreamObjectClient(
       this.env, this.auth, parentId, operation.substreamId,
     ).createMessage({
       text: opening.text,
@@ -307,18 +326,25 @@ export class SubstreamCreationService {
       // admission those ids need was checked before anything was created.
       confirmedParticipantUserIds: [...opening.confirmedParticipantUserIds],
       attachmentIds: opening.attachmentIds,
-    });
-    await publish?.();
+      telemetryOperationId: operation.operationId,
+      ...(requestReceivedAt !== undefined ? {
+        telemetryRequestReceivedAt: requestReceivedAt,
+        telemetryJourney: "substream_create" as const,
+      } : {}),
+    }));
+    await span.step("substream.create.child.publish", async () => { await publish?.(); });
     // Membership after publication, because the parent grants it only for a
     // child that is ready — and it is the parent's to grant: the
     // conversation-local roster the turn itself wrote gives neither discovery
     // nor socket admission. A mention notification is delivered from an outbox
     // the request does not drain, so it still finds these rows in place.
-    for (const userId of opening.confirmedParticipantUserIds) {
-      await this.changeParticipant(parentId, operation.substreamId, {
-        userId, operationId: `${operation.operationId}:participant:${userId}`,
-      }, true);
-    }
+    await span.step("substream.create.participants.seat", async () => {
+      for (const userId of opening.confirmedParticipantUserIds) {
+        await this.changeParticipant(parentId, operation.substreamId, {
+          userId, operationId: `${operation.operationId}:participant:${userId}`,
+        }, true);
+      }
+    });
     const naming = nameWorkstream(this.env, {
       workspaceId: this.auth.workspaceId,
       workstreamId: parentId,
@@ -328,7 +354,8 @@ export class SubstreamCreationService {
       openingMessage: opening.text,
       provisionalTitle: title,
     });
-    if (this.defer) this.defer(naming); else await naming;
+    if (this.defer) this.defer(naming);
+    else await span.step("substream.create.naming", () => naming);
     return { substreamId: operation.substreamId, title, opening: receipt.turn };
   }
 

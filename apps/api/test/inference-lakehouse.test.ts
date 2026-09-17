@@ -97,6 +97,9 @@ describe("inference lakehouse", () => {
       requestId: "run-1",
       parentRequestId: "parent-1",
       draftId: "draft-1",
+      operationId: "00000000-0000-7000-8000-000000000099",
+      journey: "workstream_create" as const,
+      requestReceivedAt: Date.parse("2026-09-17T20:00:00.000Z"),
     };
     await captureStreamingInferenceRequest(env, context, {
       inferenceRequestId: "stream-request-1",
@@ -111,7 +114,7 @@ describe("inference lakehouse", () => {
         stream: true,
         stream_options: { include_usage: true },
       },
-    });
+    }, Date.parse("2026-09-17T20:00:00.425Z"));
     await captureStreamingInferenceAttempt(env, context, {
       inferenceRequestId: "stream-request-1",
       turnId: "turn-1",
@@ -135,6 +138,18 @@ describe("inference lakehouse", () => {
         usage: { prompt_tokens: 10, completion_tokens: 4 },
         finishReason: "stop",
         generationId: "generation-1",
+      },
+    });
+    const requestRecord = JSON.parse(objects.get(
+      "inference-lakehouse/records/2026-09-17/stream-request-1:request.json",
+    ) ?? "null") as InferenceLakehouseRecord;
+    expect(requestRecord).toMatchObject({
+      metadata: {
+        operationId: context.operationId,
+        journey: "workstream_create",
+        requestReceivedAt: "2026-09-17T20:00:00.000Z",
+        providerRequestIssuedAt: "2026-09-17T20:00:00.425Z",
+        requestToInferenceStartMs: 425,
       },
     });
     await captureStructuredInferenceDiagnostic(env, {

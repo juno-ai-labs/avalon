@@ -81,6 +81,9 @@ export interface InferenceLakehouseContext {
   requestId?: string;
   parentRequestId?: string;
   draftId?: string;
+  operationId?: string;
+  journey?: "workstream_create" | "substream_create" | "message_send";
+  requestReceivedAt?: number;
 }
 
 function commonRecord(
@@ -90,6 +93,7 @@ function commonRecord(
   eventType: "request" | "attempt",
   invocationType: "streaming" | "structured",
   inferenceRequestId: string,
+  capturedAt = Date.now(),
 ): Pick<
   InferenceLakehouseRecord,
   | "schema_version"
@@ -116,7 +120,7 @@ function commonRecord(
     schema_version: INFERENCE_LAKEHOUSE_SCHEMA_VERSION,
     event_id: eventId,
     event_type: eventType,
-    captured_at: new Date().toISOString(),
+    captured_at: new Date(capturedAt).toISOString(),
     region: env.AVALON_REGION,
     invocation_type: invocationType,
     source: context.source,
@@ -228,6 +232,7 @@ export function captureStreamingInferenceRequest(
   env: Env,
   context: InferenceLakehouseContext,
   request: InferenceRequestEvent,
+  providerRequestIssuedAt = Date.now(),
 ): Promise<void> {
   return captureBestEffort(env, {
     ...commonRecord(
@@ -237,6 +242,7 @@ export function captureStreamingInferenceRequest(
       "request",
       "streaming",
       request.inferenceRequestId,
+      providerRequestIssuedAt,
     ),
     turn_id: request.turnId,
     provider: request.provider,
@@ -247,6 +253,13 @@ export function captureStreamingInferenceRequest(
       cursor: request.cursor,
       messageCount: request.payload.messages.length,
       toolCount: request.payload.tools?.length ?? 0,
+      ...(context.operationId ? { operationId: context.operationId } : {}),
+      ...(context.journey ? { journey: context.journey } : {}),
+      ...(context.requestReceivedAt !== undefined ? {
+        requestReceivedAt: new Date(context.requestReceivedAt).toISOString(),
+        requestToInferenceStartMs: Math.max(0, providerRequestIssuedAt - context.requestReceivedAt),
+      } : {}),
+      providerRequestIssuedAt: new Date(providerRequestIssuedAt).toISOString(),
     },
   });
 }

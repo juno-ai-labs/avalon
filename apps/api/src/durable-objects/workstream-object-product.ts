@@ -155,6 +155,8 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
   runMode: z.enum(["steer", "queue"]).optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
+  telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
+  telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   forcedHarnessOrigin: z.string().min(1).max(80).optional(),
   parentHarnessRunId: z.string().uuid().optional(),
   expectedLatestHarnessRunId: z.string().uuid().optional(),
@@ -235,6 +237,8 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   slackSearchAuthorization: z.unknown().optional(),
   telemetryOperationId: z.string().uuid().optional(),
   telemetrySubjectUserId: z.string().uuid().optional(),
+  telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
+  telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   /**
    * Present when a demo seed opens the work stream. An opening message always
    * starts a run, so the seed's turn is what that run says; a seed that says
@@ -1566,6 +1570,10 @@ export class WorkstreamObjectProductService {
       } : {}),
       ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
       ...(input.telemetrySubjectUserId ? { telemetrySubjectUserId: input.telemetrySubjectUserId } : {}),
+      ...(input.telemetryRequestReceivedAt !== undefined
+        ? { telemetryRequestReceivedAt: input.telemetryRequestReceivedAt }
+        : {}),
+      ...(input.telemetryJourney ? { telemetryJourney: input.telemetryJourney } : {}),
       // Rides the execution receipt, so the run this create starts answers
       // from the seed rather than reaching a provider.
       ...(input.seed ? { seed: input.seed } : {}),
@@ -4060,10 +4068,13 @@ export class WorkstreamObjectProductService {
     reauthorizeWorkspaceMembership: boolean,
   ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
+    const receiptInput = { ...input };
+    delete receiptInput.telemetryRequestReceivedAt;
+    delete receiptInput.telemetryJourney;
     const requestHash = workstreamImportHash({
       command: "create_message",
       authorUserId: auth.userId,
-      input,
+      input: receiptInput,
     });
     const authorizedRoot = () => reauthorizeWorkspaceMembership
       ? this.authorize(auth)
@@ -4382,6 +4393,8 @@ export class WorkstreamObjectProductService {
             expectedLatestHarnessRunId: input.expectedLatestHarnessRunId ?? null,
             expectedToolInvocationId: input.expectedToolInvocationId ?? null,
             telemetryOperationId: input.telemetryOperationId ?? null,
+            telemetryRequestReceivedAt: input.telemetryRequestReceivedAt ?? null,
+            telemetryJourney: input.telemetryJourney ?? null,
             slackOrigin: input.slackOrigin ?? null,
             slackSearchAuthorization: input.slackSearchAuthorization ?? null,
             // The only carrier available: a message-started run's execution
