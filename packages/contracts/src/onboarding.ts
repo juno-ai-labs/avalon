@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ConnectorConnectionCardIds } from './connector-connection-card';
 
 /**
  * What a person may be: every other colour around the ring, plus `black`.
@@ -61,7 +62,19 @@ export const UpdateAccountOnboardingSchema = z.strictObject({
   introduced: z.literal(true).optional(),
   presentation: PersonalPresentationSchema.omit({ revision: true }).optional(),
 });
-export const OnboardingConnectorIdSchema = z.enum(['google-mail-calendar', 'google-drive-workspace', 'github', 'ashby', 'granola', 'linear', 'slack', 'notion', 'custom-mcp', 'generic-webhook', 'x']);
+/**
+ * Connectors the onboarding picker may offer, derived from the connection-card
+ * catalog plus the three identities that have no card because they are not a
+ * named provider: a Custom MCP server, an inbound webhook, and Rally's own
+ * read-only X access.
+ *
+ * Derived rather than listed: this enum was a hand-kept copy of those ids, and
+ * when Fireflies was added to the catalog and to the picker it was not added
+ * here, so anyone who chose Fireflies during onboarding had their whole
+ * selection rejected and could connect nothing at all. A new connection card is
+ * now selectable in onboarding by construction.
+ */
+export const OnboardingConnectorIdSchema = z.enum([...ConnectorConnectionCardIds, 'custom-mcp', 'generic-webhook', 'x']);
 export const OnboardingConnectorSelectionSchema = z.templateLiteral([z.enum(['workspace', 'you']), ':', OnboardingConnectorIdSchema]);
 export const OnboardingJourneySchema = z.object({
   path: z.enum(['creator', 'member']),
@@ -77,5 +90,6 @@ export const UpdateOnboardingJourneySchema = z.strictObject({
 export type PersonalPresentation = z.infer<typeof PersonalPresentationSchema>;
 export type AccountOnboarding = z.infer<typeof AccountOnboardingSchema>;
 export type UpdateAccountOnboarding = z.infer<typeof UpdateAccountOnboardingSchema>;
+export type OnboardingConnectorId = z.infer<typeof OnboardingConnectorIdSchema>;
 export type OnboardingJourney = z.infer<typeof OnboardingJourneySchema>;
 export type UpdateOnboardingJourney = z.infer<typeof UpdateOnboardingJourneySchema>;
