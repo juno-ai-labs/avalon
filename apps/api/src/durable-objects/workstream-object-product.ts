@@ -669,8 +669,11 @@ export class WorkstreamObjectProductService {
       throw new Error(`pending_input_preparation_${preparation.state}`);
     }
     this.beginInputPreparation(preparation.input_id, Date.now());
+    let completed = false;
     try {
-      return await work();
+      const result = await work();
+      completed = true;
+      return result;
     } catch (error) {
       this.loops.failInputPreparation({
         inputId: preparation.input_id,
@@ -680,11 +683,14 @@ export class WorkstreamObjectProductService {
       throw error;
     } finally {
       this.endInputPreparation(preparation.input_id);
-      // A settled earlier preparation can make later ready inputs runnable.
-      // The alarm is only a wake-up hint; the loop/mailbox rows remain truth.
-      if (this.loops.pendingInputs().length > 0
-        || this.nextRecoverableInputPreparationAt() !== null) {
-        await this.storage.setAlarm(Date.now() + 1);
+      // A failed preparation can expose later ready inputs without returning an
+      // activation request to the SubstreamAgent. Successful preparation does
+      // return one, so its caller is the sole owner of the eager activation
+      // wake. The reservation's longer cancellation-recovery alarm remains
+      // armed before the durable row either way.
+      if (!completed && (this.loops.pendingInputs().length > 0
+        || this.nextRecoverableInputPreparationAt() !== null)) {
+        await ensureStorageAlarmNoLaterThan(this.storage, Date.now() + 1);
       }
     }
   }

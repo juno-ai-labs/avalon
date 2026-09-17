@@ -607,6 +607,18 @@ recovered from the same object alarm after eviction, and takes terminal receipts
 in order. A failed settlement moves only its own retry time and cannot prevent a
 pending loop input from becoming the next inference.
 
+The alarm scheduler has two distinct ready lanes. Canonical semantic realtime
+delivery remains an activation barrier because a committed predecessor must be
+visible before ephemeral output from the next execution. Authorization, search,
+and child-to-parent regional projections are cross-authority delivery instead:
+their durable outbox rows retry beside the loop and never gate its claim. The
+alarm schedules execution first, starts one serialized projection chain beside
+it, requests another projection pass after preparation, claim, and settlement
+when those phases can have committed new effects, and awaits both lanes before
+returning. The persistent loop therefore does not starve projections, Queue
+acceptance does not add to activation latency, and no second regional drain is
+performed inside the execution loop.
+
 `WorkstreamLoopWorkflow` and its binding are gone: every work-stream run
 executes inside the SubstreamAgent, and a stack whose authority is not
 `durable_object_open` is refused with `workstream_authority_not_open` rather
@@ -879,6 +891,15 @@ all, and that message and every message queued after it would wait for an
 unrelated request that a work stream nobody reopens never receives. Arming
 before the commit rather than after is what makes that unconditional: the worst
 an admission that then fails can cost is one wake that finds nothing to do.
+
+Successful preparation has one separate eager-wake owner. The product service
+returns its private `activationRequest`, and `SubstreamAgent` validates the loop
+and pending-input fence before moving the alarm to due now. The product's
+`finally` does not schedule the same wake again; it re-arms promptly only after a
+preparation failure, where no activation request returns and settling the failed
+head may have exposed later inputs. The pre-reservation cancellation-recovery
+alarm remains in both cases, so cancellation between durable admission and the
+outer activation call delays recovery but cannot strand the row.
 
 The claim itself expires. `activeInputPreparations` records when a preparation
 was first claimed, and past `LOOP_EXECUTION_LEASE_MS` the claim stops being
@@ -1614,6 +1635,44 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-17 — Projection delivery no longer gates loop activation
+
+**What changed:** The SubstreamAgent alarm schedules persistent-loop execution
+before starting a sibling serialized lane for authorization, search, and
+regional projection delivery. Preparation, claim, and settlement request a new
+pass when they can have committed effects, and the alarm awaits the loop plus
+the final projection chain. The duplicate regional drain before every execution
+claim is removed. Canonical semantic realtime delivery remains ordered ahead of
+activation. Successful input preparation now returns its activation request to
+the SubstreamAgent without also scheduling a due-now alarm in the product
+service; failure-only re-arming and the pre-reservation cancellation-recovery
+alarm remain.
+
+**Why:** Queue acceptance is external projection work, not evidence that a
+durably admitted execution is ready. Awaiting it in front of every claim added
+unrelated latency to a subsequent message, while draining regional effects both
+in the alarm and inside the loop paid for the same work twice. Durable outbox
+rows already provide the recovery and retry authority. Likewise, one successful
+admission scheduled the same activation twice even though the private activation
+request already has a single owner.
+
+**Considered and rejected:** Removing the outboxes would trade a small scheduler
+duplication for lossy cross-object delivery. Starting projection sends under
+`waitUntil` without awaiting them would repeat the cancellation failure that the
+durable alarm loop exists to prevent. Moving canonical semantic realtime into
+the concurrent lane was also rejected because it could publish a new run's
+ephemeral frames ahead of committed transcript events.
+
+**Consequences, and what a future change has to respect:** Execution readiness
+and cross-authority delivery due-time are independent. Projection passes must
+remain serialized, be requested as executions settle, and be awaited by the
+alarm invocation; their durable rows must remain the source of retry. Canonical
+semantic realtime is deliberately different and must retain its pre-activation
+ordering barrier unless the publication protocol itself gains an equivalent
+fence. The product may pre-arm recovery before a preparing row or re-arm after a
+failure, but successful eager activation stays with the SubstreamAgent that
+validates the returned loop/input fence.
 
 ### 2026-09-15 — Assistant person links become authoritative mentions at acceptance
 

@@ -987,6 +987,24 @@ describe('message mention resolution', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
   });
 
+  it('reuses a supplied workspace roster instead of fetching it again', async () => {
+    const fetchMock = stubRoster();
+    const api = new RallyApi('https://api.rally.test', session);
+    const roster = [{
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      timezone: user.timezone,
+      role: 'owner',
+      status: 'active' as const,
+    }];
+
+    await expect(api.messageMentionPayload('Ask @Adam', [], roster)).resolves.toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('resolves a typed member name and leaves a typed connection name alone', async () => {
     stubRoster();
     const api = new RallyApi('https://api.rally.test', session);
