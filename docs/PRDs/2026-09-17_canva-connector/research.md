@@ -1,225 +1,286 @@
 # Canva platform research
 
-> Read 2026-09-17 from Canva's published documentation. Everything here is
-> documentation, not live observation: no Canva integration has been registered
-> and no delivery has been received. Anything marked **unverified** must be
-> confirmed against the live provider before it is built against, and the
-> confirmation recorded in [`provider-apps.md`](../../provider-apps.md) with its
-> date, the way Fireflies' and Ashby's were.
+> Read from Canva's published documentation on 2026-09-17, and measured against
+> the live provider the same day. Documentation claims and live measurements are
+> kept apart deliberately, because two of the load-bearing ones disagreed.
+>
+> The second half of this document — the Connect APIs and their webhooks — is no
+> longer proposed. It is kept because it is what the workspace scope was costed
+> against before it was cut, and it is the answer to "why not just ingest Canva
+> events". Anything that becomes a registration is recorded in
+> [`provider-apps.md`](../../provider-apps.md) with its date, the way Fireflies'
+> and Ashby's are.
 
-## The two platforms, and which one is which
+## The two platforms
 
-Canva ships two developer surfaces, and they are not alternatives to each other.
-They authenticate differently, they are registered differently, and only one of
-them emits events.
+Canva ships two developer surfaces. They authenticate differently, are registered
+differently, and only one of them emits events.
 
-| | Connect APIs | Canva MCP |
+| | Canva MCP | Connect APIs |
 | --- | --- | --- |
-| What it is | A REST API over designs, folders, assets, comments, brand templates, exports, autofill, imports, resizes, merges, analytics | A remote Streamable HTTP MCP server |
-| Endpoint | `https://api.canva.com/rest/v1/…` | `https://mcp.canva.com/mcp` |
-| Registration | An integration in the [Developer Portal](https://www.canva.com/developers/), client ID + client secret | A redirect URI allowlisted by Canva; OAuth client identified by CIMD |
-| Authorization | OAuth 2.0 authorization code + PKCE, per Canva user | OAuth, per Canva user |
-| Events | Webhook notifications (preview) | None |
-| Tenancy | Per user. There is no team or service credential | Per user, explicitly: permissions are "per-user basis, not at the organization level" |
+| What it is | A remote Streamable HTTP MCP server | A REST API over designs, folders, assets, comments, brand templates, exports, autofill |
+| Endpoint | `https://mcp.canva.com/mcp` | `https://api.canva.com/rest/v1/…` |
+| Registration | A redirect URI allowlisted by Canva; client identified by CIMD or DCR | An integration in the [Developer Portal](https://www.canva.com/developers/), client ID + secret |
+| Authorization | OAuth, per Canva user | OAuth 2.0 authorization code + PKCE, per Canva user |
+| Events | None | Webhook notifications (preview) |
+| Tenancy | Per user, explicitly — no organization-level authentication | Per user. There is no team or service credential |
 
-Sources:
+Sources: [MCP overview](https://www.canva.dev/docs/mcp/),
 [Connect overview](https://www.canva.dev/docs/connect/),
-[MCP overview](https://www.canva.dev/docs/mcp/),
 [Creating integrations](https://www.canva.dev/docs/connect/creating-integrations/).
 
-## Canva MCP
+**Only the MCP server is in scope.** The rest of this document explains why.
 
-- **One endpoint, one transport.** `https://mcp.canva.com/mcp`, Streamable HTTP.
-  Canva documents `mcp-remote` over stdio only for clients that cannot speak
-  remote MCP; Rally can, so it is irrelevant here.
-- **CIMD is the recommended client identity.** The OAuth `client_id` is an HTTPS
-  URL serving a JSON document describing the client, so no client is
-  pre-registered and no client secret is held. **Dynamic Client Registration is
-  documented as deprecated** in favour of CIMD, though still accepted for
-  backward compatibility. This is the first provider Rally would meet where the
-  hosted-MCP helper's DCR path is the deprecated one.
-- **The redirect URI must be allowlisted by Canva, by application.** Canva's
-  documented route is a [waitlist
-  form](https://www.canva.dev/docs/mcp/) reviewed for "brand alignment, trust and
-  safety considerations, compliance readiness, technical fit, and strategic
-  alignment". Canva states that many established AI tools already have access.
-  This is a business gate on a calendar Rally does not control, and it blocks
-  the personal connection entirely — not partially.
-- **Documented capability areas** (Canva publishes no tool list): design
-  generation, design editing, design discovery, asset and brand management,
-  design export, collaborative commenting.
-- **Per-user only.** "Each user needs to authenticate", and each needs their own
-  Canva account. There is no organization-level MCP connection to build.
+## Canva MCP, as documented
 
-**Unverified:** the live `tools/list` catalog, the authorization-server metadata
-(scopes published, whether a refresh token is issued), and whether Canva's server
-assigns an MCP session ID. Rally's pass-through does not need the catalog — it
-must not be copied into source — but the metadata decides whether a personal
-connection can renew itself or must be reconnected, which is the thing Fireflies
-taught us to check before shipping rather than after.
+- One endpoint, `https://mcp.canva.com/mcp`, Streamable HTTP. `mcp-remote` over
+  stdio is documented only for clients that cannot speak remote MCP.
+- **CIMD is the recommended client identity**: the OAuth `client_id` is an HTTPS
+  URL serving a JSON document, so no client is pre-registered and no secret is
+  held. **DCR is documented as deprecated** but still accepted.
+- **The redirect URI must be allowlisted by Canva**, through a
+  [waitlist form](https://docs.google.com/forms/d/1jgC4vAA2-5LqaNzVhnP8ygSknF4Vysc1UzAWJukzcp0/viewform)
+  reviewed for "brand alignment, trust and safety considerations, compliance
+  readiness, technical fit, and strategic alignment". Canva notes that many
+  established AI tools already have access.
+- **No organization-level authentication.** Canva's own words: access varies by
+  user, users can only reach their own or shared content, and "you can't set up a
+  single service account or application-level authentication that works for all
+  users."
+- **Manual client registration** is documented for platforms supporting neither
+  CIMD nor DCR: `POST https://mcp.canva.com/register`, with
+  `https://mcp.canva.com/authorize` and `/token`.
+- **Canva communicates over two domains**, `canva.com` and `canva.ai`; a client
+  must allow both.
+- **Timeouts**: `generate-design` can run long, and Canva suggests a 60-second
+  client timeout.
 
-## Connect API webhook notifications
+### The published tool list
 
-### Configuration is per integration, not per connection
+Canva *does* publish one, at
+[Tools and rate limits](https://www.canva.dev/docs/mcp/tools/) — around thirty
+tools with a per-minute rate limit and plan availability each. An earlier index
+page lists only ten, which is how this research first recorded it wrongly. The
+catalog is transcribed in [`design.md`](design.md#the-tool-surface) at review
+level only: Rally's pass-through must read `tools/list` live, and a snapshot in
+source is a second authority that goes stale — which two of Canva's own pages
+already demonstrate.
 
-In the Developer Portal, under **Notifications**, an integration enables
-`collaboration:event` and enters **one Webhook URL**. That is the entire
-configuration surface. There is no webhook API, no per-user subscription, no
-per-event toggle, and no way for Rally to register or rotate anything
-programmatically.
+Plan gating, which the documentation is clear about:
 
-Three consequences follow, and they shape the whole design:
+- **All plans**: design generation, editing, search, exports, comments, asset
+  uploads, folders, imports.
+- **Pro and above**: brand templates, brand kits, resize. Export quality also
+  improves — lossless PNG, transparency, premium elements.
+- **Enterprise**: autofill and brand template datasets.
 
-1. **One URL serves every Canva user who has authorized the integration**, in
-   every Canva team, for every Rally workspace. Routing is Rally's problem, and
-   the payload is the only thing that can solve it.
-2. **Enabling notifications enables all eleven event types.** "Which events do we
-   subscribe to" is not a question Canva lets anyone answer. The only choice
-   available is which delivered events Rally ingests and which it refuses.
-3. **Registration, rotation and removal are manual**, in a UI, by whoever holds
-   the Canva developer account — the same posture as Fireflies, and the reason
+## The live probe (2026-09-17)
+
+Protocol-level only. No credentials were used, no login was completed, and no
+token was ever issued — every probe stopped at the redirect to Canva's login
+page. A few throwaway OAuth clients were registered at Canva's open endpoint;
+none were authorized.
+
+### Registration is open; `/authorize` is the gate
+
+`POST https://mcp.canva.com/register` returned **`201` with a real `client_id`
+and `client_secret` for every redirect URI tried**, including
+`https://example.com/callback` and `http://localhost:9999/cb`. No approval field,
+no pending state, no error naming an allowlist. **Registration is not the gate.**
+
+Presenting one of those clients at `/authorize`, with correct PKCE and the same
+redirect URI it registered, is where the allowlist appears:
+
+| redirect URI | result |
+| --- | --- |
+| `https://api.rallywith.ai/connections/canva/callback` | `400` · `Invalid redirect URI.` |
+| `https://example.com/callback` | `400` · `Invalid redirect URI.` |
+| `https://cursor.com/connector` | `400` · `Invalid redirect URI.` |
+| `https://www.canva.com/cb` | `400` · `Invalid redirect URI.` |
+| `https://claude.ai/…`, `https://claude.com/…` | `302` → Canva login |
+| `https://chatgpt.com/connector_platform_oauth_redirect` | `302` → Canva login |
+| `http://localhost:<port>/…`, `http://127.0.0.1:<port>/…`, `https://localhost:<port>/…` | `302` → Canva login |
+
+The refusal body is exactly `Invalid redirect URI.` — `text/plain`, 21 bytes, no
+OAuth error code, no redirect carrying `error=`, no mention of an allowlist or a
+waitlist. A client that hits it has nothing to diagnose from.
+
+An accepted client's `302` proves only the *client* was accepted: Canva swaps in
+its own upstream OAuth app and sends the user to
+`https://www.canva.com/api/oauth/authorize?client_id=OC-…&redirect_uri=https%3A%2F%2Fmcp.canva.com%2Fcallback&…`.
+
+**So the two documentation pages were never in tension about policy — they are in
+tension about where you find out.** The open registration endpoint is real and
+useless on its own.
+
+Three further observations:
+
+- **Matching is exact host, any path.** `https://claude.ai/totally/other/path`
+  passes; `https://evil.claude.ai/cb` and `https://claude.ai.evil.example.com/cb`
+  do not. No suffix hole, but anyone with an open redirect on an allowlisted host
+  could point a DCR client at it. The allowlist is not a security boundary.
+- **It is partner identification.** Canva fingerprints the redirect host and
+  forwards `mcp_client_type` upstream — `ClaudeConnector`, `ChatGPTConnector`,
+  `Other` for loopback.
+- **Loopback is unconditionally allowed**, any port, http or https. That is the
+  standard native-application flow, and it is the one path needing no approval.
+
+### Authorization server metadata
+
+`GET https://mcp.canva.com/.well-known/oauth-authorization-server` → `200`:
+
+```json
+{"issuer":"https://mcp.canva.com",
+ "authorization_endpoint":"https://mcp.canva.com/authorize",
+ "token_endpoint":"https://mcp.canva.com/token",
+ "registration_endpoint":"https://mcp.canva.com/register",
+ "grant_types_supported":["authorization_code","refresh_token",
+   "urn:ietf:params:oauth:grant-type:jwt-bearer"],
+ "token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post","none"],
+ "revocation_endpoint":"https://mcp.canva.com/token",
+ "code_challenge_methods_supported":["plain","S256"],
+ "client_id_metadata_document_supported":true}
+```
+
+- **Refresh tokens are supported, and `offline_access` is not a published
+  scope** — refresh is granted by default rather than scope-requested. The
+  opposite of Fireflies.
+- PKCE offers `plain` as well as `S256`; use `S256`.
+- Revocation shares the token endpoint URL.
+- `.well-known/openid-configuration` → `404`. Not an OIDC provider.
+
+### Consent is all sixteen scopes, whatever is requested
+
+A request carrying `scope=profile:read` produced an upstream authorization asking
+for all sixteen published scopes: `profile:read`, `design:meta:read`,
+`design:content:read`, `design:content:write`, `folder:read`, `folder:write`,
+`brandtemplate:meta:read`, `brandtemplate:content:read`,
+`brandtemplate:content:write`, `comment:read`, `comment:write`, `asset:read`,
+`asset:write`, `brandkit:read`, `help:answers:read`, `help:answers:write`.
+
+**There is no least-privilege connection available**, which also contradicts
+Canva's own published advice to request only the minimum scopes needed.
+
+### Two provider bugs worth designing around
+
+- **`/authorize` returns `500 Internal Server Error` for an unknown
+  `client_id`**, where OAuth requires a 400-class error. A stale or revoked Rally
+  registration would surface as an opaque server error.
+- Canva sends `code_challenge_method=s256` lowercase on its own upstream hop,
+  which is non-conformant to RFC 7636. Internal to Canva; noted only so nobody
+  copies it.
+
+### What could not be settled
+
+**Whether CIMD bypasses the redirect-host allowlist.** It could not be tested
+without hosting a client metadata document on a domain we control, and passing an
+unfetchable HTTPS `client_id` returns the same opaque `500` as a nonexistent
+client — so the result proves nothing either way. This is the question with the
+most leverage in the whole PRD: if CIMD bypasses the host gate, the waitlist
+stops being blocking.
+
+Also inconclusive: whether the per-tool rate limits are per user or per client.
+
+## Why the workspace scope was cut
+
+Kept as the record of what a Canva workspace connection would have cost. The
+product decision, taken 2026-09-17, was that it is too complicated to ask a
+customer to do.
+
+### Webhook configuration is per integration, not per connection
+
+In the Developer Portal, an integration enables `collaboration:event` and enters
+**one Webhook URL**. That is the entire configuration surface: no webhook API, no
+per-user subscription, no per-event toggle, nothing Rally can register, rotate or
+reconcile. Three consequences:
+
+1. One URL serves every Canva user who authorized the integration, in every Canva
+   team, for every Rally workspace — so routing is Rally's problem and the
+   payload is the only thing that can solve it.
+2. Enabling notifications enables **all eleven** event types. There is no
+   subscription choice to make.
+3. Registration, rotation and removal are manual, in a UI — the Fireflies
+   posture, and the reason
    [`connector-installation-lifecycle.md`](../../connector-installation-lifecycle.md)
    exists.
 
-### Scopes required for each notification family
+### Preview status forces a private integration
+
+Webhook notifications and the Keys API are both **preview**. Canva states that
+"public integrations that use preview APIs or features will not pass the review
+process", and that private integrations "can only be used by your team on a Canva
+Enterprise plan".
+
+So a Rally-owned integration with webhooks could serve only Juno Labs' own Canva
+team. Reaching customers would mean **each customer registering their own private
+integration** — MFA, thirteen scopes, a client ID and secret pasted into Rally, a
+Rally-issued URL pasted back into Canva, an Enterprise plan, and a real comment
+on a real design to prove delivery works, because Canva has no test-event button.
+That is the setup that was judged too complicated, and it is the whole reason the
+scope is gone.
+
+### The eleven event types, for whenever this is revisited
+
+Each delivery carries `id`, `created_at` (UNIX seconds) and `content`, with
+`content.type` as the discriminant.
+
+| `content.type` | Subject | Distinguishing fields |
+| --- | --- | --- |
+| `comment` | `design` | `comment_event` (`new`/`reply`), `comment_url`, thread with `thread_type` (`comment`/`suggestion`), `plaintext`/`markdown`, `mentions` |
+| `design_mention` | `design` | as comment, scoped to a mention |
+| `suggestion` | `design` | a suggestion-typed thread |
+| `design_access_requested` | `design` | `triggering_user` is a `TeamUser` |
+| `design_approval_requested` | `design` | **no property list published** — only a worked example |
+| `design_approval_response` | `design` | `initial_requesting_user`, `responding_groups[]` with `external` |
+| `design_approval_reviewer_invalidated` | `design` | **no `triggering_user`** — the system, not a person |
+| `share_design` | `design` | optional `share` carrying a `message` |
+| `share_folder` | `folder` | optional `share` with `message` |
+| `folder_access_requested` | `folder` | `folder` (`FolderSummary`) |
+| `team_invite` | neither | `receiving_user`, `inviting_team` with `external` |
+
+Shared shapes: `User` is `id` (required) and `display_name`. `TeamUser` is
+`user_id`, `team_id`, `display_name`, **all optional**. `DesignSummary` carries
+`id`, `urls.edit_url`, `urls.view_url`, `created_at`, `updated_at` required, plus
+`title`, `url`, `thumbnail`, `page_count`. `FolderSummary` carries `id`, `name`,
+`created_at`, `updated_at` required. **Thumbnail URLs expire after 15 minutes.**
+Mentions are keyed `"<user_id>:<team_id>"` and appear in text as
+`[user_id:team_id]`.
+
+Notice what is absent: no `design.created`, `design.updated`, `design.published`,
+`export.completed` or `folder.item_added`. **Canva emits collaboration
+notifications, not content-change events.** Even with the workspace scope, Rally
+could never have learned that a design changed.
+
+Scopes per family, for the record — and note that receiving a *folder access
+request* requires `folder:permission:write`, a write scope, to read an event:
 
 | Notification type | Required scopes |
 | --- | --- |
 | Comments | `collaboration:event`, `design:meta:read`, `comment:read` |
 | Design access requests | `collaboration:event`, `design:meta:read` |
 | Design approvals | `collaboration:event`, `design:meta:read` |
-| Design sharing events | `collaboration:event`, `design:meta:read` |
+| Design sharing | `collaboration:event`, `design:meta:read` |
 | Folder access requests | `collaboration:event`, `folder:permission:write` |
-| Folder sharing events | `collaboration:event`, `folder:read` |
-| Team access invitations | `collaboration:event` |
+| Folder sharing | `collaboration:event`, `folder:read` |
+| Team invitations | `collaboration:event` |
 
-Canva is explicit that scopes are not hierarchical: `asset:write` does not grant
-`asset:read`. Note the trap in row five — receiving a *folder access request*
-notification requires `folder:permission:write`, a write scope, to read an event.
+### Verification, for whenever this is revisited
 
-Full scope list:
-[Scopes appendix](https://www.canva.dev/docs/connect/appendix/scopes/).
+`GET https://api.canva.com/rest/v1/connect/keys` is public and unauthenticated,
+returning a JWKS of Ed25519 public keys (`kty: OKP`, `crv: Ed25519`, `kid`
+selecting). Canva says the keys rotate and recommends caching them, refetching
+only on an unrecognized `kid`.
 
-### The eleven event types
+**The exact signature envelope remains unresolved** — header names, and whether
+the body is a signed JWT or JSON with a detached signature. Canva's prose says
+"decrypt the webhook signature", which describes no signature scheme. It would
+need one observed delivery to settle, which the personal-only scope no longer
+requires.
 
-Delivered as `POST` with a JSON body. Every notification carries `id`,
-`created_at` (UNIX seconds) and `content`, and `content.type` is the
-discriminant.
+## What the platform rules out, either way
 
-| `content.type` | Subject | Distinguishing fields |
-| --- | --- | --- |
-| `comment` | `design` | `comment_event` (`new` \| `reply`), `comment_url`, thread with `thread_type` (`comment` \| `suggestion`), `content.plaintext`/`markdown`, `mentions` |
-| `design_mention` | `design` | as comment, scoped to a mention of the receiving user |
-| `suggestion` | `design` | a suggestion-typed thread |
-| `design_access_requested` | `design` | `triggering_user` is a `TeamUser` |
-| `design_approval_requested` | `design` | *see below* |
-| `design_approval_response` | `design` | `initial_requesting_user`, `responding_groups[]` with `external: boolean` |
-| `design_approval_reviewer_invalidated` | `design` | **no `triggering_user`** — the system, not a person, invalidated the reviewer |
-| `share_design` | `design` | optional `share` (`ShareAction`) carrying a `message` |
-| `share_folder` | `folder` | optional `share` with `message` |
-| `folder_access_requested` | `folder` | `folder` (`FolderSummary`) |
-| `team_invite` | neither | `receiving_user` (a `User`, not a `TeamUser`), `inviting_team` with `external: boolean` |
-
-**`design_approval_requested` publishes no field list.** Its documentation page
-carries only a worked example, where every sibling page carries a property table.
-Its shape is inferred from `design_approval_response` and must be confirmed live
-before a schema is frozen — it is the one event whose parse is a guess.
-
-Shared shapes:
-
-- `User`: `id` (required), `display_name`.
-- `TeamUser`: `user_id`, `team_id`, `display_name` — **all three optional**,
-  except on `TeamUserSummary` (`design_approval_reviewer_invalidated`), where
-  `user_id` and `team_id` are required.
-- `DesignSummary`: `id`, `urls.edit_url`, `urls.view_url`, `created_at`,
-  `updated_at` (all required), `title`, `url`, `thumbnail`, `page_count`.
-- `FolderSummary`: `id`, `name`, `created_at`, `updated_at` (required), `url`,
-  and a deprecated `title`.
-- `Thumbnail`: `width`, `height`, `url` — **the URL expires after 15 minutes**.
-- Mentions are keyed `"<user_id>:<team_id>"` and appear inline in comment text as
-  `[user_id:team_id]`.
-
-Notice what is *not* in that table: there is no `design.created`,
-`design.updated`, `design.published`, `export.completed`, or `folder.item_added`.
-**Canva emits collaboration notifications, not content-change events.** Rally
-cannot learn that a design changed by subscribing; it can only learn that someone
-said something about it, asked for it, approved it, or shared it.
-
-Sources: [Webhooks overview](https://www.canva.dev/docs/connect/webhooks/) and
-the eleven per-type pages beneath it.
-
-### Verification
-
-`GET https://api.canva.com/rest/v1/connect/keys` is public and unauthenticated. It
-returns a JWKS of Ed25519 public keys: `kty` is `OKP`, `crv` is `Ed25519`, `x` is
-the Base64urlUInt public key, and `kid` selects one. Canva says the keys rotate,
-and recommends caching them and refetching only on an unrecognized `kid`. Canva
-names replay attacks as the threat the mechanism addresses.
-
-**Unverified, and load-bearing:** the exact wire form of the signature — the
-header name, whether the body is delivered as a signed JWT or as JSON alongside a
-detached signature, and what is covered by the signature. Canva's own prose says
-"decrypt the webhook signature", which is not a description of any signature
-scheme, and the published pages do not settle it. Two candidate shapes are in
-circulation: Standard Webhooks' `webhook-id` / `webhook-timestamp` /
-`webhook-signature: v1a,<base64>` asymmetric profile, and a signed JWT verified
-against the same JWKS. **This must be resolved by receiving one real delivery
-before any verification code is written**, and the answer recorded in
-`provider-apps.md` with the date it was observed.
-
-The Keys API is itself flagged **preview**.
-
-### Preview status blocks a public integration
-
-Canva states that "public integrations that use preview APIs or features will not
-pass the review process, and can't be made available to all Canva users", and that
-preview features may break without an API version change. Webhook notifications
-and the Keys API are both preview. So the Canva integration Rally registers is
-**private**, which Canva restricts to the developer's own team on a Canva
-Enterprise plan, for as long as webhooks remain preview.
-
-## Connect API surface relevant to a workspace connection
-
-Endpoints Rally would plausibly call, from the [API
-reference](https://www.canva.dev/docs/connect/):
-
-- **Designs**: create, list, get, get pages, get export formats, get dataset.
-- **Folders**: create, get, update, delete, list items, move item.
-- **Comments**: create thread, create reply, get thread, get reply, list replies.
-  (`create comment` is deprecated.)
-- **Brand templates**: list, get, get dataset, publish.
-- **Autofill**: create design autofill job, get job.
-- **Exports**: create export job, get job.
-- **Assets**: create upload job (bytes or URL), get job, get, update, delete.
-- **Design imports**, **resizes**, **merges**: all create-job + get-job.
-- **Analytics**: design views, viewers, links, page views, views over time.
-- **Users**: `users/me`, profile, capabilities.
-
-**Six of those families are asynchronous job APIs** — autofill, export, asset
-upload, design import, resize, merge. Each is create-then-poll, Canva recommends
-exponential backoff, and none of them documents an idempotency key. That is a
-shape Rally has no primitive for yet, and it is the most interesting thing the
-Connect API asks of the codebase.
-
-`GET /v1/users/me/capabilities` reports what the connected account may do, which
-is the honest answer to the question Fireflies could not answer about its own API
-key — whether the connection can see the team or only one person.
-
-**Unverified:** published rate limits. Canva documents "trial quotas" as a
-preview feature and recommends backoff for job polling, but the pages read do not
-give a request-per-minute figure per endpoint.
-
-## What this rules out
-
-- **No workspace-level credential.** Every token on both platforms belongs to one
-  Canva user. A Rally workspace connection is therefore one named Canva account
-  acting on the workspace's behalf, and that must be stated in the setup copy
-  rather than implied — the same honesty Fireflies' setup copy carries about
-  Enterprise visibility.
-- **No content-change events.** Any "the deck changed" behavior has to be polled
-  or asked for, and neither is in scope here.
-- **No programmatic webhook management.** Nothing can be created, rotated,
-  reconciled or removed by Rally.
-- **No per-tenant webhook secret.** Every Rally workspace's deliveries arrive on
-  the same URL signed by the same rotating Canva keys, so a delivery's *content*
-  is the only thing that says which tenant it belongs to.
+- **No workspace-level credential**, on either platform. Every token belongs to
+  one Canva user.
+- **No content-change events**, even with webhooks.
+- **No least-privilege consent**, measured.
+- **No organization-level authentication**, stated by Canva.
