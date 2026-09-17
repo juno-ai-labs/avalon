@@ -1411,7 +1411,11 @@ export class RallyApi {
     };
   }
 
-  async messageMentionPayload(text: string, selected: MentionIdentity[] = []): Promise<Array<{
+  async messageMentionPayload(
+    text: string,
+    selected: MentionIdentity[] = [],
+    existingRoster?: readonly WorkspaceMember[],
+  ): Promise<Array<{
     type: 'person' | 'connector';
     userId: string | null;
     connectorType: string | null;
@@ -1423,7 +1427,7 @@ export class RallyApi {
     // front of it. `person://` covers durable mention Markdown that is pasted
     // or replayed; `@` covers composer and hand-typed mentions.
     if (!text.includes('@') && !text.includes('person://')) return [];
-    const members = await this.getWorkspaceMembers();
+    const members = existingRoster ?? await this.getWorkspaceMembers();
     // People only, and only here: what a name in the text resolves to has to
     // agree with what the composer that wrote it offered and highlighted.
     // The work stream's connections were discovered here too, so a hand-typed

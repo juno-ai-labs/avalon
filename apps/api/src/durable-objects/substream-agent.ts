@@ -3347,7 +3347,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   /** Run the one persistent loop in the current invocation. Durable SQL, not
    * the promise, is the restart authority if the isolate is evicted. */
-  private async drainLoopToCompletion(): Promise<"drained" | "deferred"> {
+  private async drainLoopToCompletion(
+    requestProjectionDrain?: () => void,
+  ): Promise<"drained" | "deferred"> {
     if (this.agentDrain.active) {
       const now = Date.now();
       const loop = this.loop.loop();
@@ -3364,7 +3366,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     await this.agentDrain.resume(
-      (ownsDrain) => this.drainPersistentLoop(ownsDrain).catch((error: unknown) => {
+      (ownsDrain) => this.drainPersistentLoop(ownsDrain, requestProjectionDrain).catch((error: unknown) => {
         logWarn(this.env, "substream_loop_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
           workstream_id: this.objectStore.identity()?.parentId,
@@ -3377,20 +3379,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return "drained";
   }
 
-  private async drainPersistentLoop(ownsDrain: () => boolean): Promise<void> {
+  private async drainPersistentLoop(
+    ownsDrain: () => boolean,
+    requestProjectionDrain?: () => void,
+  ): Promise<void> {
     while (ownsDrain()) {
       this.agentDrain.touch();
-      await this.drainRegionalEffects();
-      if (!ownsDrain()) return;
 
       const preparation = await this.product.resumeOldestInputPreparation();
       if (preparation === "active") return;
-      if (preparation === "settled") continue;
+      if (preparation === "settled") {
+        requestProjectionDrain?.();
+        continue;
+      }
 
       const activation = await this.claimPersistentLoopExecution();
       if (!activation) return;
       if (!ownsDrain()) return;
       this.activeLoopExecution = activation.execution;
+      requestProjectionDrain?.();
       try {
         const identity = { workspaceId: activation.input.workspaceId, parentId: activation.input.parentId };
         await this.product.recordWorkflowStarted(
@@ -3456,6 +3463,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           this.activeLoopExecution = null;
         }
         if (ownsDrain()) this.agentDrain.touch();
+        requestProjectionDrain?.();
       }
     }
   }
@@ -6003,25 +6011,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   protected override async runDueAlarmWork(): Promise<void> {
     this.loopDrainDeferred = false;
-    const authzIdentity = this.objectStore.identity();
-    if (authzIdentity) {
-      try {
-        await flushAuthorizationProjection(this.state.storage.sql, this.env.ACTIVITY_QUEUE, {
-          type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: authzIdentity.workspaceId, parentId: authzIdentity.parentId,
-          substreamId: this.externalSubstreamId(),
-        });
-      } catch { logWarn(this.env, 'authorization_projection_dispatch_deferred', { region: this.env.AVALON_REGION }); }
-    }
-    await this.flushSearchProjectionOutbox();
-    const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
-    const hasLoopWork = this.nextLoopWorkAt() !== null;
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
-    if (nextEffectAt === null && nextSemanticRealtimeAt === null
-      && !hasLoopWork && nextExternalSettlementAt === null) return;
 
     if (nextExternalSettlementAt !== null && nextExternalSettlementAt <= Date.now()) {
       if (this.externalSettlementDrain.abandonActive()) {
@@ -6034,15 +6027,48 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.resumeExternalSettlementDrain();
     }
 
+    // Pending canonical events must precede ephemeral run output. Keep this
+    // local ordering barrier ahead of activation; cross-authority projections
+    // below are independent and must not gate execution readiness.
     if (nextSemanticRealtimeAt !== null && nextSemanticRealtimeAt <= Date.now()) {
       await this.flushSemanticRealtimeOutboxBestEffort();
     }
 
+    let projectionDrain = Promise.resolve();
+    const requestProjectionDrain = (): void => {
+      projectionDrain = projectionDrain.then(() => this.drainDueExternalProjections());
+    };
+
+    // Schedule the execution lane first, then begin the projection lane without
+    // awaiting either one. Preparation, claim, and settlement request more
+    // serialized passes when they may have committed new projection work.
+    const loopDrain = this.drainLoopToCompletion(requestProjectionDrain);
+    requestProjectionDrain();
+    this.loopDrainDeferred = await loopDrain === "deferred";
+    await projectionDrain;
+  }
+
+  /**
+   * Deliver cross-authority projections that are due now. These sends share a
+   * serialized lane beside agent execution: durable outbox rows remain the
+   * retry authority, while Queue acceptance never delays claiming loop work.
+   */
+  private async drainDueExternalProjections(): Promise<void> {
+    const authzIdentity = this.objectStore.identity();
+    if (authzIdentity) {
+      try {
+        await flushAuthorizationProjection(this.state.storage.sql, this.env.ACTIVITY_QUEUE, {
+          type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+          workspaceId: authzIdentity.workspaceId, parentId: authzIdentity.parentId,
+          substreamId: this.externalSubstreamId(),
+        });
+      } catch { logWarn(this.env, 'authorization_projection_dispatch_deferred', { region: this.env.AVALON_REGION }); }
+    }
+    await this.flushSearchProjectionOutbox();
+    const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
       await this.drainRegionalEffects();
     }
-
-    this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
   }
 
   /**
