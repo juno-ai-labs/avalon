@@ -283,7 +283,7 @@ One of three.
 | --- | --- | --- |
 | `note.generated` | Yes | The meeting note was written for the first time; effectively "the meeting happened". |
 | `note.edited` | No | A revision to a note already reported, including Granola regenerating its own earlier output. |
-| `note.access_granted` | No | A permission change, not something that happened. |
+| `note.access_granted` | No | A permission change, not something that happened. When the shared note already has a summary, the ingress stores a `note.generated` beside it, and that one is digestible: from the workspace's side, that is when the meeting arrived. |
 
 ## Fireflies
 

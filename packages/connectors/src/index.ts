@@ -113,6 +113,7 @@ export {
   type ConnectorMessagingAgentAdapter,
   type ConnectorLogLevel,
   type ConnectorObserver,
+  type ConnectorDerivedActivities,
   type ConnectorVerifiedActivityWebhook,
   type ConnectorWebhookActivitySource,
   type ConnectorWebhookVerificationInput,
