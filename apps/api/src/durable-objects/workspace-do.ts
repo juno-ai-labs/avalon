@@ -9309,18 +9309,51 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM workspace_workstream_directory
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
+      const workspaceId = asWorkspaceId(input.workspaceId);
       for (const parent of parents) {
-        if (input.refresh === false && this.state.storage.sql.exec(
-          'SELECT 1 FROM authorization_backfill WHERE parent_id = ?', parent.parent_id,
-        ).toArray().length) continue;
-        this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
-          ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
-        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: asWorkspaceId(input.workspaceId), parentId: IdSchema.parse(parent.parent_id) });
+        const parentId = IdSchema.parse(parent.parent_id);
+        if (input.refresh !== false) {
+          this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
+            ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
+          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            workspaceId, parentId });
+          continue;
+        }
+        // The unavailable-read path repairs only discovery that is missing, never work that finished
+        // or is already scheduled: a retryable 503 must not reset a workspace or amplify into writes.
+        const tracked = this.state.storage.sql.exec<{ completed: number }>(
+          'SELECT completed FROM authorization_backfill WHERE parent_id = ?', parent.parent_id).toArray()[0];
+        if (!tracked) {
+          this.state.storage.sql.exec('INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)',
+            parent.parent_id, parent.parent_kind);
+        }
+        if (!tracked || !tracked.completed) {
+          if (!this.authorizationDeliveryScheduled(parent.parent_id, null)) {
+            this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+              workspaceId, parentId });
+          }
+          continue;
+        }
+        // A parent completes when its children are registered, so a child whose own discovery died
+        // leaves the parent complete. Re-queue that child directly: re-running the parent would
+        // reset its siblings' finished receipts and widen the very outage being repaired.
+        for (const child of this.state.storage.sql.exec<{ substream_id: string }>(
+          'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? AND completed = 0',
+          parent.parent_id).toArray()) {
+          if (this.authorizationDeliveryScheduled(parent.parent_id, child.substream_id)) continue;
+          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            workspaceId, parentId, substreamId: SubstreamIdSchema.parse(child.substream_id) });
+        }
       }
     });
     await this.armNextAlarm();
     return this.authorizationBackfillStatus(input);
+  }
+
+  /** Work already queued (including one waiting out a delivery backoff) needs no second request. */
+  private authorizationDeliveryScheduled(parentId: string, substreamId: string | null): boolean {
+    return this.state.storage.sql.exec('SELECT 1 FROM authorization_delivery WHERE job_key = ?',
+      JSON.stringify([parentId, substreamId])).toArray().length > 0;
   }
 
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
