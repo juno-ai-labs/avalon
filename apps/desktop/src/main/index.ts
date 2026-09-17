@@ -150,7 +150,10 @@ import {
   javascriptErrorProcessHealthState,
   normalizeJavascriptErrorCandidate,
 } from './javascript-error-candidate';
-import { recoverMainProcessNetworkRejection } from './main-process-network-recovery';
+import {
+  MainProcessNetworkRecovery,
+  type MainProcessFatalOrigin,
+} from './main-process-network-recovery';
 import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import { LockdownModeController } from './lockdown-mode';
 import {
@@ -4577,7 +4580,9 @@ if (!singleInstanceLock) {
   });
 }
 
-process.on('uncaughtExceptionMonitor', (error, origin) => {
+const mainProcessNetworkRecovery = new MainProcessNetworkRecovery();
+
+function reportMainProcessFatal(error: Error, origin: MainProcessFatalOrigin): void {
   const frames = safeJavascriptFrames(error.stack);
   if (frames.length === 0) {
     void telemetryReporter?.processHealth(
@@ -4592,17 +4597,26 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
     errorCode: javascriptErrorCode(error, origin === 'unhandledRejection' ? 'unhandled_rejection' : 'unknown'),
     frames,
   }).catch(() => undefined);
+}
+
+process.on('uncaughtExceptionMonitor', (error, origin) => {
+  if (mainProcessNetworkRecovery.consumeDeferredFatal(error)) return;
+  reportMainProcessFatal(error, origin);
 });
 
 process.on('unhandledRejection', (reason) => {
-  recoverMainProcessNetworkRejection(reason, (error, code) => {
-    // Chromium can reject an in-flight URL load while macOS is changing the
-    // network underneath a sleeping or waking app. The request's owner has
-    // already lost this result; keeping the process alive lets each background
-    // subsystem use its existing reconnect or retry path instead of showing
-    // Electron's fatal JavaScript dialog. Unknown rejections are rethrown by
-    // the boundary above and retain the ordinary fatal behavior.
-    logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+  mainProcessNetworkRecovery.handleUnhandledRejection(reason, {
+    recovered: (error, code) => {
+      // Preserve the payload-free fleet signal this rejection emitted before
+      // it became recoverable; a packaged app's local warning is not observable.
+      void telemetryReporter?.processHealth('main', 'rejection', 'unknown').catch(() => undefined);
+      logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+    },
+    reportFatal: reportMainProcessFatal,
+    // Throw only after Node has delivered every rejection already pending in
+    // this microtask batch. The fatal monitor consumes the marker above so the
+    // scheduled throw is not double-counted as an ordinary exception.
+    deferFatal: (fatal) => { setImmediate(fatal); },
   });
 });
 
