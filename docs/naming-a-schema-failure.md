@@ -132,6 +132,15 @@ its own is a boundary that drifts.
 | `packages/connectors/src/types.ts` | `streamFailure` names a provider's off-schema poll body as `schema_invalid:<path>:<code>` where it said `poll_failed`, the word a network fault also says; the code reaches the connection row as the stream's degradation reason |
 | `packages/connectors/src/granola.ts`, `packages/connectors/src/slack.ts` | the OAuth stage helpers attach `responseIssues` — the failing paths — to a `provider_error` whose body did not parse, beside `responseInvalid` |
 | `apps/api/src/lib/connector-oauth-error.ts` | `connector_oauth_callback_failed` carries `response_issues` from that detail, admitted only in code shape, and from a raw `ZodError` |
+| `apps/api/src/services/slack-agent-service.ts`, `slack-notification-service.ts`, `slack-workstream-card.ts` | the three Slack reason helpers answer a `ZodError` with `invalid_slack_data:<path>:<code>` — the reason persisted on an ingress job and written to the connection's `error_json` |
+| `apps/api/src/services/workstream-description-service.ts` | a model whose answer failed the decision schema records `description_decision_invalid:<path>:<code>` as the rejection code, where it recorded `model_unavailable` |
+| `apps/api/src/routes/telemetry.ts` | the four catch sites rethrow a `ZodError` as itself, so `request_failed` logs the route and the failing paths behind the same `internal_error` |
+| `apps/api/src/services/connection-service.ts` | the managed repair on the Test path answers with its sentence only for an installation that stopped — `failed` or `action_required` — so one still in flight, whose health check passed, is not reported as needing attention |
+| `apps/api/src/services/connector-installation-service.ts`, `connector-maintenance-service.ts` | a step that failed logs `connector_installation_step_failed` with `diagnosticErrorCode`; a maintenance target that stopped logs `connector_maintenance_target_failed`, and its `reason` is the receipt's own sentence when the receipt has one |
+| `apps/api/src/durable-objects/workspace-do.ts` | `connector_event_authority_terminal` carries the settler's `error` as `error_code` when it is code-shaped |
+| `apps/api/src/services/demo-preparation.ts` | a phase stopped by a stored record that no longer parses names the field as its operator-facing code, where it said `demo_internal_error` |
+| `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
+| `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
 | `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
@@ -161,10 +170,13 @@ its empty message as `""`, `handler_error:Error`, or the caller's fallback.
 
 Known and not yet converted:
 
-- `packages/agent-harness/src/index.ts` — `if (error instanceof z.ZodError)
-  return "validation_error"` names the class and discards the path.
 - The Durable Object RPC entry points listed above by object, which still
   open with a bare `Schema.parse(input)`.
+- `packages/agent-harness/src/index.ts` — `if (error instanceof z.ZodError)
+  return "validation_error"` names the class and discards the path, and stays
+  that way on purpose: `failure_kind` is a small vocabulary `integrations.ts`
+  matches on, and the `validate`-stage diagnostic emitted for the same
+  `inferenceRequestId` already carries the paths as `validationIssues`.
 
 ## What it costs
 
@@ -188,6 +200,99 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-09-15 — The plugin host names a catalog and an authorization that failed their schemas
+
+**What changed:** The two host logs behind a plugin the model could not
+load name the field. `dynamic_connector_tools_unavailable` carries
+`error_code` beside `error_name` on both surfaces that emit it, and
+`connector_plugin_reauthorization_failed` carries a schema rejection's paths
+as `code`, the key it already used for a connector's own code.
+
+**Why:** A hosted MCP server's tool catalog that drifted out of
+`ToolDefinitionSchema` failed identically on every activation, and the host
+logged the word `ZodError`; the model was told `plugin_tools_unavailable`
+and to retry once later. A reauthorization whose cause was a schema
+rejection logged the rejection's JSON message as `reason` and no code, and
+became `indeterminate` — `plugin_authorization_unavailable`, "retry after
+the authorization service is available" — for a failure that no wait would
+change. Naming the field at the host log is what tells an operator reading
+that row that the blocker is deterministic.
+
+**Considered and rejected:** Changing `structuredFailureKind`'s
+`validation_error` to a per-path code. The kind is a small vocabulary that
+`integrations.ts` matches on to derive a member-facing classification, and
+the `validate`-stage diagnostic emitted two lines earlier already carries
+`validationIssues` for the same `inferenceRequestId`; the paths are on the
+row beside it. Also rejected: naming the rejection inside the harness's
+`plugin_tools_unavailable` catch. The only slot that reaches the log is the
+one that reaches the model, and what the model is told about a deterministic
+blocker is the fabricated-blocker decision recorded in the pull request, not
+a diagnostics change. And rejected: converting `onToolCallRejected`'s
+`error.name` defensively. Nothing in this repository can be shown to hand a
+`ZodError` to that callback — the rejection hook returns a structured refusal
+rather than throwing — so a conversion there would be a guess with no test
+able to fail.
+
+**Consequences:** `error_code` on `dynamic_connector_tools_unavailable`
+carries the catalog's failing path only for a schema rejection and the
+fallback constant otherwise, so a query on that field separates a drifted
+catalog from an unreachable server. The two `plugin_*_unavailable` codes and
+their retry guidance are unchanged; the fabricated-blocker finding stands
+against them until their owners decide on a third verdict.
+
+Shipped in #771.
+
+### 2026-09-15 — The services and the admin Worker name what they already knew
+
+**What changed:** The catch sites in the API's services, routes, and the Ace
+Worker that reduced a schema rejection to a fixed string now name its field,
+and the returned failures around the connector lifecycle carry the reason
+they computed. The three Slack reason helpers answer
+`invalid_slack_data:<path>:<code>`; the description refresh records
+`description_decision_invalid:<path>:<code>` where it recorded
+`model_unavailable`; the telemetry routes rethrow a `ZodError` so the error
+handler logs its paths behind the same `internal_error`; an installation
+step that failed and a maintenance target that stopped each log a code, and
+the maintenance target's `reason` is the receipt's own sentence when it has
+one; the event settlement row carries the settler's own `errorCode`; the
+managed repair on the Test path speaks only for an installation that stopped;
+a demo phase stopped by a stored record that no longer parses names the
+field; and Ace names the field in a contract mismatch, its fallback log, and
+a refused download grant.
+
+**Why:** Each of these had the reason in hand. The Slack reason is
+persisted on the ingress job and the connection row, so the word
+`invalid_slack_data` was what an operator and the re-drive read. The
+description refresh recorded `model_unavailable` for a model that had
+answered — with JSON the schema did not model — and sent an operator to look
+at the provider. The telemetry routes mapped every unknown error to an
+`ApiError` before the handler could see it, so the one branch that logs
+`validation_issues` never ran for them. The managed repair on the Test path
+— whose unrepaired reason `main` began returning while this change was under
+review — spoke for an installation still in flight as if it had stopped. The
+installation runner logged
+nothing at all, and the maintenance sweep's bare `catch {}` wrote a pointer
+to go and read a receipt whose sentence it was holding.
+
+**Considered and rejected:** Answering the telemetry routes' schema
+rejections with a 400 that names the field. A `CrashMetadataSchema` rejection
+is the desktop's payload, so a 400 may well be right — but that is a status
+change, and this rule is about what a log says. Also rejected: renaming the
+settlement row's `reason`, which holds a mechanical value where a reader
+expects the cause. Saved queries filter on it; `error_code` is added beside
+it instead.
+
+**Consequences:** `slack_ingress_jobs.error_code` and the exhausted-job notice
+are keyed on the reason, so a path-specific code makes the one-notice-per-code
+window finer for schema rejections: two fields failing in one hour are two
+notices. A maintenance target's `reason` is now whatever sentence the stopped
+registration carries, so an operator screen shows the receipt's words. The
+telemetry routes' 500 bodies say `An unexpected error occurred` rather than
+each route's own sentence for a schema rejection; the code and status are
+unchanged.
+
+Shipped in #770.
 
 ### 2026-09-15 — A connector's returned rejection is named like its thrown one
 

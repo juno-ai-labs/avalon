@@ -1,5 +1,6 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import { DemoOperationStartRequestSchema, ProductFeatureFlagKeySchema } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { accessFailureMessage, readAccessConfiguration, verifyAccessRequest, type AccessPrincipal } from './access';
@@ -280,7 +281,10 @@ app.post('/api/workspaces/:workspaceId/retire', async (c) => {
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
 app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw));
 app.onError((error, c) => {
-  console.error(JSON.stringify({ event: 'ace_request_failed', path: c.req.path, error: error.message }));
+  // A schema rejection's message is its issue list as JSON; the code names
+  // the field so the row can be read without expanding it.
+  const errorCode = zodDiagnosticCode(error, 'request');
+  console.error(JSON.stringify({ event: 'ace_request_failed', path: c.req.path, error: error.message, ...(errorCode ? { error_code: errorCode } : {}) }));
   return c.json({ error: 'internal_error' }, 500);
 });
 
