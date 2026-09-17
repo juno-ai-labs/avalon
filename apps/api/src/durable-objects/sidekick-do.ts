@@ -31,6 +31,7 @@ import {
   type AutomationRunTriggerV1,
   type AutomationScope,
   type DemoSeed,
+  externalEventOccurrenceKey,
   withoutUnusableAutomationResourceIds,
 } from "@rally/contracts";
 import type {
@@ -968,7 +969,7 @@ export class SidekickDO extends ConversationParentDurableObject {
       || request.event.eventSequence <= row.effective_after_event_sequence) {
       return { admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" };
     }
-    const admitted = await this.admitOccurrence(`external:${request.event.id}`, {
+    const admitted = await this.admitOccurrence(externalEventOccurrenceKey(request.event), {
       kind: "external_event",
       workspaceEventId: request.event.id,
       eventType: request.event.eventType,

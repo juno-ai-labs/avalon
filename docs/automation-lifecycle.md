@@ -330,7 +330,7 @@ run it already made. The object must hold an accepted revision
 | --- | --- | --- | --- |
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
 | **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
-| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
+| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
 | **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
 **Connector events** follow one regional path. The regional activity Queue
@@ -345,8 +345,11 @@ predicate with no model inference, and returns one complete
 `workspace_external_event_delivery_v1` message per match carrying the
 registration, the destination, and the event. There is no delivery ledger and
 no lease: the consumer sends each message to the Queue, and the destination is
-idempotent on the event id, which is all a lease ever guaranteed. A redelivery
-answers `sidekick_occurrence_replayed`. Registrations for an automation and
+idempotent on the occurrence key — the event id, unless the connector named the
+occurrence the event reports, as Granola does for a note that can arrive as a
+share and as a generation — which is all a lease ever guaranteed. A redelivery
+answers `sidekick_occurrence_replayed`, and so does a second delivery for the
+same named occurrence. Registrations for an automation and
 for a watched work-stream resource share one candidate index; a watched work
 stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
@@ -812,6 +815,30 @@ was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-17 — A connector event admits under the occurrence its connector named
+
+**What changed:** `admitExternalEvent` keys the run on `occurrence:<key>` when
+the delivery carries the occurrence the connector named, and on
+`external:<workspaceEventId>` otherwise. The key is a field of the normalized
+activity that adapter code sets; the workspace store drops a same-named key
+from provider metadata at ingest and lifts only that field onto the delivery.
+
+**Why:** Granola reports one note twice, as a share and as a generation, and a
+Sidekick on "Transcript added" must run for the note once. The fuller entry,
+with the Granola behaviour behind it and the alternatives rejected, is in
+[`connectors.md`](connectors.md#2026-09-17--a-note-shared-into-the-workspace-after-it-was-generated-is-a-transcript-added).
+
+**Considered and rejected:** Reading the key out of the event's metadata. The
+generic webhook copies a caller's metadata whole, and the key a Sidekick dedupes
+on is not a caller's to pick. Also rejected: one key space for both, where a
+connector naming a bare id could collide with another event's.
+
+**Consequences:** Every trigger still converges on `occurrence_key` with
+`INSERT OR IGNORE`; a named occurrence delivered twice answers with the run it
+already made, like a redelivery.
+
+PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
 
 ### 2026-09-15 — The empty Sidekick slot stays visible until an active shortcut occupies it
 

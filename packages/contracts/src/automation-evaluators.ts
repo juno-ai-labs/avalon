@@ -364,11 +364,30 @@ export const WorkspaceExternalEventSchema = z.strictObject({
    */
   textSnippet: z.string().default(""),
   metadata: z.record(z.string(), z.unknown()).default({}),
+  /** The occurrence the connector named, lifted by the workspace store from the activity's own field — never from its metadata. */
+  occurrenceKey: z.string().min(1).optional(),
   occurredAt: z.number().int().nonnegative(),
   audienceUserIds: z.array(IdSchema),
   audienceKind: z.enum(["workspace", "restricted"]),
 });
 export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema>;
+
+/**
+ * What an automation admits an event under.
+ *
+ * Two key spaces that cannot meet: `occurrence:<key>` when the connector named
+ * the occurrence — one thing in the world that more than one delivery can
+ * report, such as a Granola note that arrives as `note.access_granted` when it
+ * is shared and as `note.generated` when its summary is written — and
+ * `external:<event id>` otherwise. The key is adapter-authored and namespaced
+ * by provider (`granola:<connection>:note:<id>:transcript`); the workspace
+ * store lifts it only from the activity's own field, never from provider
+ * metadata, so no payload can plant one. No length bound: only Rally's own
+ * adapters write it, and a limit against our own code is the wrong tool.
+ */
+export function externalEventOccurrenceKey(event: Pick<WorkspaceExternalEvent, "id" | "occurrenceKey">): string {
+  return event.occurrenceKey ? `occurrence:${event.occurrenceKey}` : `external:${event.id}`;
+}
 
 export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.strictObject({
   type: z.literal("workspace_external_event_delivery_v1"),

@@ -29,6 +29,9 @@ import {
   listCustomMcpToolInventory,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
+  type ConnectorDerivedActivities,
+  type ConnectorVerifiedActivityWebhook,
+  type ConnectorWebhookActivitySource,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
   type ResolvedConnectorAdapter,
@@ -362,6 +365,23 @@ async function reportConnectorRepair(
       : "A repair was attempted and failed";
   }
 }
+
+/**
+ * How long a webhook delivery may spend on the provider read behind
+ * `webhookActivity.derive`.
+ *
+ * Open, per docs/adding-security-defensive-and-other-limits.md: the number is
+ * the team's, and until they set one no timer is created. What goes wrong
+ * without it: a provider read that never answers holds the delivery until the
+ * platform ends the invocation, while the provider retries the delivery it
+ * gave up on — Granola allows fifteen seconds for the whole delivery and
+ * retries with exponential backoff for four days (https://docs.granola.ai/webhooks,
+ * read 2026-09-17). Who can cause it: the provider. Why nothing already stops
+ * it: the read has no deadline of its own, and the delivery's incoming request
+ * has none either. What the trip looks like: the named activity is stored, the
+ * derived one is reported unverified and marked, and the log says `timeout`.
+ */
+const WEBHOOK_DERIVE_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
 export class ConnectionService {
   private env: Env;
@@ -2800,7 +2820,9 @@ export class ConnectionService {
     const event = z.record(z.string(), z.unknown()).parse(envelope.event);
     const normalized = source.normalize(context, { ...envelope, event: { ...event, observedAt: receipt.firstObservedAt ?? receivedAt } }, payloadKey);
     if (!normalized) throw new ApiError(400, "invalid_event", "Ashby event could not be normalized");
+    const derived = await this.deriveWebhookActivities({ provider: "ashby", connection, context, adapter: ashbyAdapter, source, normalized, envelope });
     const accepted = await persistNormalizedActivity(this.env, normalized, "ashby");
+    for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "ashby");
     await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
       workspaceId: connection.workspace_id, connectionId, receivedAt,
       registrationSupport: { create: ashbyManagement.support.create, inspect: ashbyManagement.support.inspect },
@@ -2921,7 +2943,9 @@ export class ConnectionService {
     if (!normalized) throw unsupportedWebhookEvent(this.env, {
       provider: "fireflies", connectionId, eventType: envelope.eventType,
     });
+    const derived = await this.deriveWebhookActivities({ provider: "fireflies", connection, context, adapter, source, normalized, envelope });
     const accepted = await persistNormalizedActivity(this.env, normalized, "fireflies");
+    for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "fireflies");
     // The delivery is the verification: Fireflies exposes nothing to inspect,
     // so this is what moves the installation from Action required to Current.
     await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
@@ -2930,6 +2954,48 @@ export class ConnectionService {
       registrationSupport: { create: management.support.create, inspect: management.support.inspect },
     });
     return { duplicate: receipt.outcome === "duplicate" || accepted.duplicate, activityId: accepted.activityId };
+  }
+
+  /**
+   * What a verified delivery implies beyond the activity it named, decided by
+   * the adapter with a provider read before any activity row exists. Every
+   * webhook ingress that persists through the workspace object calls this, so
+   * an adapter's `derive` is honoured wherever its deliveries arrive; an
+   * adapter without one costs nothing here. A failure the adapter reports is
+   * logged with its code and status, under one name when the activity was
+   * stored anyway and another when nothing was.
+   */
+  private async deriveWebhookActivities(input: {
+    provider: string;
+    connection: Pick<StoredConnection, "id" | "workspace_id">;
+    context: ConnectorConnectionContext;
+    adapter: ResolvedConnectorAdapter;
+    source: ConnectorWebhookActivitySource;
+    normalized: NonNullable<ReturnType<ConnectorWebhookActivitySource["normalize"]>>;
+    envelope: ConnectorVerifiedActivityWebhook;
+  }): Promise<ConnectorDerivedActivities> {
+    if (!input.source.derive) return { activities: [], outcome: "not_supported" };
+    const signal = Number.isFinite(WEBHOOK_DERIVE_TIMEOUT_MS)
+      ? AbortSignal.timeout(WEBHOOK_DERIVE_TIMEOUT_MS)
+      : new AbortController().signal;
+    const derived = await withAuthorizedConnection(
+      this.env,
+      { connection: input.context, adapter: input.adapter, signal },
+      (authorized) => input.source.derive!(authorized, input.normalized, input.envelope, signal),
+    );
+    if (derived.failure) {
+      logWarn(this.env, derived.activities.length > 0 ? "connector_webhook_derive_unverified" : "connector_webhook_derive_refused", {
+        provider: input.provider,
+        workspace_id: input.connection.workspace_id,
+        connection_id: input.connection.id,
+        delivery_id: input.envelope.deliveryId,
+        event_type: input.envelope.eventType,
+        outcome: derived.outcome,
+        code: derived.failure.code,
+        ...(derived.failure.status !== undefined ? { status: derived.failure.status } : {}),
+      });
+    }
+    return derived;
   }
 
   async ingestGranolaWebhook(
@@ -2982,6 +3048,18 @@ export class ConnectionService {
     if (!normalized) throw unsupportedWebhookEvent(this.env, {
       provider: "granola", connectionId: connection.id, eventType: envelope.eventType,
     });
+    // What the delivery implies but could not say: a note shared into the
+    // workspace after it was generated is the transcript Granola will never
+    // announce as `note.generated`. Decided before any activity row exists, so
+    // a failure here leaves no half-written pair; the adapter answers a share
+    // it cannot resolve with the event anyway, marked, and the log says why.
+    const derived = await this.deriveWebhookActivities({
+      provider: "granola", connection, context, adapter: this.registry().get("granola"), source, normalized, envelope,
+    });
+    const activities = [normalized, ...derived.activities].map((activity) => ({
+      ...activity,
+      rawContentHash: activity.rawContentHash ?? envelope.bodyHash,
+    }));
     if (this.env.WORKSPACE_DOS) {
       const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
         await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
@@ -2993,17 +3071,17 @@ export class ConnectionService {
           expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
         }),
       );
-      const persisted = await persistNormalizedActivity(this.env, {
-        ...normalized,
-        rawContentHash: normalized.rawContentHash ?? envelope.bodyHash,
-      }, "granola");
+      const [persisted, ...rest] = await Promise.all(
+        activities.map((activity) => persistNormalizedActivity(this.env, activity, "granola")),
+      );
       return {
-        duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
-        activityId: persisted.activityId,
+        duplicate: receipt.outcome === "duplicate" || persisted!.duplicate,
+        activityId: persisted!.activityId,
+        ...(rest.length > 0 ? { derivedActivityIds: rest.map((entry) => entry.activityId) } : {}),
       };
     }
-    const activityId = newId();
     const receiptId = newId();
+    const activityIds = activities.map(() => newId());
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
@@ -3015,7 +3093,7 @@ export class ConnectionService {
         receivedAt,
         new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
       ),
-      this.env.DB.prepare(
+      ...activities.map((activity, index) => this.env.DB.prepare(
         `INSERT INTO activities
          (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
           provider, provider_event_id, event_type, resource_type, provider_resource_id,
@@ -3027,47 +3105,55 @@ export class ConnectionService {
                  '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
-        activityId,
+        activityIds[index],
         connection.workspace_id,
         connection.id,
-        verified.event_id,
-        normalized.eventType,
-        normalized.providerResourceId,
-        JSON.stringify(normalized.subject),
-        normalized.occurredAt,
+        activity.providerEventId,
+        activity.eventType,
+        activity.providerResourceId,
+        JSON.stringify(activity.subject),
+        activity.occurredAt,
         receivedAt,
-        normalized.title,
+        activity.title,
         payloadKey,
-        JSON.stringify(normalized.visibility),
-        JSON.stringify(normalized.entityKeys),
-        normalized.dedupeKey,
-        normalized.rawContentHash,
-        JSON.stringify(normalized.targetUserIds),
-        JSON.stringify(normalized.externalPeople ?? []),
-        JSON.stringify(normalized.metadata),
-      ),
+        JSON.stringify(activity.visibility),
+        JSON.stringify(activity.entityKeys),
+        activity.dedupeKey,
+        activity.rawContentHash,
+        JSON.stringify(activity.targetUserIds),
+        JSON.stringify(activity.externalPeople ?? []),
+        JSON.stringify(activity.metadata),
+      )),
     ]);
+    const canonicalIds: string[] = [];
+    for (const [index, activity] of activities.entries()) {
+      const inserted = Number(results[index + 1]?.meta.changes ?? 0) > 0;
+      const canonical = inserted
+        ? { id: activityIds[index]! }
+        : await this.env.DB.prepare(
+            `SELECT id FROM activities
+             WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
+             ORDER BY received_at DESC LIMIT 1`,
+          ).bind(connection.id, activity.providerEventId, activity.eventType).first<{ id: string }>();
+      if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
+      canonicalIds.push(canonical.id);
+    }
     const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
-    const canonical = insertedActivity
-      ? { id: activityId }
-      : await this.env.DB.prepare(
-          `SELECT id FROM activities
-           WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
-           ORDER BY received_at DESC LIMIT 1`,
-        ).bind(connection.id, verified.event_id, verified.event_type).first<{ id: string }>();
-    if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
-    // Re-enqueue the canonical row on retries as crash-window recovery. If a
+    // Re-enqueue the canonical rows on retries as crash-window recovery. If a
     // previous request committed D1 but failed before queue delivery, Granola's
-    // retry must still make the durable activity visible to the consumer.
-    await this.env.ACTIVITY_QUEUE.send({
-      region: this.env.AVALON_REGION,
-      workspaceId: connection.workspace_id,
-      activityId: canonical.id,
-      attempt: 0,
-    });
+    // retry must still make the durable activities visible to the consumer.
+    for (const activityId of canonicalIds) {
+      await this.env.ACTIVITY_QUEUE.send({
+        region: this.env.AVALON_REGION,
+        workspaceId: connection.workspace_id,
+        activityId,
+        attempt: 0,
+      });
+    }
     return {
       duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
-      activityId: canonical.id,
+      activityId: canonicalIds[0]!,
+      ...(canonicalIds.length > 1 ? { derivedActivityIds: canonicalIds.slice(1) } : {}),
     };
   }
 
@@ -3145,7 +3231,11 @@ export class ConnectionService {
           expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
         }),
       );
+      const derived = await this.deriveWebhookActivities({
+        provider: "generic_webhook", connection, context, adapter: this.registry().get("generic_webhook"), source, normalized, envelope,
+      });
       const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
+      for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "generic_webhook");
       return {
         duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
         activityId: persisted.activityId,
