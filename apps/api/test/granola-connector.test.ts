@@ -142,12 +142,12 @@ describe("Granola workspace connection", () => {
       .toEqual([first.activityId, first.derivedActivityIds![0], first.activityId, first.derivedActivityIds![0]]);
     expect(payloadPut).toHaveBeenCalledTimes(2);
     expect(database.prepare("SELECT event_type, provider_event_id, dedupe_key, metadata_json FROM activities ORDER BY event_type").all()).toEqual([
-      { event_type: "note.access_granted", provider_event_id: event.event_id, dedupe_key: event.event_id, metadata_json: JSON.stringify({ changedFields: [] }) },
+      { event_type: "note.access_granted", provider_event_id: event.event_id, dedupe_key: event.event_id, metadata_json: JSON.stringify({ noteId: "not_1234567890abcd", changedFields: [] }) },
       {
         event_type: "note.generated",
         provider_event_id: event.event_id,
         dedupe_key: `${event.event_id}:generated`,
-        metadata_json: JSON.stringify({ changedFields: [], derivedFrom: "note.access_granted" }),
+        metadata_json: JSON.stringify({ noteId: "not_1234567890abcd", changedFields: [], derivedFrom: "note.access_granted" }),
       },
     ]);
     expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 1 });
@@ -424,7 +424,7 @@ describe("Granola workspace connection", () => {
     expect(queued[1]!.request.event.activity).toMatchObject({
       dedupeKey: `${event.event_id}:generated`,
       occurrenceKey: `granola:${connectionId}:note:not_2234567890abcd:transcript`,
-      metadata: { changedFields: [], derivedFrom: "note.access_granted" },
+      metadata: { noteId: "not_2234567890abcd", changedFields: [], derivedFrom: "note.access_granted" },
     });
     expect(queued[0]!.request.event.activity.occurrenceKey).toBeUndefined();
     expect(queued[0]!.request.ingressEventId).toBe(first.activityId);
