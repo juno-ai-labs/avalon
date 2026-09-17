@@ -81,6 +81,12 @@ export const ConversationParentReserveChildRequestSchema = z.strictObject({
     titleStatus: z.enum(["naming", "automatic", "settled"]),
     createdAt: z.string().datetime({ offset: true }),
   }).optional(),
+  /**
+   * Creation may overlap the provisional workspace-directory delivery with
+   * child initialization, then explicitly flush it before answering. Omitted
+   * by every existing caller, which preserves the synchronous default.
+   */
+  deferDirectoryDelivery: z.boolean().optional(),
 });
 export const ConversationParentReserveChildResultSchema = z.strictObject({
   reserved: z.literal(true),

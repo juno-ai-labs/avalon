@@ -928,12 +928,23 @@ describe("boundary contracts", () => {
       executionPrincipal: { type: "user", userId: id },
       telemetryOperationId: id,
       telemetrySubjectUserId: id,
+      telemetryRequestReceivedAt: 1_789_680_000_000,
+      telemetryJourney: "substream_create",
       reason: "human_message",
     });
-    expect(parsed).toMatchObject({ telemetryOperationId: id, telemetrySubjectUserId: id });
+    expect(parsed).toMatchObject({
+      telemetryOperationId: id,
+      telemetrySubjectUserId: id,
+      telemetryRequestReceivedAt: 1_789_680_000_000,
+      telemetryJourney: "substream_create",
+    });
     expect(WorkstreamWorkflowInputSchema.safeParse({
       ...parsed,
       telemetryOperationId: "not-an-id",
+    }).success).toBe(false);
+    expect(WorkstreamWorkflowInputSchema.safeParse({
+      ...parsed,
+      telemetryJourney: "provider_ttft",
     }).success).toBe(false);
   });
 

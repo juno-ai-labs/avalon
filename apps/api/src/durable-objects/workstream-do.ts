@@ -1038,12 +1038,30 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       }
       return { authorityGeneration: metadata.authority_generation, envelopes };
     });
-    if (reserved.envelopes.length > 0) await this.deliverProvisionalDirectory(reserved.envelopes);
+    if (reserved.envelopes.length > 0 && !request.deferDirectoryDelivery) {
+      await this.deliverProvisionalDirectory(reserved.envelopes);
+    }
     await this.armNextAlarm();
     return ConversationParentReserveChildResultSchema.parse({
       reserved: true,
       authorityGeneration: reserved.authorityGeneration,
     });
+  }
+
+  /**
+   * Finish a deferred provisional directory delivery before the create route
+   * answers. The outbox is the authority, so retrying after an accepted
+   * delivery is a no-op and an alarm remains the recovery path.
+   */
+  async flushProvisionalDirectory(input: ConversationParentAuthorityRequest): Promise<void> {
+    await this.initialized;
+    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const provisional = this.dueParentEffects(25).filter(({ effect }) => (
+      effect.kind === "directory_common" || effect.kind === "directory_user"
+    ));
+    if (provisional.length > 0) await this.deliverProvisionalDirectory(provisional);
+    await this.armNextAlarm();
   }
 
   /** Reserve one creator-only nonzero child and its immutable preparation receipt. */
@@ -1883,10 +1901,25 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    */
   protected override runDueAlarmWork(): Promise<void> {
     return Promise.all([
-      this.drainParentOutbox(),
+      this.drainParentOutboxWithCreationFence(),
       this.drainPrivateChildMembershipEffects(),
       this.drainPrivateChildLifecycleEffects(),
     ]).then(() => undefined);
+  }
+
+  /**
+   * A deferred creation projection still has to reach WorkspaceDO directly if
+   * its recovery alarm wins the race with the create coordinator. Version one
+   * is uniquely the provisional row; later aggregate projections use the
+   * ordinary Queue outbox.
+   */
+  private async drainParentOutboxWithCreationFence(): Promise<void> {
+    const provisional = this.dueParentEffects(25).filter(({ effect, sourceVersion }) => (
+      sourceVersion === 1
+      && (effect.kind === "directory_common" || effect.kind === "directory_user")
+    ));
+    if (provisional.length > 0) await this.deliverProvisionalDirectory(provisional);
+    await this.drainParentOutbox();
   }
 
   private async acceptSocket(request: Request): Promise<Response> {

@@ -56,6 +56,67 @@ const request = {
 } satisfies InferenceRequestEvent;
 
 describe("agent inference logging", () => {
+  it("defers lakehouse staging so provider dispatch does not wait on R2", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const env = createTestEnv({
+      APP_ENV: "production",
+      AVALON_REGION: "global",
+      LOG_LEVEL: "error",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(() => blocked) }),
+      INFERENCE_LAKEHOUSE_QUEUE: createCloudflareTestBinding<Queue>({ send: vi.fn() }),
+      INFERENCE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["INFERENCE_LAKEHOUSE"]>>({ send: vi.fn() }),
+    });
+    const deferred: Promise<unknown>[] = [];
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+      requestId: "run-1",
+      source: "workstream",
+      requestReceivedAt: Date.now() - 100,
+      journey: "message_send",
+    }, (task) => deferred.push(task));
+
+    await expect(logger.onRequest(request)).resolves.toBeUndefined();
+    expect(deferred).toHaveLength(1);
+    release();
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
+  it("defers terminal attempt staging so the next run step does not wait on R2", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const env = createTestEnv({
+      APP_ENV: "production",
+      AVALON_REGION: "global",
+      LOG_LEVEL: "error",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(() => blocked) }),
+      INFERENCE_LAKEHOUSE_QUEUE: createCloudflareTestBinding<Queue>({ send: vi.fn() }),
+      INFERENCE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["INFERENCE_LAKEHOUSE"]>>({ send: vi.fn() }),
+    });
+    const deferred: Promise<unknown>[] = [];
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+      requestId: "run-1",
+      source: "workstream",
+    }, (task) => deferred.push(task));
+
+    await expect(logger.onAttempt({
+      inferenceRequestId: request.inferenceRequestId,
+      success: true,
+      turnId: request.turnId,
+      model: request.model,
+      provider: request.provider,
+      providerInvocationModel: request.providerInvocationModel,
+      cursor: request.cursor,
+      latencyMs: 340,
+    })).resolves.toBeUndefined();
+    expect(deferred).toHaveLength(1);
+    release();
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
   it("has no legacy D1 or agent-inference R2 path", async () => {
     const { env, put } = fixture();
     const logger = createAgentInferenceLogger(env, {

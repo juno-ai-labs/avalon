@@ -14,6 +14,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";
+import { runtimeDeferral } from "../lib/defer";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { publishWorkstreamEvent } from "./integrations";
 import {
@@ -125,7 +126,7 @@ export class SlackWorkspaceWorkstreamService {
     });
     const openingMessageId = newId();
     const created = { workstream: { id: workstreamId, createdByUserId: creatorUserId } };
-    await recordWorkstreamCreatedTelemetry(this.env, {
+    runtimeDeferral(recordWorkstreamCreatedTelemetry(this.env, {
       workspaceId: this.workspaceId,
       workstreamId: created.workstream.id,
       creationSource: "slack_agent",
@@ -133,7 +134,7 @@ export class SlackWorkspaceWorkstreamService {
       principal: input.creatorUserId
         ? { type: "user", userId: input.creatorUserId }
         : { type: "workspace" },
-    });
+    }));
     await emailRouting.activateWorkstreamRoute(routeInput);
     // Before the launch, so the run's first context read already holds the
     // Slack thread it was summoned from. The attribution matches the work
