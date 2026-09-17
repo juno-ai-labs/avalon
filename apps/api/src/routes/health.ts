@@ -147,6 +147,10 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
   };
+  checks.typeSafe = {
+    ok: Boolean(c.env.TYPESAFE_API_KEY),
+    message: c.env.TYPESAFE_API_KEY ? "configured" : "not configured",
+  };
   // Identity sign-in is a Global-only surface, so regional reporting "not configured"
   // forever was a permanent false negative — noise that a real fault would have
   // had to be spotted inside.

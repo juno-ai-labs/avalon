@@ -171,7 +171,6 @@ describe("agent model flags", () => {
     });
     expect(defaultAgentModelRouting(baseEnv, "inline_child").model).toBe("x-ai/grok-4.3");
     expect(defaultAgentModelRouting(baseEnv, "workstream").model).toBe("x-ai/grok-4.3");
-    expect(defaultAgentModelRouting(baseEnv, "addressing_classifier").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
   });
 

@@ -235,7 +235,6 @@ export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
-  "addressing_classifier",
   "workstream_naming",
   "work_opportunity_admission",
   "work_opportunity_ranking",
@@ -247,7 +246,6 @@ export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
-  addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
