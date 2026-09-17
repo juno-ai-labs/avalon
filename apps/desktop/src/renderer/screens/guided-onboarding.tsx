@@ -5,6 +5,7 @@ import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, X } from 'lucide-react';
 import { ConnectorInstallationProviders, PERSONAL_COLOR_KEYS, OnboardingJourneySchema, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
@@ -245,7 +246,13 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       <Button className="button-primary" disabled={busy} onClick={() => {
         const pageSelected = connectorProviders.some((provider) => selected.includes(`${connectorScope}:${provider.id}`) && provider.scopes.some((scope) => scope === connectorScope));
         if (!configuring && pageSelected) void perform(async () => {
-          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: OnboardingJourneySchema.shape.connectorIds.parse(selected) });
+          // Nothing the picker produces can fail this: every tile's id is a
+          // compile-time proven selection and the rest was parsed on the way in.
+          // It stays a guard rather than a cast, so it owes a reason somebody can
+          // act on instead of a ZodError's JSON blob.
+          const connectorIds = OnboardingJourneySchema.shape.connectorIds.safeParse(selected);
+          if (!connectorIds.success) throw new Error(`Rally could not save these connections (${describeZodIssues(connectorIds.error)}). Try again, or skip for now.`);
+          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: connectorIds.data });
           queryClient.setQueryData(key, saved);
           setConfiguring(true);
         });
