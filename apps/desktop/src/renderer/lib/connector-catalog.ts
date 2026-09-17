@@ -135,13 +135,13 @@ export const connectorProviders = [
 export type ConnectorProviderCatalogEntry = (typeof connectorProviders)[number];
 
 /**
- * Every tile the onboarding picker draws must be a selection the journey schema
- * accepts. Fireflies once was not, and the picker offered it anyway: choosing it
- * failed the whole save, so the person could connect nothing. This is that check,
- * at compile time.
+ * Every tile the picker draws is a selection the journey schema accepts. A tile
+ * it refuses fails this line at compile time, naming the id — see that schema for
+ * why the check exists.
  */
-const _onboardingSelectable: readonly OnboardingConnectorId[] = connectorProviders.map((provider) => provider.id);
-void _onboardingSelectable;
+type UnselectablePickerId = Exclude<ConnectorProviderCatalogEntry['id'], OnboardingConnectorId>;
+const everyPickerIdIsSelectable: UnselectablePickerId extends never ? true : UnselectablePickerId = true;
+void everyPickerIdIsSelectable;
 export type OAuthConnectorProviderCatalogEntry = Exclude<
   ConnectorProviderCatalogEntry,
   { provider: 'custom_mcp' | 'generic_webhook' | 'x' }

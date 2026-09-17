@@ -82,6 +82,22 @@ export const OnboardingJourneySchema = z.object({
   revision: z.number().int().nonnegative(),
   connectorIds: z.array(OnboardingConnectorSelectionSchema),
 });
+/**
+ * A stored selection list, minus any id this build no longer offers.
+ *
+ * Reads are deliberately more forgiving than writes. The stored array is parsed
+ * on every read of a journey, and `update` reads before it writes, so a
+ * connector id that leaves the catalog would otherwise make an existing
+ * journey unreadable rather than merely unsaveable: the person could not see or
+ * advance their own onboarding, and the rejection would cross the workspace
+ * object's RPC hop as a bare `Error`. Retired accent names are kept parseable
+ * above for the same reason. A selection nobody can act on any more is noise, so
+ * it is dropped on the way out; a write still has to name ids that exist, at the
+ * boundary that can report which one did not.
+ */
+export const StoredOnboardingConnectorSelectionsSchema = z.array(z.unknown()).transform((values) =>
+  values.filter((value): value is z.infer<typeof OnboardingConnectorSelectionSchema> =>
+    OnboardingConnectorSelectionSchema.safeParse(value).success));
 export const UpdateOnboardingJourneySchema = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   stage: OnboardingJourneySchema.shape.stage,
