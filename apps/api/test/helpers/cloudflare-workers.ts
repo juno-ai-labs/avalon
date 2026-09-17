@@ -1,4 +1,11 @@
 /** Node-test stand-in for the runtime-only `cloudflare:workers` base class. */
+export function waitUntil(promise: Promise<unknown>): void {
+  // Production keeps the invocation alive. Node already remains alive for its
+  // own pending I/O; attach a rejection handler so a best-effort background
+  // task cannot become an unrelated unhandled-rejection failure.
+  void promise.catch(() => undefined);
+}
+
 export class DurableObject<Env = unknown> {
   protected readonly ctx: DurableObjectState;
   protected readonly env: Env;

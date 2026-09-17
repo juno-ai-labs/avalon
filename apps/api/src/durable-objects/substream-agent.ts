@@ -989,6 +989,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.transcript,
         this.loop,
         () => this.externalSubstreamId(),
+        (promise) => this.state.waitUntil(promise),
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
@@ -4649,7 +4650,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         metrics: outcome.metrics,
       });
     }
-    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
+    emitCorrelatedRunOutcome(executionEnv, input);
 
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)

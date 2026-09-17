@@ -129,7 +129,7 @@ export class TerminalWorkstreamService {
     }
     await this.destroyCurrentSandbox(workstreamId);
     const next = await this.readState(workstreamId);
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: "terminal_workspace_terminal",
@@ -144,7 +144,7 @@ export class TerminalWorkstreamService {
       },
       operationId: workstreamId,
       eventId: newId(),
-    }).catch(() => undefined);
+    });
     return next;
   }
 

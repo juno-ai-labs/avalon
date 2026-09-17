@@ -59,7 +59,10 @@ rows with its request id, success, latency, and response size. The inference
 lakehouse retains exact provider request and response envelopes plus usage,
 including schema-invalid JEV responses, under the shared trace id; Workers Logs
 keep indexed operational fields rather than duplicating message content or
-credential-shaped fields.
+credential-shaped fields. Exact-envelope lakehouse staging is registered on the
+owning Durable Object's `waitUntil`; hashing, R2 persistence, and queue delivery
+therefore remain alive after classification without delaying provider dispatch,
+the provider deadline, or message admission.
 
 The addressing classifier has a production-replay eval at
 `packages/agent-harness/evals/addressing`. The raw JSONL is a caller-supplied,
@@ -1304,6 +1307,24 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-17 — Inference telemetry leaves model critical paths
+
+The addressing classifier, streaming harness callbacks, and standalone
+structured inference now hand exact request and response archive work to the
+current Cloudflare invocation instead of awaiting R2 and Queue staging inside
+provider callbacks. Structured operational logs, cascade status accounting, and
+the harness's authoritative inference-attempt ledger remain synchronous, while
+exact envelopes keep the same shared trace and inference-request identifiers. A
+production trace showed request archival consuming about 1.8 seconds before JEV
+was dispatched, making telemetry the dominant controlled cost ahead of a roughly
+400-millisecond provider call. Starting the deadline earlier was rejected: it
+would make archive latency consume the provider's budget while still delaying
+the request. Dropping archive persistence was also rejected because the exact
+provider exchange is the evidence used to evaluate and diagnose the classifier.
+The classifier receives an explicit deferral port from its Durable Object; deep
+shared inference services use the same runtime-backed primitive, so the work is
+neither on the critical path nor an untracked floating promise.
 
 ### 2026-09-17 — Use JEV first and a measured exact fallback for addressing
 
