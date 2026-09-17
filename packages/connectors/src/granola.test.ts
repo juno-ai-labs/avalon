@@ -271,7 +271,7 @@ describe("Granola connector", () => {
         title: "Granola note generated",
         dedupeKey: "11111111-1111-4111-8111-111111111111:generated",
         occurrenceKey: `granola:${generated.activity.connectionId}:note:not_generated000aa:transcript`,
-        metadata: { changedFields: [], derivedFrom: "note.access_granted" },
+        metadata: { noteId: "not_generated000aa", changedFields: [], derivedFrom: "note.access_granted" },
       }],
     });
     // The share itself is not the transcript and names no occurrence; the
@@ -279,14 +279,14 @@ describe("Granola connector", () => {
     // the same key as the derived one, and the key is the activity's own
     // field, never its metadata.
     expect(generated.activity.occurrenceKey).toBeUndefined();
-    expect(generated.activity.metadata).toEqual({ changedFields: [] });
+    expect(generated.activity.metadata).toEqual({ noteId: "not_generated000aa", changedFields: [] });
     const announced = source.normalize(workspaceConnection(), {
       ...generated.envelope,
       eventType: "note.generated",
       event: { ...generated.envelope.event, event_type: "note.generated" },
     }, "payload-ref")!;
     expect(announced.occurrenceKey).toBe(derived.activities[0]!.occurrenceKey);
-    expect(announced.metadata).toEqual({ changedFields: [] });
+    expect(announced.metadata).toEqual({ noteId: "not_generated000aa", changedFields: [] });
 
     // Shared before its summary exists: Granola sends `note.generated` itself
     // once the summary is written, so nothing is derived now.

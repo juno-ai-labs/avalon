@@ -702,7 +702,11 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           entityKeys: [`granola:note:${verified.note_id}`],
           dedupeKey: verified.event_id,
           rawContentHash: event.bodyHash,
-          metadata: { changedFields: verified.data?.changed_fields ?? [] },
+          // The note id rides in metadata because metadata is what a run this
+          // event wakes gets to read; the subject and resource fields never
+          // reach it. Without this the run knew a note was generated, could not
+          // name which, and said so instead of guessing.
+          metadata: { noteId: verified.note_id, changedFields: verified.data?.changed_fields ?? [] },
           ...(verified.event_type === "note.generated"
             ? { occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id) }
             : {}),
@@ -738,6 +742,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           // this run, on a note nobody confirmed, would be the only one.
           ...(summaryVerified ? { occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id) } : {}),
           metadata: {
+            noteId: verified.note_id,
             changedFields: [],
             derivedFrom: "note.access_granted",
             ...(summaryVerified ? {} : { summaryVerified: false }),
@@ -821,7 +826,10 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
             description: "A note's summary was edited or regenerated after it was first written.",
           },
         },
-        [{ key: "changedFields", label: "Changed fields", description: "Granola note fields reported as changed.", valueType: "string_array" }],
+        [
+          { key: "noteId", label: "Note ID", description: "The Granola note the event is about; pass it to get_note.", valueType: "string" },
+          { key: "changedFields", label: "Changed fields", description: "Granola note fields reported as changed.", valueType: "string_array" },
+        ],
       ),
       resourceTypes: ["granola_note", "granola_folder"],
       tools: granolaTools,
