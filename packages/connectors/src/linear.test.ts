@@ -111,6 +111,7 @@ describe("Linear connector", () => {
       code: "authorization-code",
       codeVerifier: "v".repeat(43),
       connectionScope: "workspace",
+      authorizationState: authorization.state,
     })).resolves.toMatchObject({
       accessToken: "linear-access",
       refreshToken: "linear-refresh",
@@ -158,6 +159,7 @@ describe("Linear connector", () => {
       code: "personal-code",
       codeVerifier: "v".repeat(43),
       connectionScope: "personal",
+      authorizationState: authorization.state,
     });
     expect(credentials).toMatchObject({
       oauthActor: "user",
@@ -187,6 +189,7 @@ describe("Linear connector", () => {
     await expect(adapter.handleAuthorizationCallback!({
       code: "authorization-code",
       codeVerifier: "v".repeat(43),
+      authorizationState: { connectionScope: "workspace" },
     })).rejects.toThrow(/connectionScope/i);
   });
 

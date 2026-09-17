@@ -76,6 +76,10 @@ One public Linear app supports both. A person who wants both identities authoriz
 it twice, once per actor, and **the sealed Rally OAuth state — not the requested
 provider scopes — selects the actor.**
 
+The shared callback also forwards the adapter's `authorizationState` metadata.
+Linear accepts that field without using it to select the actor; the explicit
+`connectionScope` recovered from sealed OAuth state remains required.
+
 Scopes are capability-derived, never broader:
 
 | Rally capability | Linear scopes |
@@ -252,6 +256,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | Suite | Covers |
 | --- | --- |
 | `packages/connectors/src/linear.test.ts` | Scope derivation, actor selection from sealed state, webhook normalization, resource mapping, and the personal-connection access proof. |
+| `apps/api/test/linear-oauth.test.ts` | Both connection scopes through the shared service callback, with migrated regional and object schemas, simulated Linear endpoints, and persisted connection/attempt/routing assertions. |
 | `packages/connectors/src/linear-agent.test.ts` | The native-agent metadata: invocation modes, activity kinds, deadlines, and the `protocol_only` refusal. |
 | `apps/api/test/linear-routing.test.ts` | The organization-to-region directory and the forwarding of exact signed bytes. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared Linear activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
@@ -281,6 +286,28 @@ Before applying for Linear Integration Directory review:
   documentation.
 - Native-agent directory claims remain absent until the operational acceptance gate
   passes.
+
+## Changelog
+
+### 2026-09-17 — Linear accepts the shared OAuth callback envelope
+
+**What changed:** The callback validator accepts the optional
+`authorizationState` field passed by `ConnectionService`. Both personal and
+workspace flows have service-level regression coverage.
+
+**Why:** Every Linear callback failed before token exchange because the shared
+service forwarded this field and Linear's strict schema rejected it. Production
+reported `connector_provider_response_invalid` and displayed the generic retry
+screen. Adapter-only tests omitted the field and therefore missed the failure.
+
+**Considered and rejected:** Removing the field from the shared service would
+break providers that need their saved authorization metadata. Making Linear's
+whole callback schema permissive would accept unrelated unknown fields.
+
+**Consequences:** Linear continues validating the code, PKCE verifier, and
+explicit connection scope, then verifying the returned actor and granted scopes.
+Adapter metadata cannot replace the sealed scope. Callback tests must exercise
+the envelope the service actually supplies.
 
 ### 2026-08-25 — The provider manifest completed Linear's Rally identity cut-over
 
