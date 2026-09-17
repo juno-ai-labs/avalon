@@ -1201,6 +1201,26 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-17 — A Granola event tells the run which note it is about
+
+**What changed:** Every Granola activity carries `noteId` in its metadata, and
+the trigger vocabulary lists it as a filter field. The derived transcript from
+a shared note carries it too.
+
+**Why:** The first run the shared-note fix produced completed in one turn with
+no tool calls: "The event payload does not include a Granola note ID." A run
+reads the event's title, type, time, and metadata; the note id was in the
+subject and resource fields, which never reach it. The model refused to guess,
+correctly, and no recap was sent — for a note generated in a shared space just
+as for one shared afterwards.
+
+**Considered and rejected:** Handing every event's subject to the run. What a
+run may read is a decision per connector, and one field this connector's
+instructions name is enough.
+
+**Consequences:** A Sidekick on Transcript added can call `get_note` with the
+id the event names. No re-activation needed.
+
 ### 2026-09-17 — A note shared into the workspace after it was generated is a transcript added
 
 **What changed:** A Granola `note.access_granted` delivery on a workspace
