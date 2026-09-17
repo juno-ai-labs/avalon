@@ -309,6 +309,8 @@ explicit connection scope, then verifying the returned actor and granted scopes.
 Adapter metadata cannot replace the sealed scope. Callback tests must exercise
 the envelope the service actually supplies.
 
+PR: [#810](https://github.com/juno-ai-labs/avalon/pull/810).
+
 ### 2026-08-25 — The provider manifest completed Linear's Rally identity cut-over
 
 **What changed:** Both checked-in manifests and the live production registration
