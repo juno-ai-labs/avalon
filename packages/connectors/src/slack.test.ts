@@ -426,6 +426,14 @@ describe("Slack connector", () => {
       details: { oauthStage: "token_exchange", error: "invalid_code" },
     });
 
+    // Slack answered with a body this adapter does not model. Which field is
+    // the whole diagnosis, and the body's values do not travel with it.
+    respond.set("/api/oauth.v2.user.access", () => json({ ok: true, team: { id: "TACME" }, authed_user: { access_token: 123 } }));
+    expect(await failure()).toMatchObject({
+      code: "provider_error",
+      details: { oauthStage: "token_exchange", responseIssues: "authed_user.access_token:invalid_type" },
+    });
+
     // Slack answered, but with nothing this connection can be built from.
     respond.set("/api/oauth.v2.user.access", () => json({ ok: true, team: { id: "TACME" } }));
     expect(await failure()).toMatchObject({
@@ -1456,8 +1464,16 @@ describe("Slack connector", () => {
       return json({ ok: true, plan: 42 });
     });
 
+    // The failing field rides on the error, code-shaped, for the API's reason
+    // helpers to read; the body's values do not.
     await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
-      .rejects.toThrow(/malformed response/iu);
+      .rejects.toMatchObject({
+        code: "provider_error",
+        message: expect.stringMatching(/malformed response/iu),
+        details: { responseIssues: expect.stringMatching(/^[A-Za-z0-9_:.-]+$/u) },
+      });
+    await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
+      .rejects.toMatchObject({ details: { responseIssues: expect.stringContaining("invalid_type") } });
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "ada@example.com",
     }, neverAborts(), fetcher)).resolves.toMatchObject({

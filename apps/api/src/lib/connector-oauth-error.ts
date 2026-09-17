@@ -1,4 +1,5 @@
 import { ConnectorError } from "@rally/connectors";
+import { describeZodIssues, isCodeShaped, codeShaped } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 import { ApiError } from "./api-error";
 
@@ -47,6 +48,12 @@ export function classifyConnectorOAuthCallbackFailure(
     // though its contents are not.
     const responseInvalid = details?.responseInvalid === true
       || (details !== null && ("fieldErrors" in details || "formErrors" in details));
+    // Which field the response was missing. An adapter's stage helper
+    // attaches the failing paths and issue codes — schema shape, and the
+    // whole diagnosis of a provider that answered with a body this binary
+    // does not model — and nothing else reaches this key; the shape test
+    // bounds what would if one did.
+    const responseIssues = safeResponseIssues(details?.responseIssues);
     return {
       errorCode: `connector_${error.code}`,
       level: error.code === "unauthorized" ? "warn" : "error",
@@ -58,6 +65,7 @@ export function classifyConnectorOAuthCallbackFailure(
         ...(providerStatus ? { provider_status: providerStatus } : {}),
         ...(details?.timedOut === true ? { timed_out: true } : {}),
         ...(responseInvalid ? { response_invalid: true } : {}),
+        ...(responseIssues ? { response_issues: responseIssues } : {}),
       },
     };
   }
@@ -69,6 +77,7 @@ export function classifyConnectorOAuthCallbackFailure(
         error_name: errorName,
         response_invalid: true,
         validation_issue_count: error.issues.length,
+        response_issues: codeShaped(describeZodIssues(error)),
       },
     };
   }
@@ -83,6 +92,10 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function safeResponseIssues(value: unknown): string | null {
+  return typeof value === "string" && isCodeShaped(value) ? value : null;
 }
 
 function safeStage(value: unknown): string | null {

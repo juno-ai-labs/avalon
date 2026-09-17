@@ -36,6 +36,7 @@ import {
 import { z } from "zod";
 
 import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import type { Env } from "../env";
 import { firstNonEmptyLine, truncateUtf16Safe } from "../lib/text";
@@ -484,9 +485,12 @@ async function evaluate(
     proposal = inference.result;
     evaluatedModel = inference.model;
   } catch (error) {
+    // A model that answered with JSON the decision schema does not model was
+    // available; the failing path is what to read, and it is schema shape.
+    const code = zodDiagnosticCode(error, "description_decision") ?? "model_unavailable";
     await recordOutcome(env, input, scheduling, claim, {
       decision: "failed",
-      rejectionCode: "model_unavailable",
+      rejectionCode: code,
       model: evaluatedModel,
       previousDescription: workstream.objective,
       description: null,
@@ -495,7 +499,7 @@ async function evaluate(
       windowMessageCount: window.messages.length,
       now,
     });
-    return { status: "failed", code: "model_unavailable" };
+    return { status: "failed", code };
   }
 
   const verdict = judgeDescriptionProposal(proposal, workstream.objective);

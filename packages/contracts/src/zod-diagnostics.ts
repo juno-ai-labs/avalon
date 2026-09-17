@@ -68,6 +68,7 @@ const WITHHELD_SEGMENT = "_key_";
 const DECLARED_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 const OUTSIDE_CODE_SHAPE = /[^A-Za-z0-9_:.-]/gu;
+const CODE_SHAPE = new RegExp(`^[A-Za-z0-9_:.-]{1,${DIAGNOSTIC_CODE_MAX_LENGTH}}$`, "u");
 
 /**
  * One string reduced to what a code-shaped field will carry.
@@ -79,6 +80,50 @@ const OUTSIDE_CODE_SHAPE = /[^A-Za-z0-9_:.-]/gu;
  */
 export function codeShaped(text: string): string {
   return text.replace(OUTSIDE_CODE_SHAPE, "_").slice(0, DIAGNOSTIC_CODE_MAX_LENGTH);
+}
+
+/**
+ * Whether a string already has the shape `codeShaped` reduces to.
+ *
+ * The test a boundary applies to a thrown message before copying it into an
+ * indexed field or an operator notice. A message in this class carries no
+ * whitespace and no punctuation beyond a separator, so it cannot be prose —
+ * not a provider's sentence, not a member's content — and it is how a code a
+ * Durable Object threw on purpose (`sidekick_missing`, or a `parseRpcInput`
+ * rejection naming its field) is told apart from a message only a log row may
+ * keep.
+ *
+ * One test rather than one per boundary. The alarm notice and the logger's
+ * `diagnosticErrorCode` each spelled their own, and the second refused the
+ * `:` and `.` the first accepted — so a rejection named on one side of an RPC
+ * hop was reduced to its fallback on the other, by the helper that existed to
+ * read it.
+ */
+export function isCodeShaped(text: string): boolean {
+  return CODE_SHAPE.test(text);
+}
+
+/** The label-and-issues shape `zodDiagnosticCode` and `parseRpcInput` compose. */
+const DIAGNOSTIC_CODE = /^[a-z][a-z0-9_]*_invalid:/u;
+
+/**
+ * Whether a message is one this module composed, rather than merely
+ * code-shaped.
+ *
+ * `isCodeShaped` says a string cannot be prose. It does not say who wrote it:
+ * `memory_table_value_type:${column.name}:string` passes it with a member's
+ * column name in the middle, and so does an R2 key or a target id after a
+ * colon. A reporter that reads a *thrown message* therefore admits an
+ * arbitrary message only through the narrow constant class it always
+ * trusted, and a message with separators only when it has the shape that
+ * `zodDiagnosticCode` and `parseRpcInput` alone compose — a label,
+ * `_invalid`, then the issues. That is provenance by construction rather than
+ * proof: a thrown `x_invalid:${value}` would pass. It is the bound the first
+ * adoption's reviewers asked for, and the reason a character class is never a
+ * reason to trust a value, only a limit on what it can be.
+ */
+export function isDiagnosticCode(text: string): boolean {
+  return isCodeShaped(text) && DIAGNOSTIC_CODE.test(text);
 }
 
 /**
