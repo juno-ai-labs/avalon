@@ -319,18 +319,52 @@ function isGranolaWebhookEvent(value: string): value is GranolaWebhookEvent {
  * `derive` turns that into the `note.generated` the workspace never got. The
  * two can also both arrive for one note, shared before its summary existed or
  * moved between shared folders later, so both carry this key and an automation
- * runs once per note rather than once per delivery.
+ * runs once per note rather than once per delivery. Namespaced by provider and
+ * connection: the key space is shared with every connector that names one.
  */
 function transcriptOccurrenceKey(connectionId: string, noteId: string): string {
   return `granola:${connectionId}:note:${noteId}:transcript`;
 }
 
-/** Whether a note Granola returned has a generated summary to work from. */
-function noteHasSummary(note: Record<string, unknown>): boolean {
-  const markdown = note.summary_markdown;
-  const text = note.summary_text;
-  return (typeof markdown === "string" && markdown.trim().length > 0)
-    || (typeof text === "string" && text.trim().length > 0);
+/** One title per event, read by `normalize` and by the transcript `derive` reports, so the two cannot drift. */
+const GRANOLA_ACTIVITY_TITLES: Record<GranolaWebhookEvent, string> = {
+  "note.access_granted": "Granola note access granted",
+  "note.edited": "Granola note edited",
+  "note.generated": "Granola note generated",
+};
+
+/**
+ * The two summary fields of Granola's note, and only those.
+ *
+ * Transcribed from Granola's published OpenAPI document,
+ * `components.schemas.Note` (https://docs.granola.ai/api-reference/openapi.json,
+ * read 2026-09-16): `summary_text` is a string and `summary_markdown` a string
+ * or null, "null if the note has no summary". Loose on purpose — the note
+ * carries a dozen other fields this decision does not read. A note with
+ * neither field is a shape this connector does not know, and
+ * `noteSummaryState` says so instead of passing it off as "no summary yet".
+ */
+const GranolaNoteSummarySchema = z.looseObject({
+  summary_markdown: z.string().nullish(),
+  summary_text: z.string().nullish(),
+});
+
+function noteSummaryState(note: Record<string, unknown>): "written" | "pending" | "unrecognized" {
+  const parsed = GranolaNoteSummarySchema.safeParse(note);
+  if (!parsed.success) return "unrecognized";
+  const { summary_markdown: markdown, summary_text: text } = parsed.data;
+  if (markdown === undefined && text === undefined) return "unrecognized";
+  return (markdown ?? "").trim().length > 0 || (text ?? "").trim().length > 0 ? "written" : "pending";
+}
+
+/** The provider failure behind a read `derive` could not complete, in the words the log gets. */
+function connectorFailure(error: unknown): { code: string; status?: number } {
+  if (error instanceof ConnectorError) {
+    const status = isRecord(error.details) ? Number(error.details.status) : NaN;
+    return { code: error.code, ...(Number.isFinite(status) ? { status } : {}) };
+  }
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return { code: "timeout" };
+  return { code: "unexpected_error" };
 }
 
 const GranolaWebhookEndpointSchema = z.looseObject({
@@ -643,11 +677,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         // Rally's list of Granola's events has been wrong once already.
         if (!isGranolaWebhookEvent(verified.event_type)) return null;
         const receivedAt = new Date().toISOString();
-        const title = {
-          "note.access_granted": "Granola note access granted",
-          "note.edited": "Granola note edited",
-          "note.generated": "Granola note generated",
-        }[verified.event_type];
+        const title = GRANOLA_ACTIVITY_TITLES[verified.event_type];
         return {
           workspaceId: connection.workspaceId,
           region: RegionSchema.parse(connection.config.region ?? "global"),
@@ -672,17 +702,15 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           entityKeys: [`granola:note:${verified.note_id}`],
           dedupeKey: verified.event_id,
           rawContentHash: event.bodyHash,
-          metadata: {
-            changedFields: verified.data?.changed_fields ?? [],
-            ...(verified.event_type === "note.generated"
-              ? { occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id) }
-              : {}),
-          },
+          metadata: { changedFields: verified.data?.changed_fields ?? [] },
+          ...(verified.event_type === "note.generated"
+            ? { occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id) }
+            : {}),
         };
       },
       async derive(connection, activity, event, signal) {
         const verified = event.event as VerifiedGranolaWebhook;
-        if (verified.event_type !== "note.access_granted") return [];
+        if (verified.event_type !== "note.access_granted") return { activities: [], outcome: "not_applicable" };
         // A note shared into the workspace. Granola sends `note.generated`
         // only while the endpoint can read the note, so for a note generated
         // privately and shared afterwards this delivery is the only one the
@@ -690,38 +718,62 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         // note shared later arrives as `note.access_granted` instead. Whether
         // it is a transcript yet is the note's to say; a note shared before its
         // summary exists gets its `note.generated` from Granola later.
-        let note: Record<string, unknown> | null = null;
-        let summaryVerified = true;
+        let apiKey: string;
+        try {
+          apiKey = requireWorkspaceApiKey(connection);
+        } catch (error) {
+          // We could not ask. Not Granola declining to answer, and not a
+          // transcript either: a run could not read the note.
+          return { activities: [], outcome: "credential_unavailable", failure: connectorFailure(error) };
+        }
+        const transcript = (summaryVerified: boolean) => ({
+          ...activity,
+          eventType: "note.generated",
+          title: GRANOLA_ACTIVITY_TITLES["note.generated"],
+          dedupeKey: `${verified.event_id}:generated`,
+          // Only a transcript Granola confirmed admits under the note's key. One
+          // reported on a read that failed keeps its own delivery's identity:
+          // under the note's key it would turn the `note.generated` Granola may
+          // still send, for a note that had no summary, into a replay — and
+          // this run, on a note nobody confirmed, would be the only one.
+          ...(summaryVerified ? { occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id) } : {}),
+          metadata: {
+            changedFields: [],
+            derivedFrom: "note.access_granted",
+            ...(summaryVerified ? {} : { summaryVerified: false }),
+          },
+        });
+        let note: Record<string, unknown>;
         try {
           note = await granolaApi(
             fetcher,
             apiBaseUrl,
-            requireWorkspaceApiKey(connection),
+            apiKey,
             `/v1/notes/${encodeURIComponent(verified.note_id)}`,
             {},
             signal,
           );
         } catch (error) {
-          // The key cannot read this note, so no run could either.
-          const status = error instanceof ConnectorError && isRecord(error.details) ? Number(error.details.status) : NaN;
-          if (status === 403 || status === 404) return [];
-          // Anything else is Granola not answering. A run that reads a note
-          // without a summary says so; a share nobody hears about says nothing.
-          summaryVerified = false;
+          const failure = connectorFailure(error);
+          // The key cannot read this note — rejected, forbidden, or not there
+          // for it — so no run could either.
+          if (failure.status === 401 || failure.status === 403 || failure.status === 404) {
+            return { activities: [], outcome: "unreadable", failure };
+          }
+          // Anything else is Granola not answering. A run that finds no
+          // summary says so; a share nobody hears about says nothing.
+          return { activities: [transcript(false)], outcome: "derived_unverified", failure };
         }
-        if (note && !noteHasSummary(note)) return [];
-        return [{
-          ...activity,
-          eventType: "note.generated",
-          title: "Granola note generated",
-          dedupeKey: `${verified.event_id}:generated`,
-          metadata: {
-            changedFields: [],
-            occurrenceKey: transcriptOccurrenceKey(connection.id, verified.note_id),
-            derivedFrom: "note.access_granted",
-            ...(summaryVerified ? {} : { summaryVerified: false }),
-          },
-        }];
+        const summary = noteSummaryState(note);
+        if (summary === "pending") return { activities: [], outcome: "pending_summary" };
+        if (summary === "unrecognized") {
+          // Neither summary field: a note shape this connector does not know.
+          // Reported and named rather than folded into "no summary yet" — that
+          // fold is how a wrong guess about Granola's response would stay a
+          // silent no-op, the failure this whole hook exists to end.
+          return { activities: [transcript(false)], outcome: "derived_unverified", failure: { code: "unexpected_shape" } };
+        }
+        return { activities: [transcript(true)], outcome: "derived" };
       },
     },
     manifest: {

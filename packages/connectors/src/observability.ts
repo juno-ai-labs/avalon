@@ -330,8 +330,12 @@ function instrumentWebhook(
           },
           () => source.derive!(connection, activity, event, signal),
           (derived) => ({
-            outcome: derived.length === 0 ? "none" : "derived",
-            derived_event_types: derived.map((entry) => entry.eventType),
+            outcome: derived.outcome,
+            derived_event_types: derived.activities.map((entry) => entry.eventType),
+            ...(derived.failure ? {
+              failure_code: derived.failure.code,
+              ...(derived.failure.status !== undefined ? { failure_status: derived.failure.status } : {}),
+            } : {}),
           }),
         );
       },

@@ -476,20 +476,38 @@ export interface ConnectorWebhookActivitySource {
   /**
    * Activities a verified delivery implies but cannot decide on its own.
    *
-   * Runs after `normalize` accepted the delivery and before anything is
-   * persisted, with an authorized connection, because the decision needs a
+   * Runs after `normalize` accepted the delivery and before any activity row
+   * exists, with an authorized connection, because the decision needs a
    * provider read: Granola reports a note shared into the workspace as
    * `note.access_granted` whether or not its summary exists yet, and only
-   * the note says which. Returns whole activities to store beside the one the
-   * delivery named, or nothing when the delivery meant exactly what it said.
-   * Absent for every connector whose deliveries always do.
+   * the note says which. Answers with whole activities to store beside the
+   * one the delivery named, or none when the delivery meant exactly what it
+   * said, and always with the outcome by name. Every webhook ingress that
+   * persists through the workspace object calls it, so an adapter's answer
+   * is honoured wherever its deliveries arrive. Absent for every connector
+   * whose deliveries always mean what they say.
    */
   derive?(
     connection: AuthorizedConnectorConnection,
     activity: Omit<NormalizedActivity, "id">,
     event: ConnectorVerifiedActivityWebhook,
     signal: AbortSignal,
-  ): Promise<Array<Omit<NormalizedActivity, "id">>>;
+  ): Promise<ConnectorDerivedActivities>;
+}
+
+/** What `derive` decided, for the wrapper's log and the host's. */
+export interface ConnectorDerivedActivities {
+  /** Whole activities to store beside the one the delivery named. */
+  activities: Array<Omit<NormalizedActivity, "id">>;
+  /**
+   * Why, in one short code: what the provider read found, or why there was
+   * none. Every outcome that stored nothing is a different word from every
+   * other, so an unreadable note and a summary not yet written can be told
+   * apart afterwards.
+   */
+  outcome: string;
+  /** The provider failure behind an outcome the adapter could not verify, when there was one. */
+  failure?: { code: string; status?: number };
 }
 
 export interface ConnectorActivityStreamError {

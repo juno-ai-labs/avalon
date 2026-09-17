@@ -249,7 +249,12 @@ async function activateAutomation(): Promise<void> {
   expect(detail.lifecycle).toBe("active");
 }
 
-async function ingestSlackEvent(eventId: string, providerEventId: string, eventType = "slack.message.posted"): Promise<void> {
+async function ingestSlackEvent(
+  eventId: string,
+  providerEventId: string,
+  eventType = "slack.message.posted",
+  overrides: { metadata?: Record<string, unknown>; occurrenceKey?: string } = {},
+): Promise<void> {
   await workspace().ingestConnectorEvent({
     workspaceId: WORKSPACE_ID,
     ingressEventId: eventId,
@@ -281,7 +286,8 @@ async function ingestSlackEvent(eventId: string, providerEventId: string, eventT
         entityKeys: [],
         dedupeKey: `slack:${providerEventId}`,
         rawContentHash: null,
-        metadata: { messageText: "foobar" },
+        metadata: overrides.metadata ?? { messageText: "foobar" },
+        ...(overrides.occurrenceKey ? { occurrenceKey: overrides.occurrenceKey } : {}),
         externalPeople: [],
       },
     },
@@ -385,6 +391,34 @@ describe("external event routing", () => {
     expect(await consumeEffectBodies(TEST_ENV, matched.deliveries)).toEqual({ acked: 1, retried: 0 });
     expect(await automationRuns()).toEqual([{ occurrence_key: `external:${EVENT_ID}`, state: expect.any(String) }]);
     await settleAdmittedRun();
+  });
+
+  it("delivers the occurrence a connector named and drops one planted in provider metadata", async () => {
+    // A provider payload cannot pick the key an automation dedupes on. The
+    // generic webhook copies a caller's metadata whole, so the workspace
+    // store drops a same-named key from metadata at ingest and lifts only the
+    // activity's own field, which adapter code alone sets, onto the delivery.
+    await activateAutomation();
+    await registerAutomation();
+    await ingestSlackEvent(EVENT_ID, "event-planted", "slack.message.posted", {
+      metadata: { messageText: "foobar", occurrenceKey: "planted:by:caller" },
+    });
+    const planted = await match(EVENT_ID);
+    expect(planted.deliveries).toHaveLength(1);
+    expect(planted.deliveries[0]!.event.occurrenceKey).toBeUndefined();
+    expect(planted.deliveries[0]!.event.metadata).toMatchObject({ messageText: "foobar" });
+    expect(planted.deliveries[0]!.event.metadata).not.toHaveProperty("occurrenceKey");
+
+    const namedEventId = "00000000-0000-7000-8000-0000000009c2";
+    await ingestSlackEvent(namedEventId, "event-named", "slack.message.posted", {
+      metadata: { messageText: "foobar", occurrenceKey: "planted:by:caller" },
+      occurrenceKey: "slack:C123:thread:1712345678.000201",
+    });
+    const named = await match(namedEventId);
+    expect(named.deliveries).toHaveLength(1);
+    expect(named.deliveries[0]!.event.occurrenceKey).toBe("slack:C123:thread:1712345678.000201");
+    expect(named.deliveries[0]!.event.metadata).toMatchObject({ messageText: "foobar" });
+    expect(named.deliveries[0]!.event.metadata).not.toHaveProperty("occurrenceKey");
   });
 
   it("rejects stale registration effects and keeps retry activation boundaries stable", async () => {

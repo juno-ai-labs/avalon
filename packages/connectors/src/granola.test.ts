@@ -216,8 +216,9 @@ describe("Granola connector", () => {
     // note. A note generated privately and shared into the workspace later
     // arrives as `note.access_granted` and nothing else, so `derive` asks
     // the note whether its summary exists and, when it does, stores the
-    // `note.generated` beside the share, keyed so a second delivery for the
-    // same note is one run and not two.
+    // `note.generated` beside the share, keyed on the note so a second
+    // delivery for it is one run and not two. Every answer that stores
+    // nothing says why in its own word.
     const requested: URL[] = [];
     const adapter = createGranolaConnector({
       redirectUri: "https://api.example.test/connections/granola/callback",
@@ -233,6 +234,8 @@ describe("Granola connector", () => {
           return jsonResponse({ id: "not_pendinggen00aa", summary_markdown: null, summary_text: "" });
         }
         if (url.pathname === "/v1/notes/not_hidden000000aa") return jsonResponse({ error: "not found" }, 404);
+        if (url.pathname === "/v1/notes/not_rejected0000aa") return jsonResponse({ error: "invalid api key" }, 401);
+        if (url.pathname === "/v1/notes/not_reshaped0000aa") return jsonResponse({ note: { id: "not_reshaped0000aa", summary_markdown: "## Recap" } });
         return jsonResponse({ error: "upstream" }, 503);
       },
     });
@@ -255,55 +258,78 @@ describe("Granola connector", () => {
       };
       return { envelope, activity: source.normalize(workspaceConnection(), envelope, "payload-ref")! };
     };
+    const derive = (share: ReturnType<typeof shared>, connection = workspaceConnection()) =>
+      source.derive!(connection, share.activity, share.envelope, neverAborts());
 
     const generated = shared("not_generated000aa", "11111111-1111-4111-8111-111111111111");
-    const derived = await source.derive!(workspaceConnection(), generated.activity, generated.envelope, neverAborts());
-    expect(derived).toEqual([{
-      ...generated.activity,
-      eventType: "note.generated",
-      title: "Granola note generated",
-      dedupeKey: "11111111-1111-4111-8111-111111111111:generated",
-      metadata: {
-        changedFields: [],
+    const derived = await derive(generated);
+    expect(derived).toEqual({
+      outcome: "derived",
+      activities: [{
+        ...generated.activity,
+        eventType: "note.generated",
+        title: "Granola note generated",
+        dedupeKey: "11111111-1111-4111-8111-111111111111:generated",
         occurrenceKey: `granola:${generated.activity.connectionId}:note:not_generated000aa:transcript`,
-        derivedFrom: "note.access_granted",
-      },
-    }]);
+        metadata: { changedFields: [], derivedFrom: "note.access_granted" },
+      }],
+    });
     // The share itself is not the transcript and names no occurrence; the
     // `note.generated` Granola sends for a note it could read admits under
-    // the same key as the derived one.
+    // the same key as the derived one, and the key is the activity's own
+    // field, never its metadata.
+    expect(generated.activity.occurrenceKey).toBeUndefined();
     expect(generated.activity.metadata).toEqual({ changedFields: [] });
     const announced = source.normalize(workspaceConnection(), {
       ...generated.envelope,
       eventType: "note.generated",
       event: { ...generated.envelope.event, event_type: "note.generated" },
     }, "payload-ref")!;
-    expect(announced.metadata).toEqual({ changedFields: [], occurrenceKey: derived[0]!.metadata.occurrenceKey });
+    expect(announced.occurrenceKey).toBe(derived.activities[0]!.occurrenceKey);
+    expect(announced.metadata).toEqual({ changedFields: [] });
 
     // Shared before its summary exists: Granola sends `note.generated` itself
     // once the summary is written, so nothing is derived now.
-    const pending = shared("not_pendinggen00aa", "22222222-2222-4222-8222-222222222222");
-    expect(await source.derive!(workspaceConnection(), pending.activity, pending.envelope, neverAborts())).toEqual([]);
-    // A note the workspace key cannot read: no run could read it either.
-    const hidden = shared("not_hidden000000aa", "33333333-3333-4333-8333-333333333333");
-    expect(await source.derive!(workspaceConnection(), hidden.activity, hidden.envelope, neverAborts())).toEqual([]);
-    // Granola not answering: the transcript is reported anyway and marked. A
-    // run that finds no summary says so; a share nobody hears about says nothing.
-    const unanswered = shared("not_unanswered00aa", "44444444-4444-4444-8444-444444444444");
-    expect(await source.derive!(workspaceConnection(), unanswered.activity, unanswered.envelope, neverAborts()))
-      .toMatchObject([{ eventType: "note.generated", metadata: { derivedFrom: "note.access_granted", summaryVerified: false } }]);
+    expect(await derive(shared("not_pendinggen00aa", "22222222-2222-4222-8222-222222222222")))
+      .toEqual({ activities: [], outcome: "pending_summary" });
+    // A note the workspace key cannot read, or a key Granola rejects: no run
+    // could read it either, and the log gets the status.
+    expect(await derive(shared("not_hidden000000aa", "33333333-3333-4333-8333-333333333333")))
+      .toEqual({ activities: [], outcome: "unreadable", failure: { code: "provider_error", status: 404 } });
+    expect(await derive(shared("not_rejected0000aa", "55555555-5555-4555-8555-555555555555")))
+      .toEqual({ activities: [], outcome: "unreadable", failure: { code: "unauthorized", status: 401 } });
+    // Granola not answering: the transcript is reported anyway and marked,
+    // but under its own delivery's identity — never the note's key, which
+    // would make the `note.generated` Granola may still send a replay.
+    const unanswered = await derive(shared("not_unanswered00aa", "44444444-4444-4444-8444-444444444444"));
+    expect(unanswered).toMatchObject({ outcome: "derived_unverified", failure: { code: "provider_error", status: 503 } });
+    expect(unanswered.activities).toHaveLength(1);
+    expect(unanswered.activities[0]).toMatchObject({ eventType: "note.generated", metadata: { derivedFrom: "note.access_granted", summaryVerified: false } });
+    expect(unanswered.activities[0]!.occurrenceKey).toBeUndefined();
+    // A note shape this connector does not know is named as such, not folded
+    // into "no summary yet".
+    const reshaped = await derive(shared("not_reshaped0000aa", "66666666-6666-4666-8666-666666666666"));
+    expect(reshaped).toMatchObject({ outcome: "derived_unverified", failure: { code: "unexpected_shape" } });
+    expect(reshaped.activities[0]!.occurrenceKey).toBeUndefined();
+    // A connection without a usable key never asks, and stores nothing.
+    const keyless = { ...workspaceConnection(), credentials: {} };
+    expect(await derive(shared("not_generated000aa", "77777777-7777-4777-8777-777777777777"), keyless))
+      .toEqual({ activities: [], outcome: "credential_unavailable", failure: { code: "unauthorized" } });
     // Only a share asks Granola anything.
     const edited = {
       ...generated.envelope,
       eventType: "note.edited",
       event: { ...generated.envelope.event, event_type: "note.edited" },
     };
-    expect(await source.derive!(workspaceConnection(), source.normalize(workspaceConnection(), edited, null)!, edited, neverAborts())).toEqual([]);
+    expect(await source.derive!(workspaceConnection(), source.normalize(workspaceConnection(), edited, null)!, edited, neverAborts()))
+      .toEqual({ activities: [], outcome: "not_applicable" });
     expect(requested.map((url) => url.pathname)).toEqual([
       "/v1/notes/not_generated000aa",
       "/v1/notes/not_pendinggen00aa",
       "/v1/notes/not_hidden000000aa",
+      "/v1/notes/not_rejected0000aa",
       "/v1/notes/not_unanswered00aa",
+      "/v1/notes/not_reshaped0000aa",
     ]);
   });
 
