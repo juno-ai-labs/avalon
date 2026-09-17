@@ -80,6 +80,7 @@ interface CreateOptions {
   slackSearchAuthorization?: SlackSearchAuthorization;
   reason?: string;
   telemetryOperationId?: string;
+  telemetryRequestReceivedAt?: number;
   /**
    * Whether the people in `participantUserIds` are told they were added.
    *
@@ -437,11 +438,12 @@ export class WorkstreamObjectCreationService {
         titleStatus: body.title == null ? "naming" : "settled",
         createdAt: at,
       },
+      deferDirectoryDelivery: true,
     }));
 
     let created: Awaited<ReturnType<WorkstreamObjectClient["initialize"]>>;
     try {
-      created = await span.step("workstream.create.object.initialize", () => client.initialize({
+      [created] = await span.step("workstream.create.initialize_and_project_directory", () => Promise.all([client.initialize({
       workspaceId: this.auth.workspaceId,
       workstreamId: asWorkstreamId(receipt.workstream_id),
       generation: control.generation,
@@ -477,8 +479,17 @@ export class WorkstreamObjectCreationService {
         telemetryOperationId: options.telemetryOperationId,
         telemetrySubjectUserId: this.auth.userId,
       } : {}),
+      ...(options.telemetryRequestReceivedAt !== undefined ? {
+        telemetryRequestReceivedAt: options.telemetryRequestReceivedAt,
+        telemetryJourney: "workstream_create" as const,
+      } : {}),
       reason: options.reason ?? "opening_message",
-      }));
+      }),
+        workstream.flushProvisionalDirectory({
+          workspaceId: this.auth.workspaceId,
+          parentId: receipt.workstream_id,
+        }),
+      ]));
       if (projectSettle) {
         const membership = WorkspaceProjectMutationResultSchema.parse(
           await workspace.finalizeProjectMembership(projectSettle),

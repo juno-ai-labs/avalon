@@ -289,7 +289,7 @@ where its state rolls up; its parent does, through the contract in
 | --- | --- | --- | --- |
 | `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's Main viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
 | `authority({workspaceId, parentId})` | `{exists, authorityGeneration, archived}` | from `workstream_metadata` | from the automation row; `archived` when deleted or the owning room is archived |
-| `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and delivers the provisional directory row to WorkspaceDO synchronously | inserts `conversation_children` |
+| `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?, deferDirectoryDelivery?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and normally delivers the provisional directory row to WorkspaceDO synchronously. The creation coordinator may defer that delivery, overlap it with child initialization, and flush it before answering. | inserts `conversation_children` |
 | `receiveChildEffects({substreamId, envelopes})` | `{accepted: [{messageId, payloadHash}]}` | shared | shared |
 | `listChildren({workspaceId, parentId})` | `{children: [{substreamId, kind, createdAt}]}`, always including `"0"` | shared | shared |
 
@@ -1106,7 +1106,7 @@ complete relationship map is:
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: one automation's sidebar row, fenced on the automation's own `sourceVersion` |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
-| WorkstreamDO | WorkspaceDO | typed RPC | the one synchronous parent-to-workspace delivery: the provisional directory row a `reserveChild("0")` at creation writes, because the person who created the work stream is about to open it and the Worker's visibility checks read the directory |
+| WorkstreamDO | WorkspaceDO | typed RPC | the provisional directory row a `reserveChild("0")` at creation writes. It is synchronous by default; the creation coordinator may overlap it with child initialization, but still fences its response on `flushProvisionalDirectory` because visibility checks read the directory. The alarm uses the same direct delivery if it wins that race. |
 | WorkspaceDO | AutomationDO | typed RPC | `setOwningRoomArchived`, fanned out with `Promise.allSettled` when a directory effect archives or unarchives a room that owns automations; a failed call is logged and the next archival change retries it |
 | a run's loop | AutomationDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
 | a run's loop | WorkstreamDO, then the room's SubstreamAgent `0` | typed RPC | the `sidekick_post_result` tool: `authority` for the room's generation and archive state, then `appendAutomationActivation` keyed on the run id |
@@ -1635,6 +1635,29 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-17 — Start durable loop work eagerly and overlap creation projections
+
+**What changed:** message and initialization admission still persist their loop
+input and recovery alarm, then start the singleton loop drain in the current
+Durable Object invocation. Work-stream creation can defer its provisional
+workspace-directory delivery until after the parent reservation and overlap
+that delivery with child initialization; the API awaits both before answering.
+
+**Why:** production traces placed several seconds between a committed opening
+message and the first provider request, and showed the provisional directory
+RPC serialized ahead of child initialization. Both waits were scheduling
+artifacts rather than authority work.
+
+**Considered and rejected:** removing the alarm or returning before the
+directory projection. The former loses recovery after isolate eviction; the
+latter lets a successful create response race the workspace visibility checks.
+
+**Consequences:** durable SQL remains the execution authority and the alarm the
+recovery hint. The eager drain is only the healthy-path scheduler. The ordinary
+`reserveChild` contract remains synchronously projecting by default; only the
+creation coordinator opts into deferred delivery and must call
+`flushProvisionalDirectory` before publication.
 
 ### 2026-09-17 — Projection delivery no longer gates loop activation
 

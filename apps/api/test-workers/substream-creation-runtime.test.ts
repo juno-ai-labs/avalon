@@ -392,6 +392,15 @@ describe("substream preparation on workerd", () => {
       const target = instance as unknown as { env: Env };
       target.env = new Proxy(target.env, { get: (env, key) => key === "OPENROUTER_PRIMARY_MODEL"
         ? "google/gemini-2.5-flash-lite" : Reflect.get(env, key) });
+      // Suppress only the recovery hint so this test proves the current
+      // invocation starts the durable pending input. The SQL input itself is
+      // still produced by the real product admission below.
+      const wakeups = instance as unknown as {
+        requestPersistentLoopActivation: () => Promise<void>;
+        runDueAlarmWork: () => Promise<void>;
+      };
+      wakeups.requestPersistentLoopActivation = async () => {};
+      wakeups.runDueAlarmWork = async () => {};
       state.storage.sql.exec(`UPDATE workstream SET model_override = 'google/gemini-2.5-flash-lite' WHERE id = 1`);
     });
     await runInDurableObject(conversation(), async (_instance, state) => seedParticipantMessage(state, {
@@ -408,7 +417,8 @@ describe("substream preparation on workerd", () => {
     });
     const responseBody = await response.json();
     expect(response.status, JSON.stringify(responseBody)).toBe(200);
-    await runDurableObjectAlarm(child);
+    // Admission commits an alarm for recovery, but the healthy path starts the
+    // durable loop in this same invocation instead of waiting for it to fire.
     await expect.poll(async () => {
       if (provider.calls.some((call) => call.stream)) return "inference";
       return runInDurableObject(child, (_instance, state) => JSON.stringify(

@@ -3156,6 +3156,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           const { harnessRunId, workflowInput } = result;
           await span.step("workstream.room.loop.activate", () =>
             this.requestExecutionReceiptActivation(harnessRunId, workflowInput));
+          this.resumePersistentLoopDrain();
         }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({
@@ -3379,6 +3380,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return "drained";
   }
 
+  /**
+   * Start newly committed loop work in this invocation. Durable input rows and
+   * the alarm remain the restart authority; this only removes the alarm
+   * scheduler from the latency-critical healthy path.
+   */
+  private resumePersistentLoopDrain(): void {
+    this.ctx.waitUntil(this.drainLoopToCompletion().then((result) => {
+      this.loopDrainDeferred = result === "deferred";
+    }));
+  }
+
   private async drainPersistentLoop(
     ownsDrain: () => boolean,
   ): Promise<void> {
@@ -3525,6 +3537,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         executionPrincipal: z.unknown(),
         reason: z.string().min(1).max(500),
         telemetryOperationId: z.string().nullable().optional(),
+        telemetryRequestReceivedAt: z.number().int().nonnegative().nullable().optional(),
+        telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
         seed: DemoSeedSchema.nullable().optional(),
@@ -3557,6 +3571,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
                 : {}),
             }
           : {}),
+        ...(authorization.telemetryRequestReceivedAt !== null
+          && authorization.telemetryRequestReceivedAt !== undefined
+          ? { telemetryRequestReceivedAt: authorization.telemetryRequestReceivedAt }
+          : {}),
+        ...(authorization.telemetryJourney ? { telemetryJourney: authorization.telemetryJourney } : {}),
         ...(authorization.slackOrigin ? { slackOrigin: authorization.slackOrigin } : {}),
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
@@ -5372,6 +5391,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     attachment: SocketAttachment,
     command: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "create_message" }>,
   ): Promise<void> {
+    const requestReceivedAt = Date.now();
     await inFlowSpan(this.env, "workstream.room.create_message", {
       flow: "workstream_message_send",
       component: "substream_do",
@@ -5416,6 +5436,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const result = await this.admitMessage(auth, {
           ...command.payload,
           telemetryOperationId: command.operationId,
+          telemetryRequestReceivedAt: requestReceivedAt,
+          telemetryJourney: "message_send",
         }, span, true);
         this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
@@ -5473,6 +5495,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       try {
         await span.step("workstream.room.loop.activate", () =>
           this.requestPersistentLoopActivation(activationRequest));
+        this.resumePersistentLoopDrain();
       } catch (error) {
         // Admission arms cancellation recovery before its durable input row.
         // An eager wake-up failure must not turn that committed message into a
