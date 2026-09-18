@@ -32,7 +32,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { primitiveOf, type CandidateContract, type Verdict } from "./contract";
-import { loadCases } from "./run";
+import { firesInBand, loadCases, utility } from "./run";
 import type { CandidateReport, CaseOutcome } from "./run";
 
 interface GenerationFile {
@@ -164,20 +164,24 @@ function main(): void {
     }));
     console.log(`Brier score over P(match): ${brier.toFixed(4)} (0 is perfect, 0.25 is a coin flip).`);
 
-    console.log("\nThe fire decision, swept over the threshold. A fire needs the `met` choice AND confidence above it:\n");
-    console.log("| threshold | fires | wanted | unwanted | missed | precision | recall | watches made noisy | silence broken |");
-    console.log("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+    console.log(`\nThe fire decision, swept over the threshold${entry.primitive === "choice"
+      ? ". A fire needs the `met` choice AND confidence above it"
+      : ". A fire needs the scalar above it, and no unjudgeable answer"}, with what the product pays:\n`);
+    console.log("| threshold | fires | wanted | unwanted | missed | utility | precision | recall | watches made noisy | silence broken |");
+    console.log("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
     for (const threshold of THRESHOLDS) {
-      const fired = entry.outcomes.filter((outcome) => (entry.primitive === "choice"
-        // A Choice must pick the match label and clear the threshold.
-        ? outcome.verdict === "met" && (outcome.confidence ?? 0) > threshold
-        // A Noul only has to clear it: the scalar is the whole answer, and a
-        // hybrid's judgeability answer blocks a fire whatever the scalar says.
-        : outcome.verdict !== "not_judgeable" && (outcome.confidence ?? 0) > threshold));
+      // One implementation of the gate's rule, from `run.ts`. This read it twice
+      // before — once for the fires and once for the misses — and the second copy
+      // used the Choice rule for every primitive, which pinned a Noul's missed
+      // count to its midpoint verdict and reported its recall as flat across the
+      // whole sweep. A threshold recommendation came out of that table.
+      const firesAt = (outcome: CaseOutcome) =>
+        firesInBand(entry.primitive, outcome.verdict, outcome.confidence, [threshold])[0]!;
+      const fired = entry.outcomes.filter(firesAt);
       const wanted = fired.filter((outcome) => outcome.truth === "met").length;
       const unwanted = fired.length - wanted;
-      const missed = entry.outcomes.filter((outcome) => outcome.truth === "met"
-        && !(outcome.verdict === "met" && (outcome.confidence ?? 0) > threshold)).length;
+      const missed = entry.outcomes.filter((outcome) => outcome.truth === "met" && !firesAt(outcome)).length;
+      const utilityAt = mean(entry.outcomes.map((outcome) => utility(firesAt(outcome), outcome.truth === "met")));
       const noisy = new Set<string>();
       const brokenSilence = new Set<string>();
       for (const outcome of fired) {
@@ -193,6 +197,7 @@ function main(): void {
       const precision = fired.length === 0 ? null : wanted / fired.length;
       const totalWanted = entry.outcomes.filter((outcome) => outcome.truth === "met").length;
       console.log(`| ${threshold.toFixed(2)} | ${fired.length} | ${wanted} | ${unwanted} | ${missed}`
+        + ` | ${utilityAt.toFixed(3)}`
         + ` | ${precision === null ? "n/a" : (precision * 100).toFixed(1) + "%"}`
         + ` | ${((totalWanted - missed) / totalWanted * 100).toFixed(1)}%`
         + ` | ${noisy.size} | ${brokenSilence.size} |`);
