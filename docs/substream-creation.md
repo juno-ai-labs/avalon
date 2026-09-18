@@ -185,15 +185,19 @@ or replace the child's creator-only conversation membership.
    membership initializer receipt. Reserved children are not discoverable or
    readable as conversations. The title it reserves them under is a placeholder:
    preparation is about the context, and the message that names the substream
-   has not been sent yet.
+   has not been sent yet. Once that stable ID exists, preparation also starts
+   the child's idempotent runtime bootstrap and awaits it before returning the
+   preview. That overlaps the full schema migration with source capture and
+   summary work without provisioning or publishing the child.
 3. The source SubstreamAgent captures a completed main-conversation prefix in
    a synchronous storage transaction. Subsequent messages and edits do not
    change this operation's capture. An explicit unfinished cutoff is rejected.
 4. The coordinator runs the pinned recipe outside the storage transaction.
    Completed parts are durably checkpointed. The summary adapter has no tools
    or fallback model and records requested/resolved model and token usage.
-5. Confirmation claims the operation and provisions the same child, titled from
-   the first line of the opening message and in `title_status = 'naming'`, then
+5. Confirmation claims the operation, repeats runtime bootstrap as an
+   idempotent recovery fence, and provisions the same child, titled from the
+   first line of the opening message and in `title_status = 'naming'`, then
    installs the immutable seed. None of this is visible to anybody yet.
 6. The opening message is admitted through the child's own product
    `create_message`, which writes the canonical turn and wakes the child's
@@ -536,6 +540,30 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-18 — Bootstrap the reserved child during preparation
+
+**What changed:** Once the parent has durably reserved a child ID, preparation
+starts that child's idempotent runtime bootstrap alongside context capture and
+transformation, and awaits both before returning. Confirmation retains the same
+bootstrap call as a recovery fence, but normally reaches a current-schema
+object.
+
+**Why:** Production confirmation traces attributed 2,793 ms of a 4,525 ms API
+flow to the first child bootstrap. That work needed the reserved ID, not the
+opening message, so placing it after the person pressed send made cold schema
+setup part of inference-start latency unnecessarily.
+
+**Considered and rejected:** Deferring bootstrap past the preparation response
+would make confirmation race unobserved work, while removing it from
+confirmation would weaken retry and cross-deploy recovery. Provisioning during
+preparation was also rejected because it would create product state before the
+opening message and model choice exist.
+
+**Consequences:** A cancelled preparation may leave an empty, unpublished
+Durable Object, just as it already leaves a durable parent receipt. It has no
+directory or participant visibility. Confirmation remains idempotent and still
+owns provisioning, context installation, opening admission, and publication.
 
 ### 2026-09-15 — Share prepared conversation file ownership
 

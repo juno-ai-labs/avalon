@@ -102,6 +102,10 @@ describe('projected search authorization', () => {
   it('records retry intent before an initial authority lookup can fail', async () => {
     const stub = env.WORKSPACE_DOS.getByName('search-authorization-atomic-fill');
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');
+    // The retry row is due immediately. Keep its transport unavailable while
+    // inspecting it so the object's alarm cannot successfully publish and
+    // delete the very row this assertion is proving was committed first.
+    vi.spyOn(env.ACTIVITY_QUEUE, 'sendBatch').mockRejectedValue(new Error('hold search authorization retry'));
     await stub.registerSearchAuthorization({ subject, resources: [resource] });
     await runInDurableObject(stub, async (_instance, state) => {
       expect(state.storage.sql.exec('SELECT target_id FROM search_authorization_push').toArray())
