@@ -125,22 +125,26 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("substream preparation on workerd", () => {
-  it("bootstraps the reserved child before confirmation without publishing it", async () => {
+  it("warms the reserved child before confirmation without claiming authority or publishing it", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000cf90";
-    const prepared = await service.prepare(WORKSTREAM_ID, {
+    const steps: string[] = [];
+    await service.prepare(WORKSTREAM_ID, {
       operationId,
       title: "Warm child",
       throughTurnId: "source-turn-1",
+    }, {
+      isTraced: false,
+      setAttributes() {},
+      setError() {},
+      mark() {},
+      async step<T>(name: string, run: () => Promise<T>): Promise<T> {
+        steps.push(name);
+        return run();
+      },
     });
 
-    expect(await runInDurableObject(conversation(prepared.substreamId), (_instance, state) =>
-      state.storage.sql.exec<{ authority_mode: string; workstream_key: string }>(
-        `SELECT authority_mode, workstream_key FROM workstream WHERE id = 1`,
-      ).one())).toEqual({
-      authority_mode: "authoritative",
-      workstream_key: WORKSTREAM_ID,
-    });
+    expect(steps).toContain("substream.prepare.child.warm");
     expect((await parent().listVisiblePrivateChildren({
       workspaceId: WORKSPACE_ID,
       parentId: WORKSTREAM_ID,

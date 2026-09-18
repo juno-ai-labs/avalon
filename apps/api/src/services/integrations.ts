@@ -159,7 +159,7 @@ import {
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
-import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { createAgentInferenceLogger, logAgentInferencePrepared } from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -2642,6 +2642,19 @@ export async function runWorkstreamHarness(
   const initialRunPreparation = new Preparation(() => createHarnessRunObjectPort(
     env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
   ).run({ runId: input.harnessRunId }));
+  // These two reads gate every later branch and grant no authority. Observe
+  // both through the reusable preparation primitive so they overlap without
+  // creating floating rejections.
+  identityPreparation.get();
+  initialRunPreparation.get();
+  const identity = await identityPreparation.get();
+  const workstream = identity && identity.archived_at === null
+    ? { title: identity.title, objective: identity.description }
+    : null;
+  if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
+  const initialRun = await initialRunPreparation.get();
+  if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
+  if (initialRun.status === "cancelled") return { status: "stopped" };
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
   const sidekickSourcesPreparation = new Preparation(() => resolveSidekickSkills(
     env,
@@ -2652,21 +2665,8 @@ export async function runWorkstreamHarness(
     createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
     input,
   ));
-  // These reads are independent and grant no authority. Eagerly observe all
-  // four through the reusable preparation primitive so object-local reads and
-  // workspace lookups overlap without creating floating rejections.
-  identityPreparation.get();
-  initialRunPreparation.get();
   sidekickSourcesPreparation.get();
   persistedHostOutcomePreparation.get();
-  const identity = await identityPreparation.get();
-  const workstream = identity && identity.archived_at === null
-    ? { title: identity.title, objective: identity.description }
-    : null;
-  if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await initialRunPreparation.get();
-  if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
-  if (initialRun.status === "cancelled") return { status: "stopped" };
   const currentSidekickSources = await sidekickSourcesPreparation.get();
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
@@ -3067,26 +3067,24 @@ export async function runWorkstreamHarness(
 
   const inferencePreparationFinishedAtMs = Date.now();
   const inferenceStartEligible = (runtime?.lease.attemptNumber ?? 1) === 1;
-  if (inferenceStartEligible && input.telemetryRequestReceivedAt !== undefined) {
-    const requestToPreparedMs = inferencePreparationFinishedAtMs >= input.telemetryRequestReceivedAt
-      ? inferencePreparationFinishedAtMs - input.telemetryRequestReceivedAt
-      : undefined;
-    logStructuredEvent(env, "info", "agent_inference_prepared", {
-      request_id: input.harnessRunId,
-      operation_id: input.telemetryOperationId,
-      journey: input.telemetryJourney,
-      request_received_at: input.telemetryRequestReceivedAt,
-      request_to_prepared_ms: requestToPreparedMs,
-      request_clock_skewed: requestToPreparedMs === undefined,
-      workspace_id: input.workspaceId,
-      workstream_id: input.parentId,
-      substream_id: input.substreamId ?? "0",
-      initial_authority_ms: initialAuthorityReadyAtMs - runStartedAtMs,
-      context_tools_ms: harnessInputsReadyAtMs - initialAuthorityReadyAtMs,
-      scope_activation_routing_ms: inferencePreparationFinishedAtMs - harnessInputsReadyAtMs,
-      total_ms: inferencePreparationFinishedAtMs - runStartedAtMs,
-    });
-  }
+  logAgentInferencePrepared(env, {
+    workspaceId: input.workspaceId,
+    requestId: input.harnessRunId,
+    source: "workstream",
+    workstreamId: input.parentId,
+    substreamId: input.substreamId ?? "0",
+    ...(input.telemetryOperationId ? { operationId: input.telemetryOperationId } : {}),
+    ...(input.telemetryJourney ? { journey: input.telemetryJourney } : {}),
+    ...(input.telemetryRequestReceivedAt !== undefined
+      ? { requestReceivedAt: input.telemetryRequestReceivedAt }
+      : {}),
+    inferenceStartEligible,
+  }, {
+    runStartedAtMs,
+    initialAuthorityReadyAtMs,
+    harnessInputsReadyAtMs,
+    preparationFinishedAtMs: inferencePreparationFinishedAtMs,
+  });
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
   // recurring monitor only once every setup step that can throw has finished,
