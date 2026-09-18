@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "rally-browser",
+  "main": "src/worker.tsx",
+  // Match the API and the checked-in workerd toolchain.
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "services": [{ "binding": "GLOBAL_API", "service": "avalon-api-global" }],
+  "observability": { "enabled": true }
+}

@@ -32,7 +32,10 @@ function acceptedResult(input: ScopeInvitationResult) {
   const message = result.reason === "sharing_required" ? "You cannot share this conversation. It may be archived or your access may have changed."
     : result.reason === "relationship_required" ? "Your workspace access has changed. Sign in again to continue."
     : result.reason === "migration_pending" ? "Sharing is being prepared. Try again shortly."
-    : "This invitation operation is unavailable. Refresh and try again.";
+    : result.reason === "configuration_required" ? "Email sharing is not configured. Contact your workspace administrator."
+    : result.reason === "scope_changed" || result.reason === "revision_conflict" || result.reason === "operation_conflict" ? "Sharing changed. Refresh the available scopes and try again."
+    : result.reason === "verified_email_required" ? "Sign out and sign in with the email address that received this invitation."
+    : "This invitation is unavailable. Ask the sender for a new invitation.";
   throw new ApiError(status, `scope_${result.reason}`, message);
 }
 

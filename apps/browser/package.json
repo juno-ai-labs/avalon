@@ -1,0 +1,41 @@
+{
+  "name": "@rally/browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm build:client && concurrently -k \"vite build --watch\" \"wrangler dev --port 8794\"",
+    "build:client": "vite build",
+    "build": "pnpm build:client && wrangler deploy --dry-run --outdir dist-worker",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "test": "pnpm build:client && vitest run"
+  },
+  "dependencies": {
+    "@rally/contracts": "workspace:*",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "catalog:",
+    "@rally/ui": "workspace:*",
+    "@radix-ui/react-dropdown-menu": "latest",
+    "@radix-ui/react-tooltip": "latest",
+    "@tanstack/react-query": "latest",
+    "react-router-dom": "latest",
+    "lucide-react": "latest",
+    "@rally/desktop": "workspace:*",
+    "@radix-ui/react-dialog": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "latest",
+    "@cloudflare/workers-types": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "catalog:",
+    "vite": "^7.0.0",
+    "vitest": "catalog:",
+    "wrangler": "latest",
+    "tailwindcss": "^3.4.17",
+    "autoprefixer": "latest",
+    "concurrently": "latest"
+  }
+}
