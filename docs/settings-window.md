@@ -148,6 +148,14 @@ Mounting the screen starts `/workspace/members`, `/connections`,
 and `getApplicationSettings` over IPC. A section adds one more when it is
 selected: `/workspace/terminal`, GitHub repository access, or custom MCP tools.
 
+The roster the Workspace section draws is also where a member is made an
+administrator or handed back: each row an administrator may act on carries a
+promote/demote control that `PATCH`es `/workspace/members/:userId/role`, and the
+answer invalidates both the roster and `['workspace']` — the second because the
+viewer may have just demoted themselves.
+[`workspace-member-roles.md`](workspace-member-roles.md) owns the rules behind
+that control and what the server refuses.
+
 Two of those used to be read twice per open, and both because staleness had been
 bypassed rather than tuned:
 
@@ -207,7 +215,14 @@ value is what the reveal is measured against.
   a guessed timezone above all — on screen as though they had been read.
 - **The placeholder's `role` is presentation, never authorization.** It decides
   which admin controls are drawn; the API refuses every one of them for a member
-  regardless, so a role the session has not caught up on costs a redraw.
+  regardless, so a stale role can never grant anything. It can still *withhold*
+  something, which is why no gate may read it: a role now changes while somebody
+  is signed in — see
+  [`workspace-member-roles.md`](workspace-member-roles.md) — and the session's
+  copy moves only when its access token rotates. Gates read the `['workspace']`
+  query through `renderer/lib/use-workspace.ts`, which the `workspace_profile`
+  sync topic invalidates; the placeholder is what the first paint uses while
+  that read is in flight.
 - **The module-scope `settingsWindow` stays in step with the controller.** It is
   what `rallyWindows()` broadcasts to, what `logout` closes and what
   `assertTrustedIpcSender` trusts — all of which a hidden window must still be

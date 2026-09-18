@@ -9,6 +9,7 @@ import {
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
   UpdateUserTimezoneRequestSchema,
+  UpdateWorkspaceMemberRoleRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceInvitationSchema,
   WorkspaceAttentionSchema,
@@ -30,6 +31,7 @@ import { TerminalSettingsService } from "../services/terminal/settings";
 import { issueWorkspaceSocketTicket } from "../services/socket-service";
 
 const invitationParam = z.object({ id: IdSchema });
+const memberParam = z.object({ userId: IdSchema });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
 const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
@@ -83,6 +85,26 @@ workspaceRoutes.post(
 );
 workspaceRoutes.get("/members", async (c) =>
   c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listMembers() })),
+);
+/**
+ * Make somebody an administrator, or take it back.
+ *
+ * `PATCH` on the membership rather than a `promote`/`demote` pair: the role is
+ * one field with one assignable set, and two endpoints would be two places to
+ * grow a third role into. It is a different operation from the guest promotion
+ * below, which moves an access class rather than a role.
+ */
+workspaceRoutes.patch(
+  "/members/:userId/role",
+  zValidator("param", memberParam),
+  zValidator("json", UpdateWorkspaceMemberRoleRequestSchema),
+  async (c) => {
+    await new WorkspaceService(c.env, getAuth(c)).setMemberRole(
+      c.req.valid("param").userId,
+      c.req.valid("json").role,
+    );
+    return c.body(null, 204);
+  },
 );
 workspaceRoutes.post("/members/:id/promote", zValidator("param", invitationParam),
   zValidator("json", PromoteWorkspaceGuestSchema), async (c) =>
