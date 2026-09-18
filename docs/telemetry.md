@@ -517,8 +517,8 @@ Run focused suites from their package directories:
 ```bash
 pnpm --filter @rally/contracts test
 pnpm --filter @rally/db test
-pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/tool-usage-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts
+pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/product-usage-deferral.test.ts test/tool-usage-telemetry.test.ts test/run-outcome-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts test-workers/runtime-deferral.test.ts
 pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/main-process-network-recovery.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts

@@ -14,6 +14,10 @@ function fixture(options: {
 } = {}) {
   const objects = new Map<string, string>();
   const deferred: Promise<unknown>[] = [];
+  const payloadPut = vi.fn(async (key: string, value: string) => {
+    await options.beforePayloadPut?.();
+    objects.set(key, value);
+  });
   const getObjectDetails = vi.fn(async () => {
     throw new Error("addressing_flag_should_not_be_evaluated");
   });
@@ -29,10 +33,7 @@ function fixture(options: {
     OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
     FLAGS: createCloudflareTestBinding<Flagship>({ getObjectDetails }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({
-      async put(key: string, value: string) {
-        await options.beforePayloadPut?.();
-        objects.set(key, value);
-      },
+      put: payloadPut,
       async delete(key: string) {
         objects.delete(key);
       },
@@ -48,6 +49,7 @@ function fixture(options: {
     env,
     getObjectDetails,
     objects,
+    payloadPut,
     defer(promise: Promise<unknown>) {
       deferred.push(promise);
     },
@@ -220,7 +222,7 @@ describe("addressing classifier logging", () => {
     const payloadPutReleased = new Promise<void>((resolve) => {
       releasePayloadPut = resolve;
     });
-    const { env, defer, settleDeferred } = fixture({
+    const { env, defer, objects, payloadPut, settleDeferred } = fixture({
       beforePayloadPut: async () => { await payloadPutReleased; },
     });
     const fetcher = vi.fn(async () => Response.json({
@@ -238,7 +240,7 @@ describe("addressing classifier logging", () => {
 
     const classification = classifyWorkstreamMessage(env, { ...input, defer });
     try {
-      await Promise.resolve();
+      await vi.waitFor(() => expect(payloadPut).toHaveBeenCalled());
       expect(fetcher).toHaveBeenCalledTimes(1);
       await expect(classification).resolves.toMatchObject({
         classification: "agent_action",
@@ -247,5 +249,10 @@ describe("addressing classifier logging", () => {
       releasePayloadPut();
       await settleDeferred();
     }
+    expect(payloadPut).toHaveBeenCalledTimes(2);
+    expect(records(objects)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event_type: "request", provider: "typesafe" }),
+      expect.objectContaining({ event_type: "attempt", provider: "typesafe", success: true }),
+    ]));
   });
 });
