@@ -331,8 +331,10 @@ The whole procedure runs through the Sidekicks plugin; load it before you start.
 Inspect the plugin for the connector the person named and read the event types
 it declares. If one of them covers what they described, trigger on that instead
 — a \`connector_activity\` trigger when deterministic filters express the match,
-a \`semantic_activity\` one when each event also has to pass a written condition.
-A real event arrives immediately and costs nothing while nothing is happening.
+a \`semantic_activity\` one when each event also has to pass a written condition,
+a \`webhook\` one when the event types belong to a webhook connection the
+workspace has already set up. A real event arrives immediately and costs nothing
+while nothing is happening.
 
 Poll only when inspection shows no event type that fits. When you propose the
 Sidekick, say in one line that it checks on a timer because that connection has
@@ -378,6 +380,10 @@ Prefer a "since" or "updated after" argument on the connector's own read when it
 has one, and keep the table as the check that survives it; a timestamp alone
 double-reports anything that arrives in the same second.
 
+Say what the **first** run does, because the table is empty and everything looks
+new: record what is already there and report nothing, unless the person asked to
+be caught up. Nobody wants a watcher's first act to be their whole backlog.
+
 ## 4. Write the run so that finding nothing is normal
 
 Most runs will find nothing. Say explicitly in the instructions what such a run
@@ -396,8 +402,9 @@ its recipient as a step.
 - **Polling when the connector declares the event.** Inspect first, use the
   event, and keep the interval for the connections that have none.
 - **An interval under ten minutes because the person said "right away".** Set
-  600 and say so. If they truly need seconds, what they want is a webhook, and
-  that is a conversation with the team rather than a draft you can submit.
+  600 and say so. What they actually want is a webhook: draft one when the
+  workspace already has a webhook connection declaring that event, and otherwise
+  say that wiring one up is a conversation with the team.
 - **An interval standing in for a time of day.** "Every morning" as 86400 fires
   at whatever hour it was accepted. Use a calendar recurrence.
 - **A key column the run invents** — a row number, a hash of a summary, the
@@ -420,7 +427,7 @@ its recipient as a step.
 export const POLLING_FOR_EVENTS_SKILL: HarnessSkill = {
   name: "polling-for-events",
   description:
-    "How to build a Sidekick that watches for something no connector can push: prefer a declared event, otherwise poll on an interval no faster than every ten minutes, and keep a keyed memory table so a run never reports the same item twice.",
+    "How to build a Sidekick that watches for something no connector can push: prefer a declared event, otherwise poll on an interval no faster than every ten minutes, and keep a keyed memory table so a run skips what an earlier one already handled.",
   whenToUse:
     "When someone asks to be told whenever something happens — new mail, a finished meeting, a note or ticket added — and the connection has no event to subscribe to.",
   body: POLLING_FOR_EVENTS_BODY,
