@@ -1071,13 +1071,29 @@ export function useWorkstreamSocket(
      * arriving would pile up behind a paused reveal. Nobody is watching a
      * hidden window: show everything at once, which is also what new frames do
      * while it stays hidden.
+     *
+     * Electron may also suspend this renderer after it sends a command but
+     * before the private receipt is processed. Returning to the foreground is
+     * then the earliest trustworthy recovery edge. Replay only unresolved
+     * commands with their original operation IDs, reconcile the canonical
+     * transcript, and verify this transport immediately instead of waiting for
+     * the ordinary heartbeat interval. Sockets with no pending command do no
+     * foreground work, so retained conversations do not create a snapshot
+     * swarm whenever the app becomes visible.
      */
     const handleVisibilityChange = (): void => {
-      if (document.visibilityState !== 'hidden') return;
-      if (flushStreamReveal(streamCursors)) {
-        queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
-          mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
+      if (document.visibilityState === 'hidden') {
+        if (flushStreamReveal(streamCursors)) {
+          queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
+            mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
+        }
+        return;
       }
+      if (pendingSubstreamCommands.size === 0) return;
+      for (const pending of pendingSubstreamCommands.values()) pending.sentOn = null;
+      sendPendingSubstreamCommands();
+      requestCanonicalSnapshot();
+      if (socket) probeHeartbeatNow(socket);
     };
     /**
      * When this effect began dialling, so an open trace can report how long the
@@ -1878,18 +1894,29 @@ export function useWorkstreamSocket(
       }, SOCKET_STABLE_CONNECTION_MS);
     };
 
+    const probeHeartbeatNow = (target: RealtimeSocket): void => {
+      clearHeartbeat();
+      if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
+      try {
+        target.send('ping');
+      } catch {
+        socketTelemetry.willClose('transport_error');
+        target.close();
+        return;
+      }
+      pongTimer = window.setTimeout(() => {
+        pongTimer = null;
+        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
+        socketTelemetry.willClose('heartbeat_timeout');
+        target.close();
+      }, PONG_TIMEOUT_MS);
+    };
+
     const scheduleHeartbeat = (target: RealtimeSocket): void => {
       clearHeartbeat();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
-        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
-        target.send('ping');
-        pongTimer = window.setTimeout(() => {
-          pongTimer = null;
-          if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
-          socketTelemetry.willClose('heartbeat_timeout');
-          target.close();
-        }, PONG_TIMEOUT_MS);
+        probeHeartbeatNow(target);
       }, socketHeartbeatDelay());
     };
 
