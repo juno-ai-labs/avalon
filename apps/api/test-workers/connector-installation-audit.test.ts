@@ -99,10 +99,13 @@ describe('connector administrative audit', () => {
     const service = new ConnectionService({ ...env, CONNECTOR_CREDENTIALS_KEY: key, CONNECTOR_CREDENTIALS_KEY_VERSION: '1' },
       { workspaceId, userId: actingAdmin, role: 'admin', sessionId, region: env.AVALON_REGION });
     expect(await service.test(connectionId)).toMatchObject({ ok: true });
-    const audits = (await env.DB.prepare(
+    const audits = await vi.waitFor(async () => {
+      const audits = (await env.AUDIT_DB.prepare(
       "SELECT actor_user_id, action, target_id, metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'connector.installation.repair'",
-    ).bind(workspaceId).all<{ actor_user_id: string; action: string; target_id: string; metadata_json: string }>()).results;
-    expect(audits).toHaveLength(1);
+      ).bind(workspaceId).all<{ actor_user_id: string; action: string; target_id: string; metadata_json: string }>()).results;
+      expect(audits).toHaveLength(1);
+      return audits;
+    });
     expect(audits[0]).toMatchObject({ actor_user_id: actingAdmin, action: 'connector.installation.repair', target_id: connectionId });
     expect(JSON.parse(audits[0]!.metadata_json)).toMatchObject({ provider: 'ashby', generation: 2 });
     expect(JSON.stringify(audits)).not.toContain('fixture-api-key');

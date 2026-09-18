@@ -1,3 +1,4 @@
+import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
@@ -3685,7 +3686,7 @@ export async function runWorkstreamHarness(
           const invocation = await loadToolInvocation(env, input, toolCallId);
           if (invocation) {
             await emit({ type: "tool_completed", invocation });
-            await recordToolAudit(env, input, invocation.id, row.toolName, "write", "completed");
+            runtimeDeferral(recordToolAudit(env, input, invocation.id, row.toolName, "write", "completed"));
           }
           logStructuredEvent(env, "info", "terminal_tool_receipt_recovered", {
             workspace_id: input.workspaceId,
@@ -3778,7 +3779,7 @@ export async function runWorkstreamHarness(
         if (invocation) {
           await emit({ type: "tool_failed", invocation });
           if (newlyAmbiguous) {
-            await recordToolAudit(env, input, invocation.id, row.toolName, mode, "ambiguous");
+            runtimeDeferral(recordToolAudit(env, input, invocation.id, row.toolName, mode, "ambiguous"));
           }
         }
         return {
@@ -3977,7 +3978,7 @@ export async function runWorkstreamHarness(
               // recorded. Without it an ambiguity that leaves the receipt row
               // untouched — a coordinate reused after it settled — reaches the
               // person as a bare "Needs input" and appears nowhere else.
-              await recordToolAudit(env, input, invocation.id, event.toolName, mode, "ambiguous");
+              runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, mode, "ambiguous"));
             }
             logStructuredEvent(env, "warn", "tool_receipt_coordinate_conflict", {
               workspace_id: input.workspaceId,
@@ -4121,7 +4122,7 @@ export async function runWorkstreamHarness(
               await settleTranscriptAssistantActivity(event.toolCallId, "complete");
             }
             await emit({ type: "tool_completed", invocation });
-            await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed");
+            runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed"));
             emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
@@ -4249,7 +4250,7 @@ export async function runWorkstreamHarness(
           const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
             await emit({ type: "tool_failed", invocation });
-            await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed");
+            runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed"));
             emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
@@ -8060,7 +8061,7 @@ async function recordToolAudit(
   mode: "read" | "write",
   status: "completed" | "failed" | "ambiguous",
 ): Promise<void> {
-  await env.DB.prepare(
+  await env.AUDIT_DB.prepare(
     `INSERT INTO audit_events
      (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
       target_type, target_id, metadata_json, created_at)
