@@ -166,17 +166,28 @@ the preparation timestamp.
 
 The same row carries raw elapsed durations for the operations inside those
 regions: `initial_identity_run_ms`, `persisted_outcome_ms`,
-`run_authority_ms`, `sidekick_authority_ms`, `lease_heartbeat_ms`,
+`initial_run_authority_ms`, `sidekick_authority_ms`,
+`sidekick_recommendations_ms`, `lease_heartbeat_ms`,
 `run_context_ms`, its nested `memory_context_ms`,
 `transcript_bootstrap_ms`, `tool_inventory_ms`, `tool_construction_ms`, and
 `attachment_replay_ms`.
 `transcript_bootstrap_required` distinguishes a fresh canonical projection from
 a resident persistent-loop projection, and `sidekick_snapshot_reused`
-distinguishes a pinned Sidekick snapshot from fresh discovery. These durations
-also overlap: tool inventory begins before the lease heartbeat, while tool
-construction begins after it; run context, tools, transcript, and attachment
-replay then proceed concurrently. Use each field to identify the slow
-dependency, never add them together.
+distinguishes a pinned Sidekick snapshot from fresh discovery.
+`sidekick_recommendations_read` and `memory_recall_required` distinguish a
+skipped conditional dependency from a real `0 ms` result. These durations also
+overlap: recommendation discovery may be nested inside guest Sidekick authority,
+tool inventory begins before the lease heartbeat, while tool construction begins
+after it, and run context, tools, transcript, and attachment replay then proceed
+concurrently. Use each field to identify the slow dependency, never add them
+together.
+
+`initial_run_authority_ms` names the membership, identity, parent, and optional
+automation authority read that starts the run. Bind repeats Sidekick and run
+authority immediately before each provider request in its `before_model`
+liveness callback. That later fence occurs after `agent_inference_prepared`; its
+wait remains in `request_to_inference_start_ms`, not this initial-authority
+field or `total_ms`.
 
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
@@ -765,8 +776,9 @@ changing execution order or adding a telemetry promise.
 
 **Consequences:** The detailed durations are diagnostic dependency clocks, not
 a serial partition, and may exceed their enclosing region when work starts in
-one region and is consumed in another. Dashboards must group them independently
-and use the two boolean fields when comparing warm and fresh runs.
+one region and is consumed in another. Dashboards must group them independently,
+use the conditional-execution booleans when comparing warm and fresh runs, and
+must not treat the initial authority field as the later provider-boundary fence.
 
 Shipped in #833.
 

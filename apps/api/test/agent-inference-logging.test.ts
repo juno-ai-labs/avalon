@@ -84,8 +84,9 @@ describe("agent inference logging", () => {
       breakdown: {
         initialIdentityRunMs: 12,
         persistedOutcomeMs: 8,
-        runAuthorityMs: 28,
+        initialRunAuthorityMs: 28,
         sidekickAuthorityMs: 16,
+        sidekickRecommendationsMs: 9,
         leaseHeartbeatMs: 7,
         runContextMs: 38,
         memoryContextMs: 31,
@@ -95,6 +96,8 @@ describe("agent inference logging", () => {
         attachmentReplayMs: 15,
         transcriptBootstrapRequired: true,
         sidekickSnapshotReused: false,
+        sidekickRecommendationsRead: true,
+        memoryRecallRequired: true,
       },
     });
     logAgentInferencePrepared(env, { ...context, inferenceStartEligible: false }, {
@@ -105,8 +108,9 @@ describe("agent inference logging", () => {
       breakdown: {
         initialIdentityRunMs: 1,
         persistedOutcomeMs: 1,
-        runAuthorityMs: 1,
+        initialRunAuthorityMs: 1,
         sidekickAuthorityMs: 1,
+        sidekickRecommendationsMs: 0,
         leaseHeartbeatMs: 1,
         runContextMs: 1,
         memoryContextMs: 1,
@@ -116,6 +120,8 @@ describe("agent inference logging", () => {
         attachmentReplayMs: 1,
         transcriptBootstrapRequired: false,
         sidekickSnapshotReused: true,
+        sidekickRecommendationsRead: false,
+        memoryRecallRequired: false,
       },
     });
     logAgentInferencePrepared(env, { ...context, requestId: "run-skewed", requestReceivedAt: 1_200 }, {
@@ -126,8 +132,9 @@ describe("agent inference logging", () => {
       breakdown: {
         initialIdentityRunMs: 12,
         persistedOutcomeMs: 8,
-        runAuthorityMs: 28,
+        initialRunAuthorityMs: 28,
         sidekickAuthorityMs: 16,
+        sidekickRecommendationsMs: 9,
         leaseHeartbeatMs: 7,
         runContextMs: 38,
         memoryContextMs: 31,
@@ -137,6 +144,8 @@ describe("agent inference logging", () => {
         attachmentReplayMs: 15,
         transcriptBootstrapRequired: true,
         sidekickSnapshotReused: false,
+        sidekickRecommendationsRead: true,
+        memoryRecallRequired: true,
       },
     });
 
@@ -155,8 +164,9 @@ describe("agent inference logging", () => {
       total_ms: 125,
       initial_identity_run_ms: 12,
       persisted_outcome_ms: 8,
-      run_authority_ms: 28,
+      initial_run_authority_ms: 28,
       sidekick_authority_ms: 16,
+      sidekick_recommendations_ms: 9,
       lease_heartbeat_ms: 7,
       run_context_ms: 38,
       memory_context_ms: 31,
@@ -166,6 +176,8 @@ describe("agent inference logging", () => {
       attachment_replay_ms: 15,
       transcript_bootstrap_required: true,
       sidekick_snapshot_reused: false,
+      sidekick_recommendations_read: true,
+      memory_recall_required: true,
     });
     expect(rows[1]).toMatchObject({
       request_id: "run-skewed",
