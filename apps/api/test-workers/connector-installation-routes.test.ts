@@ -304,7 +304,7 @@ describe('public connector installation boundaries', () => {
     expect(replaced.status, JSON.stringify(replaced.body)).toBe(200);
     const repaired = await f.request(`/connections/${installed.connectionId}/installation`, f.owner, { action: 'repair' });
     expect(repaired.status, JSON.stringify(repaired.body)).toBe(200);
-    const rows = (await env.DB.prepare('SELECT action, actor_user_id, target_id, metadata_json FROM audit_events ORDER BY action').all<{
+    const rows = (await env.AUDIT_DB.prepare('SELECT action, actor_user_id, target_id, metadata_json FROM audit_events ORDER BY action').all<{
       action: string; actor_user_id: string; target_id: string; metadata_json: string;
     }>()).results;
     expect(rows.map((row) => row.action)).toEqual(['connector.authorized', 'connector.credentials.replaced', 'connector.installation.repair']);

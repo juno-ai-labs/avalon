@@ -787,7 +787,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 - `resource_watches` records explicit direct relationships.
 
-- `audit_events` records security- and side-effect-relevant actions without copying
+- `audit_events` in the independent `AUDIT_DB` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
 ### Demo workspaces and object retirement
@@ -1067,6 +1067,17 @@ Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, a
 sessions bound by registration establish delivery eligibility. Receipts identify
 one workspace intent and device. Notification content remains in WorkspaceDO,
 read through typed RPC. See [Apple push](push-notifications.md).
+
+## Observational databases
+
+The regional Worker binds `TELEMETRY_DB` and `AUDIT_DB` separately from identity
+`DB`. `packages/db/telemetry-migrations` owns `telemetry_accepted_events`,
+`telemetry_delivery_receipts`, and `telemetry_replay_audit`;
+`packages/db/audit-migrations` owns `audit_events`. Their user, workspace, and
+workstream IDs have no cross-database foreign keys. Audit writes are best-effort
+background work using the existing runtime deferral. See [telemetry](telemetry.md#storage-and-background-writes)
+for the fresh cutover and delivery behavior. Legacy regional tables are retained
+as inactive history; no applied migration is rewritten.
 
 ## Changelog
 

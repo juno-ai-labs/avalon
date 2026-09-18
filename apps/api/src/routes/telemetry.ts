@@ -1,3 +1,4 @@
+import { requestDeferral } from "../lib/defer";
 import { RegionSchema } from "@rally/contracts/regions";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -332,18 +333,15 @@ authenticatedTelemetryRoutes.patch(
   async (c) => {
     const auth = getIdentityAuth(c);
     const body = c.req.valid("json");
+    const acceptedBefore = new Date().toISOString();
     const preference = await new ProductAnalyticsPreferenceService(c.env, auth.userId).update(body);
     if (!body.enabled) {
+      requestDeferral(c)(c.env.TELEMETRY_DB.prepare(
+        `DELETE FROM telemetry_accepted_events WHERE subject_user_id = ?
+         AND accepted_at < ? AND delivery_state IN ('pending', 'retrying')
+         AND json_extract(envelope_json, '$.category') IN ('product', 'diagnostic')`,
+      ).bind(auth.userId, acceptedBefore).run());
       await c.env.DB.batch([
-        c.env.DB.prepare(
-          `DELETE FROM telemetry_accepted_events
-           WHERE subject_user_id = ? AND delivery_state IN ('pending', 'retrying')
-             AND json_extract(envelope_json, '$.category') IN ('product', 'diagnostic')
-             AND EXISTS (
-               SELECT 1 FROM users WHERE id = ? AND product_analytics_enabled = 0
-                 AND product_analytics_preference_version = ?
-             )`,
-        ).bind(auth.userId, auth.userId, preference.version),
         c.env.DB.prepare(
           `DELETE FROM telemetry_profile_jobs
            WHERE subject_user_id = ? AND state IN ('pending', 'delivering')

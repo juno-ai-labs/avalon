@@ -84,17 +84,19 @@ describe('connector installation teardown', () => {
       env.DB.prepare(`CREATE TABLE telemetry_profile_jobs (id TEXT PRIMARY KEY, subject_user_id TEXT, workspace_id TEXT,
         job_kind TEXT, destination_analytics_id TEXT, anonymous_epoch_id TEXT, properties_json TEXT, version INTEGER,
         state TEXT, created_at TEXT, delete_at TEXT)`),
-      env.DB.prepare(`CREATE TABLE telemetry_accepted_events (event_id TEXT PRIMARY KEY, payload_hash TEXT, envelope_json TEXT,
+    ]);
+    await env.TELEMETRY_DB.batch([
+      env.TELEMETRY_DB.prepare(`CREATE TABLE telemetry_accepted_events (event_id TEXT PRIMARY KEY, payload_hash TEXT, envelope_json TEXT,
         route TEXT, routing_basis TEXT, analytics_subject_id TEXT, workspace_analytics_id TEXT, subject_user_id TEXT,
         accepted_at TEXT, normalized_timestamp TEXT, delete_at TEXT, delivery_state TEXT, terminal_code TEXT)`),
-      env.DB.prepare(`CREATE TABLE telemetry_delivery_receipts (event_id TEXT PRIMARY KEY, payload_hash TEXT, route TEXT,
+      env.TELEMETRY_DB.prepare(`CREATE TABLE telemetry_delivery_receipts (event_id TEXT PRIMARY KEY, payload_hash TEXT, route TEXT,
         result_code TEXT, created_at TEXT, delete_at TEXT)`),
     ]);
     const input = { provider: 'ashby' as const, apiKey: 'new-workspace-key', idempotencyKey: crypto.randomUUID(), events: ['applicationSubmit'] };
     const first = await f.service.createWorkspaceInstallation(input);
     const retry = await f.service.createWorkspaceInstallation(input);
     expect(retry.installation.connectionId).toBe(first.installation.connectionId);
-    const accepted = (await env.DB.prepare("SELECT envelope_json FROM telemetry_accepted_events WHERE json_extract(envelope_json, '$.name') = 'connector_setup_completed_v2'")
+    const accepted = (await env.TELEMETRY_DB.prepare("SELECT envelope_json FROM telemetry_accepted_events WHERE json_extract(envelope_json, '$.name') = 'connector_setup_completed_v2'")
       .all<{ envelope_json: string }>()).results;
     expect(accepted).toHaveLength(1);
     expect(JSON.parse(accepted[0]!.envelope_json)).toMatchObject({ name: 'connector_setup_completed_v2',
@@ -107,7 +109,7 @@ describe('connector installation teardown', () => {
     const disconnected = await f.service.changeInstallation(f.connectionId, { action: 'disconnect' });
     expect(disconnected.installation?.state).toBe('cleanup_pending');
     await f.assertDisabled();
-    expect(await env.DB.prepare("SELECT actor_user_id FROM audit_events WHERE target_id = ? AND action = 'connector.disabled'").bind(f.connectionId).first())
+    expect(await env.AUDIT_DB.prepare("SELECT actor_user_id FROM audit_events WHERE target_id = ? AND action = 'connector.disabled'").bind(f.connectionId).first())
       .toEqual({ actor_user_id: f.userId });
   });
 

@@ -716,11 +716,11 @@ describe("Slack workspace workstream assignment", () => {
       deliveryState: "pending",
     });
     expect(replay).toEqual(first);
-    expect(database.prepare(
+    await vi.waitFor(() => expect(database.prepare(
       `SELECT COUNT(*) AS count FROM audit_events
         WHERE action = 'slack.workspace_workstream.message_created'
           AND target_id = ?`,
-    ).get(first.message.id)).toEqual({ count: 1 });
+    ).get(first.message.id)).toEqual({ count: 1 }));
   });
 
   it("lets an explicit account link correct a creator its own email guess produced", async () => {
