@@ -95,14 +95,14 @@ for different tools, which is worse than either prefix. Connector plugins can
 never qualify: their prefix is per *connection* (`google_1`, `google_2`), and it
 is the only thing telling two connections of one connector apart.
 
-**Two of the unprefixed names do not say who they act on.** `rally_agents`'
-`send_message` and `reply` reach another *agent*, not a person and not a
-connector, and nothing in the bare name says so. They were unprefixed anyway,
-deliberately: the plugin's instructions name the addressee in every sentence
-that reaches for one, and the transcript rows say "Messaged a teammate" rather
-than "Sent a message". If a model is seen sending an agent message where a
-person was meant, that pair is the first place to look, and giving those two
-tools better canonical names is the fix rather than restoring the prefix.
+**`send_message` does not say who it acts on.** `rally_agents`' `send_message`
+reaches another *agent*, not a person and not a connector, and nothing in the
+bare name says so. It was unprefixed anyway, deliberately: the plugin's
+instructions name the addressee in every sentence that reaches for one, and the
+transcript rows say "Messaged a teammate" rather than "Sent a message". Its
+sibling `reply_to_message` had the same problem as plain `reply` and was
+renamed rather than re-prefixed — which is the fix available here, and the one
+to reach for if `send_message` turns out to mislead a model in practice.
 
 **Bind only guarantees the absence of a collision for always-active plugins.**
 Its duplicate-wire-name check covers those; for a loadable plugin two identical

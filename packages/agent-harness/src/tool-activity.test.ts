@@ -191,13 +191,17 @@ describe("tool activity names", () => {
       .toBe("Posted the result to the work stream");
     expect(toolActivityName({ toolName: "sidekick_post_result", status: "completed" }))
       .toBe("Posted the result to the work stream");
-    // `send_message` and `reply` are the two agent tools whose bare names do not
-    // say who they reach, so the row says it for them.
+    // `send_message` is the agent tool whose bare name still does not say who it
+    // reaches, so the row says it for it.
     expect(toolActivityName({ toolName: "send_message", status: "completed" }))
       .toBe("Messaged a teammate");
     expect(toolActivityName({ toolName: "agents_send_message", status: "completed" }))
       .toBe("Messaged a teammate");
-    expect(toolActivityName({ toolName: "reply", status: "started" }))
+    // `reply_to_message` was `reply`, so its rows carry `agents_reply` rather
+    // than the `agents_`-plus-current-name the other tools' rows carry.
+    expect(toolActivityName({ toolName: "reply_to_message", status: "started" }))
+      .toBe("Replying to a teammate");
+    expect(toolActivityName({ toolName: "agents_reply", status: "started" }))
       .toBe("Replying to a teammate");
     expect(toolActivityName({ toolName: "generate_image", status: "completed" }))
       .toBe("Generated an image");

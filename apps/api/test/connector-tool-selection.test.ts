@@ -670,7 +670,7 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.some((tool) => tool.definition.mode === "write")).toBe(true);
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining([
-        "start_agent", "list_agents", "send_message", "reply", "stop_agent",
+        "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual(["sidekicks_list", "attach", "detach"]);

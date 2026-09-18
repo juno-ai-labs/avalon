@@ -117,7 +117,7 @@ function explicitReply(call: ProviderCall, text: string): ProviderReply {
     && /"data"\s*:\s*\{\s*"messageId"\s*:/u.test(String(message.content)))) {
     return { say: "My local work is complete." };
   }
-  const reply = call.toolNames.find((name) => name.endsWith("reply"));
+  const reply = call.toolNames.find((name) => name.endsWith("reply_to_message"));
   if (reply) {
     const messageId = /Message ID: ([0-9a-f-]{36})/u.exec(String(latestInput?.content))?.[1];
     if (!messageId) throw new Error("test_reply_reference_missing");
