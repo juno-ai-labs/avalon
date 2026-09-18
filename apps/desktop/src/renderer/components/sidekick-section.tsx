@@ -23,12 +23,13 @@ export function SidekickSection(props: React.ComponentProps<typeof SharedSidekic
  * separates the two states: a half-answered union rendered as `[]` is a claim
  * that the room has no Sidekicks.
  */
-export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, recommendationOptions, onChangeRecommendation }: {
+export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, recommendationOptions, managementOptionsPending = !recommendationOptions, onChangeRecommendation }: {
   owned: WorkstreamAutomationSummary[] | undefined;
   attached: SidekickAttachment[] | undefined;
   recommended: SidekickAttachment[] | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
   recommendationOptions?: SidekickRecommendationOptions | undefined;
+  managementOptionsPending?: boolean;
   onChangeRecommendation?: ((id: string, attached: boolean) => void) | undefined;
 }): SidekickRow[] | undefined {
   if (!owned || !attached || !recommended) return undefined;
@@ -73,6 +74,9 @@ export function workstreamSidekickRows({ owned, attached, recommended, onRemoveA
     else rows.push({ id: recommendation.id, name: recommendation.name, description: recommendation.description,
       recommended: true, ...(recommendation.available ? {} : { note: 'Unavailable' }),
     });
+  }
+  if (managementOptionsPending && onChangeRecommendation) {
+    for (const row of rows) row.managementPending = !ownedIds.has(row.id);
   }
   if (recommendationOptions?.canManage && onChangeRecommendation) {
     for (const row of rows) {

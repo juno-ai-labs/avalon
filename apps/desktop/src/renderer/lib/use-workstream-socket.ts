@@ -95,7 +95,8 @@ import {
 
 export type { StreamCursor } from './workstream-socket-resume';
 
-export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+import type { SocketState } from '@rally/ui/lib/types';
+export type { SocketState } from '@rally/ui/lib/types';
 export type WorkstreamMessageDeliveryMode = 'steer' | 'queue';
 
 /** The exact API capability the realtime cache reconciler is allowed to use. */

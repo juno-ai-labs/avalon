@@ -5,6 +5,8 @@ import { AutomationGlyph } from './workstream-glyph';
 import { InlineError, Tip } from './primitives';
 export interface SidekickRow {
   recommended?: boolean;
+  /** Management options have not arrived for this non-owned row yet. */
+  managementPending?: boolean;
   id: string;
   name: string;
   description: string;
@@ -60,7 +62,7 @@ export function SidekickSection({ items, error, onOpen, onMenuOpen }: {
           rides along because compact hides the copy underneath, and a row
           nobody can read is the one place **Paused** is worth saying twice. */}
       <Tip label={item.note ? `${item.name} · ${item.note}` : item.name} side="right">
-        <ContextMenu.Trigger asChild disabled={!onMenuOpen && !item.onRemove && !item.onRemoveRecommendation && !item.onRecommend}>
+        <ContextMenu.Trigger asChild disabled={!item.managementPending && !item.onRemove && !item.onRemoveRecommendation && !item.onRecommend}>
         <Row className="workstream-context-row" {...(onOpen ? { type: "button" as const } : { tabIndex: 0 })} aria-label={item.name} aria-description={item.recommended ? 'Recommended Sidekick' : undefined} onClick={() => onOpen?.(item.id)}>
           {/* The library's own hexagon, at the rail's size: compact drops every
               title in this rail, and a Sidekick row without its mark collapses
@@ -73,16 +75,17 @@ export function SidekickSection({ items, error, onOpen, onMenuOpen }: {
         </Row>
         </ContextMenu.Trigger>
       </Tip>
-      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every substream in this workstream. Agents can load it when relevant; it isn’t automatically loaded." side="right">
+      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every substream in this work stream. Agents can load it when relevant; it isn’t automatically loaded." side="right">
         <span className="sidekick-recommendation" role="img" aria-label="Recommended Sidekick" tabIndex={0}>
           <IconCarambola size={14} stroke={1.5} aria-hidden="true" />
         </span>
       </Tip>}
-      {(onMenuOpen || item.onRemove || item.onRemoveRecommendation || item.onRecommend) && <ContextMenu.Portal>
+      {(item.managementPending || item.onRemove || item.onRemoveRecommendation || item.onRecommend) && <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content">
+          {item.managementPending && <ContextMenu.Label className="menu-label">Loading Sidekick options…</ContextMenu.Label>}
           {item.onRemove && <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove from this substream</ContextMenu.Item>}
-          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove workstream recommendation</ContextMenu.Item>}
-          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this workstream</ContextMenu.Item>}
+          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove work stream recommendation</ContextMenu.Item>}
+          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this work stream</ContextMenu.Item>}
         </ContextMenu.Content>
       </ContextMenu.Portal>}
     </li></ContextMenu.Root>)}</ul>

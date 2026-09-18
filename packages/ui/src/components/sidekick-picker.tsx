@@ -7,8 +7,9 @@ export function SidekickPicker({ options, loading, saving, error, open, setOpen,
   options?: SidekickRecommendationOptions; loading: boolean; saving: boolean; error?: string;
   open: boolean; setOpen: (open: boolean) => void; onMenuOpen: (open: boolean) => void;
   onAttach: (id: string) => void; onCreate?: () => void | Promise<void>;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [search, setSearch] = useState('');
+  if (options?.canManage === false) return null;
   const items = options?.items.filter((item) => item.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
 
   return <>
@@ -27,7 +28,7 @@ export function SidekickPicker({ options, loading, saving, error, open, setOpen,
           {error && <InlineError>{error}</InlineError>}
           {!loading && options && !options.canManage && <DropdownMenu.Label className="menu-label">Sidekick management is unavailable here.</DropdownMenu.Label>}
           <DropdownMenu.Item className="menu-item" disabled={!options?.canManage} onSelect={() => setOpen(true)}>Attach existing Sidekick</DropdownMenu.Item>
-          {onCreate && <DropdownMenu.Item className="menu-item" onSelect={() => void onCreate()}>Create new Sidekick</DropdownMenu.Item>}
+          {onCreate && <DropdownMenu.Item className="menu-item" disabled={!options?.canManage} onSelect={() => void onCreate()}>Create new Sidekick</DropdownMenu.Item>}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

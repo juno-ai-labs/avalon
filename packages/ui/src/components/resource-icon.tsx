@@ -2,7 +2,18 @@ import { classifyAttachmentKind } from '@rally/contracts';
 import { File, FileText, Image as ImageIcon, Link2, Volume2 } from 'lucide-react';
 import { IconRosetteAsterisk } from '@tabler/icons-react';
 type ResourceKindInput = { resourceType: string; mimeType?: string | null; title: string };
-const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
+export const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
+/**
+ * The one name a resource is drawn under.
+ *
+ * A provenance type says who made the resource, not what it is, so it is
+ * replaced by the attachment kind its MIME and filename classify to. That is
+ * the only place the translation happens, and it is why `ResourceIcon` takes a
+ * resource rather than a string: a caller holding a raw `resourceType` cannot
+ * tell that a `generated_file` carrying the site manifest is a live site, and
+ * the two rails proved it by both passing the raw type and both drawing a
+ * `.docx` sheet over a page somebody opens.
+ */
 export function resourceIconType(resource: ResourceKindInput): string {
   if (FILE_PROVENANCE_TYPES.has(resource.resourceType)) {
     return classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title });

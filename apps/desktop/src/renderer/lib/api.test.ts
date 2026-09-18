@@ -1652,6 +1652,13 @@ describe('browser cookie collaboration transport', () => {
     expect(result.protocols).toEqual(socketTicketProtocols(ticket));
   });
 
+  it('reports an invalid browser socket path as an API schema error', async () => {
+    const ticket = 'test-ticket-longer-than-twenty';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ url: 'wss://api.rally.test/unexpected', ticket })));
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
   it('uploads using the same scoped resource path without a bearer header', async () => {
     class CookieUpload {
       static current: CookieUpload;

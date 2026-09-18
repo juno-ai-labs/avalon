@@ -111,15 +111,6 @@ export function formatDuration(milliseconds?: number): string | undefined {
   return `${minutes}m ${remainder.toString().padStart(2, '0')}s`;
 }
 
-/**
- * What a work-stream marker can say, which is more than the run can.
- *
- * Five of these are the harness's own status. Three — `unread`, `mentioned`,
- * `unseen` — are the reader's, and they are in the same vocabulary because
- * they compete for the same dot: a work stream is never showing a person two
- * markers, so the states have to be ranked against each other rather than
- * drawn side by side.
- */
 export { statusLabel, statusDescription, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
 import { harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
 

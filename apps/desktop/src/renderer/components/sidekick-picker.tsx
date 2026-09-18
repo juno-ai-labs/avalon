@@ -20,9 +20,10 @@ function WorkstreamSidekickPicker({ workstreamId, substreamId = '0' }: { workstr
     onSuccess: async (items) => {
       // Recommendation ownership is shared, but source eligibility is checked
       // for each conversation. Do not seed a child's cache with Main's answer.
-      await queryClient.cancelQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
+      await queryClient.cancelQueries({ queryKey: ['recommended-sidekicks', workstreamId, substreamId], exact: true });
       queryClient.setQueryData(['recommended-sidekicks', workstreamId, substreamId], items);
-      await queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
+      await queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId],
+        predicate: (query) => query.queryKey[2] !== substreamId });
       await queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
       setOpen(false);
     },
