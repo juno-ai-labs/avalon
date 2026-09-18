@@ -112,10 +112,10 @@ function fixture(
   // Terminal reads the receipt id off the tool context, but publication still
   // records its effect against this row.
   seedToolReceipt(objectStore, {
-    id: I, runId: R, toolCallId: "resource-call", toolName: "terminal_publish_resource",
+    id: I, runId: R, toolCallId: "resource-call", toolName: "publish_resource",
   });
   seedToolReceipt(objectStore, {
-    id: I2, runId: R, toolCallId: "resource-recall", toolName: "terminal_publish_resource",
+    id: I2, runId: R, toolCallId: "resource-recall", toolName: "publish_resource",
     position: 1,
   });
   const objects = new Map<string, Uint8Array>();

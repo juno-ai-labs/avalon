@@ -274,7 +274,7 @@ describe("Terminal scheduled lifecycle", () => {
     );
     seedToolReceipt(objectStore, {
       id: "invocation-lifecycle", runId: "run-lifecycle", toolCallId: "call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     workstreamObjectRun(
       objectStore,
@@ -327,7 +327,7 @@ describe("Terminal scheduled lifecycle", () => {
         id: "invocation-submitting-lifecycle",
         runId: "run-submitting-lifecycle",
         toolCallId: "call",
-        toolName: "terminal_run_command",
+        toolName: "run_command",
       });
       workstreamObjectRun(
         objectStore,
@@ -400,7 +400,7 @@ describe("Terminal scheduled lifecycle", () => {
       id: "invocation-missing-sandbox",
       runId: "run-missing-sandbox",
       toolCallId: "call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     workstreamObjectRun(
       objectStore,
@@ -464,7 +464,7 @@ describe("Terminal scheduled lifecycle", () => {
       id: "invocation-cancel-failure",
       runId: "run-cancel-failure",
       toolCallId: "call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     workstreamObjectRun(
       objectStore,
@@ -559,7 +559,7 @@ describe("Terminal scheduled lifecycle", () => {
       id: "invocation-lifecycle-race",
       runId: "run-lifecycle-race",
       toolCallId: "call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     workstreamObjectRun(
       objectStore,
@@ -632,7 +632,7 @@ describe("Terminal scheduled lifecycle", () => {
         id: invocation,
         runId: "run-lifecycle-batch",
         toolCallId: `lifecycle-batch-call-${index}`,
-        toolName: "terminal_run_command",
+        toolName: "run_command",
         position: index,
       });
       workstreamObjectRun(

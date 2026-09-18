@@ -781,7 +781,7 @@ export function siteReadRemediation(
       attachmentKind: "site",
       ...(modelToolPrefix === "sidekick"
         ? {}
-        : { suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId } } }),
+        : { suggestedCall: { tool: "import_resource", arguments: { resourceId } } }),
     },
   );
 }

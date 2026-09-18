@@ -289,7 +289,7 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
    * blind, and an import writes a tree to the sandbox filesystem.
    *
    * What keeps it safe is that only the create-only form is expressible.
-   * `terminal_import_resource` also accepts `destinationPath` and `overwrite`,
+   * `import_resource` also accepts `destinationPath` and `overwrite`,
    * and neither appears here, so a suggested import lands on the deterministic
    * path and refuses a non-empty destination with `destination_exists` rather
    * than replacing anything. The object is strict, so a producer that tried to
@@ -297,7 +297,7 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
    * forwarded to the model.
    */
   z.strictObject({
-    tool: z.literal("terminal_import_resource"),
+    tool: z.literal("import_resource"),
     arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
   }),
 ]);

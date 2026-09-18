@@ -106,7 +106,7 @@ function sitePublishPath(row: VisibleWorkstreamResourceRow): string | null {
 /**
  * The published path as the document's identity reads it.
  *
- * `terminal_publish_resource` already resolves its argument to this shape, so
+ * `publish_resource` already resolves its argument to this shape, so
  * for a model-driven publish this is the identity function. It is applied
  * anyway because the identity has to be one derivation rather than a promise
  * that every caller normalized first: `docs/./plan.md` and `docs/plan.md` are

@@ -4774,7 +4774,7 @@ describe("agent harness", () => {
     const terminalPlugin: HarnessPlugin = {
       canonicalId: "rally:terminal",
       modelId: "rally_terminal",
-      shortWireName: "terminal",
+      shortWireName: "",
       description: "Terminal",
       preload: true,
       explicit: false,

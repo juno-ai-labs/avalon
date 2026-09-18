@@ -121,7 +121,7 @@ describe("unlisted resources", () => {
     expect(inventory.totalVisibleResources).toBe(1);
 
     // The reachable half. This is the path the checkout receipt's
-    // `backup.resourceId` takes into `terminal_import_resource`, and the one an
+    // `backup.resourceId` takes into `import_resource`, and the one an
     // opened resource link takes; unlisting must not close it.
     const byId = await loadVisibleWorkstreamResourcesByIds(database, attachments, {
       ...scope, resourceIds: [BACKUP],

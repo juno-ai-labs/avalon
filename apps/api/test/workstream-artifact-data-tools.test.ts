@@ -227,7 +227,7 @@ describe("what a content read on a site does instead of dead-ending", () => {
       attachmentKind: "site",
       // `{ resourceId }` alone: the create-only form, which refuses a non-empty
       // destination rather than replacing anything.
-      suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId: ARTIFACT } },
+      suggestedCall: { tool: "import_resource", arguments: { resourceId: ARTIFACT } },
     });
     expect(failure.message).toContain("terminal workspace");
   });
@@ -248,7 +248,7 @@ describe("what a content read on a site does instead of dead-ending", () => {
     expect(forwarded?.code).toBe("resource_tool_mismatch");
     expect(forwarded?.details).toMatchObject({
       attachmentKind: "site",
-      suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId: ARTIFACT } },
+      suggestedCall: { tool: "import_resource", arguments: { resourceId: ARTIFACT } },
     });
   });
 
@@ -259,7 +259,7 @@ describe("what a content read on a site does instead of dead-ending", () => {
       code: "resource_tool_mismatch",
       details: {
         suggestedCall: {
-          tool: "terminal_import_resource",
+          tool: "import_resource",
           arguments: { resourceId: ARTIFACT, overwrite: true },
         },
       },
