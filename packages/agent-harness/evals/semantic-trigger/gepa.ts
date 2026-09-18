@@ -27,8 +27,8 @@ import { join } from "node:path";
 
 import { verdictOfLabel } from "./contract";
 import type { CandidateContract, EvalCase } from "./contract";
-import { loadCases, UTILITY_FALSE_FIRE, UTILITY_MISSED_FIRE } from "./run";
-import type { CandidateReport } from "./run";
+import { loadCases, scoreCase, UTILITY_FALSE_FIRE, UTILITY_MISSED_FIRE } from "./run";
+import type { CandidateReport, ScoredCase } from "./run";
 
 interface GenerationFile {
   split: string;
@@ -56,31 +56,57 @@ export function loadGenerations(directory: string): GenerationFile[] {
     .map((name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as GenerationFile);
 }
 
+/**
+ * Every run, with its per-case objective derived rather than read.
+ *
+ * A report stores the answers alone, so the score has to be recomputed from the
+ * candidate that produced them — which is also the only correct thing to do: the
+ * front is a ranking under the *current* price list, and a stored score would
+ * silently be one under whatever price list was in force when the run happened.
+ */
+function scoredRuns(generations: GenerationFile[]): Array<{
+  candidateId: string;
+  generation: number;
+  aggregate: CandidateReport["aggregate"];
+  cases: ScoredCase[];
+}> {
+  return generations.flatMap((file) => file.reports.flatMap((report) => {
+    const candidate = file.candidates.find((entry) => entry.id === report.candidateId);
+    if (!candidate) return [];
+    return [{
+      candidateId: report.candidateId,
+      generation: report.generation,
+      aggregate: report.aggregate,
+      cases: report.cases.map((outcome) => scoreCase(candidate, outcome)),
+    }];
+  }));
+}
+
 export function paretoFront(generations: GenerationFile[]): FrontEntry[] {
-  const reports = generations.flatMap((generation) => generation.reports);
+  const runs = scoredRuns(generations);
   const bestByCase = new Map<string, number>();
-  for (const report of reports) {
-    for (const outcome of report.cases) {
+  for (const run of runs) {
+    for (const outcome of run.cases) {
       bestByCase.set(outcome.caseId, Math.max(bestByCase.get(outcome.caseId) ?? 0, outcome.score));
     }
   }
   const achieversByCase = new Map<string, string[]>();
-  for (const report of reports) {
-    for (const outcome of report.cases) {
+  for (const run of runs) {
+    for (const outcome of run.cases) {
       if (outcome.score === bestByCase.get(outcome.caseId)) {
-        achieversByCase.set(outcome.caseId, [...(achieversByCase.get(outcome.caseId) ?? []), report.candidateId]);
+        achieversByCase.set(outcome.caseId, [...(achieversByCase.get(outcome.caseId) ?? []), run.candidateId]);
       }
     }
   }
-  return reports
-    .map((report) => {
-      const bestOn = report.cases.filter((o) => o.score === bestByCase.get(o.caseId)).map((o) => o.caseId);
+  return runs
+    .map((run) => {
+      const bestOn = run.cases.filter((o) => o.score === bestByCase.get(o.caseId)).map((o) => o.caseId);
       return {
-        candidateId: report.candidateId,
-        generation: report.generation,
-        meanScore: report.aggregate.meanScore,
-        threeClassAccuracy: report.aggregate.threeClassAccuracy,
-        hardAccuracy: report.aggregate.hardThreeClassAccuracy,
+        candidateId: run.candidateId,
+        generation: run.generation,
+        meanScore: run.aggregate.meanScore,
+        threeClassAccuracy: run.aggregate.threeClassAccuracy,
+        hardAccuracy: run.aggregate.hardThreeClassAccuracy,
         bestOn,
         uniquelyBestOn: bestOn.filter((caseId) => (achieversByCase.get(caseId) ?? []).length === 1),
       };
@@ -92,12 +118,10 @@ export function paretoFront(generations: GenerationFile[]): FrontEntry[] {
 /** How every candidate so far did on one case, for spotting a case nobody gets. */
 export function hardestCases(generations: GenerationFile[], limit = 12): Array<{ caseId: string; bestScore: number; attempts: number }> {
   const byCase = new Map<string, { best: number; attempts: number }>();
-  for (const generation of generations) {
-    for (const report of generation.reports) {
-      for (const outcome of report.cases) {
-        const existing = byCase.get(outcome.caseId) ?? { best: 0, attempts: 0 };
-        byCase.set(outcome.caseId, { best: Math.max(existing.best, outcome.score), attempts: existing.attempts + 1 });
-      }
+  for (const run of scoredRuns(generations)) {
+    for (const outcome of run.cases) {
+      const existing = byCase.get(outcome.caseId) ?? { best: 0, attempts: 0 };
+      byCase.set(outcome.caseId, { best: Math.max(existing.best, outcome.score), attempts: existing.attempts + 1 });
     }
   }
   return [...byCase.entries()]

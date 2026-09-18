@@ -54,6 +54,20 @@ export interface CaseOutcome {
   inputTokens: number | null;
   outputTokens: number | null;
   failureKind: string | null;
+}
+
+/**
+ * One case's answer plus everything the objective derives from it.
+ *
+ * Deliberately **not** what is written to `reports/`. Every field below is a
+ * function of the stored answer and the current price list, and a stored copy is
+ * stale the moment either changes — which is not hypothetical: this optimization
+ * reversed its price list once, and any tool that had read a stored `score`
+ * afterwards would have ranked the population backwards while looking correct.
+ * Storing only the answer makes that mistake unavailable rather than merely
+ * discouraged, and costs one call to `scoreCase` at read time.
+ */
+export interface ScoredCase extends CaseOutcome {
   /**
    * The per-case objective, from `objective.md`: mean band utility over the
    * operating band, rescaled to [0, 1] so the Pareto front can compare cases.
@@ -118,6 +132,7 @@ export interface CandidateReport {
   parent: string | null;
   requestHash: string;
   size: CandidateSize;
+  /** The answers, without anything derived from them. See `ScoredCase`. */
   cases: CaseOutcome[];
   aggregate: {
     n: number;
@@ -518,25 +533,8 @@ async function evaluateCase(
     await new Promise((resolve) => setTimeout(resolve, 500 * (retry + 1)));
     attempt = await askOnce(apiKey, candidate, testCase);
   }
-  const choice = attempt.outcome.choice ?? null;
   const confidence = attempt.outcome.confidence ?? null;
-  const verdict = resolveVerdict(candidate, choice, confidence);
-  const shouldFire = truth.label === "met";
-  const fires = firesInBand(gateShapeOf(candidate), verdict, confidence);
-  const bandUtility = bandUtilityOf(fires, shouldFire);
-  const probabilities = primitiveOf(candidate) === "choice"
-    ? verdictProbabilities(
-      { choice, confidence, probabilities: attempt.outcome.probabilities ?? null },
-      candidate.mapping,
-    )
-    // For a Noul the scalar *is* P(match), or its complement under `ignore`
-    // polarity, which is the cleanest probability in the whole comparison: a
-    // Choice's confidence is about the label it picked, while this is about the
-    // thing being asked.
-    : noulProbabilities(candidate, choice, confidence);
-  const brier = (["met", "not_met", "not_judgeable"] as const)
-    .reduce((total, key) => total + (probabilities[key] - (truth.label === key ? 1 : 0)) ** 2, 0);
-  const brierBinary = (probabilities.met - (shouldFire ? 1 : 0)) ** 2;
+  const choice = attempt.outcome.choice ?? null;
   return {
     caseId: testCase.id,
     family: testCase.family,
@@ -544,20 +542,45 @@ async function evaluateCase(
     truth: truth.label,
     truthSource: truth.source,
     choice,
-    verdict,
-    confidence: attempt.outcome.confidence ?? null,
+    verdict: resolveVerdict(candidate, choice, confidence),
+    confidence,
     probabilities: attempt.outcome.probabilities ?? null,
     resolvedModel: attempt.outcome.resolvedModel ?? null,
     latencyMs: attempt.outcome.latencyMs ?? 0,
     inputTokens: attempt.outcome.inputTokens ?? null,
     outputTokens: attempt.outcome.outputTokens ?? null,
     failureKind: attempt.outcome.failureKind ?? null,
+  };
+}
+
+/**
+ * Everything the objective derives from one stored answer.
+ *
+ * The only place the derivation lives, and it runs at read time rather than at
+ * write time so a report can be re-read under a changed price list or a changed
+ * gate rule and give the right answer. `gepa.ts` calls this to build its front;
+ * `rescore.ts` re-derives the decision counts the same way.
+ */
+export function scoreCase(candidate: CandidateContract, outcome: CaseOutcome): ScoredCase {
+  const shouldFire = outcome.truth === "met";
+  const fires = firesInBand(gateShapeOf(candidate), outcome.verdict, outcome.confidence);
+  const bandUtility = bandUtilityOf(fires, shouldFire);
+  const probabilities = primitiveOf(candidate) === "choice"
+    ? verdictProbabilities(outcome, candidate.mapping)
+    // For a Noul the scalar *is* P(match), or its complement under `ignore`
+    // polarity, which is the cleanest probability in the whole comparison: a
+    // Choice's confidence is about the label it picked, while this is about the
+    // thing being asked.
+    : noulProbabilities(candidate, outcome.choice, outcome.confidence);
+  return {
+    ...outcome,
     // Rescaled from the −2..+1 the product pays into 0..1, so the Pareto front
     // compares cases on one axis without the utility's asymmetry changing sign.
     score: (bandUtility + 2) / 3,
     bandUtility,
-    brier,
-    brierBinary,
+    brier: (["met", "not_met", "not_judgeable"] as const)
+      .reduce((total, key) => total + (probabilities[key] - (outcome.truth === key ? 1 : 0)) ** 2, 0),
+    brierBinary: (probabilities.met - (shouldFire ? 1 : 0)) ** 2,
     firesInBand: fires,
   };
 }
@@ -567,17 +590,20 @@ export async function evaluateCandidate(
   candidate: CandidateContract,
   cases: EvalCase[],
 ): Promise<CandidateReport> {
-  const outcomes: CaseOutcome[] = new Array(cases.length);
+  const answers: CaseOutcome[] = new Array(cases.length);
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, cases.length) }, async () => {
     for (;;) {
       const index = cursor;
       cursor += 1;
       if (index >= cases.length) return;
-      outcomes[index] = await evaluateCase(apiKey, candidate, cases[index]!);
+      answers[index] = await evaluateCase(apiKey, candidate, cases[index]!);
     }
   }));
 
+  // Derived once here for the aggregate, and never written: `reports/` holds the
+  // answers alone, so nothing on disk can disagree with the current price list.
+  const outcomes: ScoredCase[] = answers.map((answer) => scoreCase(candidate, answer));
   const completed = outcomes.filter((outcome) => outcome.verdict !== null);
   const verdicts: Verdict[] = ["met", "not_met", "not_judgeable"];
   const perClass = Object.fromEntries(verdicts.map((verdict) => [verdict, {
@@ -612,7 +638,7 @@ export async function evaluateCandidate(
     falseFiresPerHundredEvents: (falseFires / outcomes.length) * 100,
   };
 
-  const byScenario = new Map<string, CaseOutcome[]>();
+  const byScenario = new Map<string, ScoredCase[]>();
   for (let index = 0; index < cases.length; index += 1) {
     const scenarioId = cases[index]!.scenarioId;
     if (!scenarioId) continue;
@@ -641,7 +667,7 @@ export async function evaluateCandidate(
     parent: candidate.parent,
     requestHash: requestHash(candidate),
     size: candidateSize(candidate, cases[0]!),
-    cases: outcomes,
+    cases: answers,
     aggregate: {
       n: outcomes.length,
       completed: completed.length,
@@ -737,6 +763,12 @@ async function main(): Promise<void> {
       + ` wall=${((Date.now() - started) / 1000).toFixed(1)}s`,
     );
   }
+  // Written on one line on purpose. A report is generated data that no human
+  // reads directly — `rescore.ts`, `calibration.ts` and `gepa.ts` read it — and
+  // pretty-printing it cost roughly four lines per stored field, which put a few
+  // hundred thousand lines of machine output into every pull request that ran the
+  // evaluation. `.gitattributes` marks the directory generated so a diff collapses
+  // it too.
   writeFileSync(outputPath, `${JSON.stringify({
     split,
     corpusHash: corpusHash(cases),
@@ -744,7 +776,7 @@ async function main(): Promise<void> {
     ranAt: new Date().toISOString(),
     candidates,
     reports,
-  }, null, 2)}\n`);
+  })}\n`);
   console.log(`wrote ${outputPath}`);
 }
 
