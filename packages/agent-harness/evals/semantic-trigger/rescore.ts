@@ -36,6 +36,9 @@ import { splitOf } from "./split";
 
 const DIR = "evals/semantic-trigger";
 
+/** The band point the decision counts are read at. */
+const MIDPOINT_INDEX = Math.floor(OPERATING_BAND.length / 2);
+
 interface GenerationFile {
   split: string;
   corpusHash: string;
@@ -107,10 +110,13 @@ function scoreRun(
     firesInBand(primitive, outcome.verdict, outcome.confidence, curve)
       .forEach((fired, index) => { curveUtility[index]! += utility(fired, shouldFire); });
 
-    // The decision counts are reported at the gate's single verdict rather than
-    // over the band, because "how many runs did it drop" is a count of events and
-    // not of threshold points. The band is what the objective averages over.
-    const fired = outcome.verdict === "met";
+    // The decision counts are reported at one threshold rather than over the
+    // band, because "how many runs did it drop" is a count of events and not of
+    // threshold points. That threshold is the band's midpoint, and it is the
+    // gate's own rule at that point rather than the report's `verdict` field: for
+    // a Choice, `verdict === "met"` ignores the threshold entirely, so reading it
+    // would compare a Choice with no gate against a Noul with one.
+    const fired = fires[MIDPOINT_INDEX]!;
     const scenarioId = scenarioOf.get(outcome.caseId);
     if (scenarioId) watches.add(scenarioId);
     if (shouldFire) wantedTotal += 1;
@@ -185,7 +191,8 @@ function main(): void {
     + ` corpus=${[...corpora].map((hash) => hash.slice(0, 8)).join(",")}`);
   console.log("");
   const bandColumns = OPERATING_BAND.map((threshold) => `u@${threshold}`).join(" | ");
-  console.log(`| candidate | runs | words | band utility | spread | ${bandColumns} | fireBrier | 3-class | recall | precision | missed | false fires | watches dropped | watches noisy |`);
+  const at = `@${OPERATING_BAND[MIDPOINT_INDEX]}`;
+  console.log(`| candidate | runs | words | band utility | spread | ${bandColumns} | fireBrier | 3-class | recall${at} | precision${at} | missed${at} | false fires${at} | watches dropped${at} | watches noisy${at} |`);
   console.log(`| --- | ---: | ---: | ---: | ---: | ${OPERATING_BAND.map(() => "---:").join(" | ")} | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |`);
 
   const rows = [...byCandidate.entries()]
