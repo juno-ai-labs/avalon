@@ -170,9 +170,16 @@ function main(): void {
     }));
     console.log(`Brier score over P(match): ${brier.toFixed(4)} (0 is perfect, 0.25 is a coin flip).`);
 
-    console.log(`\nThe fire decision, swept over the threshold${entry.gate.primitive === "choice"
-      ? ". A fire needs the `met` choice AND confidence above it"
-      : ". A fire needs the scalar above it, and no unjudgeable answer"}, with what the product pays:\n`);
+    // The rule differs on both axes, and a table that misdescribes its own rule is
+    // how a threshold gets chosen from a curve nobody read correctly.
+    const gateRule = entry.gate.polarity === "ignore"
+      ? (entry.gate.primitive === "choice"
+        ? "A run stops only on a non-`met` choice with confidence above it; an unsure answer fires"
+        : "A run stops only on a scalar above it; a low scalar fires")
+      : (entry.gate.primitive === "choice"
+        ? "A fire needs the `met` choice AND confidence above it"
+        : "A fire needs the scalar above it, and no unjudgeable answer");
+    console.log(`\nThe fire decision, swept over the threshold. ${gateRule}, with what the product pays:\n`);
     console.log("| threshold | fires | wanted | unwanted | missed | utility | precision | recall | watches made noisy | silence broken |");
     console.log("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
     for (const threshold of THRESHOLDS) {

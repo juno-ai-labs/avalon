@@ -48,6 +48,24 @@ interface GenerationFile {
   reports: CandidateReport[];
 }
 
+/**
+ * What the threshold is applied to.
+ *
+ * `label_confidence` is what the runtime does: the provider picks a label and
+ * reports a confidence in *that label*, and the gate thresholds the confidence.
+ *
+ * `match_probability` thresholds the provider's own probability mass on the match
+ * label instead, which is a different number and a strictly richer one — a case
+ * answered `condition_not_met` at 0.55 still carries 0.45 on `condition_met`, and
+ * the label's confidence cannot see it. Read with a low threshold it is the third
+ * way to get the fall-through that `polarity` was reaching for: fire unless the
+ * mass on a match is genuinely small. Unlike the negative question it does not
+ * change what is asked, so it cannot damage the label.
+ *
+ * Only a Choice returns a distribution, so this reading is Choice-only.
+ */
+type GateReading = "label_confidence" | "match_probability";
+
 interface RunScore {
   reportFile: string;
   ranAt: string;
@@ -86,6 +104,7 @@ function scoreRun(
   scenarioOf: Map<string, string | undefined>,
   curve: number[],
   polarity: CandidatePolarity | null,
+  reading: GateReading,
 ): RunScore | null {
   const candidate = file.candidates.find((entry) => entry.id === report.candidateId);
   if (!candidate) throw new Error(`${reportFile} has a report for ${report.candidateId} with no candidate`);
@@ -96,7 +115,23 @@ function scoreRun(
   // that was not asked — re-gating one would print a number for a request nobody
   // ever sent.
   if (polarity !== null && polarity !== own.polarity && own.primitive !== "choice") return null;
+  if (reading === "match_probability" && own.primitive !== "choice") return null;
   const gate = polarity === null ? own : { ...own, polarity };
+
+  /** The provider's mass on a match, which only a Choice reports. */
+  const matchProbability = (outcome: CandidateReport["cases"][number]): number => {
+    if (!outcome.probabilities) return outcome.verdict === "met" ? outcome.confidence ?? 0 : 0;
+    let total = 0;
+    for (const [label, probability] of Object.entries(outcome.probabilities)) {
+      if (candidate.mapping[label] === "met") total += probability;
+    }
+    return total;
+  };
+  const firesAt = (outcome: CandidateReport["cases"][number], band: readonly number[]): boolean[] => (
+    reading === "match_probability"
+      ? band.map((threshold) => matchProbability(outcome) > threshold)
+      : firesInBand(gate, outcome.verdict, outcome.confidence, band)
+  );
 
   let utilityTotal = 0;
   const utilityAt = OPERATING_BAND.map(() => 0);
@@ -112,10 +147,10 @@ function scoreRun(
 
   for (const outcome of report.cases) {
     const shouldFire = outcome.truth === "met";
-    const fires = firesInBand(gate, outcome.verdict, outcome.confidence);
+    const fires = firesAt(outcome, OPERATING_BAND);
     utilityTotal += bandUtilityOf(fires, shouldFire);
     fires.forEach((fired, index) => { utilityAt[index]! += utility(fired, shouldFire); });
-    firesInBand(gate, outcome.verdict, outcome.confidence, curve)
+    firesAt(outcome, curve)
       .forEach((fired, index) => { curveUtility[index]! += utility(fired, shouldFire); });
 
     // The decision counts are reported at one threshold rather than over the
@@ -161,14 +196,18 @@ function scoreRun(
 }
 
 function main(): void {
-  // Positional arguments are report files; every `--flag` takes one value, which is
-  // not one. Filtering on the shape of the token instead read `--polarity ignore`
-  // as a file called `ignore`.
+  // Positional arguments are report files. A flag's *value* is not one, and not
+  // every flag has a value, so both have to be declared: filtering on the token's
+  // shape read `--polarity ignore` as a file called `ignore`, and assuming every
+  // flag took a value read `--probability-gate --curve 0.1` as a file called
+  // `0.1`.
+  const VALUED_FLAGS = new Set(["--curve", "--polarity"]);
   const files: string[] = [];
   const argv = process.argv.slice(2);
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index]!.startsWith("--")) index += 1;
-    else files.push(argv[index]!);
+    const token = argv[index]!;
+    if (VALUED_FLAGS.has(token)) index += 1;
+    else if (!token.startsWith("--")) files.push(token);
   }
   // Re-gating a stored run under the other polarity costs nothing and answers half
   // the question on its own: polarity changes only the gate rule, and the verdict
@@ -181,6 +220,9 @@ function main(): void {
     console.error(`--polarity takes "match" or "ignore"`);
     process.exit(1);
   }
+  const reading: GateReading = process.argv.includes("--probability-gate")
+    ? "match_probability"
+    : "label_confidence";
   const curveIndex = process.argv.indexOf("--curve");
   // The band is where the threshold is *allowed* to sit; the curve is for asking
   // whether that band is the right one, which the reversed asymmetry reopened.
@@ -205,7 +247,7 @@ function main(): void {
     splits.add(file.split);
     corpora.add(file.corpusHash);
     for (const report of file.reports) {
-      const scored = scoreRun(file, path, report, scenarioOf, curve, asPolarity);
+      const scored = scoreRun(file, path, report, scenarioOf, curve, asPolarity, reading);
       if (scored === null) {
         skipped.add(report.candidateId);
         continue;
@@ -227,6 +269,10 @@ function main(): void {
       console.log(`Not re-gated, because a scalar cannot be re-read as the answer to a question`
         + ` it was not asked: ${[...skipped].sort().join(", ")}.`);
     }
+  }
+  if (reading === "match_probability") {
+    console.log("Gated on the provider's probability mass for a match, not on the chosen label's"
+      + " confidence. Choice candidates only; a Noul has no distribution to read.");
   }
   console.log(`band=[${OPERATING_BAND.join(", ")}] splits=${[...splits].join(",")}`
     + ` corpus=${[...corpora].map((hash) => hash.slice(0, 8)).join(",")}`);

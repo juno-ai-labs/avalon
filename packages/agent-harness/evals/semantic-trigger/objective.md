@@ -65,6 +65,33 @@ weights are `UTILITY_CORRECT`, `UTILITY_FALSE_FIRE` and `UTILITY_MISSED_FIRE` in
 `run.ts`, in one place, and the ranking is worth re-deriving if the cost of a
 session ever stops being small relative to the cost of dropping a request.
 
+#### What the price list implies, before any measurement
+
+The matrix is not only a scoring rule; it fixes the decision rule. Writing `p`
+for the probability that this event should fire, and `c`, `f`, `m` for the three
+weights:
+
+```
+fire when      p·c + (1−p)·f   >   p·m + (1−p)·c      (fire)   >   (do not fire)
+which is       p  >  (c − f) / (2c − f − m)
+and at 1, 0, −2:  p > 1/4
+```
+
+**So the optimal gate fires whenever a calibrated probability of a match exceeds
+0.25, and never lower.** That is worth stating because it bounds an argument that
+otherwise has no floor: "a miss is expensive, so err towards firing" is true and
+stops being true at one in four. Below that, the events the gate would pick up are
+mostly non-matches, and three cheap errors cost as much as the expensive one they
+avoid.
+
+The number the runtime actually thresholds is **not** `p`. It is the provider's
+confidence in the label it picked, which is a different quantity and a
+demonstrably badly calibrated one on this decision — hence the sweep. What the
+0.25 does is tell you which direction a sweep result can be trusted in, and it
+has already been useful: every attempt to make the gate fire more freely than
+about `p > 0.2` measured worse, on three different mechanisms.
+
+
 ### 2. Multiclass Brier score — did the confidence mean anything
 
 The provider returns a probability for every choice, not just a confidence in the
