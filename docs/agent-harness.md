@@ -203,7 +203,7 @@ Stream and checkpoint events for participant loops carry that same sequence.
 
 ### Addressing
 
-Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
+Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages are retained; older ones are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
@@ -1130,6 +1130,10 @@ and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
+Addressing retains only the newest ten context messages and silently omits older
+ones. Each retained message is center-truncated to 1,000 Unicode code points;
+the current message is not truncated.
+
 Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to complete durable transcript replay. The first request must fit the selected model because automatic compaction depends on usage from a completed turn. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
@@ -1309,6 +1313,31 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-17 — Addressing history keeps both ends of long messages
+
+**What changed:** JEV's state payload and the model-independent OpenRouter
+classifier prompt now share one recent-message bound. Each retained message
+keeps an even front-and-back window around an ellipsis when it exceeds 1,000
+Unicode code points. The newest message remains complete.
+
+**Why:** The opening identifies how a message begins and who it addresses, while
+the conclusion often carries the actual request or hand-off. Keeping only the
+opening could discard the evidence the classifier needs to decide whether Rally,
+a person, or both should act.
+
+**Considered and rejected:** Tail-only truncation, which merely reverses the
+blind spot and loses the addressee or setup at the beginning. Raising or removing
+the history bound would spend more classifier context without preserving a
+predictable request size.
+
+**Consequences:** The omission marker consumes one code point, so the 1,000-point
+window retains 500 from the front and 499 from the back. Future changes to this
+budget must preserve code-point-safe cutting and the shared JEV/OpenRouter
+context boundary. Terra uses the OpenRouter renderer in direct evaluation; the
+hosted cascade currently uses it for the pinned DeepSeek fallback.
+
+Shipped in [#819](https://github.com/juno-ai-labs/avalon/pull/819).
 
 ### 2026-09-17 — Inference telemetry leaves model critical paths
 

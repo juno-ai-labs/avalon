@@ -340,7 +340,7 @@ describe("prompt renderers", () => {
       recentMessages: Array.from({ length: 12 }, (_, index) => ({
         authorType: index % 2 === 0 ? "human" as const : "agent" as const,
         authorName: index % 2 === 0 ? `Person ${index}` : "Rally",
-        message: `${index}:`.padEnd(1_100, "x"),
+        message: `start-${index}-${"🧭".repeat(1_100)}-end-${index}`,
       })),
     });
 
@@ -351,7 +351,14 @@ describe("prompt renderers", () => {
     expect(payload.recentMessages).toHaveLength(10);
     expect(payload.recentMessages[0]).toMatchObject({ authorName: "Person 2" });
     expect(payload.recentMessages.at(-1)).toMatchObject({ authorName: "Rally" });
-    expect(payload.recentMessages.every((message) => Array.from(message.message).length === 1_000)).toBe(true);
+    expect(payload.recentMessages.map((message) => Array.from(message.message).length)).toEqual(
+      Array.from({ length: 10 }, () => 1_000),
+    );
+    const firstSourceCharacters = Array.from(`start-2-${"🧭".repeat(1_100)}-end-2`);
+    const firstRenderedCharacters = Array.from(payload.recentMessages[0]!.message);
+    expect(firstRenderedCharacters.slice(0, 500)).toEqual(firstSourceCharacters.slice(0, 500));
+    expect(firstRenderedCharacters[500]).toBe("…");
+    expect(firstRenderedCharacters.slice(501)).toEqual(firstSourceCharacters.slice(-499));
     expect(payload.currentMessage).toBe(currentMessage);
   });
 
