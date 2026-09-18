@@ -289,6 +289,43 @@ point at. What the exercise bought is the knowledge that the remaining utility i
 **not** in the miss column: recall can be taken to 99% whenever we want it, and it
 is not worth having.
 
+### The third class is free to keep and free to drop; its prose is not
+
+`condition_not_judgeable` earns nothing operationally — the product refuses on it
+exactly as it refuses on `not_met` — so it was worth asking what it is for. Two
+ablations of the winner, three runs each on the tuning split:
+
+| | Words | Band utility | Spread | fireBrier | 3-class | Recall @0.6 | Noisy watches |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `gen4-merged` (control) | 133 | 0.819 | 0.011 | 0.081 | 85.4% | 80.0% | 2 of 12 |
+| `gen7-two-label` (label deleted) | **71** | 0.814 | 0.024 | 0.082 | 81.2% | 78.1% | 2 of 12 |
+| `gen7-two-label-absorbed` | 106 | 0.755 | 0.035 | 0.078 | 83.2% | 70.5% | 1 of 12 |
+
+**Deleting the label costs nothing measurable and halves the contract.** The
+utility difference is well inside the spread, the fire-decision Brier is identical
+and the watch behaviour is unchanged, at 71 words against 133. The 4.2 points of
+three-class accuracy are the ten dev cases it can no longer get right by
+construction, and those cost the product nothing because both answers refuse.
+
+**Folding the class's prose into `not_met` is worse**, and legibly so: recall falls
+to 70.5%. Telling the model that untestable conditions are non-matches made it
+readier to call things non-matches generally. So the label was free and the prose
+was a liability — the opposite of what the lineage suggested, since an assertive
+third class is what separated this winner from the compact candidates.
+
+**Nothing shipped, and the reason is not the score.** Two things sit outside what
+this corpus can settle. The risk of deleting the class is a watch whose condition
+can never be settled: with nowhere to put "untestable", its events may lean `met`
+and fire on every event of their type — and there are **zero** untestable cases on
+a standing watch here, because the adjudicator overrode all seven the authors
+labelled that way. The evidence is entirely from the balanced half, which is the
+wrong half to learn watch behaviour from. And
+[`semantic-activity-triggers.md`](../../../../docs/semantic-activity-triggers.md)
+carries "whether `condition_not_judgeable` should reach its author" as an open
+question: it marks an authoring defect rather than a run that should not start, and
+deleting the class means that surface can never be built without re-running this
+optimization. No holdout run has been spent on the two-label variant.
+
 ### Evidentially loaded state field names bought nothing
 
 `w3-state`'s thesis was that the state's field names *are* the instruction: it
