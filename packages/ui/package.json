@@ -8,10 +8,11 @@
     "./lib/*": "./src/lib/*.ts",
     "./themes": "./src/themes.ts",
     "./styles/*": "./src/styles/*",
-    "./components/project-icons": "./src/components/project-icons.ts"
+    "./components/project-icons": "./src/components/project-icons.ts",
+    "./assets/*": "./src/assets/*"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@rally/contracts": "workspace:*",
@@ -29,8 +30,8 @@
     "tw-fade": "^0.8.0"
   },
   "peerDependencies": {
-    "react": "latest",
-    "react-dom": "latest"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "typescript": "catalog:",

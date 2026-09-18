@@ -21,7 +21,7 @@ by the feed's own component and only the surroundings are new.
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `AssistantMessageActions` — the hover row under a turn, its in-flight and failed states. |
 | `apps/desktop/src/main/message-export.ts` | Everything about the card: the document, its stylesheet, the splash, the page footer, request validation, and `MessageExporter`, which drives one render at a time and writes the file. |
 | `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `rallywithai-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
-| `apps/desktop/src/renderer/styles/app.css` | Only the hover row's own styling. The card's stylesheet is not here; see the boundary below. |
+| `packages/ui/src/styles/app.css` | Only the hover row's own styling. The card's stylesheet is not here; see the boundary below. |
 
 ## How it works
 

@@ -38,6 +38,7 @@
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-tooltip": "latest",
     "@rally/contracts": "workspace:*",
+    "@rally/ui": "workspace:*",
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-query": "latest",
     "@tanstack/react-virtual": "latest",
@@ -58,8 +59,7 @@
     "tw-fade": "^0.8.0",
     "ws": "8.21.0",
     "zod": "catalog:",
-    "zustand": "latest",
-    "@rally/ui": "workspace:*"
+    "zustand": "latest"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1108.0",

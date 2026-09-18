@@ -24,7 +24,7 @@ token and which state wins.
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |
 | `apps/desktop/src/renderer/components/automation-header.tsx` | The Sidekick run history, the one surface that still draws `scheduled` under its own name. |
 | `config/design-tokens/registry.json` | The `sys.color.workstream` group: one token per state. |
-| `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
+| `packages/ui/src/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | The authority for the three personal states: `member_attention` for unread and mentions, `participants.first_opened_at` for unseen. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v18: the column, its backfill, and the rebuilt `_runtime_workstream_participants` triggers that keep a re-add through the compatibility views unseen. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |

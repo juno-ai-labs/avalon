@@ -18,7 +18,7 @@ the render that produced it.
 | `apps/desktop/src/renderer/components/relative-time.tsx` | `RelativeTime` — the only component that renders a relative label, and the only caller of `formatRelative`. Carries the absolute-time tooltip. |
 | `apps/desktop/src/renderer/components/message-byline.tsx` | `MessageByline` — the identity line over a turn: who, when, and the optional labels between them. |
 | `apps/desktop/src/renderer/lib/format.ts` | The vocabularies. `formatRelative` is the default; `formatDateTime` is what the tooltip says; `formatSidebarActivityTime` is the calendar one the sidebar's hover preview passes in. |
-| `apps/desktop/src/renderer/styles/app.css` | `.message-author`, `.message-block time` and the shared `.message-block > header` — one set of type and colour for the byline, not one per speaker. |
+| `packages/ui/src/styles/app.css` | `.message-author`, `.message-block time` and the shared `.message-block > header` — one set of type and colour for the byline, not one per speaker. |
 | `config/design-tokens/base.json` | `cmp.feed.byline.font-size`, `cmp.feed.byline.author-weight` and `cmp.feed.byline.time-weight` — one size for the line, and the two weights that separate who from when. |
 
 ## How it works
