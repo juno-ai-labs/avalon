@@ -58,6 +58,14 @@ workspace sync log. The first refreshes every administrator's roster; the second
 refreshes `GET /workspace`, which is where a person's own role — and therefore
 whether their window draws the administrator controls at all — comes from.
 
+A successful write also dispatches the workspace relationship deliveries the
+membership triggers recorded. Migration 0109 turns any `UPDATE OF role` into a
+revision bump and a `workspace_relationship_deliveries` row; `setMemberRole`
+hands those to the queue exactly as `removeMember` and `promoteGuest` do,
+because a recorded admission change that is never dispatched reaches no socket
+holder. That is separate from the sync publish below: one carries the admission
+fact, the other invalidates what a window has on screen.
+
 **That publish is post-commit and best effort.** The role has already changed by
 the time it runs, so a failure to announce it is logged as
 `workspace_member_role_sync_publish_failed` and the request still succeeds.
@@ -86,6 +94,10 @@ because `auth.role` is read per request.
 - **Only an active membership has a role to change.** Somebody who has not
   accepted their invitation is not a member to promote — the invitation carries
   their role, and reissuing one is how it changes.
+- **A guest holds no role, and never acquires one here.** `workspace_members`
+  enforces `access_class = 'guest' AND role IS NULL` with a `CHECK`. Giving a
+  guest a role means promoting their *access class* first, through
+  `promoteGuest`, which is a different operation on a different field.
 - **The role the desktop holds decides what is *drawn*, never what is
   *allowed*.** Every control it draws is refused server-side for a member, so a
   stale role costs a redraw and nothing else. This is also what makes a lost
@@ -124,6 +136,7 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | `cannot_change_owner_role` | 403 | The target is the workspace owner. |
 | `member_not_active` | 409 | The target has not accepted their invitation. |
 | `last_workspace_administrator` | 409 | The demotion would leave the workspace with no administrator. |
+| `member_is_guest` | 409 | The target is a guest, who holds no role until `promoteGuest` moves their access class. |
 | `membership_changed` | 409 | The conditional write lost a race; nothing was written. |
 | — (logged only) | 200 | The role changed but `publishWorkspaceSync` failed. Logged as `workspace_member_role_sync_publish_failed` with the reason from `diagnosticErrorCode`; other windows keep a stale roster until something else invalidates it. |
 | `member_role_invalid:…` | 400 | The role is not one an administrator may assign. The code carries the failing path and Zod issue code, from `zodDiagnosticCode` — see [`naming-a-schema-failure.md`](naming-a-schema-failure.md). |
@@ -185,6 +198,12 @@ and the first bug in it would have been the two disagreeing. Also rejected:
 keeping administrator invitations owner-only. An administrator who can promote
 an existing member can reach the same end state in two steps, so the gate
 stopped anything except the convenient path.
+
+`workspace_members` gained a guest access class (migration 0109) while this
+branch was open. A guest's role is `NULL`, so the conditional write refuses one
+already — but as `membership_changed`, which reads as a lost race and invites a
+retry that can never succeed. `setMemberRole` names it `member_is_guest`
+instead, and the roster draws no control beside a guest.
 
 Review raised one correctness bug, fixed here: the sync publish originally ran
 inside the endpoint's contract, so a WorkspaceDO that could not be reached made

@@ -1,11 +1,15 @@
+import { requireIdentityAuth, getIdentityAuth } from "../middleware/auth";
+import { startEmailLogin, redeemEmailLogin, deliverEmailLogin, EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
+import { authBodyLimit } from "../middleware/auth-body-limit";
 import { zValidator } from "../middleware/validation";
 import {
   DesktopExchangeRequestSchema,
   RefreshRequestSchema,
   RefreshTokenSchema,
   SessionSchema,
+  WorkspaceSchema,
+  WorkspaceIdSchema,
   WorkspaceInvitationPreviewSchema,
 } from "@rally/contracts";
 import { HttpOrDesktopDeepLinkUrlSchema } from "@rally/contracts/url-schemas";
@@ -29,17 +33,44 @@ const callbackQuery = z.object({
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
 const logoutBody = z.object({ refreshToken: RefreshTokenSchema.optional() }).default({});
 const developmentSessionBody = z.object({ workspaceName: z.string().trim().min(2).max(120).optional() }).default({});
-const refreshBodyLimit = bodyLimit({
-  maxSize: 4 * 1024,
-  onError: () => {
-    throw new ApiError(413, "payload_too_large", "The authentication request body is too large");
-  },
-});
+
 
 /** The opaque provider URL the desktop opens; the route owns this shape. */
 const IdentityStartResponseSchema = z.object({ url: z.string().min(1) });
 
 export const authRoutes = new Hono<HonoAppEnv>();
+
+const RegionalWorkspacesSchema = z.object({ workspaces:z.array(WorkspaceSchema) });
+const SelectRegionalWorkspaceSchema = z.strictObject({ workspaceId:WorkspaceIdSchema });
+
+authRoutes.get("/workspaces",requireIdentityAuth,async (c) => {
+  c.header("Cache-Control","no-store");
+  const workspaces = await new AuthService(c.env).listRegionalWorkspaces(getIdentityAuth(c).userId);
+  return c.json(RegionalWorkspacesSchema.parse({ workspaces }));
+});
+authRoutes.post("/workspace/select",requireIdentityAuth,authBodyLimit,zValidator("json",SelectRegionalWorkspaceSchema),async (c) => {
+  c.header("Cache-Control","no-store");
+  const session = await new AuthService(c.env).createRegionalSession(getIdentityAuth(c).userId,c.req.valid("json").workspaceId);
+  return c.json(SessionSchema.parse(session));
+});
+
+// Both entrypoints are POST-only. Loading a link never consumes a challenge.
+authRoutes.post("/email/start", authBodyLimit, zValidator("json",EmailLoginStartSchema), async (c) => {
+  c.header("Cache-Control","no-store");
+  const started = await startEmailLogin(c.env,c.req.valid("json"));
+  await deliverEmailLogin(c.env,started.challengeId);
+  return c.json(EmailLoginStartedSchema.parse(started),202);
+});
+authRoutes.get("/email/redeem", (c) => {
+  c.header("Allow","POST");
+  c.header("Cache-Control","no-store");
+  return c.body(null,405);
+});
+authRoutes.post("/email/redeem", authBodyLimit, zValidator("json",EmailLoginRedeemSchema), async (c) => {
+  c.header("Cache-Control","no-store");
+  const receipt = await redeemEmailLogin(c.env,c.req.valid("json"));
+  return c.json(SessionSchema.parse(await new AuthService(c.env).resumeEmailLogin(receipt)));
+});
 
 authRoutes.post("/dev/session", zValidator("json", developmentSessionBody), async (c) =>
   c.json(SessionSchema.parse(
@@ -103,11 +134,11 @@ authRoutes.post("/desktop/exchange", zValidator("json", DesktopExchangeRequestSc
   return c.json(SessionSchema.parse(await new AuthService(c.env).exchangeDesktopTicket(body)));
 });
 
-authRoutes.post("/refresh", refreshBodyLimit, zValidator("json", RefreshRequestSchema), async (c) => {
+authRoutes.post("/refresh", authBodyLimit, zValidator("json", RefreshRequestSchema), async (c) => {
   return c.json(SessionSchema.parse(await new AuthService(c.env).refresh(c.req.valid("json").refreshToken)));
 });
 
-authRoutes.post("/logout", refreshBodyLimit, zValidator("json", logoutBody), async (c) => {
+authRoutes.post("/logout", authBodyLimit, zValidator("json", logoutBody), async (c) => {
   const body = c.req.valid("json");
   const authorization = c.req.header("authorization");
   let sessionId: string | undefined;

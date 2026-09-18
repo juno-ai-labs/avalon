@@ -1,3 +1,6 @@
+import { admitConnectorAudience, reconcileConnectorWorkstreamCreator } from "../src/services/connector-workstream-audience";
+import { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import { bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "../src/services/workstream-runtime-database";
 import { previewSessionImport } from "../src/services/session-import";
 import { prepareSessionImport } from "../src/services/session-import-files";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
@@ -105,6 +108,130 @@ function creationEnv(): Env {
 }
 
 describe("creating a work stream", () => {
+  it.each([
+    { accessClass: "member", creatorAssignment: false },
+    { accessClass: "guest", creatorAssignment: false },
+    { accessClass: "member", creatorAssignment: true },
+    { accessClass: "guest", creatorAssignment: true },
+  ])("receipts connector admission for $accessClass (creator=$creatorAssignment) without reviving old access", async ({ accessClass, creatorAssignment }) => {
+    const recipient = asUserId(crypto.randomUUID());
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,role,access_class,revision) VALUES (?,?,'active','member',?,1)")
+        .bind(WORKSPACE_ID,recipient,accessClass),
+      env.DB.prepare("INSERT INTO users(id,email,name,avatar_url,timezone,created_at) VALUES (?,'recipient@example.test','Recipient',NULL,'UTC','2026-09-17T00:00:00.000Z')")
+        .bind(recipient),
+    ]);
+    const created = await new WorkstreamObjectCreationService(creationEnv(), AUTH).createPrepared({
+      title: "Connector admission", clientMessageId: "connector-admission", participantUserIds: [],
+    }, { messages: [{ role: "user", text: "A prepared start" }] });
+    const parentId = asWorkstreamId(created.workstream.id);
+    const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, parentId));
+    const target = { kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId("0") };
+    expect(await parent.createScopeInvitations({ workspaceId: WORKSPACE_ID, parentId, actorUserId: USER_ID,
+      operationId: crypto.randomUUID(), emails: ["recipient@example.test"], expiresAt: null, targets: [target] }))
+      .toMatchObject({ status: "created" });
+    const input = { workspaceId: WORKSPACE_ID, parentId, eventId: "connector-event-1", userIds: [recipient], addedByUserId: recipient };
+    const admit = (eventId: string) => creatorAssignment
+      ? reconcileConnectorWorkstreamCreator(creationEnv(), { workspaceId: WORKSPACE_ID, workstreamId: parentId,
+        assignmentId: eventId, userId: recipient, previousAssignedUserId: USER_ID, mayCorrectVerifiedCreator: true })
+      : admitConnectorAudience(creationEnv(), {
+        workspaceId: WORKSPACE_ID, workstreamId: parentId, eventId, userIds: [recipient], addedByUserId: recipient,
+      });
+    if (creatorAssignment) {
+      await runInDurableObject(parent, (_instance,state) => {
+        state.storage.sql.exec(`CREATE TRIGGER fail_connector_admission BEFORE INSERT ON connector_participant_admissions
+          BEGIN SELECT RAISE(ABORT, 'connector admission unavailable'); END`);
+      });
+      await expect(admit(input.eventId)).rejects.toThrow("connector admission unavailable");
+      const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, parentId));
+      await runInDurableObject(source, (_instance,state) => {
+        expect(state.storage.sql.exec("SELECT created_by_user_id FROM workstream").one()).toEqual({ created_by_user_id: recipient });
+        expect(state.storage.sql.exec("SELECT 1 FROM participants WHERE user_id=? AND status='active'",recipient).toArray()).toEqual([]);
+      });
+      await runInDurableObject(parent, (_instance,state) => { state.storage.sql.exec("DROP TRIGGER fail_connector_admission"); });
+    }
+    await admit(input.eventId);
+    expect(await parent.readScopeAccess({ userId: recipient, target })).toMatchObject({ allowed: accessClass === "member" });
+    expect(await parent.readScopeAccess({ userId: recipient, target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId } }))
+      .toMatchObject({ allowed: false });
+    if (accessClass === "member") {
+      const revision = await runInDurableObject(parent, (_instance,state) =>
+        new ScopeGrantStorage(state.storage,target).read(recipient,target)!.revision);
+      expect(await parent.mutateScopeGrant({ operationId: crypto.randomUUID(), target, userId: recipient,
+        actorUserId: USER_ID, active: false, expectedRevision: revision })).toMatchObject({ status: "committed" });
+    } else {
+      await env.DB.prepare("UPDATE workspace_members SET access_class='member',revision=2 WHERE user_id=?").bind(recipient).run();
+    }
+    await admit(input.eventId);
+    expect(await parent.readScopeAccess({ userId: recipient, target })).toMatchObject({ allowed: false });
+    if (!creatorAssignment) {
+      await expect((async () => await parent.admitConnectorParticipants({ ...input, userIds: [USER_ID] }))()).rejects.toThrow("connector_participant_admission_conflict");
+    }
+    await admit("connector-event-2");
+    expect(await parent.readScopeAccess({ userId: recipient, target })).toMatchObject({ allowed: true, writable: true });
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, parentId));
+    await runInDurableObject(main, (_instance,state) => {
+      expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id=?",recipient).one()).toEqual({ status: "active" });
+      expect(state.storage.sql.exec("SELECT created_by_user_id FROM workstream").one())
+        .toEqual({ created_by_user_id: creatorAssignment ? recipient : USER_ID });
+    });
+  });
+
+  it.each([
+    { systemKind: "digest", owned: true },
+    { systemKind: null, owned: true },
+    { systemKind: null, owned: false },
+  ])("keeps system creation on the local participant writer ($systemKind, owned=$owned)", async ({ systemKind, owned }) => {
+    const workstreamId = asWorkstreamId(crypto.randomUUID());
+    await bootstrapWorkstreamRuntimeEnvironment(creationEnv(), WORKSPACE_ID, workstreamId, "workstream");
+    const input = { workspaceId: WORKSPACE_ID, workstreamId, title: "System workstream", objective: "",
+      scope: owned ? "personal" : "workspace", createdByUserId: owned ? USER_ID : null,
+      participantUserIds: owned ? [USER_ID] : [], harnessStatus: "idle",
+      emailAddress: null, emailRouteStatus: null, systemKind, modelOverride: null, now: Date.now() };
+    await provisionWorkstreamObject(creationEnv(), input);
+    await provisionWorkstreamObject(creationEnv(), input);
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, workstreamId));
+    await runInDurableObject(main, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT 1 FROM participant_authority_transfer").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT user_id FROM participants WHERE status='active'").toArray())
+        .toEqual(owned ? [{ user_id: USER_ID }] : []);
+    });
+    expect((await new WorkstreamObjectClient(creationEnv(), AUTH, workstreamId).boot()).workstream.title).toBe("System workstream");
+  });
+
+  it("keeps creation local and transfers participants only on first sharing", async () => {
+    const service = new WorkstreamObjectCreationService(creationEnv(), AUTH);
+    const input = { title: "Shared from birth", clientMessageId: "initial-grant-owner", participantUserIds: [] };
+    const history = { messages: [{ role: "user" as const, text: "A prepared start" }] };
+    const created = await service.createPrepared(input, history);
+    const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, asWorkstreamId(created.workstream.id)));
+    await runInDurableObject(parent, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT 1 FROM main_participant_migration").toArray()).toEqual([]);
+    });
+    expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);
+    expect(await parent.createScopeInvitations({ workspaceId: WORKSPACE_ID, parentId: created.workstream.id,
+      actorUserId: USER_ID, operationId: crypto.randomUUID(), emails: ["guest@example.test"], expiresAt: null,
+      targets: [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: created.workstream.id, substreamId: asSubstreamId("0") }] }))
+      .toMatchObject({ status: "created" });
+    const authority = await runInDurableObject(parent, (_instance, state) => ({
+      migration: state.storage.sql.exec("SELECT transfer_id,phase FROM main_participant_migration").one(),
+      grants: state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM scope_grants").toArray(),
+    }));
+    expect(authority.migration).toMatchObject({ phase: "complete" });
+    expect(authority.grants).toEqual([{ user_id: USER_ID, scope_kind: "workstream", revision: 1, active: 1 }]);
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, created.workstream.id));
+    await runInDurableObject(main, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT phase FROM participant_authority_transfer").one()).toEqual({ phase: "projection" });
+    });
+    expect(await parent.readScopeAccess({ userId: USER_ID, target: { kind: "workstream", workspaceId: WORKSPACE_ID,
+      parentId: created.workstream.id } })).toMatchObject({ allowed: true, writable: true });
+    expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);
+    await runInDurableObject(parent, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT transfer_id,phase FROM main_participant_migration").one()).toEqual(authority.migration);
+      expect(state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM scope_grants").toArray()).toEqual(authority.grants);
+    });
+  });
+
   it("names prepared history through the standard background naming path without starting a run", async () => {
     const pending: Promise<unknown>[] = [];
     const service = new WorkstreamObjectCreationService(creationEnv(), AUTH, (task) => { pending.push(task); });

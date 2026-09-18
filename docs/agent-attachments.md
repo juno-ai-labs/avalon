@@ -143,9 +143,14 @@ transaction that queues canonical projection; a direct canonical message has no
 pending recovery row. Neither path releases the workspace hold early: its
 durable common effect names the exact
 input/resource reservation, and WorkspaceDO releases only that hold in the same
-transaction that projects the canonical work-stream resource link and marks the
-upload `attached`. Historical resource versions and R2 references are retained
-throughout.
+transaction that marks the upload `attached`. The Queue consumer delivers this
+publication after parent admission for every conversation, including private
+children whose common directory projection stays in WorkstreamDO. Publication
+checks the exact workspace, parent, input and resource reservation and its
+canonical link in the effect. Queue acknowledgement follows publication; a
+replay after response loss leaves the already published resource unchanged.
+Main directory projection remains compatible with older queued effects.
+Historical resource versions and R2 references are retained throughout.
 
 ### Authorized work-stream discovery and text hydration
 
@@ -653,6 +658,20 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-16 — Publish scoped conversation uploads independently
+
+Guest uploads reuse ordinary draft ownership, message reservations and file
+storage. Existing-resource attachment requires source read access as well as
+target conversation mutation authority; unpublished uploads enter through message
+admission so attachment cannot leave a shared file deletable as an unsent draft.
+
+Private-child common projections intentionally stay at the parent. Publishing
+uploads only in the workspace directory path therefore left child files as
+drafts indefinitely. The existing Queue consumer now publishes exact committed
+reservations after parent admission, before acknowledgement. Forwarding private
+child directory content was rejected because publication needs resource state,
+not broader directory visibility.
 
 ### 2026-09-15 — Share prepared conversation file ownership
 

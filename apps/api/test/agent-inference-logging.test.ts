@@ -2,7 +2,10 @@ import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 import type { InferenceRequestEvent } from "@rally/agent-harness";
 import type { Env } from "../src/env";
-import { createAgentInferenceLogger } from "../src/services/agent-inference-logging";
+import {
+  createAgentInferenceLogger,
+  logAgentInferencePrepared,
+} from "../src/services/agent-inference-logging";
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 function fixture(options: { beforePut?: () => Promise<void> } = {}) {
@@ -58,6 +61,62 @@ const request = {
 } satisfies InferenceRequestEvent;
 
 describe("agent inference logging", () => {
+  it("records preparation phases only for a first attempt and marks clock skew", () => {
+    const { env } = fixture();
+    env.LOG_LEVEL = "info";
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    const context = {
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+      substreamId: "substream-7",
+      requestId: "run-1",
+      operationId: "operation-1",
+      journey: "message_send" as const,
+      source: "workstream" as const,
+      requestReceivedAt: 900,
+    };
+
+    logAgentInferencePrepared(env, context, {
+      runStartedAtMs: 1_000,
+      initialAuthorityReadyAtMs: 1_040,
+      harnessInputsReadyAtMs: 1_100,
+      preparationFinishedAtMs: 1_125,
+    });
+    logAgentInferencePrepared(env, { ...context, inferenceStartEligible: false }, {
+      runStartedAtMs: 2_000,
+      initialAuthorityReadyAtMs: 2_010,
+      harnessInputsReadyAtMs: 2_020,
+      preparationFinishedAtMs: 2_030,
+    });
+    logAgentInferencePrepared(env, { ...context, requestId: "run-skewed", requestReceivedAt: 1_200 }, {
+      runStartedAtMs: 1_000,
+      initialAuthorityReadyAtMs: 1_040,
+      harnessInputsReadyAtMs: 1_100,
+      preparationFinishedAtMs: 1_125,
+    });
+
+    const rows = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "agent_inference_prepared");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      request_id: "run-1",
+      operation_id: "operation-1",
+      journey: "message_send",
+      request_to_prepared_ms: 225,
+      request_clock_skewed: false,
+      initial_authority_ms: 40,
+      context_tools_ms: 60,
+      scope_activation_routing_ms: 25,
+      total_ms: 125,
+    });
+    expect(rows[1]).toMatchObject({
+      request_id: "run-skewed",
+      request_clock_skewed: true,
+    });
+    expect(rows[1]?.request_to_prepared_ms).toBeUndefined();
+    logged.mockRestore();
+  });
+
   it("defers lakehouse staging so provider dispatch does not wait on R2", async () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
@@ -319,14 +378,20 @@ describe("agent inference logging", () => {
       expect(logged.mock.calls.filter(([entry]) => (
         entry as { event?: string }
       ).event === "agent_inference_started")).toHaveLength(1);
+      // Background archive writes may finish in a different order than requests.
       const records = put.mock.calls.map((call) => JSON.parse(String(call[1])) as {
+        inference_request_id: string;
         metadata: Record<string, unknown>;
       });
-      expect(records[0]?.metadata).toMatchObject({
+      expect(records).toHaveLength(2);
+      const first = records.find((record) => record.inference_request_id === request.inferenceRequestId);
+      const second = records.find((record) => record.inference_request_id === "00000000-0000-7000-8000-000000000091");
+      expect(first?.metadata).toMatchObject({
         journey: "message_send",
         requestToInferenceStartMs: 100,
       });
-      expect(records[1]?.metadata).not.toHaveProperty("requestToInferenceStartMs");
+      expect(second).toBeDefined();
+      expect(second!.metadata).not.toHaveProperty("requestToInferenceStartMs");
     } finally {
       now.mockRestore();
       logged.mockRestore();

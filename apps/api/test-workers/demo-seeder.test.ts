@@ -124,9 +124,10 @@ describe("seeding a pack", () => {
         `SELECT sequence_number, role, author_user_id, content
            FROM canonical_conversation_turn_details ORDER BY sequence_number`,
       ).toArray());
-    expect(canonical.slice(0, 5).map((turn) => [turn.role, turn.author_user_id])).toEqual([
+    expect(canonical.slice(0, 6).map((turn) => [turn.role, turn.author_user_id])).toEqual([
       ["user", DEMO_PRIYA_ID],
       ["assistant", null],
+      ["user", DEMO_PRIYA_ID], // Attachment-only upload turn.
       ["user", DEMO_MARCUS_ID],
       ["user", DEMO_PRIYA_ID],
       ["user", DEMO_MARCUS_ID],
@@ -134,9 +135,9 @@ describe("seeding a pack", () => {
     // Rally's prose is the ordinary assistant turn an ordinary run reserved.
     expect(canonical[1]?.content).toBe(DEMO_OPENING_PROSE);
     // The mention was rewritten to its durable form by the object, not by the pack.
-    expect(canonical[3]?.content).toContain("[@Member](person://");
+    expect(canonical[4]?.content).toContain("[@Member](person://");
     // Whatever follows the question is the question's own run: nothing human.
-    expect(canonical.slice(5).every((turn) => turn.role === "assistant")).toBe(true);
+    expect(canonical.slice(6).every((turn) => turn.role === "assistant")).toBe(true);
     // The one tool call in seeded history is the real elicitation; no
     // connector call, recorded or replayed, appears anywhere.
     const toolNames = transcript.ranges.flatMap((range) => range.turns)
@@ -160,7 +161,7 @@ describe("seeding a pack", () => {
     const seed = await openDemoTestSession();
     const [open, upload, marcus] = seed.actions;
     const opened = await playDemoAction(seed, open!);
-    await playDemoAction(seed, upload!);
+    const uploaded = await playDemoAction(seed, upload!);
     const said = await playDemoAction(seed, marcus!);
 
     // A recorded action is answered from its receipt: nothing touches the room.
@@ -174,10 +175,18 @@ describe("seeding a pack", () => {
     const replayed = await playDemoAction(seed, marcus!);
     expect(replayed.turnId).toBe(said.turnId);
 
+    // A claimed draft and its attachment-only message must replay together
+    // even when the separate orchestration receipt was lost.
+    await env.DB.prepare(`DELETE FROM demo_seed_receipts WHERE operation_id = ? AND action_id = ?`)
+      .bind(DEMO_OPERATION_ID, upload!.actionId).run();
+    const replayedUpload = await playDemoAction(seed, upload!);
+    expect(replayedUpload.turnId).toBe(uploaded.turnId);
+    expect(replayedUpload.resourceId).toBe(uploaded.resourceId);
+
     const { transcript } = await roomClient(seed, opened.workstreamId!, DEMO_MARCUS_ID).boot();
     const humans = transcript.ranges.flatMap((range) => range.turns)
       .filter((turn) => turn.entryKind === "conversation" && turn.actor === "human");
-    expect(humans).toHaveLength(2);
+    expect(humans).toHaveLength(3);
     expect(provider.calls).toEqual([]);
   }, 60_000);
 

@@ -35,7 +35,7 @@ remain separate from this effect-ordering fence.
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, while execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the parent outbox, whose deadline stays derived. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the parent outbox, whose deadline stays derived, stored `participant_projection` deliveries independently retried per conversation/user/revision, and resumable `main_participant_migration` / `child_participant_migration` handoffs. |
 | `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and the same derived parent-outbox lane `WorkstreamDO` has. |
 
 ### Two kinds of wake reason
@@ -503,6 +503,36 @@ completion or failure names the phase active when the continuation ended. Do
 not join on workspace ids or alarm keys within these phase rows: neither is
 emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
+
+### Scoped invitation email delivery
+
+WorkstreamDO schedules `scope_invitation_delivery` keyed by invitation ID in the
+same transaction as its invitation receipt. The handler decrypts the frozen mail
+payload, sends through the existing transactional sender with a stable provider
+key, and records delivery. Revoked, expired or already accepted invitations stop
+pending sends; revocation during a provider await can still deliver an unusable
+link. The ordinary alarm retry handles transport failures. See
+[scoped invitations](scope-invitations.md).
+
+### Scope grant discovery delivery
+
+WorkstreamDO schedules `scope_grant_directory` with key `pending` in the grant
+transaction. Its handler atomically transfers undelivered grant intents into the
+parent outbox and acknowledges them. Queue retries remain the outbox's job. See
+[scope grant directory](scope-grant-directory.md).
+
+## Changelog
+
+### 2026-09-17 — Persist invitation delivery beside its grant operation
+
+WorkstreamDO invitation creation now schedules its email in the same local
+transaction as the receipt. Sending only from the HTTP handler would strand a
+committed invitation after a failed response. The existing per-object alarm
+queue retries the frozen body with a stable provider key; a separate email
+scheduler would duplicate that durable mechanism. Acceptance and revocation
+remain owner decisions independent of whether a mail was delivered. Grant
+discovery uses the same alarm mechanism to hand committed changes to the parent
+outbox, avoiding request-lifetime delivery that could lose accepted shares.
 
 ### 2026-09-11 — Unfurl expiry uses the sweep's timestamp format
 

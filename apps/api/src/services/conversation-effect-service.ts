@@ -108,7 +108,7 @@ export async function applyWorkstreamRegionalEffect(
   ) {
     throw new Error("workstream_effect_payload_hash_mismatch");
   }
-  if (isDirectoryEffect(message.effect) || message.effect.kind === "directory_automation") {
+  if (isDirectoryEffect(message.effect) || message.effect.kind === "directory_automation" || message.effect.kind === "scope_grant_directory") {
     throw new Error("workspace_owned_effect_misdirected_to_regional_queue");
   }
 

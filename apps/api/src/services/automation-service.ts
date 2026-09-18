@@ -2,6 +2,7 @@ import {
   asAutomationId,
   asUserId,
   asWorkspaceId,
+  asWorkstreamId,
   type AutomationDetail,
   type AutomationDraft,
   type AutomationExecutionPrincipalClaim,
@@ -16,7 +17,7 @@ import {
 
 import type { AutomationDO } from "../durable-objects/automation-do";
 import type { AutomationActor } from "../durable-objects/automation-do-protocol";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { automationDOName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -227,9 +228,9 @@ export class AutomationService {
 
   /**
    * Who is asking, with the one fact the automation object cannot see for
-   * itself: whether they are in the room that owns it. Resolved from the
-   * workspace directory, and false when it cannot answer, which only ever
-   * withholds the room's standing rather than granting anything.
+   * itself: whether they can manage the workstream that owns it. The directory
+   * locates the owner; its canonical management decision supplies authority.
+   * Failure withholds standing rather than falling back to a stale Main roster.
    */
   async actorRequest(automationId: string): Promise<{
     workspaceId: ReturnType<typeof asWorkspaceId>;
@@ -248,12 +249,13 @@ export class AutomationService {
         // after the archive, and the object itself answers what the archive
         // forbids (`sidekick_room_archived` on resume) rather than a blanket
         // refusal that hides it.
-        participantOfOwningWorkstream = (await workspace.workstreamParticipant({
+        const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+          this.auth.workspaceId, workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(owned.owningWorkstreamId)));
+        participantOfOwningWorkstream = (await owner.readManagementAccess({
           workspaceId: this.auth.workspaceId,
-          workstreamId: owned.owningWorkstreamId,
+          parentId: owned.owningWorkstreamId,
           userId: this.auth.userId,
-          includeArchived: true,
-        })).participant;
+        })).allowed;
       }
     } catch {
       participantOfOwningWorkstream = false;
@@ -263,7 +265,7 @@ export class AutomationService {
       automationId,
       actor: {
         userId: this.auth.userId,
-        ...(this.auth.role ? { actorRole: this.auth.role } : {}),
+        actorRole: this.auth.role,
         participantOfOwningWorkstream,
       },
     };

@@ -58,6 +58,7 @@ export function workspaceFromSession(session: DesktopSession | null): Workspace 
       ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
       timezone: userTimezone,
       role: workspace.role,
+      ...(workspace.accessClass ? { accessClass: workspace.accessClass } : {}),
     },
   };
 }

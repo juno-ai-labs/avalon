@@ -850,7 +850,11 @@ export class RallyApi {
       role: member.role,
       // Carried, not dropped: the roster is the only list that can contain a
       // membership the work-stream endpoints will refuse, and a caller that
-      // cannot see the status has no way to keep one out of a picker.
+      // cannot see the status has no way to keep one out of a picker. The
+      // access class travels for the same reason — a guest holds no role, so a
+      // surface that offers one has to be able to tell a guest apart from a
+      // member whose role simply has not loaded.
+      ...(member.accessClass ? { accessClass: member.accessClass } : {}),
       status: member.status,
     }));
   }
