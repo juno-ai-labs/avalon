@@ -26,7 +26,7 @@ describe('SidekickSection', () => {
     expect(marker.querySelector('.tabler-icon-carambola')).not.toBeNull();
     expect(screen.queryByText('Recommended')).toBeNull();
     fireEvent.pointerMove(marker, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every substream in this workstream');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Recommended for every substream in this work stream');
     expect(screen.getByRole('tooltip')).toHaveTextContent('isn’t automatically loaded');
   });
   it('opens a row and keeps removal in its right-click menu', () => {
@@ -52,8 +52,24 @@ describe('SidekickSection', () => {
       onRemoveRecommendation: remove }] });
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
     expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove workstream recommendation' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove work stream recommendation' }));
     expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('does not open an empty menu merely because the host can load options', () => {
+    const load = vi.fn();
+    renderSection({ items: [{ id: 'one', name: 'Owned guide', description: '' }], onMenuOpen: load });
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Owned guide' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('shows a loading label while lazy row actions are unknown', () => {
+    const load = vi.fn();
+    renderSection({ items: [{ id: 'one', name: 'Shared guide', description: '', managementPending: true }], onMenuOpen: load });
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Shared guide' }));
+    expect(screen.getByText('Loading Sidekick options…')).toBeVisible();
+    expect(load).toHaveBeenCalledOnce();
   });
 
   it('keeps a row that cannot be detached free of a remove control', () => {

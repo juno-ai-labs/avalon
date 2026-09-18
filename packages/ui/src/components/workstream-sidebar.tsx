@@ -7,7 +7,7 @@ import clsx from 'clsx';
 import type { SidebarPresentation } from '../lib/types';
 import { COLLAPSED_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '../lib/sidebar-geometry';
 import { AvatarStack, DragHint, IconButton, Tip, TitleSkeleton } from './primitives';
-const PENDING_SUBSTREAM_DRAFT_ID = 'new';
+export const PENDING_SUBSTREAM_DRAFT_ID = 'new';
 import { ResourceIcon } from './resource-icon';
 import { WorkstreamMark } from './workstream-glyph';
 
@@ -21,7 +21,7 @@ export interface ConversationRowActions {
   publicDisabled?: boolean | undefined;
   onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
   onRename: (target: ConversationRowTarget) => void;
-  onArchive: (target: ConversationRowTarget) => void;
+  onArchive?: (target: ConversationRowTarget) => void;
 }
 
 function ConversationRowMenu({ actions, children, target }: {
@@ -42,10 +42,10 @@ function ConversationRowMenu({ actions, children, target }: {
         {actions.onCopyLink && <ContextMenu.Item className="menu-item" onSelect={() => actions.onCopyLink?.(target)}>
           <Copy aria-hidden="true" size={16} /> {main ? 'Copy work stream link' : 'Copy substream link'}
         </ContextMenu.Item>}
-        <ContextMenu.Separator className="menu-separator" />
-        <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => actions.onArchive(target)}>
+        {actions.onArchive && <><ContextMenu.Separator className="menu-separator" />
+        <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => actions.onArchive?.(target)}>
           <Archive aria-hidden="true" size={16} /> {main ? 'Archive work stream' : 'Archive substream'}
-        </ContextMenu.Item>
+        </ContextMenu.Item></>}
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
@@ -376,6 +376,8 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
 function ResourceSection({ label, resources, onOpen }: { label: string; resources: SidebarPresentation['resources']; onOpen: (id: string, returnFocus: HTMLElement) => void }): React.JSX.Element | null {
   if (!resources.length) return null;
   return <section aria-label={label} className="workstream-context-section"><h2>{label}</h2>
+    {/* The rail owns its tooltip: native title uses a different delay and
+        never appears for someone reaching the row with the keyboard. */}
     {resources.map((resource) => <Tip key={resource.id} label={resource.title} side="right">
       <button className="workstream-context-row" aria-label={`Open ${resource.title}`} type="button" onClick={(event) => onOpen(resource.id, event.currentTarget)}>
         <span className="workstream-context-resource-icon"><ResourceIcon resource={resource} /></span>

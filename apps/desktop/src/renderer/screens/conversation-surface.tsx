@@ -360,7 +360,7 @@ export function AddParticipantDialog({
     <Modal
       description={privateSubstream
         ? 'Added participants can read this substream and its shared context. This does not grant access to the parent work stream.'
-        : 'Add people to the main conversation. Work stream sharing is managed separately.'}
+        : 'Add people to the main conversation. Opening or viewing never adds someone as a participant.'}
       onOpenChange={onOpenChange}
       open={open}
       title="Add a participant"
@@ -1040,7 +1040,8 @@ export function ConversationSurface({
    */
   const siteArtifacts = useMemo(() => {
     if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
-    const bridge = desktopBridge();
+    const bridge = window.rally;
+    if (!bridge) return undefined;
     return {
       openArtifact: (resourceId: string) => api.openArtifact(resourceId),
       describeData: (resourceId: string) => api.describeArtifactData(resourceId),
@@ -2110,6 +2111,7 @@ export function ConversationSurface({
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),
     recommendationOptions: recommendationOptions.data,
+    managementOptionsPending: !recommendationOptions.data && !recommendationOptions.isError,
     onChangeRecommendation: (sidekickId, attached) => removeSidekick.mutate({ sidekickId, attached,
       recommendation: true, workstreamId: id!, substreamId }),
   });
@@ -2132,11 +2134,11 @@ export function ConversationSurface({
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId(workstreamContext ? '0' : substreamId); setParticipantDialogOpen(true); },
-        openResource: workstreamContext ? openWorkstreamResourceDetails : openResourceDetails,
+        openParticipantDialog: () => { setParticipantDialogSubstreamId(sidebarScope === 'workstream' ? '0' : substreamId); setParticipantDialogOpen(true); },
+        openResource: sidebarScope === 'workstream' ? openWorkstreamResourceDetails : openResourceDetails,
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        openArtifact: workstreamContext ? sidebarCitations.openPreview : citations.openPreview,
+        openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx(

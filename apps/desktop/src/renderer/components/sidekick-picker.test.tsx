@@ -35,7 +35,8 @@ describe('Sidekick recommendation picker', () => {
     expect(api.getSidekickRecommendationOptions).not.toHaveBeenCalled();
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
     await waitFor(() => expect(client.getQueryData(['sidekick-recommendation-options', 'room', '0'])).toMatchObject({ canManage: false }));
-    expect(screen.queryByRole('button', { name: 'Add Sidekick' })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Add Sidekick', hidden: true })).not.toBeInTheDocument());
+    expect(screen.queryByRole('menuitem', { name: 'Create new Sidekick', hidden: true })).not.toBeInTheDocument();
   });
 
   it('keeps existing Sidekick attachment available without a setup capability', async () => {
@@ -114,7 +115,9 @@ describe('Sidekick recommendation picker', () => {
     const client = new QueryClient();
     renderPicker(client);
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Create new Sidekick' }));
+    const create = await screen.findByRole('menuitem', { name: 'Create new Sidekick' });
+    await waitFor(() => expect(create).not.toHaveAttribute('aria-disabled', 'true'));
+    fireEvent.click(create);
     expect(openSidekicks).toHaveBeenCalledWith('new');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });

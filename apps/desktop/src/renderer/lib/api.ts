@@ -584,10 +584,10 @@ export class RallyApi {
   private get socketSchema() {
     const session = this.session;
     if (!session || !('authentication' in session) || session.authentication !== 'cookie') return socketTicketSchema;
-    return socketTicketSchema.transform((ticket): SocketTicket => {
-      if (!session.workspace) throw new Error('A browser socket requires a selected workspace');
+    return socketTicketSchema.transform((ticket, ctx): SocketTicket => {
+      if (!session.workspace) { ctx.addIssue({ code: 'custom', message: 'A browser socket requires a selected workspace' }); return z.NEVER; }
       const source = new URL(ticket.url);
-      if (!source.pathname.startsWith('/socket/')) throw new Error('Invalid browser socket destination');
+      if (!source.pathname.startsWith('/socket/')) { ctx.addIssue({ code: 'custom', path: ['url'], message: 'Invalid browser socket destination' }); return z.NEVER; }
       const target = new URL(this.baseUrl, location.origin);
       target.pathname = `/regional/${encodeURIComponent(session.workspace.region)}${source.pathname}`;
       target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -883,7 +883,7 @@ export class RallyApi {
       role: member.role,
       ...(member.incarnation ? { incarnation: member.incarnation } : {}),
       ...(member.revision ? { revision: member.revision } : {}),
-      ...(member.accessClass ? { accessClass:member.accessClass } : {}),
+      ...(member.accessClass ? { accessClass: member.accessClass } : {}),
       // Carried, not dropped: the roster is the only list that can contain a
       // membership the work-stream endpoints will refuse, and a caller that
       // cannot see the status has no way to keep one out of a picker.
