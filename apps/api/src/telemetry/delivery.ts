@@ -129,12 +129,23 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
      LIMIT 50`,
   ).bind(now.toISOString(), now.toISOString(), JSON.stringify(transitions.results.map((row) => row.subject_user_id))).all<DeliveryDatabaseRow>();
 
-  const subjects = await env.DB.prepare("SELECT id, product_analytics_enabled FROM users WHERE id IN (SELECT value FROM json_each(?))")
-    .bind(JSON.stringify([...new Set(pending.results.map((row) => row.subject_user_id).filter(Boolean))])).all<{ id: string; product_analytics_enabled: number }>();
-  const preferences = new Map(subjects.results.map((row) => [row.id, row.product_analytics_enabled]));
+  // Recheck fences after selecting events: a transition may have committed
+  // between the identity and telemetry database reads above.
+  const subjects = await env.DB.prepare(
+    `SELECT u.id, u.product_analytics_enabled, EXISTS (
+       SELECT 1 FROM telemetry_profile_jobs transition
+       WHERE transition.subject_user_id = u.id AND transition.job_kind = 'epoch_transition'
+         AND transition.state IN ('pending', 'delivering')
+     ) AS transition_pending
+     FROM users u WHERE u.id IN (SELECT value FROM json_each(?))`,
+  ).bind(JSON.stringify([...new Set(pending.results.map((row) => row.subject_user_id).filter(Boolean))]))
+    .all<{ id: string; product_analytics_enabled: number; transition_pending: number }>();
+  const preferences = new Map(subjects.results.map((row) => [row.id, row]));
   const eligible: DeliveryDatabaseRow[] = [];
   for (const row of pending.results) {
-    row.product_analytics_enabled = row.subject_user_id === null ? null : preferences.get(row.subject_user_id) ?? null;
+    const subject = row.subject_user_id === null ? undefined : preferences.get(row.subject_user_id);
+    if (subject?.transition_pending === 1) continue;
+    row.product_analytics_enabled = subject?.product_analytics_enabled ?? null;
     const parsed = TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope;
     const attributableNonessential = row.subject_user_id !== null && parsed.category !== "essential";
     if (isRetiredMeetingTelemetry(parsed) || (attributableNonessential && row.product_analytics_enabled !== 1)) {

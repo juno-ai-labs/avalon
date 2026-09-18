@@ -333,12 +333,12 @@ authenticatedTelemetryRoutes.patch(
   async (c) => {
     const auth = getIdentityAuth(c);
     const body = c.req.valid("json");
-    const acceptedBefore = new Date().toISOString();
+    const acceptedBefore = new Date(c.get("requestReceivedAt") ?? Date.now()).toISOString();
     const preference = await new ProductAnalyticsPreferenceService(c.env, auth.userId).update(body);
     if (!body.enabled) {
       requestDeferral(c)(c.env.TELEMETRY_DB.prepare(
         `DELETE FROM telemetry_accepted_events WHERE subject_user_id = ?
-         AND accepted_at < ? AND delivery_state IN ('pending', 'retrying')
+         AND accepted_at <= ? AND delivery_state IN ('pending', 'retrying')
          AND json_extract(envelope_json, '$.category') IN ('product', 'diagnostic')`,
       ).bind(auth.userId, acceptedBefore).run());
       await c.env.DB.batch([
