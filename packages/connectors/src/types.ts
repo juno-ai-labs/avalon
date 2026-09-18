@@ -787,15 +787,24 @@ export interface ConnectorAdapter {
    */
   activityConnectionScopes?: readonly Scope[];
   /**
-   * The connection scopes in which a *new* connection may still be created,
+   * The connection scopes a connector will still take a *credential* for,
    * where that is narrower than the connector itself.
    *
    * Separate from `manifest.supportedScopes` because the two answer different
    * questions. `supportedScopes` is what this adapter can serve: narrowing it
    * would take the tools, the events and the webhook ingress away from
    * connections a workspace already made, which is a data migration rather
-   * than a product decision. This one closes the door on new ones and leaves
-   * the connections behind it working.
+   * than a product decision. This one closes the door and leaves the
+   * connections behind it working.
+   *
+   * The line it draws is **a new grant, not a new request**. Refused: creating
+   * a connection, completing an authorization that has none, and replacing an
+   * installation's provider API key — that last one because a replacement key
+   * is a different administrator's account as easily as the same one's, so it
+   * is a creation wearing an existing connection's clothes. Allowed:
+   * reauthorizing a connection that already exists, and every path that reads,
+   * repairs with the credential already stored, or disconnects. All three
+   * refusals answer with `connector_scope_not_connectable`.
    *
    * It exists because a workspace connection is one credential every member
    * reads through, and for a provider whose product is other people's
@@ -935,10 +944,10 @@ export function connectorActivitySupportsScope(
 }
 
 /**
- * The connection scopes a new connection to this connector may be created in.
+ * The connection scopes this connector will still take a credential for.
  *
- * The one place the default is applied, so the route that refuses a scope and
- * the surface that offers it cannot answer differently.
+ * The one place the default is applied, so the four places that refuse a scope
+ * and the surface that offers it cannot answer differently.
  */
 export function connectorConnectableScopes(
   adapter: Pick<ConnectorAdapter, "manifest" | "connectableScopes">,
@@ -946,7 +955,7 @@ export function connectorConnectableScopes(
   return adapter.connectableScopes ?? adapter.manifest.supportedScopes;
 }
 
-/** Whether a new connection to this connector may be created in this scope. */
+/** Whether this connector will still take a credential in this scope. */
 export function connectorScopeIsConnectable(
   adapter: Pick<ConnectorAdapter, "manifest" | "connectableScopes">,
   scope: Scope,

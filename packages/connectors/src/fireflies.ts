@@ -586,7 +586,9 @@ export function createFirefliesConnector(config: FirefliesConnectorConfig): Conn
       [FirefliesCapabilities.workspaceRead]: ["workspace"],
       [FirefliesCapabilities.personalRead]: ["personal"],
     },
-    // Personal only. The workspace connection is one administrator's API key
+    // Personal only, for new credentials: no new workspace connection, and no
+    // replacement key for one that exists. The workspace connection is one
+    // administrator's API key
     // that every member of the workspace reads through, so connecting it hands
     // the whole company every transcript the key can see — including calls
     // whose participants never agreed to that — and Fireflies publishes no

@@ -93,8 +93,7 @@ Ashby and Granola installations through **Manage events**. The main view shows
 plain status, the last event and explained **Test**, with **Get help** when needed.
 **Advanced** contains saved-status refresh, API-key replacement and technical
 recovery; subscription diagnostics are collapsed separately. Cleanup retry is
-shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. Rotation
-guidance is local information and does not change installation state. The
+shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. The
 workspace connection notification refreshes both list and installation queries,
 so open details do not retain a pre-repair snapshot. Management is unavailable
 offline; [installation lifecycle](connector-installation-lifecycle.md) owns its
