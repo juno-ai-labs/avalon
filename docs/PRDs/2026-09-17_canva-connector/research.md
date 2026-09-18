@@ -269,7 +269,7 @@ scans with durable ID deduplication are justified; a top-ID waterline is not.
 
 Still untested: deletions, comment/reply edits, mentions, other-user actions,
 reopening, timestamp ties, large designs and provider consistency guarantees.
-Rally's checkpoint atomicity, failed scans and delivery recovery also require
+Rally's checkpoint commit ordering, failed scans and delivery recovery also require
 implementation tests. The disposable design retains the probe edits and
 comments; other designs were not changed.
 
@@ -277,12 +277,13 @@ comments; other designs were not changed.
 
 The [overview](https://www.canva.dev/docs/mcp/) continues to direct partners to
 apply for redirect allowlisting, and recommends CIMD while retaining DCR. Local
-Inspector success is not production approval. The application is drafted, not
-submitted. The proposed Global and EU callback paths are recorded in the PRD;
+Inspector success is not production approval. The application was submitted on
+2026-09-18; approval is pending. The proposed Global and EU callback paths are
+recorded in the PRD;
 they are not implemented or approved. Rally is pre-launch with zero active
-users. The suggested initial pilot forecast is fewer than 1,000 aggregate MCP
-tool calls per month across users and workspaces, not a measured demand figure,
-per-user quota or contractual promise.
+users. The submitted forecast is 1,000–10,000 aggregate MCP tool calls per month
+across all users and workspaces, including a launch buffer, not a measured
+demand figure, per-user quota or contractual promise.
 
 The current overview assigns resize to Pro+ and brand kits, templates and
 autofill to Enterprise, unlike the earlier tool-page claims above. Per-call

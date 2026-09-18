@@ -257,6 +257,38 @@ anticipates it — *"a connector that later delivers events to personal
 connections declares it once, in its adapter, and both surfaces follow."* Canva
 is that connector.
 
+### Google polling reference
+
+Use the existing implementation, read on 2026-09-18, as the reference:
+
+- [Google adapter](../../../packages/connectors/src/index.ts): `pollGmail`
+  retains its old history ID while pages or changes remain; `pollCalendarChanges`
+  distinguishes baseline/page progress from a completed sync token; `pollDrive`
+  carries the next change-page token until it receives a new start token. These
+  are provider-native change feeds, not sorted inventory scans.
+- [Shared runner](../../../packages/connectors/src/types.ts):
+  `pollCheckpointedActivityStreams` normalizes checkpoints on load and return,
+  preserves failed streams while successful siblings progress, and selects the
+  earliest backlog/retry deadline. Canva must explicitly configure scheduling
+  consistent with its agreed floor rather than inherit Google's fast backlog
+  cadence or the runner's defaults.
+- [Poll service](../../../apps/api/src/services/integrations.ts) and
+  [workflow](../../../apps/api/src/workflows/connector-poll.ts): persist
+  canonical activities, enqueue them, then compare-and-swap the cursor against
+  the starting cursor. Retries recover pending canonical activities; stale
+  commits cannot overwrite newer progress. This is ordered, replay-safe
+  persistence, not a single atomic transaction across storage and the queue.
+
+For Canva, keep in-progress scan state separate from the last completed
+baseline. A scan may resume across polls, but it must not mark unvisited pages
+or replies as observed, nor finish the initial baseline early. Preserve stable
+activity identity and payload across delivery retries. Validate checkpoint
+shapes and test interruption, replay, failed sibling streams and stale commits
+against the existing runner/workflow. Continuation expiry and safe scan restart
+need provider-specific handling; Google's token-reset behavior is not evidence
+for Canva's behavior. Complete scanning still does not guarantee a snapshot or
+capture comments created and deleted between observations.
+
 ### The two streams
 
 **`design.revised`** — compare `get-design.updated_at` for the named design.
@@ -309,8 +341,8 @@ Expose them only after their acceptance tests and audience policy pass:
 
 | Trigger | Digestibility | Filter fields | Resource relationship |
 | --- | --- | --- | --- |
-| `design.revised` | digestible | `designId`, `designTitle` | `design` → `canva_design` |
-| `design.commented` | digestible | `designId`, `designTitle`, `threadId`, optional `replyId` | `design` → `canva_design` |
+| `design.revised` | digestible | `designId`, `designTitle` | `file` → `canva_design` |
+| `design.commented` | digestible | `designId`, `designTitle`, `threadId`, optional `replyId` | `file` → `canva_design` |
 
 `resourceTypes: ["canva_design"]`, `supportsPolling: true`,
 `supportsWebhooks: false`, `supportsWatches: true`. The resource type
