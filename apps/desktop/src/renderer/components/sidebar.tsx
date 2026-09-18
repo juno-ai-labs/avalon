@@ -947,6 +947,35 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
   return [...without.slice(0, bounded), id, ...without.slice(bounded)];
 }
 
+type SidebarMenuFailure = 'archive' | 'make_public' | 'make_private' | 'pin' | 'unpin' | 'reorder_pinned';
+
+const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: string }> = {
+  archive: {
+    title: 'Work stream could not be archived',
+    copy: 'The work stream is still in the sidebar. Try again in a moment.',
+  },
+  make_public: {
+    title: 'Work stream visibility could not be changed',
+    copy: 'The work stream is still private. Try again in a moment.',
+  },
+  make_private: {
+    title: 'Work stream visibility could not be changed',
+    copy: 'The work stream is still visible to the workspace. Try again in a moment.',
+  },
+  pin: {
+    title: 'Work stream could not be pinned',
+    copy: 'The work stream is still in the recent list. Try again in a moment.',
+  },
+  unpin: {
+    title: 'Work stream could not be unpinned',
+    copy: 'The work stream is still pinned. Try again in a moment.',
+  },
+  reorder_pinned: {
+    title: 'Pinned work streams could not be reordered',
+    copy: 'The pinned list is back in the order it was in. Try again in a moment.',
+  },
+};
+
 export function Sidebar({
   onOpenSearch,
   conversationOnly = false,
@@ -1017,11 +1046,11 @@ export function Sidebar({
   const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
-  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renameFailed, setRenameFailed] = useState(false);
   // The note actions and a work stream's visibility apply straight from the
   // menu, so a rejection has nowhere to land unless it is raised here: the row
   // simply stays as it was.
-  const [menuError, setMenuError] = useState<{ copy: string; message: string; title: string } | null>(null);
+  const [menuFailure, setMenuFailure] = useState<SidebarMenuFailure | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
   // The work stream a pin or unpin has just moved, and which side of the
@@ -1111,7 +1140,7 @@ export function Sidebar({
   const [batchTarget, setBatchTarget] = useState<WorkstreamBatchTarget | null>(null);
   const [batchPreviewing, setBatchPreviewing] = useState(false);
   const [batchApplying, setBatchApplying] = useState(false);
-  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchFailure, setBatchFailure] = useState<'preview' | 'apply' | null>(null);
   const [batchPreviewFailed, setBatchPreviewFailed] = useState(false);
   const batchPreviewGeneration = useRef(0);
   const visibleWorkstreams = workstreams;
@@ -1180,7 +1209,7 @@ export function Sidebar({
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
     setRenameTitle(workstream.title);
-    setRenameError(null);
+    setRenameFailed(false);
   };
 
   const closeArchiveWorkstream = (): void => {
@@ -1208,13 +1237,9 @@ export function Sidebar({
         pinned: archiveWorkstreamTarget.pinPosition !== null,
       });
       setArchiveWorkstreamTarget(null);
-    } catch (error) {
+    } catch {
       setArchiveWorkstreamTarget(null);
-      setMenuError({
-        title: 'Work stream could not be archived',
-        copy: 'The work stream is still in the sidebar. Try again in a moment.',
-        message: error instanceof Error ? error.message : 'The work stream could not be archived.',
-      });
+      setMenuFailure('archive');
     } finally {
       setArchivingWorkstream(false);
     }
@@ -1241,15 +1266,15 @@ export function Sidebar({
       matchedNoteCount: seeded.notes,
     });
     setBatchPreviewing(true);
-    setBatchError(null);
+    setBatchFailure(null);
     setBatchPreviewFailed(false);
     void onPreviewWorkstreamBatch(filter).then(({ matchedCount, matchedNoteCount }) => {
       if (batchPreviewGeneration.current !== generation) return;
       setBatchTarget((current) => current ? { ...current, matchedCount, matchedNoteCount } : null);
-    }).catch((error: unknown) => {
+    }).catch(() => {
       if (batchPreviewGeneration.current !== generation) return;
       setBatchPreviewFailed(true);
-      setBatchError(error instanceof Error ? error.message : 'The work streams could not be counted.');
+      setBatchFailure('preview');
     }).finally(() => {
       if (batchPreviewGeneration.current === generation) setBatchPreviewing(false);
     });
@@ -1259,7 +1284,7 @@ export function Sidebar({
     if (batchApplying) return;
     batchPreviewGeneration.current += 1;
     setBatchTarget(null);
-    setBatchError(null);
+    setBatchFailure(null);
     setBatchPreviewFailed(false);
     setBatchPreviewing(false);
   };
@@ -1267,7 +1292,7 @@ export function Sidebar({
   const submitWorkstreamBatch = async (): Promise<void> => {
     if (!batchTarget || batchPreviewing || batchTotal(batchTarget) === 0) return;
     setBatchApplying(true);
-    setBatchError(null);
+    setBatchFailure(null);
     try {
       await onApplyWorkstreamBatch(
         batchTarget.operationId,
@@ -1275,8 +1300,8 @@ export function Sidebar({
         batchTarget.update,
       );
       setBatchTarget(null);
-    } catch (error) {
-      setBatchError(error instanceof Error ? error.message : 'The work streams could not be updated.');
+    } catch {
+      setBatchFailure('apply');
     } finally {
       setBatchApplying(false);
     }
@@ -1297,14 +1322,8 @@ export function Sidebar({
         origin: workstream.systemKind ? 'system' : 'ad_hoc',
         pinned: workstream.pinPosition !== null,
       });
-    } catch (error) {
-      setMenuError({
-        title: 'Work stream visibility could not be changed',
-        copy: scope === 'workspace'
-          ? 'The work stream is still private. Try again in a moment.'
-          : 'The work stream is still visible to the workspace. Try again in a moment.',
-        message: error instanceof Error ? error.message : 'The work stream could not be updated.',
-      });
+    } catch {
+      setMenuFailure(scope === 'workspace' ? 'make_public' : 'make_private');
     } finally {
       setScopePendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
@@ -1333,14 +1352,8 @@ export function Sidebar({
           pinned,
         });
       }
-    } catch (error) {
-      setMenuError({
-        title: pinned ? 'Work stream could not be pinned' : 'Work stream could not be unpinned',
-        copy: pinned
-          ? 'The work stream is still in the recent list. Try again in a moment.'
-          : 'The work stream is still pinned. Try again in a moment.',
-        message: error instanceof Error ? error.message : 'The work stream could not be updated.',
-      });
+    } catch {
+      setMenuFailure(pinned ? 'pin' : 'unpin');
     } finally {
       setPinPendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
@@ -1371,12 +1384,8 @@ export function Sidebar({
         visibleIds.has(pinned.id) ? order[nextVisible++]! : pinned.id
       ));
       await onReorderPinnedWorkstreams(completeOrder);
-    } catch (error) {
-      setMenuError({
-        title: 'Pinned work streams could not be reordered',
-        copy: 'The pinned list is back in the order it was in. Try again in a moment.',
-        message: error instanceof Error ? error.message : 'The pinned order could not be saved.',
-      });
+    } catch {
+      setMenuFailure('reorder_pinned');
     } finally {
       // Only if this call's arrangement is still the one on screen. Two moves
       // in quick succession overlap, and clearing unconditionally would let the
@@ -1453,14 +1462,14 @@ export function Sidebar({
   const closeRename = (): void => {
     if (renaming) return;
     setRenameTarget(null);
-    setRenameError(null);
+    setRenameFailed(false);
   };
 
   const submitRename = async (): Promise<void> => {
     const title = renameTitle.trim();
     if (!renameTarget || !title || title === renameTarget.title) return;
     setRenaming(true);
-    setRenameError(null);
+    setRenameFailed(false);
     try {
       await onRenameWorkstream(renameTarget, title);
       reportTelemetryProductIntent({
@@ -1472,8 +1481,8 @@ export function Sidebar({
         pinned: renameTarget.pinPosition !== null,
       });
       setRenameTarget(null);
-    } catch (error) {
-      setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
+    } catch {
+      setRenameFailed(true);
     } finally {
       setRenaming(false);
     }
@@ -2082,7 +2091,7 @@ export function Sidebar({
             />
           </label>
         </form>
-        {renameError && <InlineError>{renameError}</InlineError>}
+        {renameFailed && <InlineError>The work stream couldn’t be renamed.</InlineError>}
       </Modal>
 
       <Modal
@@ -2111,7 +2120,9 @@ export function Sidebar({
           {batchTarget?.update.kind === 'archive' ? 'archived' : 'marked as read'}. Are you sure?
         </p>
         {batchPreviewing && <p aria-live="polite" className="modal-copy">Checking the current total…</p>}
-        {batchError && <InlineError>{batchError}</InlineError>}
+        {batchFailure && <InlineError>{batchFailure === 'preview'
+          ? 'The work streams couldn’t be counted. Try again.'
+          : 'The work streams couldn’t be updated. Try again.'}</InlineError>}
       </Modal>
       <Modal
         footer={(
@@ -2140,15 +2151,14 @@ export function Sidebar({
         </p>
       </Modal>
       <Modal
-        footer={<Button onClick={() => setMenuError(null)}>Close</Button>}
+        footer={<Button onClick={() => setMenuFailure(null)}>Close</Button>}
         onOpenChange={(open) => {
-          if (!open) setMenuError(null);
+          if (!open) setMenuFailure(null);
         }}
-        open={Boolean(menuError)}
-        title={menuError?.title ?? 'That could not be updated'}
+        open={Boolean(menuFailure)}
+        title={menuFailure ? sidebarMenuFailureCopy[menuFailure].title : 'That could not be updated'}
       >
-        <p className="modal-copy">{menuError?.copy}</p>
-        {menuError && <InlineError>{menuError.message}</InlineError>}
+        {menuFailure && <InlineError>{sidebarMenuFailureCopy[menuFailure].copy}</InlineError>}
       </Modal>
     </>
   );

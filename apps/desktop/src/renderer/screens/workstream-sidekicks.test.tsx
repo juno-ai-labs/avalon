@@ -181,11 +181,12 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     renderScreen(true);
     fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
-    expect(await screen.findByText('Removal failed in main.')).toBeVisible();
+    expect(await screen.findByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
     fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
     expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
-    expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
   });
 
   it('keeps recommendations shared and loaded rows local when switching substreams', async () => {
@@ -245,7 +246,8 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     api.getWorkstreamSidekicks.mockRejectedValue(new ApiError('The service is unavailable.', 500));
     renderScreen();
 
-    expect(await screen.findByText('The service is unavailable.')).toBeVisible();
+    expect(await screen.findByText('Some Sidekick information may be out of date.')).toBeVisible();
+    expect(screen.queryByText('The service is unavailable.')).not.toBeInTheDocument();
     // And the half that did answer stays on screen under it.
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
   });

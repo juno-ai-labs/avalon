@@ -79,13 +79,13 @@ describe('SidekickSection', () => {
     expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
   });
 
-  it('leaves no heading behind for an empty answer or a pending one, and surfaces read failures', () => {
+  it('leaves no heading behind for an empty answer or a pending one, and owns failure copy', () => {
     const { rerender } = renderSection({ items: [] });
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
     rerender(<Tooltip.Provider><SidekickSection /></Tooltip.Provider>);
     expect(screen.queryByRole('heading', { name: 'Sidekicks' })).toBeNull();
-    rerender(<Tooltip.Provider><SidekickSection items={[]} error="Could not load Sidekicks" /></Tooltip.Provider>);
-    expect(screen.getByText('Could not load Sidekicks')).toBeVisible();
+    rerender(<Tooltip.Provider><SidekickSection items={[]} failed /></Tooltip.Provider>);
+    expect(screen.getByText('Sidekicks couldn’t be loaded.')).toBeVisible();
   });
 
   it('keeps the rows that arrived beside a failure rather than replacing them', () => {
@@ -94,9 +94,9 @@ describe('SidekickSection', () => {
     // loses a list that worked to report a failure about something else.
     renderSection({
       items: [{ id: 'one', name: 'Editor', description: 'Review wording' }],
-      error: 'That Sidekick could not be removed.',
+      failed: true,
     });
-    expect(screen.getByText('That Sidekick could not be removed.')).toBeVisible();
+    expect(screen.getByText('Some Sidekick information may be out of date.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
   });
 });

@@ -40,6 +40,23 @@ versioned data. Do not trade an import-cycle problem for untyped `fetch`,
 `unknown` payloads, or duplicated interfaces. Put a shared contract in the
 lowest layer both sides can import without importing an implementation.
 
+## Presentation owns product copy
+
+Presentation components accept semantic failure state, not exception text or
+transport/provider response messages. A host may pass a boolean when one stable
+failure treatment is enough, or a small domain union such as `load | attach`
+when the action changes the recovery copy. The component maps that state to
+Rally-authored language.
+
+Raw diagnostics remain useful to logs, telemetry, and request tooling, but they
+are not a presentation contract. In particular, never render `error.message`
+in persistent navigation, sidebar, or inspector chrome. Those surfaces combine
+many independent requests and remain visible after the action that failed, so a
+server sentence there looks like product content and can outlive its context.
+The scoped ESLint rule over sidebar and rail production modules enforces this
+boundary. Sidebar/rail filenames join that scope automatically; presentation
+modules with another name must be listed when they become part of those surfaces.
+
 ## Construct Zod object modes directly
 
 In production source reachable from the API Worker, construct an object's
@@ -103,6 +120,24 @@ production JavaScript and TypeScript source. Existing test and operator-script
 exceptions are migration debt and must be removed when those files are touched;
 native host-language calls such as Objective-C's `ObjC.import` are not
 JavaScript module imports.
+
+### 2026-09-18 — Sidebar presentation owns failure language
+
+**What changed:** Sidebar and inspector boundaries now carry semantic failure
+states, and a scoped lint rule rejects reads of raw diagnostic `.message`
+properties in their production modules.
+
+**Why:** A router 404 sentence reached the Sidekicks rail as if it were Rally
+copy. The same exception-to-string pattern existed in adjacent navigation,
+project, work-stream action, picker, and resource surfaces.
+
+**Considered and rejected:** Filtering known server strings would preserve an
+unsafe default for the next unknown response. A repository-wide ban would also
+reject legitimate diagnostic handling outside presentation.
+
+**Consequences:** Rail components own stable copy for each action. New
+sidebar/rail modules join the lint scope by filename, while lower layers remain
+free to retain rich errors for diagnosis.
 
 ### 2026-09-01 — Cold API schema families construct on first use
 

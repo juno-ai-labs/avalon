@@ -437,7 +437,7 @@ describe('InspectorRail details', () => {
     render(
       <Tooltip.Provider>
         <InspectorRail
-          resourceVersionsError="Rally could not load this history."
+          resourceVersionsFailed
           workstream={{ ...workstream, resources: [watched] }}
         />
       </Tooltip.Provider>,
@@ -448,7 +448,7 @@ describe('InspectorRail details', () => {
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
     expect(screen.getByRole('menu', { name: 'Versions' })).toBeVisible();
-    expect(screen.getByText('Rally could not load this history.')).toBeVisible();
+    expect(screen.getByText('Resource history couldn’t be loaded.')).toBeVisible();
   });
 
   it('says versions are loading rather than that there are none', () => {
@@ -662,7 +662,8 @@ describe('InspectorRail details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
 
-    expect(await screen.findByText('The work stream refused the unlink.')).toBeVisible();
+    expect(await screen.findByText('The resource couldn’t be archived.')).toBeVisible();
+    expect(screen.queryByText('The work stream refused the unlink.')).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Archive this resource?' })).toBeVisible();
     expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
   });

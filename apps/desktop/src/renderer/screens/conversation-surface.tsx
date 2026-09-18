@@ -718,7 +718,7 @@ const NO_RESOURCES: WorkstreamDetail['resources'] = [];
 export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
   sidekicks?: SidekickRow[] | undefined;
-  sidekicksError?: string | undefined;
+  sidekicksFailed?: boolean | undefined;
   loadSidekickOptions: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
@@ -759,7 +759,7 @@ export interface ConversationSurfaceProps {
   renderSidebar?: (context: ConversationHeaderContext & {
     /** This room's Sidekicks; `undefined` until both lists behind it answer. */
     sidekicks: SidekickRow[] | undefined;
-    sidekicksError: string | undefined;
+    sidekicksFailed: boolean;
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
@@ -2117,11 +2117,17 @@ export function ConversationSurface({
     onChangeRecommendation: (sidekickId, attached) => removeSidekick.mutate({ sidekickId, attached,
       recommendation: true, workstreamId: id!, substreamId }),
   });
-  const sidekicksError = (readOwnedSidekickDetails ? ownedSidekicks.error?.message : undefined)
-    ?? attachedSidekicks.error?.message
-    ?? recommendedSidekicks.error?.message
-    ?? recommendationOptions.error?.message
-    ?? removeSidekick.error?.message;
+  // A server/provider message belongs in diagnostics, not in the sidebar.
+  // The API client already records request path, status and request id; this
+  // surface passes only failure presence to shared presentation, which owns
+  // the stable Rally copy.
+  const sidekicksFailed = Boolean(
+    (readOwnedSidekickDetails && ownedSidekicks.error)
+    || attachedSidekicks.error
+    || recommendedSidekicks.error
+    || recommendationOptions.error
+    || removeSidekick.error,
+  );
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -2132,7 +2138,7 @@ export function ConversationSurface({
       {renderSidebar?.({
         sidekicks: sidekickRows,
         loadSidekickOptions: () => { void recommendationOptions.refetch(); },
-        sidekicksError,
+        sidekicksFailed,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -2187,7 +2193,7 @@ export function ConversationSurface({
         detail: displayedDetail,
         sidekicks: sidekickRows,
         loadSidekickOptions: () => { void recommendationOptions.refetch(); },
-        sidekicksError,
+        sidekicksFailed,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
         openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
@@ -2390,10 +2396,13 @@ export function ConversationSurface({
         } } : {})}
         dropTarget={railDrop}
         {...(api ? { loadResourceContent: loadResourceContent } : {})}
-        error={watchResource.error?.message
-          ?? detachResource.error?.message
-          ?? refreshResource.error?.message
-          ?? attachResource.error?.message}
+        failure={watchResource.error
+          ? 'watch'
+          : detachResource.error
+            ? 'detach'
+            : refreshResource.error
+              ? 'refresh'
+              : attachResource.error ? 'attach' : undefined}
         leaving={railLeaving}
         onAddParticipant={() => { setParticipantDialogSubstreamId(resourcePreview?.workstreamScoped ? '0' : substreamId); setParticipantDialogOpen(true); }}
         {...(substreamId === '0' || resourcePreview?.workstreamScoped ? {
@@ -2405,11 +2414,11 @@ export function ConversationSurface({
         onOpenResourceVersion={openResourceVersion}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
-        resourceVersionsError={resourceVersions.error?.message}
+        resourceVersionsFailed={Boolean(resourceVersions.error)}
         {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={resourceManagementDetail}
         sidekicks={sidekickRows}
-        sidekicksError={sidekicksError}
+        sidekicksFailed={sidekicksFailed}
       />}
 
       <AddParticipantDialog
