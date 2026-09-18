@@ -1,7 +1,8 @@
 # Performance tracing
 
-Three things in Rally are slow enough that a person notices: starting a work
-stream, opening one that already exists, and sending a message to one. Each
+Five things in Rally are slow enough that a person notices: starting a work
+stream, preparing a substream, confirming that substream, opening an existing
+conversation, and sending a message. Each
 spans the Electron renderer, a regional Worker, and two or three Durable
 Objects, and until this existed the only measurement of any of them was the
 `http_request` log row's total duration — a single number that says a create
@@ -30,8 +31,9 @@ necessarily keeps apart.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
-| `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `POST /:id/messages`, and both socket-ticket routes. |
+| `apps/api/src/routes/workstreams.ts`, `routes/conversations.ts` | Root spans for work-stream creation/open/message flows and substream preparation/confirmation. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
+| `apps/api/src/services/substream-creation-service.ts` | Named steps for parent authorization, preparation receipts, source capture, context transformation, child provisioning, context installation, opening admission, publication, and seating. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |
@@ -126,6 +128,29 @@ Cloudflare bills a span and a log event identically, out of one allowance, so
 the row costs the same as adding a thirteenth span. One row per flow is the
 budget it is worth.
 
+### Inference-start SLO boundary
+
+The user-facing target is measured from the regional Worker receiving the
+request to the harness issuing the first provider request: p50 500 ms and p90
+2 seconds. It is deliberately separate from provider time to first token.
+
+For `workstream_create`, `substream_create`, and `message_send`, the server
+captures `telemetryRequestReceivedAt` in the first Worker middleware (or at
+socket invocation entry) and carries a stable journey name in the durable
+execution receipt. Immediately before the first provider dispatch of the first
+durable attempt, the inference logger emits `agent_inference_started` with
+`request_to_inference_start_ms` and archives the same boundary in that request
+row's `metadata` JSON. Later model calls and recovered attempts retain their
+ordinary request archives but omit this SLO field, so percentile queries filter
+for its presence rather than deduplicating a whole agentic run. A negative
+cross-isolate wall-clock delta is marked `request_clock_skewed` and omitted from
+the duration distribution instead of being clamped to zero. The terminal
+attempt's existing `ttft_ms` measures provider request to first token. Join the
+two rows on `inference_request_id`; use `operation_id` in the regional log or
+`metadata.operationId` in the lakehouse to join the result back to the product
+journey. Do not add these two durations together when reporting which side of
+the boundary missed its target.
+
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
 same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
@@ -169,7 +194,7 @@ under `avalon.`, so it can never collide with a convention added later:
 
 | Attribute | Meaning |
 | --- | --- |
-| `rally.flow` | `workstream_create`, `workstream_open`, or `workstream_message_send`. |
+| `rally.flow` | `workstream_create`, `substream_prepare`, `substream_create`, `workstream_open`, or `workstream_message_send`. |
 | `rally.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
 | `rally.workspace.id`, `rally.workstream.id`, `rally.substream.id` | The identifiers a slow trace has to be attributable to. |
 | `rally.request.id` | The desktop's `x-request-id`. |
@@ -274,16 +299,17 @@ would never meet.
 | The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
 | Renderer → admitted SubstreamAgent socket | `rally.message.client_id`, which the renderer, the command, and the private command result all carry. |
 
-### The three flows
+### The five flows
 
 **`workstream_create`** — `POST /workstreams` opens `workstream.create` and the
 creation service adds a span per awaited call:
 `workstream.create.authority.read_recheck` (named for the second read it is —
 the route already resolved the same row), `…receipt.reserve`, `…receipt.read`,
-`…email_address.reserve`, `…d1_rows.write`, `…object.initialize`,
-`…substream.flush_effects`, `…workstream.flush_directory`,
-`…workspace.directory_probe`, `…route.activate`, `…email_route.activate`,
-`…receipt.complete`. Inside `object.initialize` the room adds
+`…email_address.reserve`, `…d1_rows.write`, `…parent.reserve`,
+`…child.initialize`, `…directory.flush`, `…route.activate`, and
+`…receipt.complete`. The child initialization and provisional directory flush
+are distinct sibling steps that run concurrently, so either latency source can
+be assigned without serializing them. Inside `child.initialize` the room adds
 `workstream.room.initialize` and its children. A replayed create is labelled
 `rally.create.path = replayed_receipt` so it does not sit in the same
 distribution as a first one.
@@ -537,9 +563,9 @@ workspace search and the work-stream flows described here.
   re-send canonical state (`request_snapshot`, see
   [`architecture.md`](architecture.md)) runs the same snapshot assembly a
   subscribe does, but under `noFlowSpan` — it is a background repair, not one of
-  the three flows a person waits on, and `PerfFlow` is deliberately limited to
+  the five flows a person waits on, and `PerfFlow` is deliberately limited to
   those. The consequence is that a slow reconciliation is invisible here; it
-  appears only as room time nobody attributed. Adding a fourth flow is the lever
+  appears only as room time nobody attributed. Adding another flow is the lever
   if that becomes the question, and it costs a `perf_flow` row per repair.
 - **A `workstream_open` trace is not always a completed open.** The renderer
   closes the trace on the first valid server frame and records which one it was
@@ -690,6 +716,16 @@ Note also how an export is scoped, because it is easy to get backwards. The
 destination is account configuration; the **attachment is per Worker**, through
 `observability.<signal>.destinations`. Creating a destination exports nothing —
 a Worker exports when its own config names one.
+
+### 2026-09-17 — Name substream stages and split inference-start from provider TTFT
+
+Substream preparation and confirmation now have their own flow roots and named
+steps instead of appearing as opaque request totals. User-started executions
+carry the Worker receipt time to the provider boundary, where a structured log
+and lakehouse request record measure admission-to-dispatch independently from
+the attempt row's TTFT. This split was chosen because a slow provider and a slow
+Rally activation path have different owners; one combined number made the
+largest latency source impossible to assign.
 
 ### 2026-09-17 — Mention resolution reuses the workspace roster
 

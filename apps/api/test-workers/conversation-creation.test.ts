@@ -22,7 +22,7 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
@@ -284,5 +284,50 @@ describe("creating a work stream", () => {
     ));
     await expect(parent.listChildren({ workspaceId: WORKSPACE_ID, parentId: workstreamId }))
       .resolves.toMatchObject({ children: [{ substreamId: "0", kind: "main" }] });
+  });
+
+  it("keeps the provisional visibility fence when recovery wins the deferred-delivery race", async () => {
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000bb9");
+    const now = "2026-09-17T20:00:00.000Z";
+    await env.DB.prepare(
+      `INSERT INTO workstream_authority_routes
+         (workspace_id, workstream_id, generation, object_name, state, stage_index,
+          source_cursor, source_fence_sequence, source_hash, target_hash,
+          row_counts_json, imported_at, verified_at, activated_at, updated_at)
+       VALUES (?, ?, 1, ?, 'verified', 0, 0, 0, 'created_in_do', 'created_in_do',
+               '{}', ?, ?, NULL, ?)`,
+    ).bind(WORKSPACE_ID, workstreamId, `global:${WORKSPACE_ID}:${workstreamId}`, now, now, now).run();
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, workstreamId),
+    ));
+    await parent.reserveChild({
+      workspaceId: WORKSPACE_ID,
+      parentId: workstreamId,
+      substreamId: asSubstreamId("0"),
+      kind: "main",
+      createdByUserId: USER_ID,
+      authorityGeneration: 1,
+      deferDirectoryDelivery: true,
+      directory: {
+        title: "Recovered creation fence",
+        description: "Alarm delivery remains direct",
+        scope: "personal",
+        systemKind: null,
+        emailAddress: null,
+        titleStatus: "settled",
+        createdAt: now,
+      },
+    });
+
+    await expect.poll(async () => {
+      await runDurableObjectAlarm(parent);
+      return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+        title: string;
+        waterline: number;
+      }>(
+        `SELECT title, waterline FROM workspace_workstream_directory WHERE workstream_id = ?`,
+        workstreamId,
+      ).toArray());
+    }).toEqual([{ title: "Recovered creation fence", waterline: 1 }]);
   });
 });

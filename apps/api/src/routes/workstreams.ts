@@ -179,6 +179,7 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
 });
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
+  const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
   const auth = getAuth(c);
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
@@ -201,7 +202,13 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
           descriptionSource: body.objective ? "authored" : "derived",
           // The one caller whose `participantUserIds` is people somebody picked
           // by hand, which is what makes telling them the right thing to do.
-        }, { span, notifyParticipants: true, authorityControl }));
+        }, {
+          span,
+          notifyParticipants: true,
+          authorityControl,
+          ...(operationId ? { telemetryOperationId: operationId } : {}),
+          telemetryRequestReceivedAt: requestReceivedAt,
+        }));
     const created = CreatedWorkstreamSchema.parse(result);
     span.setAttributes({
       "rally.workstream.id": created.workstream.id,
