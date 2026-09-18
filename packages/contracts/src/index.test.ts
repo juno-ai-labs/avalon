@@ -1305,7 +1305,7 @@ describe("boundary contracts", () => {
       actualMimeType: "image/png",
       attachmentKind: "image",
       suggestedCall: {
-        tool: "workstream_view_resource",
+        tool: "view_resource",
         arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
       },
       converterPayload: { prompt: "do not forward me" },
@@ -1316,11 +1316,56 @@ describe("boundary contracts", () => {
         actualMimeType: "image/png",
         attachmentKind: "image",
         suggestedCall: {
-          tool: "workstream_view_resource",
+          tool: "view_resource",
           arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
         },
       },
     });
+    // A receipt written before the plugins dropped their wire prefixes stores
+    // the retired spelling. This path re-parses stored `errorJson` on every
+    // reprojection, and one invalid field discards the whole detail — so the
+    // retired name is normalized rather than rejected, or the resource id and
+    // attachment kind beside it would be lost with it.
+    expect(readStructuredFailure(new ProviderError("resource_tool_mismatch", "Wrong tool", {
+      reason: "wrong_attachment_tool",
+      attachmentKind: "image",
+      suggestedCall: {
+        tool: "workstream_view_resource",
+        arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
+      },
+    }))).toEqual({
+      code: "resource_tool_mismatch",
+      details: {
+        reason: "wrong_attachment_tool",
+        attachmentKind: "image",
+        suggestedCall: {
+          tool: "view_resource",
+          arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
+        },
+      },
+    });
+    expect(readStructuredFailure(new ProviderError("resource_tool_mismatch", "Wrong tool", {
+      attachmentKind: "site",
+      suggestedCall: {
+        tool: "terminal_import_resource",
+        arguments: { resourceId: "019ff769-f7a4-70c8-87a7-16722ff2ce43" },
+      },
+    }))).toEqual({
+      code: "resource_tool_mismatch",
+      details: {
+        attachmentKind: "site",
+        suggestedCall: {
+          tool: "import_resource",
+          arguments: { resourceId: "019ff769-f7a4-70c8-87a7-16722ff2ce43" },
+        },
+      },
+    });
+    // A retired name is not a licence to widen the shape: the arguments still
+    // have to match the tool they normalize to.
+    expect(readStructuredFailure(new ProviderError("resource_tool_mismatch", "Wrong tool", {
+      attachmentKind: "image",
+      suggestedCall: { tool: "workstream_view_resource", arguments: { command: "cat /etc/passwd" } },
+    }))).toEqual({ code: "resource_tool_mismatch" });
     expect(readStructuredFailure(new ProviderError("resource_tool_mismatch", "Wrong tool", {
       actualMimeType: "x".repeat(161),
       attachmentKind: "image",

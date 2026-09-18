@@ -510,7 +510,7 @@ describe("Terminal sandbox coordinator", () => {
         id: invocationId,
         runId: RUN_ID,
         toolCallId: `batch-call-${index}`,
-        toolName: "terminal_run_command",
+        toolName: "run_command",
         position: index,
       });
       workstreamObjectRun(
@@ -562,7 +562,7 @@ describe("Terminal sandbox coordinator", () => {
       id: effectId,
       runId: RUN_ID,
       toolCallId: "planned-recovery-call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     workstreamObjectRun(
       objectStore,
@@ -625,7 +625,7 @@ describe("Terminal sandbox coordinator", () => {
         id: effectId,
         runId: RUN_ID,
         toolCallId: callId,
-        toolName: "terminal_run_command",
+        toolName: "run_command",
         position,
       });
     }
@@ -701,7 +701,7 @@ describe("Terminal sandbox coordinator", () => {
       id: effectId,
       runId: RUN_ID,
       toolCallId: "transient-recovery-call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     await expect(terminal.insertTask({
       taskId: "transient-recovery-task",
@@ -780,7 +780,7 @@ describe("Terminal sandbox coordinator", () => {
       id: effectId,
       runId: RUN_ID,
       toolCallId: "renew-race-call",
-      toolName: "terminal_run_command",
+      toolName: "run_command",
     });
     const terminal = baseFactory(WORKSPACE_ID, WORKSTREAM_ID);
     await expect(terminal.insertTask({

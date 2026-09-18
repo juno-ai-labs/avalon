@@ -772,6 +772,41 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-09-18 — Terminal's tools take the names the model already knows
+
+**What changed:** `rally:terminal` declares an empty short wire name, so its
+nine tools reach the model as `read_file`, `edit_file`, `write_file`,
+`apply_patch`, `run_command`, `checkout_repository`, `import_resource`,
+`publish_resource`, and `publish_branch_and_pr`. The plugin system message, the
+tool descriptions, and every runtime remediation string that names a tool
+(`runtime.ts`, `tools.ts`, `repository.ts`, the resident-context instruction
+blocks, and the attachment contracts) were updated with it. The tools themselves,
+their capabilities, modes, idempotency and timeouts are untouched.
+
+**Why:** `read_file` and `run_command` are among the most heavily represented
+tool names in any model's pretraining, and `terminal_` pushed all nine off that
+vocabulary for a namespace that was distinguishing them from nothing. This is
+the third design test in `docs/agent-tools.md` — does every name match what the
+model already learned — and Terminal was the plugin failing it hardest.
+
+**Considered and rejected:** Widening Bind's duplicate-wire-name check from core
+plugins to every plugin as part of this. It was proposed and explicitly declined
+in favour of the smaller change, so read the consequence below as a known,
+accepted gap rather than an oversight.
+
+**Consequences:** Terminal is the first *loadable* plugin with no prefix, and
+Bind's duplicate-wire-name guard (`bind-runtime.ts`) covers core plugins only.
+Two loadable plugins advertising the same wire name resolve to whichever sorts
+first by canonical id, with nothing raised — so `read_file`, `run_command` and
+the other seven are now a standing claim, and the next plugin that wants one has
+no mechanism stopping it from taking it. Check by hand, or widen that guard when
+a second unprefixed loadable plugin is proposed. Separately, these nine tools had
+no `AVALON_TOOL_PROSE` entry and were rendering in the transcript as the
+humanized wire name ("Terminal run command"); they have real prose now, keyed
+under both spellings, because a durable tool event stores the name it was called
+under and old and new rows for one action would otherwise read differently in the
+same feed.
+
 ### 2026-09-14 — Preserve Daytona identity through archive and error recovery
 
 **What changed:** Provider snapshots carry Daytona's recovery verdict, the

@@ -1859,7 +1859,7 @@ describe("canonical ordered work-stream transcript", () => {
         tool_calls: [{
           id: "provider-elicitation-call",
           type: "function",
-          function: { name: "core_request_elicitation", arguments: "{}" },
+          function: { name: "request_elicitation", arguments: "{}" },
         }],
       },
     }, NOW + 6, {
@@ -2003,7 +2003,7 @@ describe("canonical ordered work-stream transcript", () => {
         tool_calls: [{
           id: "provider-elicitation-call",
           type: "function",
-          function: { name: "core_request_elicitation", arguments: "{}" },
+          function: { name: "request_elicitation", arguments: "{}" },
         }],
       },
     }, NOW + 6, {

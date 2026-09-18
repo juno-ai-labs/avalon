@@ -453,7 +453,7 @@ hidden `system_kind` work stream; what the run writes is then delivered by email
 by any connector declaring a personal delivery surface. See
 [`digests.md`](digests.md).
 
-A work stream can schedule its own wake-up through `workstream_schedule_wakeup`,
+A work stream can schedule its own wake-up through `schedule_wakeup`,
 giving a relative duration or an exact ISO-8601 instant plus the prompt to act on.
 Its own SubstreamAgent owns that timer: the wake-up becomes an entry in that
 object's alarm list, so every wake-up due at one instant fires in one alarm.

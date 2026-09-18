@@ -106,7 +106,7 @@ function sitePublishPath(row: VisibleWorkstreamResourceRow): string | null {
 /**
  * The published path as the document's identity reads it.
  *
- * `terminal_publish_resource` already resolves its argument to this shape, so
+ * `publish_resource` already resolves its argument to this shape, so
  * for a model-driven publish this is the identity function. It is applied
  * anyway because the identity has to be one derivation rather than a promise
  * that every caller normalized first: `docs/./plan.md` and `docs/plan.md` are
@@ -609,8 +609,8 @@ export function createTerminalResourceBridge(
       if (!row) {
         throw new TerminalToolError(
           "resource_not_found",
-          "That resource is no longer attached or visible to this run. Call workstream_list_resources to choose a currently visible resource, then retry import_resource.",
-          { reason: "Call workstream_list_resources and choose a currently visible resource ID." },
+          "That resource is no longer attached or visible to this run. Call list_resources to choose a currently visible resource, then retry import_resource.",
+          { reason: "Call list_resources and choose a currently visible resource ID." },
         );
       }
       if (row.resource_type === "generated_site") {

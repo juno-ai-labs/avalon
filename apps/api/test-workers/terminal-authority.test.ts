@@ -158,7 +158,7 @@ function seedEffect(state: DurableObjectState, effectId: string, runId: string, 
     `INSERT INTO tool_effects (
        effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
        tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json
-     ) VALUES (?, ?, 0, ?, ?, 'terminal_run_command', 'write', 'hash', 'rev', 'admitted', ?, '{}')`,
+     ) VALUES (?, ?, 0, ?, ?, 'run_command', 'write', 'hash', 'rev', 'admitted', ?, '{}')`,
     effectId,
     runId,
     position,

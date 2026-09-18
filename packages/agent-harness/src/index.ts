@@ -3308,7 +3308,7 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
     "Check Rally's saved connection state for a connector and scope. Call this first.",
     "Returns connected, reconnect_required, not_connected, or unavailable.",
     "If connected, continue the task and do not show a card.",
-    "If reconnect_required or not_connected blocks the task, briefly explain why, then call core_show_connector_connection with the same connectorId and scope.",
+    "If reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and scope.",
     "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
     "This checks Rally's saved state, not the provider directly.",
   ].join(" "),
@@ -3329,7 +3329,7 @@ export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
   name: "show_connector_connection",
   description: [
     "Show a persistent card that lets the user connect or reconnect a connector.",
-    "Call only after core_get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
+    "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
     "Use the same connectorId and scope. Briefly explain what is blocked before this call.",
     "After this call, do not claim the connector is connected or retry connector-dependent work in this run.",
     "Never create an authorization URL or ask for credentials.",

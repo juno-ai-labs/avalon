@@ -148,7 +148,7 @@ export function importTreeFailure(exitCode: number): TerminalToolError | null {
     // contents sit beside it.
     return new TerminalToolError(
       "resource_import_failed",
-      "The site's files could not be installed, and the previous directory could not be moved back. It is beside the destination with a `.rally-replacing` suffix; inspect it with terminal_run_command and restore or remove it before retrying.",
+      "The site's files could not be installed, and the previous directory could not be moved back. It is beside the destination with a `.rally-replacing` suffix; inspect it with run_command and restore or remove it before retrying.",
       { reason: "Inspect the `.rally-replacing` directory beside the destination before retrying." },
     );
   }
