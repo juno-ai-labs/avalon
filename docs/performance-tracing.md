@@ -168,13 +168,15 @@ The same row carries raw elapsed durations for the operations inside those
 regions: `initial_identity_run_ms`, `persisted_outcome_ms`,
 `run_authority_ms`, `sidekick_authority_ms`, `lease_heartbeat_ms`,
 `run_context_ms`, its nested `memory_context_ms`,
-`transcript_bootstrap_ms`, `tool_loading_ms`, and `attachment_replay_ms`.
+`transcript_bootstrap_ms`, `tool_inventory_ms`, `tool_construction_ms`, and
+`attachment_replay_ms`.
 `transcript_bootstrap_required` distinguishes a fresh canonical projection from
 a resident persistent-loop projection, and `sidekick_snapshot_reused`
 distinguishes a pinned Sidekick snapshot from fresh discovery. These durations
-also overlap: for example tool inventory begins before the lease heartbeat and
-prompt, tools, transcript, and attachment replay proceed concurrently. Use each
-field to identify the slow dependency, never add them together.
+also overlap: tool inventory begins before the lease heartbeat, while tool
+construction begins after it; run context, tools, transcript, and attachment
+replay then proceed concurrently. Use each field to identify the slow
+dependency, never add them together.
 
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
