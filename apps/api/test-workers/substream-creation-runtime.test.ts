@@ -126,30 +126,41 @@ beforeEach(async () => {
 
 describe("substream preparation on workerd", () => {
   it("warms the reserved child before confirmation without claiming authority or publishing it", async () => {
-    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const service = new SubstreamCreationService({ ...TEST_ENV, LOG_LEVEL: "info" }, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000cf90";
     const steps: string[] = [];
-    await service.prepare(WORKSTREAM_ID, {
-      operationId,
-      title: "Warm child",
-      throughTurnId: "source-turn-1",
-    }, {
-      isTraced: false,
-      setAttributes() {},
-      setError() {},
-      mark() {},
-      async step<T>(name: string, run: () => Promise<T>): Promise<T> {
-        steps.push(name);
-        return run();
-      },
-    });
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    const prepared = await service.prepare(WORKSTREAM_ID, {
+        operationId,
+        title: "Warm child",
+        throughTurnId: "source-turn-1",
+      }, {
+        isTraced: false,
+        setAttributes() {},
+        setError() {},
+        mark() {},
+        async step<T>(name: string, run: () => Promise<T>): Promise<T> {
+          steps.push(name);
+          return run();
+        },
+      });
 
     expect(steps).toContain("substream.prepare.child.warm");
+    const warmRow = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .find((entry) => entry.event === "substream_child_warmed");
+    expect(warmRow).toMatchObject({
+      substream_id: prepared.substreamId,
+      object_id: env.SUBSTREAM_AGENTS.idFromName(conversationObjectName(
+        "global", WORKSPACE_ID, WORKSTREAM_ID, prepared.substreamId,
+      )).toString(),
+      authority_mode: "unclaimed",
+    });
     expect((await parent().listVisiblePrivateChildren({
       workspaceId: WORKSPACE_ID,
       parentId: WORKSTREAM_ID,
       userId: CREATOR_ID,
     })).children).toEqual([]);
+    logged.mockRestore();
   });
 
   it("refuses first history installation after publishing an empty child", async () => {

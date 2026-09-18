@@ -199,14 +199,17 @@ export async function warmConversationChildRuntime(
   workspaceId: string,
   parentId: string,
   substreamId: string,
-): Promise<void> {
+): Promise<{
+  objectId: string;
+  authorityMode: "unclaimed" | "preparing" | "authoritative";
+}> {
   const stub = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
     workspaceId,
     conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), parentId, asSubstreamId(substreamId)),
   );
-  await stub.wake();
+  return stub.wake();
 }
 
 /**
