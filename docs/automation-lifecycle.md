@@ -426,6 +426,20 @@ for a watched work-stream resource share one candidate index; a watched work
 stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
 
+**A `semantic_activity` trigger's `condition` is not evaluated.** The predicate
+above is the only runtime matcher, and it takes no semantic test; a
+registration carries `when` and nothing else. So a ready `semantic_activity`
+trigger admits on its `deterministicPrefilter` alone, exactly as a
+`connector_activity` trigger does, while its plain-language `condition` is
+required by the draft schema, stored on the accepted revision and rendered back
+to its author as the trigger's summary. A member who asked for "only when the
+message asks for a design review" gets every message of that event type. The
+prompt for judging one exists
+(`packages/agent-harness/src/prompts/semantic-trigger.ts`) and has no production
+caller. What it would take to close this, and the alternative of refusing the
+trigger type at authoring time until it is closed, is entry 1 of
+[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md).
+
 An evaluator rule is one AND group: `when` is `{kind: "always"}` or
 `{kind: "matching", allOf: [leaf, ...]}` over the manifest's declared attributes.
 Unknown keys, operators, attributes, plugin/event pairs, duplicate ids, empty
