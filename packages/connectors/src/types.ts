@@ -786,6 +786,25 @@ export interface ConnectorAdapter {
    * `manifest.supportedScopes`.
    */
   activityConnectionScopes?: readonly Scope[];
+  /**
+   * The connection scopes in which a *new* connection may still be created,
+   * where that is narrower than the connector itself.
+   *
+   * Separate from `manifest.supportedScopes` because the two answer different
+   * questions. `supportedScopes` is what this adapter can serve: narrowing it
+   * would take the tools, the events and the webhook ingress away from
+   * connections a workspace already made, which is a data migration rather
+   * than a product decision. This one closes the door on new ones and leaves
+   * the connections behind it working.
+   *
+   * It exists because a workspace connection is one credential every member
+   * reads through, and for a provider whose product is other people's
+   * recordings that is the whole company's transcripts behind one key. Rally
+   * is not taking new ones of those until the authorization model says who may
+   * read what; see `fireflies.ts`, which is the first to declare it. Omitted
+   * means the connector's own `manifest.supportedScopes`.
+   */
+  connectableScopes?: readonly Scope[];
   nativeAgent?: ConnectorNativeAgentAdapter;
   messagingAgent?: ConnectorMessagingAgentAdapter;
   beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
@@ -913,6 +932,26 @@ export function connectorActivitySupportsScope(
   scope: Scope,
 ): boolean {
   return connectorActivityScopes(adapter).includes(scope);
+}
+
+/**
+ * The connection scopes a new connection to this connector may be created in.
+ *
+ * The one place the default is applied, so the route that refuses a scope and
+ * the surface that offers it cannot answer differently.
+ */
+export function connectorConnectableScopes(
+  adapter: Pick<ConnectorAdapter, "manifest" | "connectableScopes">,
+): readonly Scope[] {
+  return adapter.connectableScopes ?? adapter.manifest.supportedScopes;
+}
+
+/** Whether a new connection to this connector may be created in this scope. */
+export function connectorScopeIsConnectable(
+  adapter: Pick<ConnectorAdapter, "manifest" | "connectableScopes">,
+  scope: Scope,
+): boolean {
+  return connectorConnectableScopes(adapter).includes(scope);
 }
 
 export function connectorCapabilitySupportsScope(
