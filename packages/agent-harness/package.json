@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "eval:semantic": "tsx evals/semantic-trigger/run.ts",
-    "eval:semantic:gepa": "tsx evals/semantic-trigger/gepa.ts"
+    "eval:semantic:gepa": "tsx evals/semantic-trigger/gepa.ts",
+    "eval:semantic:calibration": "tsx evals/semantic-trigger/calibration.ts"
   },
   "dependencies": {
     "@juno-ai/bind": "16.0.0",
