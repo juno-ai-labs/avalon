@@ -426,23 +426,18 @@ for a watched work-stream resource share one candidate index; a watched work
 stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
 
-**A `semantic_activity` trigger's `condition` is not evaluated.** The predicate
-above is the only runtime matcher, and it takes no semantic test; a
-registration carries `when` and nothing else. The projection is built from
-`evaluator_rules_json` alone (`SidekickDO.acceptDraft`), so a ready
-`semantic_activity` trigger admits on exactly what a `connector_activity`
-trigger does: the evaluator rules joined to it by `sourceBindingKey`. Neither of
-the two fields that distinguish the type reaches the runtime. The
-`deterministicPrefilter` is read only by the readiness refinement that makes the
-authoring model name one event type, and the plain-language `condition` is
-required by the draft schema, stored on the accepted revision and rendered back
-to its author as the trigger's summary. A member who asked for "only when the
-message asks for a design review" gets every message of that event type. The
-prompt for judging one exists
-(`packages/agent-harness/src/prompts/semantic-trigger.ts`) and has no production
-caller. What it would take to close this, and the alternative of refusing the
-trigger type at authoring time until it is closed, is entry 1 of
-[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md).
+**A `semantic_activity` trigger's `condition` is tested after the predicate, not
+by it.** The predicate above is the only runtime matcher and takes no semantic
+test; a registration carries `when` and nothing else, and the projection is built
+from `evaluator_rules_json` alone. So a ready `semantic_activity` trigger is
+*matched* on exactly what a `connector_activity` trigger is: the evaluator rules
+joined to it by `sourceBindingKey`. Its written condition is judged one step
+later, in the delivery, and `admitExternalEvent` refuses a gated event whose
+verdict does not admit or is missing — outcome codes `sidekick_semantic_*`. The
+join from an arriving event to the conditions that gate it is
+`deterministicPrefilter.eventType`, which is also the only thing that field is
+read for. [`semantic-activity-triggers.md`](semantic-activity-triggers.md) owns
+that mechanism, its confidence threshold and its failure modes.
 
 An evaluator rule is one AND group: `when` is `{kind: "always"}` or
 `{kind: "matching", allOf: [leaf, ...]}` over the manifest's declared attributes.

@@ -51,6 +51,22 @@ See [`jev-best-practices.md`](jev-best-practices.md) for the request-design,
 evaluation, confidence-calibration, and fallback methodology behind this
 cascade.
 
+The cascade is assembled from three primitives under
+`packages/agent-harness/src/jev/`, which are the harness's JEV surface for every
+classifier rather than addressing's own: `client.ts` owns one TypeSafe SystemOne
+request — the endpoint, the response envelope, the owned deadline, and the
+`typesafe_*` failure vocabulary — and knows no decision; `cascade.ts` owns
+primary, fallback and terminal floor, including the rule that a cancelled caller
+propagates rather than advancing a stage; and `questions.ts` types a Choice
+question so a criterion cannot ship without its include and exclude boundaries.
+Addressing supplies the state, the questions, the threshold and the mapping, and
+nothing else. The second caller is the semantic trigger gate in
+[`semantic-activity-triggers.md`](semantic-activity-triggers.md);
+[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md) lists the
+decisions that may want a third. A classifier's provider diagnostics go to
+`apps/api/src/services/classifier-diagnostics.ts`, which writes both the
+`structured_inference` log row and the archived inference record for all of them.
+
 Every cascade emits one `addressing_classifier_outcome` log row with `success`,
 the selected provider, final classification and confidence, and an outcome that
 distinguishes accepted JEV answers from low-confidence and failed-primary
@@ -1328,6 +1344,40 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-18 — JEV is three primitives, and addressing is one of its callers
+
+**What changed:** the TypeSafe endpoint, the response envelope, the owned
+deadline, the `typesafe_*` failure vocabulary, the diagnostic envelope and the
+cascade's control flow moved out of `classifyAddressingWithTypeSafe` and
+`classifyAddressing` into `packages/agent-harness/src/jev/`: `client.ts`,
+`cascade.ts` and `questions.ts`. Addressing now supplies state, questions, a
+threshold and a mapping. The `structured_inference` log row and the archived
+inference record moved to `apps/api/src/services/classifier-diagnostics.ts`.
+Behavior is unchanged, including the `>` on the confidence comparison and the
+`answers.addressing.confidence` path a schema rejection reports.
+
+**Why:** the second JEV classifier was about to be written, and written the way
+the first one was it would have copied roughly a hundred and thirty lines of
+transport and forty of diagnostic field mapping.
+[`jev-best-practices.md`](jev-best-practices.md#calibrate-confidence-as-an-operational-signal)
+names the failure to expect from that — "`>=` in one service and `>` in
+another" — and the same applies to whether a timeout is reported as an abort,
+which decides whether a cascade spends its fallback.
+
+**Considered and rejected:** *leaving the transport where it was and writing the
+second classifier beside it*, which is cheaper today and pays for itself once the
+two spellings of a threshold disagree in production. *Giving the request a
+default timeout*, so a caller could omit one: a deadline is a number somebody has
+to justify for the path it bounds, and a shared default silently applies one
+decision's latency budget to another's.
+
+**What a future change has to respect:** the primitives hold no product
+decision. A confidence threshold, a state shape, a question and a mapping belong
+to the classifier; the endpoint, the envelope and the cascade's transitions belong
+to the primitives. The envelope is parsed in one pass around the caller's answers
+schema so a rejected field's path stays rooted at `answers.`, which is what tells
+an operator which side of the boundary failed; a regression test pins it.
 
 ### 2026-09-18 — Watching for events becomes a loadable skill, not policy
 

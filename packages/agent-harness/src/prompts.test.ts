@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   renderAddressingMessages,
   renderCompactionCheckpointContent,
-  renderSemanticTriggerMessages,
   renderScheduledDigestBriefMessage,
   renderWorkstreamDescriptionMessages,
   renderWorkstreamNameMessages,
@@ -95,19 +94,6 @@ describe("prompt renderers", () => {
           sidekick: workstreamAutomation,
         }),
         hash: "48b11a3c27df42eb66d2770679d2677904e373edcfc1ad242ccf04e6addb037b",
-      },
-      semanticTrigger: {
-        actual: renderSemanticTriggerMessages({
-          condition: "A production deployment failed after tests passed.",
-          activity: {
-            provider: "github",
-            eventType: "github.workflow_run.completed",
-            title: "Deploy production",
-            summary: "The deployment job failed.",
-            textSnippet: "Tests passed before the deploy step failed.",
-          },
-        }),
-        hash: "1d55d7f2cbe6a00faa9b9bb2c49a363e0525c8f7f469311726526f4ea677bc0a",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -393,16 +379,6 @@ describe("prompt renderers", () => {
       plannedFor: "2026-08-11T16:00:00.000Z",
       eventCount: 1,
     });
-    const semanticMessages = renderSemanticTriggerMessages({
-      condition: "A deployment failed.",
-      activity: {
-        provider: "github",
-        eventType: "github.workflow_run.completed",
-        title: injection,
-        summary: injection,
-        textSnippet: injection,
-      },
-    });
     const nameMessages = renderWorkstreamNameMessages({
       objective: injection,
       openingMessage: injection,
@@ -424,9 +400,6 @@ describe("prompt renderers", () => {
     // however many user-role messages the renderer grows.
     expect(digestMessage).toMatchObject({ role: "user" });
     expect(digestMessage.content).toContain(injection);
-    expect(semanticMessages[0]!.content).not.toContain(injection);
-    expect(semanticMessages[1]).toMatchObject({ role: "user" });
-    expect(semanticMessages[1]!.content).toContain(injection);
     expect(nameMessages[0]!.content).not.toContain(injection);
     expect(nameMessages[1]).toMatchObject({ role: "user" });
     expect(nameMessages[1]!.content).toContain(injection);
@@ -764,14 +737,6 @@ describe("prompt renderers", () => {
     expect(prompt).toContain('"memoryTableColumnId": "column-url"');
   });
 
-  it("defines conservative confidence semantics for activity trigger classification", () => {
-    const semantic = renderSemanticTriggerMessages({
-      condition: "A deployment failed.",
-      activity: { provider: "github", eventType: "event", title: "t", summary: "s", textSnippet: "x" },
-    })[0]!.content;
-    expect(semantic).toContain("0.8 or higher");
-    expect(semantic).toContain("untrusted evidence");
-  });
 });
 
 /**

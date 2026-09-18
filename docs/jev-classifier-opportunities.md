@@ -1,7 +1,10 @@
 # Where else JEV belongs
 
 A register of decisions in this tree that a JEV request could make, or makes
-badly today. [`jev-best-practices.md`](jev-best-practices.md) owns how to design
+badly today. The first entry shipped on 2026-09-18 and is now
+[`semantic-activity-triggers.md`](semantic-activity-triggers.md); what it took,
+and the two primitives extracted on the way, are recorded there and in
+[`agent-harness.md`](agent-harness.md). [`jev-best-practices.md`](jev-best-practices.md) owns how to design
 and evaluate such a request; [`agent-harness.md`](agent-harness.md) owns the one
 that ships. This file is neither: it is the list of the next ones, with the
 contract each would need and the evidence it would have to produce first.
@@ -51,16 +54,19 @@ answer, and the rest are writing tasks with nothing closed-set about them.
 The more interesting population is not in that list at all: decisions that were
 *declined* rather than implemented, because the only tool available was a
 generative call whose self-reported confidence nobody trusted. Two are recorded
-in this tree in close to those words. One is entry 4 below. The other is the
+in this tree in close to those words. One is entry 3 below. The other is the
 retired contextual-routing gate, whose post-mortem says its only quality control
 was "a constant compared against a number the model made up about its own
 answer" ([`contextual-routing.md`](contextual-routing.md), 2026-08-12); that
 feature is gone, but the criticism is the distinction JEV exists to make, and it
 is quoted again in the rejected section below.
 
-## The primitive that has to exist first
+## The primitives, which now exist
 
-Everything TypeSafe-shaped is currently inside one function written for one
+**Done, 2026-09-18.** Kept here because every entry below is priced against
+them, and because the reasoning is what a third caller has to respect.
+
+Everything TypeSafe-shaped used to sit inside one function written for one
 question. `TYPESAFE_SYSTEMONE_URL` (`index.ts:1979`), the response schema
 (`:1993`), the question document (`:2014`), the owned deadline, the failure-kind
 classifier (`:2305`), the diagnostic envelope and the confidence comparison all
@@ -70,8 +76,8 @@ copies diverge in exactly the way
 [`jev-best-practices.md`](jev-best-practices.md#calibrate-confidence-as-an-operational-signal)
 warns about: "Avoid `>=` in one service and `>` in another."
 
-So the first change is not a classifier. It is two primitives, and neither has a
-product decision inside it:
+So the first change was not a classifier. It was two primitives, neither of which
+has a product decision inside it, now in `packages/agent-harness/src/jev/`:
 
 - **A JEV request.** Takes a `state` object, a questions document, a model
   alias, an owned deadline and a diagnostic sink; returns the typed answers with
@@ -91,111 +97,20 @@ product decision inside it:
   caller.
 
 Both are the Lego-block shape [`AGENTS.md`](../AGENTS.md#how-we-build) asks for:
-addressing becomes a state shape plus a questions document plus a mapping, and so
-does every entry below. Extracting them with addressing as the only caller is a
-refactor with a behavior-preserving test, and it is the cheapest possible first
-step in this whole file. Do it before the second classifier, not after the
-third.
+addressing is now a state shape plus a questions document plus a mapping, and so
+is every entry below. They were extracted with addressing as the only caller, as
+a refactor with the existing tests unchanged, before the semantic trigger gate
+became the second caller. A third one adds a state shape and a question, not a
+transport.
+
+A third destination came out of the same change and is worth knowing about: the
+API-side `classifier-diagnostics.ts` writes both the `structured_inference` log
+row and the archived inference record for any classifier, which was forty more
+lines a second caller would otherwise have copied.
 
 ## Candidates
 
-### 1. A Sidekick's semantic trigger condition, which is not evaluated at all
-
-**Severity: this one is a defect, not an improvement.**
-
-**Observed.** `semantic_activity` is a first-class trigger type. Its schema
-(`packages/contracts/src/index.ts:1081`) requires a non-empty plain-language
-`condition`, and two of the draft's six readiness refinements exist to make a
-ready one well-formed (a concrete connector type, exactly one declared event
-type in the `deterministicPrefilter`, which is the only thing that field is ever
-read for); the harness tool description tells the authoring model to "write it so
-it can be judged from the event alone"
-(`packages/agent-harness/src/index.ts:2470`); the compiler carries it into the
-stored definition (`:2982`); the desktop client's `triggerSummary` returns it
-verbatim as the trigger's one-line description on the card a person approves
-(`apps/desktop/src/renderer/lib/api.ts:454`); and a prompt for judging it exists,
-complete with an untrusted-evidence rule and a 0.8 confidence floor, at
-`packages/agent-harness/src/prompts/semantic-trigger.ts`.
-
-Nothing evaluates it. The prompt renderer has no caller outside
-`prompts.test.ts`. The runtime match is
-`evaluateExternalEventPredicate` (`apps/api/src/services/external-event-evaluator.ts:26`,
-called once, at `apps/api/src/durable-objects/workspace-do.ts:5306`), whose own
-docstring says it "never calls a provider or model", and the registration row it
-reads carries a single `when` predicate
-(`packages/contracts/src/automation-evaluators.ts:205`) with nowhere for a
-condition to live.
-
-**What that means for a member.** A Sidekick whose trigger reads "the changed
-file is a customer contract" (the phrasing used in
-`packages/agent-harness/src/index.test.ts:6591`) fires on *every* Drive change
-event its evaluator rules admit, which is whatever a `connector_activity`
-trigger with the same rules would have admitted. The condition is the sentence
-the approval card shows in the place where a trigger says what starts a run.
-Rally is
-promising a semantic filter, storing it, displaying it, and ignoring it. Whether
-any member has one today is not knowable from the repository; the authoring
-agent will produce one whenever a person describes a trigger in those terms,
-because that is what the tool description tells it to do.
-
-**Why JEV.** This is the closest decision in the tree to the one JEV already
-does well, and it is closer to JEV's strengths than addressing is:
-
-- The state is already compact and already assembled. The
-  `workspaceEvent` built at `workspace-do.ts:5276` carries exactly the fields
-  the existing prompt uses: event type, title, summary, text snippet. No graph
-  walk, no extra read.
-- The question is a two-outcome policy with a written asymmetry: a false match
-  starts an unrequested run with connector write tools bound
-  ([`automation-lifecycle.md`](automation-lifecycle.md) 2026-09-03 records that
-  a trigger-started run holds the same tools as any other), and a false
-  non-match silently does nothing, which the member experiences as a broken
-  automation.
-- The decision sits behind a deterministic predicate that has already narrowed
-  the population, which is the ordering
-  [`jev-best-practices.md`](jev-best-practices.md#model-the-state-explicitly)
-  asks for: derive upstream what the application knows reliably, and ask the
-  model only what is left.
-- Latency is nearly free here. A JEV call at about 220 ms p50 sits inside a
-  queue delivery that is about to start a harness run measured in seconds.
-
-**Contract.** Entity: one connector event, against one authored condition.
-Outcomes: `condition_met` and `condition_not_met`, with a third,
-`condition_not_judgeable`, if and only if the team wants an unjudgeable condition
-to be visibly broken rather than silently closed; a condition the model cannot
-test from the event alone is an authoring defect the author should be told about,
-and folding it into `condition_not_met` hides it. Evidence separating them: the
-prompt's existing rule, that only affirmative evidence in the supplied fields
-counts and topical similarity does not. Insufficient confidence: fail closed, no
-run, and log it, because the fallback for a missed trigger is the next event and
-the fallback for a wrong one is a run nobody asked for.
-
-The condition is authorized criterion; the event is untrusted evidence. That
-separation must be structural in the state object rather than a sentence in the
-question, which is one thing the existing prompt gets right and which a JEV
-`state` expresses better than a rendered user turn does.
-
-**What has to be measured first.** There is no production corpus, because the
-feature has never run. That is a real gap in test (5) and the entry should not
-pretend otherwise. What can be built without any authorized export: stored
-connector events are already retained per workspace, and conditions are
-synthesizable from the ones the authoring agent writes, so a corpus of
-(event, condition, adjudicated verdict) pairs can be assembled and judged
-independently, in the shape
-[`jev-best-practices.md`](jev-best-practices.md#build-ground-truth-that-can-disagree-with-production)
-describes, with no production label to overlay because there is no production
-behavior to regress against. Class support is the thing to watch: near-miss
-negatives (right channel, right event type, wrong subject) are the whole
-decision, and a corpus of obvious yeses and obvious noes will measure 98% and
-prove nothing.
-
-**Also worth deciding separately from the classifier.** Whether shipping the
-evaluator is even the right fix, or whether `semantic_activity` should be
-refused at authoring time until one exists. The second is smaller, reversible,
-honest, and available now; it costs the members who would have wanted the
-feature. That is a product call, not an engineering one.
-
-### 2. Work-opportunity admission, which is a coarse gate paying generative prices
+### 1. Work-opportunity admission, which is a coarse gate paying generative prices
 
 **Observed.** `processModelBatch`
 (`apps/api/src/services/work-opportunity-service.ts:1084`) sends a batch of
@@ -274,7 +189,7 @@ number in it nobody here has yet:
 [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
 applies.
 
-### 3. Identity resolution inside admission, which decides who can be targeted
+### 2. Identity resolution inside admission, which decides who can be targeted
 
 **Observed.** The same admission call returns, per person reference, a
 `resolution` of `verified`, `inferred`, `ambiguous` or `unresolved`
@@ -311,12 +226,12 @@ the decision itself. The deterministic downgrade stays no matter how good the
 confidence gets: the classifier is one input to an authorization check, and
 [`authorization.md`](authorization.md) owns the check.
 
-**Sequencing.** This is the same call as entry 2 and the same corpus. Do not
+**Sequencing.** This is the same call as entry 1 and the same corpus. Do not
 change both at once: that is the "changing primary and fallback together"
-failure with different names. Entry 2 first, because it is reversible and
+failure with different names. Entry 1 first, because it is reversible and
 touches no authorization path.
 
-### 4. Digest settlement, a decision this tree already declined for want of JEV
+### 3. Digest settlement, a decision this tree already declined for want of JEV
 
 **Observed.** `digest-run-settlement.ts` mails a digest run's final message and
 "has no way to tell a digest from a sign-off" (`:36`-`:57`). A run that ended
@@ -357,7 +272,7 @@ and protects against exactly the failure that is unrecoverable; keep it and put
 the classifier above it, the same shape as addressing's deterministic terminal
 floor.
 
-### 5. A Noul to shrink the suggested-work ranking tournament, with a caveat
+### 4. A Noul to shrink the suggested-work ranking tournament, with a caveat
 
 **Observed.** Ranking runs a tournament: candidates are grouped by byte budget,
 each group is ranked down to four by a generative call at `low` reasoning, and
@@ -376,7 +291,7 @@ semantic axis." A per-candidate Noul could cut a twelve-candidate pool to the
 handful that a single generative call can order in one round, replacing several
 elimination rounds with one scoring pass.
 
-The caveat is the reason this is entry 5 and not entry 2. A per-candidate score
+The caveat is the reason this is the last entry and not the first. A per-candidate score
 is not a comparative judgment, and the current prompt explicitly forbids the
 model from simulating a weighted formula. Ranking's final order must stay
 comparative. So the honest scope is: Noul as a *pool reducer* before the
@@ -431,7 +346,7 @@ will otherwise propose it.
 - **Replacing the external-event predicate.** The deterministic matcher is
   intentionally total, fails closed on missing values, and its strict schemas
   make illegal operator/value pairs unrepresentable. A semantic classifier
-  belongs *after* it (entry 1), never instead of it: the rules' predicate is what
+  belongs *after* it, never instead of it: the rules' predicate is what
   keeps the classifier's population small enough to afford and its state small
   enough to name.
 - **The correctable-argument classifier.** `classifyAttemptError` and the
