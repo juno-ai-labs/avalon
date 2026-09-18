@@ -54,6 +54,23 @@ export {
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 
+type WorkstreamSidebarFailure =
+  | 'copy_link'
+  | 'make_public'
+  | 'rename_workstream'
+  | 'rename_substream'
+  | 'archive_workstream'
+  | 'archive_substream';
+
+const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, { title: string; copy: string }> = {
+  copy_link: { title: 'The link couldn’t be copied', copy: 'The link couldn’t be copied. Try again.' },
+  make_public: { title: 'The work stream couldn’t be updated', copy: 'The work stream couldn’t be made public. Try again.' },
+  rename_workstream: { title: 'The work stream couldn’t be renamed', copy: 'The work stream couldn’t be renamed. Try again.' },
+  rename_substream: { title: 'The substream couldn’t be renamed', copy: 'The substream couldn’t be renamed. Try again.' },
+  archive_workstream: { title: 'The work stream couldn’t be archived', copy: 'The work stream couldn’t be archived. Try again.' },
+  archive_substream: { title: 'The substream couldn’t be archived', copy: 'The substream couldn’t be archived. Try again.' },
+};
+
 export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.ComponentProps<typeof ConversationHeader>,
   'onShowNavigation' | 'onCopyLink' | 'onCopyEmail' | 'onCopyId'> & { workspaceTarget: WorkspaceTarget | null }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
@@ -130,7 +147,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [renameTitle, setRenameTitle] = useState('');
   const [archiveTarget, setArchiveTarget] = useState<(ConversationRowTarget & { parentId: string }) | null>(null);
   const [substreamPending, setSubstreamPending] = useState(false);
-  const [substreamMenuError, setSubstreamMenuError] = useState<string | null>(null);
+  const [substreamMenuFailure, setSubstreamMenuFailure] = useState<WorkstreamSidebarFailure | null>(null);
   /**
    * The substream being written, if any. Nothing has been reserved on the
    * server while this is set: preparation and confirmation both happen on the
@@ -210,9 +227,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     const workspace = session.workspace;
     const visit = routeRef.current.visit;
     const operation = ++menuOperation.current;
-    void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, id, target.substreamId).catch((error: unknown) => {
+    void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, id, target.substreamId).catch(() => {
       if (routeRef.current.visit === visit && menuOperation.current === operation) {
-        setSubstreamMenuError(error instanceof Error ? error.message : 'The link could not be copied.');
+        setSubstreamMenuFailure('copy_link');
       }
     });
   };
@@ -224,8 +241,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     void api.setWorkstreamScope(id, 'workspace').then((updated) => {
       patchCachedWorkstream(queryClient, id, { scope: updated.scope, updatedAt: updated.updatedAt });
       reportParentAction(updated, 'make_public');
-    }).catch((error: unknown) => {
-      if (routeRef.current.visit === visit) setSubstreamMenuError(error instanceof Error ? error.message : 'The work stream could not be made public.');
+    }).catch(() => {
+      if (routeRef.current.visit === visit) setSubstreamMenuFailure('make_public');
     }).finally(() => { if (routeRef.current.visit === visit) setSubstreamPending(false); });
   };
   const submitSubstreamRename = async (): Promise<void> => {
@@ -235,7 +252,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     if (title === target.title) { setRenameTarget(null); return; }
     const visit = routeRef.current.visit;
     setSubstreamPending(true);
-    setSubstreamMenuError(null);
+    setSubstreamMenuFailure(null);
     try {
       // Match header renaming: guest Main is conversation-scoped authority.
       if (target.substreamId === '0' && !guest) {
@@ -245,9 +262,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       } else await api.renameSubstream(target.parentId, target.substreamId, title);
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setRenameTarget(null);
-    } catch (error) {
+    } catch {
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
-      setSubstreamMenuError(error instanceof Error ? error.message : `That ${target.substreamId === '0' ? 'work stream' : 'substream'} could not be renamed.`);
+      setSubstreamMenuFailure(target.substreamId === '0' ? 'rename_workstream' : 'rename_substream');
     } finally {
       if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
@@ -257,7 +274,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     if (!api || !target || substreamPending) return;
     const visit = routeRef.current.visit;
     setSubstreamPending(true);
-    setSubstreamMenuError(null);
+    setSubstreamMenuFailure(null);
     try {
       if (target.substreamId === '0') {
         const updated = await api.archiveWorkstream(target.parentId);
@@ -268,9 +285,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       setArchiveTarget(null);
       if (target.substreamId === '0') openFirstWorkstream([target.parentId]);
       else if (routeRef.current.selectedSubstreamId === target.substreamId) selectSubstream('0');
-    } catch (error) {
+    } catch {
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
-      setSubstreamMenuError(error instanceof Error ? error.message : `That ${target.substreamId === '0' ? 'work stream' : 'substream'} could not be archived.`);
+      setSubstreamMenuFailure(target.substreamId === '0' ? 'archive_workstream' : 'archive_substream');
     } finally {
       if (routeRef.current.id === target.parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
@@ -305,7 +322,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     });
   };
   useEffect(() => {
-    setRenameTarget(null); setArchiveTarget(null); setSubstreamPending(false); setSubstreamMenuError(null);
+    setRenameTarget(null); setArchiveTarget(null); setSubstreamPending(false); setSubstreamMenuFailure(null);
     // Only when the work stream itself changed. Selecting another conversation
     // inside it is how the launch surface is left, and that already clears it.
     if (creationRef.current && creationRef.current.parentId !== id) resetCreation();
@@ -421,7 +438,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       // words with it.
       if (creationRef.current === attempt) {
         setLaunching(null);
-        setCreationError(error instanceof Error ? error.message : 'The substream could not be created.');
+        setCreationError('The substream couldn’t be created. Try again.');
       }
       throw error;
     }
@@ -448,7 +465,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           onSidekickMenuOpen={context.loadSidekickOptions}
           addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
           sidekicks={context.sidekicks}
-          sidekicksError={context.sidekicksError}
+          sidekicksFailed={context.sidekicksFailed}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}
           creatingSubstream={creation?.parentId === id && launching !== null
             ? { reservedSubstreamId: reservedChildId }
@@ -465,14 +482,14 @@ export function WorkstreamScreen(): React.JSX.Element {
             publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
             onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,
-            onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuError(null); },
-            onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
+            onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
+            onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
           } : undefined}
           substreamActions={{
             onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,
-            onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuError(null); },
-            onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuError(null); },
+            onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
+            onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
           }}
         />
       )}
@@ -500,18 +517,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     />
     <Modal
       footer={<>
-        <Button disabled={substreamPending} onClick={() => { setRenameTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>
+        <Button disabled={substreamPending} onClick={() => { setRenameTarget(null); setSubstreamMenuFailure(null); }}>Cancel</Button>
         <Button
           className="button-primary"
           disabled={substreamPending || !renameTitle.trim() || renameTitle.trim() === renameTarget?.title}
           onClick={() => void submitSubstreamRename()}
         >Rename</Button>
       </>}
-      onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuError(null); } }}
+      onOpenChange={(open) => { if (!open && !substreamPending) { setRenameTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(renameTarget)}
       title={renameTarget?.substreamId === '0' ? 'Rename work stream' : 'Rename substream'}
     >
-      {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
+      {substreamMenuFailure && <InlineError>{workstreamSidebarFailureCopy[substreamMenuFailure].copy}</InlineError>}
       <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
         <label className="form-field">
           <span>Title</span>
@@ -521,10 +538,10 @@ export function WorkstreamScreen(): React.JSX.Element {
     </Modal>
     <Modal
       footer={<>
-        <Button disabled={substreamPending} onClick={() => { setArchiveTarget(null); setSubstreamMenuError(null); }}>Cancel</Button>
+        <Button disabled={substreamPending} onClick={() => { setArchiveTarget(null); setSubstreamMenuFailure(null); }}>Cancel</Button>
         <Button className="button-danger" disabled={substreamPending} onClick={() => void submitSubstreamArchive()}>Archive</Button>
       </>}
-      onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuError(null); } }}
+      onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuFailure(null); } }}
       open={Boolean(archiveTarget)}
       title={archiveTarget?.substreamId === '0' ? 'Archive work stream' : 'Archive substream'}
     >
@@ -532,15 +549,15 @@ export function WorkstreamScreen(): React.JSX.Element {
         <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
         accepting messages. The conversation is kept, but restoring it currently requires the API; there is no restore control in the app.
       </p>
-      {substreamMenuError && <InlineError>{substreamMenuError}</InlineError>}
+      {substreamMenuFailure && <InlineError>{workstreamSidebarFailureCopy[substreamMenuFailure].copy}</InlineError>}
     </Modal>
     <Modal
-      footer={<Button onClick={() => setSubstreamMenuError(null)}>Close</Button>}
-      onOpenChange={(open) => { if (!open) setSubstreamMenuError(null); }}
-      open={Boolean(substreamMenuError) && !renameTarget && !archiveTarget}
-      title="That could not be updated"
+      footer={<Button onClick={() => setSubstreamMenuFailure(null)}>Close</Button>}
+      onOpenChange={(open) => { if (!open) setSubstreamMenuFailure(null); }}
+      open={Boolean(substreamMenuFailure) && !renameTarget && !archiveTarget}
+      title={substreamMenuFailure ? workstreamSidebarFailureCopy[substreamMenuFailure].title : 'That couldn’t be updated'}
     >
-      <InlineError>{substreamMenuError}</InlineError>
+      {substreamMenuFailure && <InlineError>{workstreamSidebarFailureCopy[substreamMenuFailure].copy}</InlineError>}
     </Modal>
     </>
   );

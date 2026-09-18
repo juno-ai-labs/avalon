@@ -56,7 +56,7 @@ function ConversationRowMenu({ actions, children, target }: {
 }
 
 /** Work-stream navigation only: no second resource query or substream model. */
-export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksError, addSidekick, substreamActions, mainActions }: {
+export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSidekickMenuOpen, onOpenResource, workstream, creatingSubstream = null, presentUserIds, selectedSubstreamId = '0', onSelectSubstream, onNewSubstream, onOpenArtifact, onParticipants, onFocusTranscript, sidekicks, sidekicksFailed, addSidekick, substreamActions, mainActions }: {
   workstream: SidebarPresentation;
   onOpenResource?: (id: string, returnFocus: HTMLElement) => void;
   mainVisible?: boolean; onOpenSidekick?: (id: string) => void; onSidekickMenuOpen?: () => void;
@@ -82,7 +82,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
    * section above it does.
    */
   sidekicks?: SidekickRow[] | undefined;
-  sidekicksError?: string | undefined;
+  sidekicksFailed?: boolean | undefined;
   addSidekick?: React.ReactNode;
   selectedSubstreamId?: string;
   onSelectSubstream?: (substreamId: string) => void;
@@ -291,7 +291,7 @@ export function WorkstreamSidebar({ mainVisible = true, onOpenSidekick, onSideki
         </section>
         {/* Below the people, because a Sidekick is the other kind of thing
             working in this room. */}
-        <SidekickSection items={sidekicks} error={sidekicksError} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
+        <SidekickSection items={sidekicks} failed={sidekicksFailed} onOpen={onOpenSidekick} onMenuOpen={onSidekickMenuOpen} />
         {addSidekick}
       </div>
       <div className="sidebar-collapse-footer">

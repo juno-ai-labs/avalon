@@ -31,7 +31,7 @@ function WorkstreamSidekickPicker({ workstreamId, substreamId = '0' }: { workstr
   });
   if (!session) return null;
   return <SharedSidekickPicker options={directory.data} loading={directory.isPending} saving={attach.isPending}
-    error={(directory.error ?? attach.error)?.message} open={open} setOpen={setOpen}
+    failure={attach.error ? 'attach' : directory.error ? 'load' : undefined} open={open} setOpen={setOpen}
     onMenuOpen={(opened) => { if (opened) void directory.refetch(); }}
     onAttach={(id) => attach.mutate(id)} onCreate={createSidekick ?? undefined} />;
 }

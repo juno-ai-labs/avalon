@@ -62,7 +62,10 @@ this package does not create a second collaboration implementation.
 
 Omitted capabilities omit their controls. Loading, empty and error states must be
 supplied distinctly by host adapters; presentation cannot infer authority from a
-missing response. Shared browser-safe theme defaults apply before first render.
+missing response. Sidebar and rail error contracts carry state, never transport,
+provider, or server messages: presentation owns stable product copy while rich
+failure details stay outside its contract. Shared browser-safe theme defaults
+apply before first render.
 Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 ## Testing
@@ -76,6 +79,26 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-09-18 — Sidebar failures carry state, not response copy
+
+**What changed:** Sidebar, project, work-stream action, Sidekick picker, and
+inspector/resource rail boundaries accept booleans or semantic failure states
+and render Rally-owned copy instead of accepting arbitrary error messages.
+
+**Why:** A production API-version mismatch returned its router's diagnostic
+sentence directly under **Sidekicks**. Sidebar chrome is product presentation;
+transport and provider wording is neither stable nor suitable for a person.
+
+**Considered and rejected:** Sanitizing a growing list of known API messages
+would still make new failures user-facing by default. Hiding failures entirely
+would make a partially stale rail look authoritative.
+
+**Consequences:** Hosts tell presentation only which operation failed. A scoped
+lint rule prevents rail production modules from reading `.message`, and
+adversarial tests prove server diagnostics stay absent. New sidebar and rail
+modules join the guard by filename and must likewise own their user-facing
+failure language.
 
 ### 2026-09-17 — Share desktop presentation with the lite browser
 

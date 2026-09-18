@@ -168,6 +168,9 @@ from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
 still on its way, as the artifact section beside it is; a failure is the one
 thing it shows beside whichever rows did arrive rather than instead of them.
+That failure and the Add Sidekick picker’s load/attach failures are stable
+Rally-owned copy derived from semantic state; raw API, transport and provider
+messages never become sidebar text.
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
