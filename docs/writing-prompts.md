@@ -150,7 +150,7 @@ When you do name one, the name in the prompt and the canonical name in the
 `ToolDefinition` must match exactly, and both change in the same commit.
 
 The Terminal plugin is the fixed-surface example: its own activated system
-message names `terminal_run_command`, `terminal_read_file`, and the other tools
+message names `run_command`, `read_file`, and the other tools
 whose complete family that activation guarantees. It explicitly enumerates the
 Bash/Python/JavaScript/TypeScript/SQLite and manager contract because those are
 snapshot promises, not a changing discovery catalog. Adding a runtime therefore

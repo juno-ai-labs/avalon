@@ -37,6 +37,54 @@ const CONNECTOR_CONNECTION_CARD_PROSE: ToolProse = {
   failed: "Could not prepare a connector",
 };
 
+const TERMINAL_PROSE: Record<string, ToolProse> = {
+  read_file: {
+    started: "Reading a file",
+    settled: "Read a file",
+    failed: "Could not read a file",
+  },
+  edit_file: {
+    started: "Editing a file",
+    settled: "Edited a file",
+    failed: "Could not edit a file",
+  },
+  write_file: {
+    started: "Writing a file",
+    settled: "Wrote a file",
+    failed: "Could not write a file",
+  },
+  apply_patch: {
+    started: "Applying a patch",
+    settled: "Applied a patch",
+    failed: "Could not apply a patch",
+  },
+  run_command: {
+    started: "Running a command",
+    settled: "Ran a command",
+    failed: "Could not run a command",
+  },
+  checkout_repository: {
+    started: "Checking out a repository",
+    settled: "Checked out a repository",
+    failed: "Could not check out a repository",
+  },
+  import_resource: {
+    started: "Copying an attachment into the sandbox",
+    settled: "Copied an attachment into the sandbox",
+    failed: "Could not copy an attachment into the sandbox",
+  },
+  publish_resource: {
+    started: "Publishing an artifact",
+    settled: "Published an artifact",
+    failed: "Could not publish an artifact",
+  },
+  publish_branch_and_pr: {
+    started: "Opening a pull request",
+    settled: "Opened a pull request",
+    failed: "Could not open a pull request",
+  },
+};
+
 /**
  * Wire names Avalon owns. Connector tools are deliberately absent: there are as
  * many of them as there are authorized connections, and they are named after
@@ -207,6 +255,16 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   core_request_elicitation: REQUEST_ELICITATION_PROSE,
   [LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
   [LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
+
+  // `rally:terminal` under both spellings, for the same reason it dropped its
+  // own `terminal_` prefix. These had no entry at all and were rendering as
+  // the humanized wire name — "Terminal run command" — which is the raw-symbol
+  // fallback this module exists to prevent; without the retired spellings the
+  // prefix would simply disappear from every row already written, leaving old
+  // and new rows for one action reading differently in the same feed.
+  ...TERMINAL_PROSE,
+  ...Object.fromEntries(Object.entries(TERMINAL_PROSE)
+    .map(([toolName, prose]) => [`terminal_${toolName}`, prose])),
 };
 
 /**

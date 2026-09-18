@@ -85,7 +85,7 @@ block is not forgotten: its row stays at `none`, and the next load is a change
 of residency rather than a discovery.
 
 **Invalidation.** A kind's source can be replaced wholesale, as a Terminal
-checkout is by `terminal_checkout_repository`. `invalidateKind` moves every
+checkout is by `checkout_repository`. `invalidateKind` moves every
 block of the kind to `none`, pending deliveries included. This is the one
 transition that changes the prefix mid-run; the old repository's instructions
 have no successor message to supersede them.

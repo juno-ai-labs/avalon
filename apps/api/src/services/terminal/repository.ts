@@ -138,7 +138,7 @@ async function assertRepositoryRemoteAccess(
   if (!row) {
     throw new TerminalToolError(
       "repository_access_revoked",
-      `${selection.repositoryFullName} is no longer authorized by an active GitHub connection. Choose another authorized repository with terminal_checkout_repository or reconnect GitHub.`,
+      `${selection.repositoryFullName} is no longer authorized by an active GitHub connection. Choose another authorized repository with checkout_repository or reconnect GitHub.`,
       { reason: "The selected GitHub connection was disabled or removed; choose another authorized repository." },
     );
   }
@@ -157,7 +157,7 @@ async function assertRepositoryRemoteAccess(
   if (!authorization) {
     throw new TerminalToolError(
       "repository_access_revoked",
-      `${selection.repositoryFullName} is no longer authorized by GitHub connector settings. Choose another authorized repository with terminal_checkout_repository or ask a connector administrator to restore access.`,
+      `${selection.repositoryFullName} is no longer authorized by GitHub connector settings. Choose another authorized repository with checkout_repository or ask a connector administrator to restore access.`,
       { reason: "Repository connector policy changed; choose an authorized repository before retrying." },
     );
   }
@@ -202,7 +202,7 @@ export async function bootstrapTerminalRepository(
     terminalPortFactory,
   );
   if (!selection) {
-    throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with terminal_checkout_repository, then retry the repository operation.");
+    throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with checkout_repository, then retry the repository operation.");
   }
   const remoteAccess = await assertRepositoryRemoteAccess(env.DB, selection, "read_only");
   const alreadyBootstrapped = selection.bootstrappedSandboxGeneration === sandbox.generation;
@@ -436,7 +436,7 @@ export function createTerminalRepositoryPublisher(
       if (!selection) {
         throw new TerminalToolError(
           "repository_not_configured",
-          "This work stream has no active GitHub repository. Choose one with terminal_checkout_repository, then retry publish_branch_and_pr.",
+          "This work stream has no active GitHub repository. Choose one with checkout_repository, then retry publish_branch_and_pr.",
         );
       }
       await assertRepositoryRemoteAccess(env.DB, selection, "full_access");

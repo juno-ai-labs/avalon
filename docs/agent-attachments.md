@@ -218,7 +218,7 @@ gone with the compiler ([`automation-lifecycle.md`](automation-lifecycle.md)).
 ### Terminal resource exchange
 
 The Terminal plugin reuses the same authorized resource and lifecycle boundary
-without projecting original bytes into the model. `terminal_import_resource`
+without projecting original bytes into the model. `import_resource`
 resolves one resource through current work-stream/principal visibility, streams
 its regional R2 original through the Worker, verifies its stored hash, and writes
 it into the current authority-fenced sandbox generation. Daytona receives no R2
@@ -226,7 +226,7 @@ credential or signed URL. An omitted destination is deterministic beneath
 `.rally/resources/`; an explicit destination is create-only unless the model
 states `overwrite: true`.
 
-`terminal_publish_resource` reads one stable nonempty regular file from the
+`publish_resource` reads one stable nonempty regular file from the
 host-provided output directory, classifies it with the attachment MIME/kind
 registry, pre-registers the regional object in the cleanup outbox, writes R2,
 then creates and attaches a normal generated `resources` row. The work stream

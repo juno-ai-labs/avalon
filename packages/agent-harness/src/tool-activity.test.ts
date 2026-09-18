@@ -149,6 +149,23 @@ describe("tool activity names", () => {
       .toBe("Could not check a connector's connection");
   });
 
+  it("words a Terminal row the same under its current and its retired wire name", () => {
+    // `rally:terminal` dropped its `terminal_` prefix too, and had no prose at
+    // all before that: every row rendered the humanized wire name.
+    expect(toolActivityName({ toolName: "run_command", status: "started" }))
+      .toBe("Running a command");
+    expect(toolActivityName({ toolName: "terminal_run_command", status: "started" }))
+      .toBe("Running a command");
+    expect(toolActivityName({ toolName: "publish_resource", status: "completed" }))
+      .toBe("Published an artifact");
+    expect(toolActivityName({ toolName: "terminal_publish_resource", status: "completed" }))
+      .toBe("Published an artifact");
+    expect(toolActivityName({ toolName: "checkout_repository", status: "failed" }))
+      .toBe("Could not check out a repository");
+    expect(toolActivityName({ toolName: "terminal_checkout_repository", status: "failed" }))
+      .toBe("Could not check out a repository");
+  });
+
   it("keeps wording rows a retired tool already wrote", () => {
     // `workstream_create_artifact` no longer exists, but the rows it wrote do,
     // and they are worded from the stored name every time they are read.
