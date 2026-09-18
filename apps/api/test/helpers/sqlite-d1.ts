@@ -1,3 +1,4 @@
+import { readFileSync, readdirSync } from "node:fs";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results } from "./cloudflare-test";
 import { databaseFromSnapshot } from "./migrated-schema";
@@ -6,6 +7,22 @@ import { migratedSchemaSnapshot } from "./migrated-schema-snapshots";
 /** Applies every checked-in migration to a fresh regional D1 database. */
 export function migratedSqliteDatabase(): DatabaseSync {
   return databaseFromSnapshot(migratedSchemaSnapshot("regional"));
+}
+
+/**
+ * Combined-schema compatibility fixture for focused query tests only.
+ * It cannot prove binding isolation or reject cross-database joins. Use separate
+ * connections for routing tests, as the collector and delivery tests do.
+ */
+export function migratedObservabilityFixture(): DatabaseSync {
+  const database = migratedSqliteDatabase();
+  for (const directory of ["telemetry-migrations", "audit-migrations"]) {
+    const root = new URL(`../../../../packages/db/${directory}/`, import.meta.url);
+    for (const file of readdirSync(root).filter((name) => name.endsWith(".sql")).sort()) {
+      database.exec(readFileSync(new URL(file, root), "utf8"));
+    }
+  }
+  return database;
 }
 
 /**

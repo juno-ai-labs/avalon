@@ -6,7 +6,7 @@ import type { HonoAppEnv, IdentityAuthContext } from '../src/env';
 import { ApiError } from '../src/lib/api-error';
 import { onboardingRoutes } from '../src/routes/onboarding';
 import { createTestEnv } from './helpers/cloudflare-test';
-import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
 
 const userId = asUserId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1');
 const operationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2';
@@ -34,7 +34,7 @@ describe('authoritative onboarding outcome telemetry', () => {
   });
 
   it('emits a bounded failure outcome when a valid workspace creation operation conflicts', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES (?, 'subject', 'member@example.com', 'Member', ?, ?)
