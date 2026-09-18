@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from './guided-onboarding';
 import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
+import { connectorProviders } from '../lib/connector-catalog';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 
 const state = vi.hoisted(() => ({
@@ -286,6 +287,26 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 2, stage: 'connectors',
       connectorIds: ['workspace:google-drive-workspace', 'you:google-mail-calendar'] }));
+  });
+  it('saves every connector the picker offers on both pages, whatever the catalog grows to', async () => {
+    const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
+    state.journey.mockResolvedValue(journey);
+    state.connectors.mockResolvedValue([...new Set(connectorProviders.map((provider) => provider.provider))]);
+    state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
+    show();
+    const offeredFor = (scope: string) => connectorProviders.filter((provider) => provider.scopes.some((candidate) => candidate === scope));
+    await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    for (const provider of offeredFor('workspace')) fireEvent.click(await screen.findByRole('button', { name: provider.name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const workspaceIds = offeredFor('workspace').map((provider) => `workspace:${provider.id}`);
+    await waitFor(() => expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 0, stage: 'connectors',
+      connectorIds: workspaceIds }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Connect your personal tools' });
+    for (const provider of offeredFor('you')) fireEvent.click(await screen.findByRole('button', { name: provider.name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 1, stage: 'connectors',
+      connectorIds: [...workspaceIds, ...offeredFor('you').map((provider) => `you:${provider.id}`)] }));
   });
   it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
