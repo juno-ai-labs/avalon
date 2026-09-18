@@ -190,8 +190,6 @@ describe("Rally engineering MCP tools", () => {
         workspaceId,
         workstreamId,
         substreamId,
-        sidekickId: null,
-        artifactId: null,
         result: {
           columns: ["answer"],
           rows: [{ answer: 42 }],
@@ -248,7 +246,6 @@ describe("Rally engineering MCP tools", () => {
         workstreamId: null,
         substreamId: null,
         sidekickId,
-        artifactId: null,
         result: {
           columns: ["lifecycle"],
           rows: [{ lifecycle: "paused" }],
@@ -297,7 +294,6 @@ describe("Rally engineering MCP tools", () => {
         workspaceId,
         workstreamId: null,
         substreamId: null,
-        sidekickId: null,
         artifactId,
         result: {
           columns: ["current_version"],

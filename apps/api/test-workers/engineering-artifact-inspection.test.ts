@@ -199,7 +199,6 @@ describe("engineering inspection of a live web artifact's supervisor", () => {
         workspaceId: WORKSPACE_ID,
         workstreamId: null,
         substreamId: null,
-        sidekickId: null,
         artifactId: ARTIFACT_ID,
         result: {
           rows: [{

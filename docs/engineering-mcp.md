@@ -118,6 +118,12 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
   fixed outcome code only.
 - The private regional entrypoint has no HTTP route. Only a Worker with the
   named Service Binding can call it.
+- **A per-object-kind id on the SQL result is optional and omitted, never a
+  required nullable field.** The MCP parses every regional response through a
+  strict schema and deploys *after* the regional Workers, so a key the previous
+  build did not know is an unknown key mid-rollout and strict parsing rejects
+  it. Adding the next object kind's id as a required field breaks every existing
+  SQL tool for the length of the deployment window.
 
 ## Boundaries and non-goals
 
@@ -232,8 +238,8 @@ decision.
 **What changed:** `list_artifacts` and `run_artifact_sql` open a live web
 artifact's supervisor. `ArtifactHostDO` now extends
 `InternallyInspectableDurableObject` directly — it is the first inspectable
-object that is not a scheduled authority — and `EngineeringSqlLookup` carries a
-nullable `artifactId`.
+object that is not a scheduled authority — and `EngineeringSqlLookup` carries an
+optional `artifactId`.
 
 **Why:** The supervisor holds the bounded log of what a model's server module
 threw, which is what turns "the artifact page is broken" into a diagnosis, plus
@@ -249,7 +255,10 @@ code just to inspect it, which can fail for reasons that have nothing to do with
 the inspection. The boundary is documented instead, and the tool description says
 so, because an operator's natural assumption is the opposite.
 
-**Consequences:** `viewer_sessions` is now operator-readable and writable. It
+**Consequences:** The two new ids on the SQL result are optional and omitted
+rather than nullable, so the three pre-existing results stay byte-identical for
+the window in which an upgraded regional Worker answers an MCP that has not
+deployed yet. `viewer_sessions` is now operator-readable and writable. It
 stores only digests, so nothing there reconstructs a live cookie, but an
 admitted operator can mint artifact access by writing a row — inside this
 console's stated destructive authority rather than beyond it, and worth knowing
@@ -261,7 +270,7 @@ refused, matching the Sidekick fence.
 **What changed:** `list_sidekicks` and `run_sidekick_sql` open a Sidekick's own
 object. Every inspectable class is now routed. A Sidekick resolves through its
 workspace's active route plus an `automation_directory` row, and
-`EngineeringSqlLookup` carries a nullable `sidekickId` beside the work-stream
+`EngineeringSqlLookup` carries an optional `sidekickId` beside the work-stream
 and substream IDs.
 
 **Why:** SidekickDO inherited the inspection RPC when the shared base was added
@@ -284,9 +293,8 @@ last projection landed is refused until its row arrives. That is deliberate:
 refusing an object that exists is recoverable in a way that materializing one
 that does not is not. Each Sidekick SQL call also costs one WorkspaceDO
 inspection read before execution, the same shape a child substream's parent
-check already pays. `ArtifactHostDO` and `SlackReactionTicker` remain unroutable
-because neither inherits the RPC; reaching them is a change to their class
-hierarchy, and nobody has asked.
+check already pays. `SlackReactionTicker` remains unroutable because it does not
+inherit the RPC; reaching it is a change to its class, and nobody has asked.
 
 ### 2026-08-30 — Admit hosted origins to the MCP transport
 

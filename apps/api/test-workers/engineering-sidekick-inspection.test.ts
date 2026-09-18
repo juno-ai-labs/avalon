@@ -171,7 +171,7 @@ describe("engineering inspection of a Sidekick's own object", () => {
     expect(tables.rows).toEqual([]);
   });
 
-  it("refuses a stale caller generation and a Sidekick read from another workspace", async () => {
+  it("refuses a stale caller generation and a quarantined workspace route", async () => {
     await createSidekick();
     const inspection = bridge();
 
