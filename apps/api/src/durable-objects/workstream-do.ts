@@ -3,7 +3,7 @@ import { ConnectorParticipantAdmissionSchema, ScopeGrantManagementRequestSchema,
 import { ScopeSharingOptionsRequestSchema, ScopeSharingOptionsSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ListScopeInvitationsSchema } from "@rally/contracts/scope-grants";
 import { SharedWorkstreamRequestSchema, SharedWorkstreamSchema } from "@rally/contracts/scope-grants";
-import { ScopeInvitationService } from "./scope-invitation-service";
+import { ScopeInvitationService, scopeInvitationOrigin } from "./scope-invitation-service";
 import { SCOPE_INVITATION_SCHEMA_STATEMENTS, SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
 import { CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
   ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
@@ -1377,6 +1377,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = parseRpcInput(CreateScopeInvitationsSchema, input, "create_scope_invitations");
     this.assertParent(request.workspaceId, request.parentId);
+    if (!scopeInvitationOrigin(this.env)) return { status: "denied", reason: "configuration_required" };
     const denied = await this.prepareInvitationTargets(request);
     if (denied) return denied;
     const result = await this.scopeInvitations().create(request);

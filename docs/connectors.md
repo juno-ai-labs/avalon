@@ -166,6 +166,13 @@ Recovery is part of the contract too. A durable job that failed on authorization
 
 ### Actor identity and work-stream attribution
 
+The resolver preserves guest identity for attribution, using the role returned by
+its existing regional membership query. Automatic connector audience admission
+excludes guests, including on legacy conversations; a provider audience cannot
+create an unrelated grant. Slack also excludes guests from automatic creator
+seating and session assignment. Explicit scope sharing remains the admission
+path, and guests retain access to connectors within their shared workstreams.
+
 Every connector that can start work from a provider identity resolves that identity to an
 Rally member through one shared mapping, `resolveConnectorActorIdentity` over
 `external_user_identities`. This is the contract for every agent connector rather than

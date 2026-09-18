@@ -1359,6 +1359,15 @@ is under test.
 
 ## Data model
 
+After first-share handoff, WorkstreamDO owns `scope_grants` and their operation
+receipts, scoped invitations and delivery receipts, and the Main/child participant
+transfer ledgers. The handoff is lazy per addressed scope; untouched conversations
+keep their existing authority. SubstreamAgent retains transcript execution and a
+versioned participant projection for socket admission. `scope_grant_directory`
+outbox effects update discovery without becoming a second grant authority. See
+[scoped invitations](scope-invitations.md) and [grant discovery](scope-grant-directory.md) for
+the target, inheritance, incarnation and replay rules.
+
 The DDL in source is authoritative. This catalog defines ownership and joins.
 Durable Object tables are SQLite `STRICT` tables. Native work-stream-down
 schemas use integer Unix milliseconds; WorkspaceDO's imported workspace schema
@@ -1450,7 +1459,7 @@ remain bounded and exclude the supplemented rows.
 | `projection_keys` | Next version and last hash for parent aggregate partitions such as `common` and `user:<id>`. |
 | `workstream_state_clock` | Singleton append sequence and nondecreasing millisecond floor used to create local UUIDv7 trace identities. It is not a distributed causal clock. |
 | `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
-| `durable_outbox` | Hash-checked aggregate or immutable `parent_effect` envelope waiting for the alarm to hand it to the Queue, discriminated by a CHECK-enumerated `effect_kind` column (`directory_common`, `directory_user`, `directory_automation`, `activity_event`, `mention_notification`, `participant_notification`; the drain priority-orders on it and never re-derives the class from JSON). Every common/viewer state change keeps its own row. A row is deleted the moment `sendBatch` accepts it, deferred five seconds when the Queue refuses the batch, and deleted with a warning when the envelope is too large for one message. There is no dead-letter state here: the Queue's dead-letter queue is the disposal. |
+| `durable_outbox` | Hash-checked aggregate or immutable `parent_effect` envelope waiting for the alarm to hand it to the Queue, discriminated by a CHECK-enumerated `effect_kind` column (`directory_common`, `directory_user`, `directory_automation`, `activity_event`, `mention_notification`, `participant_notification`, `scope_grant_directory`; the drain priority-orders on it and never re-derives the class from JSON). Every common/viewer state change keeps its own row. A row is deleted the moment `sendBatch` accepts it, deferred five seconds when the Queue refuses the batch, and deleted with a warning when the envelope is too large for one message. There is no dead-letter state here: the Queue's dead-letter queue is the disposal. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
 
 The child tables are inputs to `workstream_metadata` and the aggregate
@@ -1803,7 +1812,7 @@ conversation action cannot revoke access across its siblings. A retried removal
 whose receipt was superseded by a later share reports that the participant still
 has access instead of publishing a false participant-removed event.
 
-Substream migration 61 prepares the source side of that cutover. A forward-only
+Substream migration 62 prepares the source side of that cutover. A forward-only
 handoff atomically snapshots active participants and installs a durable write
 fence enforced by participant-table triggers. This covers identity operations,
 connector reconciliation and direct product SQL alike; read-position updates

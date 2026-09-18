@@ -1638,6 +1638,7 @@ export class SlackAgentService {
     const identity = await this.linkedIdentity(teamId, slackUserId);
     let actor: ExternalActor | null = null;
     let matchedWorkspaceUserId: string | null = identity?.auth.userId ?? null;
+    let mayJoinWorkstream = identity?.auth.role != null;
     let matchedVerification: ConnectorActorVerification | null = identity ? "account_link" : null;
     if (!identity) {
       if (source.channelResolutionFailure) {
@@ -1671,6 +1672,7 @@ export class SlackAgentService {
       actor = externalIdentity.actor;
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
       matchedVerification = externalIdentity.matchedVerification;
+      mayJoinWorkstream = externalIdentity.mayJoinWorkstream;
     }
     const reactionSource = activationInvocation ? slackAgentReactionSource(activationInvocation) : null;
     let placedReaction: string | null = null;
@@ -1743,6 +1745,7 @@ export class SlackAgentService {
               identity,
               actor,
               matchedWorkspaceUserId,
+              mayJoinWorkstream,
               matchedVerification,
               teamId,
               token,
@@ -1837,7 +1840,7 @@ export class SlackAgentService {
           workspaceId: connection.workspace_id,
           workstreamId: session.workstream_id,
           eventId: clientMessageId,
-          userIds: matchedWorkspaceUserId ? [matchedWorkspaceUserId] : [],
+          userIds: mayJoinWorkstream && matchedWorkspaceUserId ? [matchedWorkspaceUserId] : [],
           addedByUserId: matchedWorkspaceUserId,
         });
         // Each message runs as whoever sent it: a linked member's own
@@ -1888,6 +1891,7 @@ export class SlackAgentService {
     actor: ExternalActor | null;
     matchedWorkspaceUserId: string | null;
     matchedVerification: ConnectorActorVerification | null;
+    mayJoinWorkstream: boolean;
     teamId: string;
     token: string;
     slackUserId: string;
@@ -1960,7 +1964,7 @@ export class SlackAgentService {
           // The Slack member is not a linked Avalon identity, but when the
           // installation resolves them to a workspace member the work stream
           // is theirs rather than ownerless.
-          creatorUserId: input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
+          creatorUserId: !input.mayJoinWorkstream || input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
           participantUserIds: audience.userIds,
           scope,
           slackOrigin: input.slackOrigin,
@@ -1998,7 +2002,7 @@ export class SlackAgentService {
         at,
       }),
     ).session;
-    if (!input.identity && input.matchedWorkspaceUserId) {
+    if (!input.identity && input.mayJoinWorkstream && input.matchedWorkspaceUserId) {
       // The recorded method has to name the mapping that actually resolved the
       // member: it is what a later assignment consults before overwriting.
       await this.assignWorkspaceSessions(
@@ -2541,6 +2545,7 @@ export class SlackAgentService {
     actor: ExternalActor;
     matchedWorkspaceUserId: string | null;
     matchedVerification: ConnectorActorVerification | null;
+    mayJoinWorkstream: boolean;
   }> {
     const result = await slackApi(token, "users.info", { user: slackUserId }, AbortSignal.timeout(10_000));
     if (!validSlackHuman(result.user, teamId) || result.user.id !== slackUserId) {
@@ -2564,6 +2569,7 @@ export class SlackAgentService {
       actor,
       matchedWorkspaceUserId: identity?.userId ?? null,
       matchedVerification: identity?.verification ?? null,
+      mayJoinWorkstream: identity !== null && identity.accessClass !== "guest",
     };
   }
 

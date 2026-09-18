@@ -27,6 +27,19 @@ const ACCESS_TTL_SECONDS = 15 * 60;
  */
 export const SESSION_RENEWAL_WINDOW_SECONDS = 30 * 24 * 60 * 60;
 export const SESSION_MAX_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+
+/** Delete only proofs/receipts which existing expiry rules can no longer resume. */
+export async function purgeExpiredEmailLoginChallenges(env: Env): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare(`DELETE FROM email_login_challenges
+    WHERE (redeemed_at IS NULL AND expires_at <= ?)
+      OR (redeemed_at IS NOT NULL AND (
+        EXISTS (SELECT 1 FROM sessions s WHERE s.id = email_login_challenges.session_id
+          AND (s.revoked_at IS NOT NULL OR s.expires_at <= ?))
+        OR (redeemed_at <= ? AND NOT EXISTS (
+          SELECT 1 FROM sessions s WHERE s.id = email_login_challenges.session_id))))`)
+    .bind(now, new Date(now).toISOString(), now - SESSION_RENEWAL_WINDOW_SECONDS * 1_000).run();
+}
 /** Fixed SQL fragments for renewal of the ordinary sessions table. */
 export function sessionRenewalPolicy(region: Region, now = nowIso()) {
   const ceiling = `+${SESSION_MAX_LIFETIME_SECONDS} seconds`;

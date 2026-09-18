@@ -13,7 +13,7 @@ require explicit policy and browser-origin configuration before they are usable.
 | `apps/api/src/services/login-identity-service.ts` | Verified email to immutable user identity. |
 | `apps/api/src/services/auth-service.ts` | Resumption of the one session recorded by a consumed challenge. |
 | `apps/api/src/routes/auth.ts` | POST start/redeem endpoints and scanner-safe GET rejection. |
-| `apps/api/src/worker-events.ts` | Scheduled recovery of pending delivery. |
+| `apps/api/src/worker-events.ts` | Scheduled delivery recovery and expired-proof cleanup. |
 | `packages/db/migrations/0111_email_login_challenges.sql` | Challenge, delivery and redemption receipt storage. |
 
 ## How it works
@@ -91,8 +91,12 @@ GET redemption returns 405. The routes reuse the existing auth body-size limit.
 
 Delivery errors leave the durable intent pending until expiry or redemption. A
 successful provider response can still be lost; the shared provider's idempotency
-semantics determine deduplication. Retention cleanup and resend/issuance abuse
-policy are outstanding and must be resolved before enabling browser sign-in.
+semantics determine deduplication. Scheduled cleanup deletes expired unredeemed
+proofs and receipts whose sessions have expired or been revoked. A consumed receipt
+without a session is retained through the existing initial session lifetime so
+crash recovery remains possible. Live receipts remain encrypted for response-loss
+retries; clearing them immediately after minting would break that contract.
+Resend/issuance abuse policy remains a production enablement prerequisite.
 
 ## Testing
 
@@ -115,7 +119,9 @@ does not introduce cross-deployment membership or route grants.
 ### 2026-09-16 — Persist proof consumption and resumable session identity
 
 **What changed:** Email links and OTPs share one challenge and one session receipt,
-with encrypted delivery retries and POST-only redemption.
+with encrypted delivery retries and POST-only redemption. Scheduled cleanup uses
+existing proof/session expiry, preserving live response-loss receipts rather than
+deleting the only recoverable credential as soon as a session is minted.
 
 **Why:** Guests need quick entry without duplicate user identities. A response lost
 between verification and session creation must not consume access irrecoverably or

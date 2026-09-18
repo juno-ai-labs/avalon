@@ -2,7 +2,8 @@
 
 Scoped invitations offer Main, individual children or a workstream to verified
 email recipients. The invitation and resulting grants live in the same
-WorkstreamDO. The [lite browser entry](browser-client.md) accepts invitations through this
+WorkstreamDO. Client integration lands in the browser-lite layer of the PR stack
+(#825); this platform layer (#822) owns the protocol. The [lite browser entry](browser-client.md) accepts invitations through this
 protocol. The shared email panel creates and revokes pending invitations from
 the browser conversation header or native participant dialog. The same panel manages direct accepted grants. Participant mutations use the
 parent grant ledger after first-share handoff; transcript execution stays in the
@@ -20,6 +21,10 @@ conversation owner.
 | `apps/api/src/durable-objects/workstream-do.ts` | Addressed RPCs, migration 14 and delivery alarm execution. |
 
 ## How it works
+
+Creation validates the configured browser origin and signing/encryption keys before
+starting any forward-only participant handoff. Configuration failure leaves the
+existing conversation authority unchanged.
 
 `POST /sharing` takes a caller-generated operation ID, one parent, explicit
 targets, recipient emails and an explicit nullable expiry. The authenticated
