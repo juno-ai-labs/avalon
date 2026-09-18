@@ -36,6 +36,16 @@
       "database_id": "00000000-0000-0000-0000-000000000001"
     },
     {
+      "binding": "TELEMETRY_DB",
+      "database_name": "avalon-global-telemetry",
+      "database_id": "00000000-0000-0000-0000-000000000003"
+    },
+    {
+      "binding": "AUDIT_DB",
+      "database_name": "avalon-global-audit",
+      "database_id": "00000000-0000-0000-0000-000000000004"
+    },
+    {
       "binding": "PLATFORM_DB",
       "database_name": "avalon-platform-runtime-tests",
       "database_id": "00000000-0000-0000-0000-000000000002"

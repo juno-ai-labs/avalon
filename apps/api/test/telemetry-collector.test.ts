@@ -1,4 +1,6 @@
 import "../../../tests/isolated-region";
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { TelemetryCollector } from "../src/telemetry/collector";
@@ -46,8 +48,10 @@ describe("regional telemetry collector", () => {
   afterEach(() => vi.useRealTimers());
 
   it("durably accepts Global events with one immutable internal deadline", async () => {
-    const database = migratedSqliteDatabase();
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    const identity = migratedSqliteDatabase();
+    const database = new DatabaseSync(":memory:");
+    database.exec(readFileSync(new URL("../../../packages/db/telemetry-migrations/0001_initial.sql", import.meta.url), "utf8"));
+    const env = createTestEnv({ DB: sqliteD1(identity), TELEMETRY_DB: sqliteD1(database), AVALON_REGION: "global" });
     const collector = new TelemetryCollector(env);
 
     await expect(collector.accept(productEvent(), {
@@ -73,6 +77,8 @@ describe("regional telemetry collector", () => {
       subject_user_id: null,
       analytics_lakehouse_state: "pending",
     });
+    expect(identity.prepare("SELECT COUNT(*) AS count FROM telemetry_accepted_events").get()).toEqual({ count: 0 });
+    identity.close();
     database.close();
   });
 

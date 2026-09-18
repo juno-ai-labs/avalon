@@ -41,6 +41,28 @@ the implementation that future changes must preserve.
 For the implementation checklist, see
 [`adding-new-instrumented-event.md`](adding-new-instrumented-event.md).
 
+## Storage and background writes
+
+`TELEMETRY_DB` owns accepted events, delivery receipts, and replay audit rows.
+Its independent schema is in `packages/db/telemetry-migrations`. Receipts stay
+with events so their existing acceptance transaction remains local. Identity,
+preferences, and profile jobs remain in `DB`; background delivery and replay
+read preferences there instead of joining across databases. These telemetry
+IDs are historical references, without foreign keys to identity tables.
+
+Product-derived telemetry uses the existing `runtimeDeferral`/`waitUntil`
+mechanism. Audit writes likewise run in the background against `AUDIT_DB`.
+Neither write is a condition of a successful user mutation or tool turn. A failed
+background write may be lost; this split adds no outbox, dual writes, or retry
+layer. Explicit telemetry ingestion still acknowledges its existing acceptance
+boundary, and the existing accepted-event delivery machinery is unchanged.
+
+Deployment applies both independent schemas before activating the API Worker.
+The cutover starts fresh; pre-cutover rows in the regional database are inactive
+history, not copied or read by the new delivery path. Applied regional migrations
+remain immutable. Opt-out purges pending events in the background through the
+request's start timestamp; delivery also checks the canonical user preference.
+
 ## How it works
 
 Interactive search uses the existing `renderer_perf_flow` diagnostic event with
@@ -489,7 +511,7 @@ WorkstreamDO for work-stream product data.
   most 4 MiB; source maps are at most 16 MiB.
 
 - Global analytics lakehouse handoff is unretractable in the current design. A
-  late opt-out, user cascade, or D1 expiry does not delete a current Iceberg row;
+  late opt-out or D1 expiry does not delete a current Iceberg row;
   the projected deadline and registry retention fields are metadata until an
   automated transactional Iceberg deletion engine exists.
 
@@ -1886,6 +1908,15 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-18 — Isolate event and audit storage from identity
+
+Large observational tables made an identity migration fail during table copying.
+Accepted telemetry and its transaction companions now use `TELEMETRY_DB`, while
+audit events use `AUDIT_DB`. Existing background deferral keeps these writes off
+product response paths. Separate bindings and a fresh cutover were chosen over
+cross-database replication or backfill machinery; future changes must preserve
+canonical preferences in `DB` and keep observational failures out of mutations.
 
 ### 2026-09-17 — Product actions no longer await observational telemetry
 

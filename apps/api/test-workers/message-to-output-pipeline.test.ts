@@ -186,6 +186,12 @@ beforeEach(async () => {
     `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000005a2`,
   );
   await reset();
+  await env.AUDIT_DB.prepare(`CREATE TABLE audit_events (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
+      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
+      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
+    )`).run();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -198,12 +204,6 @@ beforeEach(async () => {
     env.DB.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT,
       timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'
-    )`),
-    env.DB.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
-      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
-      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
