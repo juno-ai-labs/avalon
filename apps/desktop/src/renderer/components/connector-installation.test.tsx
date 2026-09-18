@@ -241,6 +241,70 @@ describe('workspace event controls', () => {
     expect(await screen.findByRole('heading', { name: fullLabel })).toBeVisible();
     expect(screen.getByRole('option', { name: 'Granola note events' })).toHaveAttribute('title', fullLabel);
   });
+
+  // Replacing a live workspace key is the path where getting this wrong is
+  // most expensive — a workspace whose key cannot be rotated from the UI — and
+  // it is the one input this change tightened: it used to accept anything
+  // non-empty.
+  it('refuses a replacement key that cannot be the provider\u2019s, and says why', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'granola',
+      state: 'current', selectedEvents: ['note.generated'], registrations: [registration('note.generated', 'current', 'whe_1')] } });
+    const replace = vi.spyOn(api, 'replaceInstallationApiKey').mockResolvedValue(undefined as never);
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+    fireEvent.click(screen.getByText('Replace workspace API key'));
+    const field = screen.getByLabelText('New API key');
+
+    fireEvent.paste(field);
+    fireEvent.change(field, { target: { value: 'sk-live-wrong-provider-key' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
+    expect(screen.getByRole('button', { name: 'Replace API key' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
+    expect(replace).not.toHaveBeenCalled();
+
+    const key = `grn_${'b'.repeat(24)}`;
+    fireEvent.change(field, { target: { value: key } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(connectionId, key));
+  });
+
+  // `format: null` is what keeps a provider that documents no key shape
+  // working exactly as it did: any non-empty paste is accepted, with nothing
+  // guessed about it.
+  it('accepts an opaque replacement key for a provider that documents no format', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'fireflies',
+      state: 'current', selectedEvents: ['meeting.transcribed'], registrations: [registration('meeting.transcribed', 'current', 'whe_2')] } });
+    const replace = vi.spyOn(api, 'replaceInstallationApiKey').mockResolvedValue(undefined as never);
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+    fireEvent.click(screen.getByText('Replace workspace API key'));
+    const field = screen.getByLabelText('New API key');
+    fireEvent.paste(field);
+    fireEvent.change(field, { target: { value: 'opaque-fireflies-key' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(connectionId, 'opaque-fireflies-key'));
+  });
+
+  // Typing a key is not pasting a wrong one: the verdict waits for the field
+  // to settle, so the message cannot sit on screen saying something untrue of
+  // a half-typed key.
+  it('holds the mismatch back until the key is pasted or the field is left', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'granola',
+      state: 'current', selectedEvents: ['note.generated'], registrations: [registration('note.generated', 'current', 'whe_1')] } });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+    fireEvent.click(screen.getByText('Replace workspace API key'));
+    const field = screen.getByLabelText('New API key');
+    for (const typed of ['g', 'gr', 'grn']) fireEvent.change(field, { target: { value: typed } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.blur(field);
+    expect(screen.getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
+  });
 });
 
 describe('Fireflies workspace setup', () => {

@@ -5008,10 +5008,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .granola-key-guide ol { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 9px 0; padding-left: 19px; }
 .granola-key-guide li + li { margin-top: 4px; }
 .granola-key-guide p { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 10px 0 0; }
-.granola-key-guide-link { background: transparent; border: 0; color: var(--av-sys-color-accent-base); cursor: pointer; font-size: var(--av-cmp-control-font-size); margin-top: 10px; padding: 0; text-align: left; }
-.granola-key-guide-link:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; text-underline-offset: 3px; }
-.granola-key-input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font-family: 'SFMono-Regular', Consolas, monospace; outline: 0; padding: 9px 10px; width: 100%; }
-.granola-key-input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
+.connector-key-guide-link { background: transparent; border: 0; color: var(--av-sys-color-accent-base); cursor: pointer; font-size: var(--av-cmp-control-font-size); margin-top: 10px; padding: 0; text-align: left; }
+.connector-key-guide-link:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; text-underline-offset: 3px; }
+.connector-key-input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); font-family: 'SFMono-Regular', Consolas, monospace; outline: 0; padding: 9px 10px; width: 100%; }
+.connector-key-input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .rename-workstream-field input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); outline: 0; padding: 9px 10px; width: 100%; }
 .rename-workstream-field input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .modal-copy { color: var(--av-sys-color-text-muted); margin: 0; }

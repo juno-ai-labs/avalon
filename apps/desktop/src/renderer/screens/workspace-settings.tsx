@@ -2448,7 +2448,7 @@ export function WorkspaceSettingsScreen({
             autoFocus
             help="Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook."
             id="granola-workspace-api-key"
-            inputClassName="granola-key-input"
+            inputClassName="connector-key-input"
             inputLabel="Workspace API key"
             label={<SettingLabel setting={settings.granolaKey} />}
             onChange={setGranolaWorkspaceApiKey}
