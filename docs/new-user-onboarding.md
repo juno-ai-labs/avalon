@@ -9,7 +9,8 @@ ships directly for newly created accounts, with no feature flag.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/onboarding.ts` | Account appearance and scoped journey contracts. |
+| `packages/contracts/src/onboarding.ts` | Account appearance and scoped journey contracts; the selectable connector ids, derived. |
+| `packages/contracts/src/connector-connection-card.ts` | Where those connector ids originate — the catalog the journey enum derives from. |
 | `packages/db/migrations/0099_account_onboarding.sql` | Global identity preferences and regional projections; existing-account exemption. |
 | `apps/api/src/services/account-onboarding-service.ts` | Revision-checked account saves. |
 | `apps/api/src/services/platform-onboarding-service.ts` | Narrow profile projection through the existing regional identity bridge. |
@@ -18,6 +19,7 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/lib/account-profile-editor.ts` | Account-scoped immediate drafts and serial revision-checked autosave. |
 | `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Introduction, connector setup, invitations and personal setup. |
+| `apps/desktop/src/renderer/lib/connector-catalog.ts` | The tiles the picker offers, and the compile-time check that each is saveable. |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `lib/onboarding-motion.ts`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
 ## How it works
@@ -60,6 +62,10 @@ editable. Onboarding has no teammate discovery API.
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
 - The visible email list and invitation action authorize sending through the existing workspace service.
+- The connectors the picker offers and the connectors the journey accepts are one
+  set, derived from the connection-card catalog rather than listed twice. Reads of a
+  stored selection drop ids the catalog no longer has, so retiring a connector cannot
+  make an existing journey unreadable; writes still have to name ids that exist.
 
 ## Boundary
 
@@ -100,7 +106,10 @@ equal projections do not emit repeated invalidations.
 
 Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
-`test-workers/onboarding-journey.test.ts`. Account tests apply the actual regional
+`test-workers/onboarding-journey.test.ts`, whose retired-connector case covers the
+tolerant read. The desktop journey itself is covered by
+`src/renderer/screens/guided-onboarding.test.tsx`, including that every connector
+the picker offers on both pages saves. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
 The write-loss and profile-update mutation checks demonstrate those integration
 tests fail when persistence is broken. Desktop session-gate and app-session suites
@@ -109,6 +118,36 @@ cover existing authentication and activation behavior.
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
+
+### 2026-09-17 — Derive the selectable connector ids from the connection-card catalog
+
+The journey's connector enum was a hand-kept copy of the ids in the
+connection-card catalog. Fireflies was added to that catalog and to the picker
+but never to the enum, so its tile was offered and then refused: the selection is
+saved as one array, so a new account that chose Fireflies had every other choice
+rejected with it and could connect nothing at all. The enum is now derived from
+`ConnectorConnectionCardIds` plus the three identities that have no card — Custom
+MCP, inbound webhook, and X — and the renderer catalog asserts at compile time
+that every tile it draws is a selection the schema accepts. The alternative, just
+adding `fireflies` to the list, leaves the next connector to break the same way.
+A connector that must be offered in onboarding but not as a connection card needs
+a second derived source rather than a return to a hand-kept list.
+
+While picking, every tile reserves two lines for its name (`min-height: 2lh` on
+the label), because a name that wraps to two lines made its entire row taller
+than the rows below it. Equalizing the rows with `grid-auto-rows: 1fr` was tried
+first and only holds while the grid fits: at its `max-height` the container's
+height is definite, so `1fr` divides that space instead of matching the tallest
+row, and the mismatch came back at exactly the length the picker actually is.
+Configuring keeps intrinsic heights: those cards carry descriptions of genuinely
+different lengths.
+
+The picker's own save no longer reports a `ZodError`'s JSON to the person; it
+names the field through `describeZodIssues`, per `docs/naming-a-schema-failure.md`.
+Reads of a stored selection now drop ids the catalog no longer offers, so
+retiring a connector cannot make an existing journey unreadable — `update` reads
+before it writes, so that rejection would have cost the person the ability to see
+or advance their own onboarding, not just to save a selection.
 
 ### 2026-09-09 — Keep pending onboarding from admitting conversations
 
