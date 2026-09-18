@@ -336,11 +336,18 @@ authenticatedTelemetryRoutes.patch(
     const acceptedBefore = new Date(c.get("requestReceivedAt") ?? Date.now()).toISOString();
     const preference = await new ProductAnalyticsPreferenceService(c.env, auth.userId).update(body);
     if (!body.enabled) {
-      requestDeferral(c)(c.env.TELEMETRY_DB.prepare(
-        `DELETE FROM telemetry_accepted_events WHERE subject_user_id = ?
-         AND accepted_at <= ? AND delivery_state IN ('pending', 'retrying')
-         AND json_extract(envelope_json, '$.category') IN ('product', 'diagnostic')`,
-      ).bind(auth.userId, acceptedBefore).run());
+      requestDeferral(c)((async () => {
+        const current = await c.env.DB.prepare(
+          "SELECT product_analytics_enabled, product_analytics_preference_version FROM users WHERE id = ?",
+        ).bind(auth.userId).first<{ product_analytics_enabled: number; product_analytics_preference_version: number }>();
+        if (current?.product_analytics_enabled !== 0
+          || current.product_analytics_preference_version !== preference.version) return;
+        await c.env.TELEMETRY_DB.prepare(
+          `DELETE FROM telemetry_accepted_events WHERE subject_user_id = ?
+           AND accepted_at <= ? AND delivery_state IN ('pending', 'retrying')
+           AND json_extract(envelope_json, '$.category') IN ('product', 'diagnostic')`,
+        ).bind(auth.userId, acceptedBefore).run();
+      })());
       await c.env.DB.batch([
         c.env.DB.prepare(
           `DELETE FROM telemetry_profile_jobs

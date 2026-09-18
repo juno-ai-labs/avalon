@@ -1,5 +1,6 @@
-import { env } from "cloudflare:workers";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
+import { env } from "cloudflare:workers";
+import auditMigration from "../../../../packages/db/audit-migrations/0001_initial.sql?raw";
 
 /**
  * Fixtures for driving a `SubstreamAgent` through its real entry points.
@@ -49,12 +50,10 @@ export async function seedWorkspaceControlPlane(
   database: D1Database,
   input: { workspaceId: string; userId: string; sessionId: string },
 ): Promise<void> {
-  await env.AUDIT_DB.prepare(`CREATE TABLE IF NOT EXISTS audit_events (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
-      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
-      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
-    )`).run();
+  await env.AUDIT_DB.batch(auditMigration.split(";").filter((sql) => sql.trim()).map((sql) => (
+    env.AUDIT_DB.prepare(sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
+      .replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS "))
+  )));
   await database.batch([
     database.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
