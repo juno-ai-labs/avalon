@@ -7675,12 +7675,12 @@ export async function pollConnectorConnection(
       ...parseJson<Record<string, unknown>>(row.config_json, {}),
       region: env.AVALON_REGION,
       ...(usesWatchCursor ? { pollTarget: {
-        watchId: watch.id,
-        resourceId: watch.resource_id,
-        providerResourceId: watch.provider_resource_id,
-        resourceType: watch.resource_type,
-        title: watch.title,
-        metadata: parseJson(watch.metadata_json, {}),
+        watchId: usesWatchCursor.id,
+        resourceId: usesWatchCursor.resource_id,
+        providerResourceId: usesWatchCursor.provider_resource_id,
+        resourceType: usesWatchCursor.resource_type,
+        title: usesWatchCursor.title,
+        metadata: parseJson(usesWatchCursor.metadata_json, {}),
       } } : {}),
     },
   };

@@ -1006,7 +1006,7 @@ export function WorkspaceSettingsScreen({
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
     const available = connectorCatalog.data?.includes(provider.provider) ?? false;
-    if (!connected && !available && !connectorCatalog.isLoading) return false;
+    if (provider.provider === 'canva' && !connected && !available) return false;
     if (connectionFilter === 'connected') return connected;
     if (connectionFilter === 'not_connected') {
       return providerHasAvailableUnconnectedScope(provider, connections.data ?? [], isAdmin);
