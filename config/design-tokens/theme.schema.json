@@ -81,7 +81,7 @@
           "maxProperties": 2,
           "properties": {
             "bundled": {
-              "description": "A file name under apps/desktop/src/renderer/fonts/. Ships in the application.",
+              "description": "A file name under packages/ui/src/fonts/. Ships in the application.",
               "type": "string",
               "pattern": "^[a-z0-9][a-z0-9.-]*\\.woff2$"
             },

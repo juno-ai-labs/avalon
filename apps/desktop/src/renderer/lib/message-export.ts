@@ -1,6 +1,6 @@
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import markUrl from '../assets/rally-mark.png';
+import markUrl from '@rally/ui/assets/rally-mark.png';
 import type { MessageExportFormat, MessageExportResult } from '../../common/message-export';
 import { desktopBridge } from './platform';
 
