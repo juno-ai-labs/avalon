@@ -273,7 +273,7 @@ None yet.
 
 One resource type, `canva_design`, plus per-owner watch observations. Reuse the
 existing encrypted connection and polling machinery; confirm its persistence
-shape supports complete-scan baselines, deduplication and atomic event/checkpoint
+shape supports complete-scan baselines, deduplication and replay-safe event/checkpoint
 progress before claiming no migration is needed.
 
 Canonical identity is the design ID. Validate any stored navigation URL as
@@ -355,7 +355,9 @@ that starts an editing transaction owns closing it.
 1. **Apply to Canva's MCP waitlist** with the redirect URI Rally will use. This
    is the blocking item, it is a reviewed application, and it needs someone who
    can speak for Juno Labs. Nothing about a server-side redirect works until it
-   is granted. On 2026-09-18 the application is drafted, not submitted. Proposed
+   is granted. The application was submitted on 2026-09-18 with a pre-launch
+   estimate of 1,000–10,000 aggregate monthly MCP tool calls across all users
+   and workspaces, including a launch buffer. Approval remains pending. Proposed
    callbacks are `https://api.rallywith.ai/connections/canva/callback` and
    `https://eu.api.rallywith.ai/connections/canva/callback`; neither is implemented
    or approved. Local authorization does not establish production eligibility.
@@ -378,8 +380,9 @@ for a connector whose availability is an operational fact per region rather than
 an audience-targeted product flag — and here it is doing real work, because the
 connector must stay absent until a redirect Canva accepts exists (Goal 6).
 
-The question *"does this ship behind a Flagship flag instead"* is the product
-owner's to answer and is recorded as unanswered in Open questions.
+The product owner confirmed the regional environment switch on 2026-09-18.
+No Flagship flag is introduced: availability depends on regional callback
+approval and configuration, with no audience-targeted rollout required.
 
 Turning it off is unsetting the variable.
 
@@ -416,10 +419,9 @@ Turning it off is unsetting the variable.
 
 ## Open questions
 
-- **Who submits the waitlist application, and when?** It is the only blocking
-  authorization approval for the primary path; the draft has not been submitted,
-  and
-  the review has no published turnaround.
+- **When will Canva approve the submitted callbacks?** The application was
+  submitted on 2026-09-18; production approval remains outstanding and the
+  review has no published turnaround.
 - **Does the desktop OAuth handoff already support a loopback listener**, or is
   that new work? Decides whether the fallback is cheap or is a project of its
   own.
@@ -435,8 +437,6 @@ Turning it off is unsetting the variable.
 
 - **How many designs may one work stream watch, and how many watches may a member
   hold?** A polling ceiling is a defensive limit and its number is the team's.
-- **Flag or regional variable?** Recorded above as the regional variable by
-  precedent; the product owner's answer replaces this line either way.
 - **The numbers in [`design.md`](design.md#limits-to-be-set-not-guessed)** — MCP
   call timeout, response caps, retry bounds, editing-transaction cleanup delay. Each guard is
   written open and each number is the team's.
