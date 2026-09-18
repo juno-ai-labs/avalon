@@ -51,8 +51,21 @@ export interface CaseOutcome {
   inputTokens: number | null;
   outputTokens: number | null;
   failureKind: string | null;
-  /** 1 exact, 0.5 right admit-decision but wrong class, 0 otherwise. */
+  /**
+   * The per-case objective, from `objective.md`: mean band utility over the
+   * operating band, rescaled to [0, 1] so the Pareto front can compare cases.
+   *
+   * Not accuracy. A case answered correctly at a confidence the gate will reject
+   * scores as the miss it would be in production, and a confident false match
+   * scores below a hesitant one.
+   */
   score: number;
+  /** Mean utility over the band, on the −2..+1 scale the product pays. */
+  bandUtility: number;
+  /** Contribution to the multiclass Brier score, over P(verdict). */
+  brier: number;
+  /** Whether the gate would fire, at each threshold in the band. */
+  firesInBand: boolean[];
 }
 
 /**
@@ -95,6 +108,8 @@ export interface CandidateReport {
     confusion: Record<string, number>;
     meanConfidenceCorrect: number | null;
     meanConfidenceIncorrect: number | null;
+    bandUtility: number;
+    brier: number;
     /**
      * What a standing watch cares about, which is not accuracy.
      *
@@ -144,6 +159,53 @@ export interface CandidateReport {
 
 function admitOf(verdict: Verdict | null): boolean {
   return verdict === "met";
+}
+
+/**
+ * The thresholds the objective is averaged over.
+ *
+ * Three points rather than one, so a candidate cannot be tuned to the exact
+ * value the gate happens to carry. `objective.md` has the evidence for the band.
+ */
+export const OPERATING_BAND = [0.5, 0.6, 0.7] as const;
+
+/** What the product pays for one decision. A false fire costs double a miss. */
+function utility(fires: boolean, shouldFire: boolean): number {
+  if (fires && shouldFire) return 1;
+  if (fires && !shouldFire) return -2;
+  if (!fires && !shouldFire) return 1;
+  return 0;
+}
+
+/**
+ * P(verdict) from the provider's own distribution, collapsed through the
+ * candidate's label mapping.
+ *
+ * Falls back to putting the whole mass on the chosen verdict when the provider
+ * omits probabilities, which is the most charitable reading available and is
+ * flagged by `probabilities: null` on the case.
+ */
+function verdictProbabilities(
+  outcome: { choice: string | null; confidence: number | null; probabilities: Record<string, number> | null },
+  mapping: Record<string, Verdict>,
+): Record<Verdict, number> {
+  const mass: Record<Verdict, number> = { met: 0, not_met: 0, not_judgeable: 0 };
+  if (outcome.probabilities) {
+    for (const [label, probability] of Object.entries(outcome.probabilities)) {
+      const verdict = mapping[label];
+      if (verdict) mass[verdict] += probability;
+    }
+    const total = mass.met + mass.not_met + mass.not_judgeable;
+    if (total > 0) {
+      mass.met /= total;
+      mass.not_met /= total;
+      mass.not_judgeable /= total;
+      return mass;
+    }
+  }
+  const verdict = outcome.choice === null ? null : mapping[outcome.choice];
+  if (verdict) mass[verdict] = 1;
+  return mass;
 }
 
 function percentile(sorted: number[], fraction: number): number {
@@ -274,8 +336,16 @@ async function evaluateCase(
   }
   const choice = attempt.outcome.choice ?? null;
   const verdict = choice !== null && candidate.mapping[choice] ? candidate.mapping[choice]! : null;
-  const exact = verdict === truth.label;
-  const sameDecision = verdict !== null && admitOf(verdict) === admitOf(truth.label);
+  const confidence = attempt.outcome.confidence ?? null;
+  const shouldFire = truth.label === "met";
+  const firesInBand = OPERATING_BAND.map((threshold) => verdict === "met" && (confidence ?? 0) > threshold);
+  const bandUtility = firesInBand.reduce((total, fires) => total + utility(fires, shouldFire), 0) / firesInBand.length;
+  const probabilities = verdictProbabilities(
+    { choice, confidence, probabilities: attempt.outcome.probabilities ?? null },
+    candidate.mapping,
+  );
+  const brier = (["met", "not_met", "not_judgeable"] as const)
+    .reduce((total, key) => total + (probabilities[key] - (truth.label === key ? 1 : 0)) ** 2, 0);
   return {
     caseId: testCase.id,
     family: testCase.family,
@@ -291,7 +361,12 @@ async function evaluateCase(
     inputTokens: attempt.outcome.inputTokens ?? null,
     outputTokens: attempt.outcome.outputTokens ?? null,
     failureKind: attempt.outcome.failureKind ?? null,
-    score: exact ? 1 : sameDecision ? 0.5 : 0,
+    // Rescaled from the −2..+1 the product pays into 0..1, so the Pareto front
+    // compares cases on one axis without the utility's asymmetry changing sign.
+    score: (bandUtility + 2) / 3,
+    bandUtility,
+    brier,
+    firesInBand,
   };
 }
 
@@ -387,6 +462,10 @@ export async function evaluateCandidate(
       confusion,
       meanConfidenceCorrect: mean(correctConfidences),
       meanConfidenceIncorrect: mean(incorrectConfidences),
+      /** The objective: mean band utility per case, on the −2..+1 scale. */
+      bandUtility: outcomes.reduce((total, outcome) => total + outcome.bandUtility, 0) / outcomes.length,
+      /** Multiclass Brier over P(verdict). Zero is perfect, 0.667 is a guess. */
+      brier: outcomes.reduce((total, outcome) => total + outcome.brier, 0) / outcomes.length,
       fires,
       ...(scenarios ? { scenarios } : {}),
       latency: {
@@ -442,7 +521,10 @@ async function main(): Promise<void> {
     const report = await evaluateCandidate(apiKey, candidate, cases);
     reports.push(report);
     console.log(
-      `${candidate.id.padEnd(22)} n=${report.aggregate.n} 3class=${(report.aggregate.threeClassAccuracy * 100).toFixed(2)}%`
+      `${candidate.id.padEnd(22)} n=${report.aggregate.n}`
+      + ` util=${report.aggregate.bandUtility.toFixed(3)}`
+      + ` brier=${report.aggregate.brier.toFixed(3)}`
+      + ` 3class=${(report.aggregate.threeClassAccuracy * 100).toFixed(2)}%`
       + ` admit=${(report.aggregate.admitAccuracy * 100).toFixed(2)}%`
       + ` hard=${(report.aggregate.hardThreeClassAccuracy * 100).toFixed(2)}%`
       + ` p75=${report.aggregate.latency.p75}ms`
