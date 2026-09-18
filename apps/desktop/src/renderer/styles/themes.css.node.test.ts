@@ -9,7 +9,7 @@ import { resolvedThemes, themeWindowBackground } from '../../common/themes';
 // `?raw` an empty string for a file it is already processing as CSS. This file
 // is typed by `tsconfig.node.json` so that `node:fs` stays out of the renderer
 // program.
-const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+const app = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/app.css'), 'utf8');
 
 /**
  * The design-token JSON, two directories up at the repository root. It is the
@@ -273,6 +273,7 @@ describe('every token has a reader', () => {
       }
     };
     walk(resolve(process.cwd(), 'src'));
+    walk(resolve(process.cwd(), '../../packages/ui/src'));
     sources.push(readFileSync(resolve(process.cwd(), '../../scripts/build-theme-assets.mjs'), 'utf8'));
     const corpus = sources.join('\n');
     const aliased = new Set<string>();
