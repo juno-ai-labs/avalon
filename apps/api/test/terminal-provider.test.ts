@@ -236,6 +236,7 @@ describe("Daytona Terminal provider", () => {
       stableName: "avalon-ws-stream",
       workspaceId: "workspace-1",
       workstreamId: "stream-1",
+      substreamId: "0",
       generation: 1,
       domainAllowList: ["github.com", "*.npmjs.org"],
       environment: { AVALON_RESOURCE_DIR: "/workspace/.rally-output" },
@@ -262,6 +263,7 @@ describe("Daytona Terminal provider", () => {
       labels: {
         "rally.workspace": "workspace-1",
         "rally.workstream": "stream-1",
+        "rally.substream": "0",
         "rally.generation": "1",
       },
     }, { timeout: 60 });
@@ -319,7 +321,7 @@ describe("Daytona Terminal provider", () => {
     }), { now, observe: (measurement) => measurements.push(measurement) });
 
     const created = await provider.createSandbox({
-      stableName: sandbox.name, workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: sandbox.name, workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: ["github.com"], environment: {},
     });
     await provider.prepareSandbox!(created.id, ["github.com"]);
@@ -364,7 +366,7 @@ describe("Daytona Terminal provider", () => {
     });
 
     await expect(provider.createSandbox({
-      stableName: "avalon-failed", workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: "avalon-failed", workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: [], environment: {},
     })).rejects.toThrow("provider detail must not enter analytics");
     expect(measurements).toEqual([{
@@ -397,7 +399,7 @@ describe("Daytona Terminal provider", () => {
     }));
 
     const createdSnapshot = await provider.createSandbox({
-      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: ["github.com"], environment: {},
     });
     await expect(provider.prepareSandbox!(createdSnapshot.id, ["github.com"]))
@@ -427,7 +429,7 @@ describe("Daytona Terminal provider", () => {
     }));
 
     const createdSnapshot = await provider.createSandbox({
-      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1",
+      stableName: "avalon-ws-stream", workspaceId: "workspace-1", workstreamId: "stream-1", substreamId: "0",
       generation: 1, domainAllowList: ["github.com"], environment: {},
     });
     await expect(provider.prepareSandbox!(createdSnapshot.id, ["github.com"]))

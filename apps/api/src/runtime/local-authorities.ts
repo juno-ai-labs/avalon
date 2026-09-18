@@ -122,19 +122,38 @@ function carriedAuthorities(env: Env): AuthorityRegistry {
  * Read by the object ports rather than by product code: a port asks for its own
  * authority by name and either gets storage in this isolate or dispatches, and
  * nothing above it has to know which happened.
+ *
+ * `substreamId` has two readings, and the difference is the whole point:
+ *
+ * - **Absent** means "the conversation this run executes in", which is what
+ *   every loop-side port means. Inside a child conversation that resolves to
+ *   the child's own authorities, not the main conversation's.
+ * - **Present** names one conversation, and it is answered locally only when
+ *   this object *is* that conversation. An explicit `"0"` inside a child names
+ *   the parent's main conversation and goes over the wire.
+ *
+ * Before the two were told apart, an explicit `"0"` and no substream at all
+ * were the same call, so a Terminal port that a background agent deliberately
+ * addressed at its owner's conversation was answered out of the agent's own
+ * storage — a second sandbox authority under the same stable name. The
+ * distinction is what lets one conversation hold a sandbox that another
+ * conversation's run may use.
  */
 export function localWorkstreamAuthority<K extends WorkstreamAuthority>(
   env: Env,
   workspaceId: string,
   workstreamId: string,
   authority: K,
-  substreamId: string = "0",
+  substreamId?: string,
 ): LocalWorkstreamAuthorities[K] | undefined {
   const installed = carriedAuthorities(env).get(scopeKey(workspaceId, workstreamId));
+  if (!installed) return undefined;
+  if (substreamId === undefined) {
+    return installed.answersDefault ? installed.authorities[authority] : undefined;
+  }
   // A port that names a substream other than the one this object is must go
   // over the wire: the installed executors answer for this object alone.
-  if (!installed || (substreamId !== "0" && installed.substreamId !== substreamId)) return undefined;
-  if (substreamId === "0" && installed.substreamId !== "0" && !installed.answersDefault) return undefined;
+  if (installed.substreamId !== substreamId) return undefined;
   return installed.authorities[authority];
 }
 

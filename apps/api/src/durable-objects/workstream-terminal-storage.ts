@@ -47,7 +47,9 @@ export type TerminalLifecycleState =
  * Renaming this to `LIVE_RUN_STATUSES` and adding `'running'` would invert the
  * test, which is why the constant names the values it actually contains.
  */
-const TERMINAL_YIELDED_RUN_STATUSES = "('needs_input', 'completed', 'failed', 'cancelled')";
+export const TERMINAL_YIELDED_RUN_STATUS_LIST = ["needs_input", "completed", "failed", "cancelled"] as const;
+const TERMINAL_YIELDED_RUN_STATUSES =
+  `(${TERMINAL_YIELDED_RUN_STATUS_LIST.map((status) => `'${status}'`).join(", ")})`;
 
 /** Existing Terminal operation-authority window, shared by cleanup claims. */
 export const TERMINAL_OPERATION_LEASE_MS = 16 * 60_000;
@@ -74,6 +76,17 @@ export interface TerminalSandboxRecord {
   appliedNetworkRevision: number;
   version: number;
   operationRunId: string | null;
+  /**
+   * The conversation the lease holder's run executes in, when that is not
+   * this object's own; `null` for a holder whose run row is in this object.
+   *
+   * The liveness test on a holder reads `runs`, and a run that executes in
+   * another conversation — a background agent using its owner's sandbox — has
+   * no row here to read. This column is what tells the claim SQL not to treat
+   * that absence as a yielded run, and tells the coordinator and the lifecycle
+   * sweep which conversation to ask instead.
+   */
+  operationRunSubstreamId: string | null;
   operationLeaseExpiresAt: number | null;
   lifecycleClaimId: string | null;
   lifecycleClaimExpiresAt: number | null;
@@ -96,6 +109,7 @@ interface SandboxRow extends Record<string, SqlStorageValue> {
   applied_network_revision: number;
   version: number;
   operation_run_id: string | null;
+  operation_run_substream_id: string | null;
   operation_lease_expires_at: number | null;
   lifecycle_claim_id: string | null;
   lifecycle_claim_expires_at: number | null;
@@ -111,9 +125,32 @@ interface SandboxRow extends Record<string, SqlStorageValue> {
 
 const SANDBOX_COLUMNS = `lifecycle_state, stable_name, sandbox_id, generation,
   authority_fingerprint, applied_network_revision, version, operation_run_id,
+  operation_run_substream_id,
   operation_lease_expires_at, lifecycle_claim_id, lifecycle_claim_expires_at,
   last_command_at, idle_expires_at, archive_due_at, expire_due_at,
   final_diff_resource_id, failure_code, created_at, updated_at`;
+
+/**
+ * The lease holder's liveness, as one SQL predicate over `terminal_workspace`
+ * aliased `workspace`.
+ *
+ * A holder that ran in this object is live while its run row has not yielded.
+ * A holder that ran in another conversation has no row here, so its lease
+ * deadline is the only liveness this transaction can read: the holder's own
+ * acquisition cache re-claims before the deadline passes, and the coordinator
+ * confirms a yielded foreign holder at that holder's conversation before it
+ * takes the lease over. The `?` is the caller's `now`.
+ */
+const HOLDER_IS_LIVE = `(
+  CASE WHEN workspace.operation_run_substream_id IS NULL
+    THEN EXISTS (
+      SELECT 1 FROM runs holder
+       WHERE holder.run_id = workspace.operation_run_id
+         AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+    )
+    ELSE workspace.operation_lease_expires_at > ?
+  END
+)`;
 
 function toSandbox(row: SandboxRow): TerminalSandboxRecord {
   return {
@@ -125,6 +162,7 @@ function toSandbox(row: SandboxRow): TerminalSandboxRecord {
     appliedNetworkRevision: row.applied_network_revision,
     version: row.version,
     operationRunId: row.operation_run_id,
+    operationRunSubstreamId: row.operation_run_substream_id,
     operationLeaseExpiresAt: row.operation_lease_expires_at,
     lifecycleClaimId: row.lifecycle_claim_id,
     lifecycleClaimExpiresAt: row.lifecycle_claim_expires_at,
@@ -377,6 +415,8 @@ export class WorkstreamTerminalStorage {
     authorityFingerprint: string;
     networkRevision: number;
     runId: string;
+    /** The holder's conversation when it is not this object's own; see the record. */
+    runSubstreamId?: string | null;
     operationLeaseExpiresAt: number;
     idleExpiresAt: number;
     archiveDueAt: number;
@@ -388,13 +428,15 @@ export class WorkstreamTerminalStorage {
         `INSERT OR IGNORE INTO terminal_workspace
            (id, provider, sandbox_id, lifecycle_state, generation, stable_name,
             authority_fingerprint, applied_network_revision, version,
-            operation_run_id, operation_lease_expires_at, last_command_at,
-            idle_expires_at, archive_due_at, expire_due_at, created_at, updated_at)
-         VALUES (1, 'daytona', NULL, 'starting', 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            operation_run_id, operation_run_substream_id, operation_lease_expires_at,
+            last_command_at, idle_expires_at, archive_due_at, expire_due_at,
+            created_at, updated_at)
+         VALUES (1, 'daytona', NULL, 'starting', 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.stableName,
         input.authorityFingerprint,
         input.networkRevision,
         input.runId,
+        input.runSubstreamId ?? null,
         input.operationLeaseExpiresAt,
         input.now,
         input.idleExpiresAt,
@@ -416,17 +458,29 @@ export class WorkstreamTerminalStorage {
    * a run that has yielded. Every takeover from another run is additionally
    * fenced on the absence of an unsettled Terminal task. A nominal command or
    * lease deadline is not proof that the provider process is quiescent.
+   *
+   * Whether the holder has yielded is read from this object's `runs` only for
+   * a holder that ran here. A holder that ran in another conversation has no
+   * row to read, so its lease holds until its deadline — or until the caller,
+   * having asked that conversation and been told the run yielded, names it as
+   * `yieldedForeignHolder`, which this statement then takes over from by exact
+   * identity. A yielded run never resumes its lease, so that answer cannot go
+   * stale between the read and this write.
    */
   claimOperation(input: {
     runId: string;
+    /** The claimant's conversation when it is not this object's own; see the record. */
+    runSubstreamId?: string | null;
     generation: number;
     leaseExpiresAt: number;
     now: number;
+    yieldedForeignHolder?: { runId: string; substreamId: string } | null;
   }): TerminalSandboxRecord | null {
     return this.storage.transactionSync(() => {
       const claimed = first<{ operation_run_id: string }>(this.sql.exec(
         `UPDATE terminal_workspace
-            SET operation_run_id = ?, operation_lease_expires_at = ?,
+            SET operation_run_id = ?, operation_run_substream_id = ?,
+                operation_lease_expires_at = ?,
                 version = version + 1, updated_at = ?
           WHERE id = 1 AND generation = ?
             AND lifecycle_claim_id IS NULL
@@ -442,21 +496,28 @@ export class WorkstreamTerminalStorage {
                   operation_run_id IS NULL
                   OR operation_lease_expires_at IS NULL
                   OR operation_lease_expires_at <= ?
-                  OR NOT EXISTS (
-                    SELECT 1 FROM runs holder
-                     WHERE holder.run_id = terminal_workspace.operation_run_id
-                       AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+                  OR (
+                    operation_run_substream_id IS NULL
+                    AND NOT EXISTS (
+                      SELECT 1 FROM runs holder
+                       WHERE holder.run_id = terminal_workspace.operation_run_id
+                         AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+                    )
                   )
+                  OR (operation_run_id = ? AND operation_run_substream_id = ?)
                 )
               )
             )
           RETURNING operation_run_id`,
         input.runId,
+        input.runSubstreamId ?? null,
         input.leaseExpiresAt,
         input.now,
         input.generation,
         input.runId,
         input.now,
+        input.yieldedForeignHolder?.runId ?? null,
+        input.yieldedForeignHolder?.substreamId ?? null,
       ));
       return claimed ? this.sandbox() : null;
     });
@@ -477,6 +538,12 @@ export class WorkstreamTerminalStorage {
     claimId: string;
     claimExpiresAt: number;
     now: number;
+    /**
+     * A holder that ran in another conversation and, that conversation says,
+     * has yielded. Named by exact identity, as in `claimOperation`; without
+     * it a foreign holder's retained task is not recoverable here.
+     */
+    yieldedForeignHolder?: { runId: string; substreamId: string } | null;
   }): boolean {
     return first<{ id: number }>(this.sql.exec(
       `UPDATE terminal_workspace
@@ -486,10 +553,16 @@ export class WorkstreamTerminalStorage {
           AND operation_run_id IS NOT NULL AND operation_run_id <> ?
           AND lifecycle_state NOT IN ('stopping', 'archiving', 'expiring')
           AND (lifecycle_claim_id IS NULL OR lifecycle_claim_expires_at <= ?)
-          AND EXISTS (
-            SELECT 1 FROM runs holder
-             WHERE holder.run_id = terminal_workspace.operation_run_id
-               AND holder.status IN ${TERMINAL_YIELDED_RUN_STATUSES}
+          AND (
+            (
+              operation_run_substream_id IS NULL
+              AND EXISTS (
+                SELECT 1 FROM runs holder
+                 WHERE holder.run_id = terminal_workspace.operation_run_id
+                   AND holder.status IN ${TERMINAL_YIELDED_RUN_STATUSES}
+              )
+            )
+            OR (operation_run_id = ? AND operation_run_substream_id = ?)
           )
           AND NOT EXISTS (
             SELECT 1 FROM terminal_tasks task
@@ -511,6 +584,8 @@ export class WorkstreamTerminalStorage {
       input.version,
       input.runId,
       input.now,
+      input.yieldedForeignHolder?.runId ?? null,
+      input.yieldedForeignHolder?.substreamId ?? null,
       input.now,
     )) !== null;
   }
@@ -518,6 +593,8 @@ export class WorkstreamTerminalStorage {
   /** Atomically hand the recovered sandbox lease to the cleanup claimant. */
   settleYieldedOperationRecovery(input: {
     runId: string;
+    /** The claimant's conversation when it is not this object's own; see the record. */
+    runSubstreamId?: string | null;
     generation: number;
     sandboxId: string;
     claimId: string;
@@ -528,7 +605,8 @@ export class WorkstreamTerminalStorage {
     return this.storage.transactionSync(() => {
       const settled = first<{ id: number }>(this.sql.exec(
         `UPDATE terminal_workspace
-            SET operation_run_id = ?, operation_lease_expires_at = ?,
+            SET operation_run_id = ?, operation_run_substream_id = ?,
+                operation_lease_expires_at = ?,
                 lifecycle_state = CASE WHEN ? = 1 THEN 'stopped' ELSE lifecycle_state END,
                 idle_expires_at = CASE WHEN ? = 1 THEN NULL ELSE idle_expires_at END,
                 lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
@@ -542,6 +620,7 @@ export class WorkstreamTerminalStorage {
             )
           RETURNING id`,
         input.runId,
+        input.runSubstreamId ?? null,
         input.leaseExpiresAt,
         input.sandboxStopped ? 1 : 0,
         input.sandboxStopped ? 1 : 0,
@@ -563,6 +642,8 @@ export class WorkstreamTerminalStorage {
    */
   retireYieldedOperationRecovery(input: {
     runId: string;
+    /** The claimant's conversation when it is not this object's own; see the record. */
+    runSubstreamId?: string | null;
     generation: number;
     sandboxId: string;
     claimId: string;
@@ -577,6 +658,7 @@ export class WorkstreamTerminalStorage {
         `UPDATE terminal_workspace
             SET generation = generation + 1, sandbox_id = NULL,
                 lifecycle_state = 'starting', operation_run_id = ?,
+                operation_run_substream_id = ?,
                 operation_lease_expires_at = ?, last_command_at = ?,
                 idle_expires_at = ?, archive_due_at = ?, expire_due_at = ?,
                 lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
@@ -591,6 +673,7 @@ export class WorkstreamTerminalStorage {
             )
           RETURNING id`,
         input.runId,
+        input.runSubstreamId ?? null,
         input.leaseExpiresAt,
         input.now,
         input.idleExpiresAt,
@@ -813,6 +896,8 @@ export class WorkstreamTerminalStorage {
     authorityFingerprint: string;
     networkRevision: number;
     runId: string;
+    /** The holder's conversation when it is not this object's own; see the record. */
+    runSubstreamId?: string | null;
     operationLeaseExpiresAt: number;
     idleExpiresAt: number;
     archiveDueAt: number;
@@ -829,6 +914,7 @@ export class WorkstreamTerminalStorage {
             SET generation = generation + 1, sandbox_id = NULL,
                 lifecycle_state = 'starting', authority_fingerprint = ?,
                 applied_network_revision = ?, operation_run_id = ?,
+                operation_run_substream_id = ?,
                 operation_lease_expires_at = ?, last_command_at = ?,
                 idle_expires_at = ?, archive_due_at = ?, expire_due_at = ?,
                 final_diff_resource_id = NULL, failure_code = NULL,
@@ -837,6 +923,7 @@ export class WorkstreamTerminalStorage {
         input.authorityFingerprint,
         input.networkRevision,
         input.runId,
+        input.runSubstreamId ?? null,
         input.operationLeaseExpiresAt,
         input.now,
         input.idleExpiresAt,
@@ -977,6 +1064,8 @@ export class WorkstreamTerminalStorage {
               archive_due_at = CASE WHEN ? = 1 THEN NULL ELSE archive_due_at END,
               expire_due_at = CASE WHEN ? = 1 THEN NULL ELSE expire_due_at END,
               operation_run_id = CASE WHEN ? = 1 THEN NULL ELSE operation_run_id END,
+              operation_run_substream_id =
+                CASE WHEN ? = 1 THEN NULL ELSE operation_run_substream_id END,
               operation_lease_expires_at =
                 CASE WHEN ? = 1 THEN NULL ELSE operation_lease_expires_at END,
               lifecycle_claim_id = NULL, lifecycle_claim_expires_at = NULL,
@@ -992,6 +1081,7 @@ export class WorkstreamTerminalStorage {
       expired,
       stoppedOrExpired,
       archivedOrExpired,
+      expired,
       expired,
       expired,
       expired,
@@ -1042,6 +1132,8 @@ export class WorkstreamTerminalStorage {
                 COALESCE(?, applied_network_revision),
               operation_run_id =
                 CASE WHEN ? = 1 THEN NULL ELSE operation_run_id END,
+              operation_run_substream_id =
+                CASE WHEN ? = 1 THEN NULL ELSE operation_run_substream_id END,
               operation_lease_expires_at =
                 CASE WHEN ? = 1 THEN NULL ELSE operation_lease_expires_at END,
               version = version + 1, updated_at = ?
@@ -1050,6 +1142,7 @@ export class WorkstreamTerminalStorage {
       input.failureCode,
       input.clearSandboxId ? 1 : 0,
       input.appliedNetworkRevision,
+      input.clearOperationLease ? 1 : 0,
       input.clearOperationLease ? 1 : 0,
       input.clearOperationLease ? 1 : 0,
       input.now,
@@ -1150,16 +1243,15 @@ export class WorkstreamTerminalStorage {
       const authorized = first<{ id: number }>(this.sql.exec(
         `SELECT workspace.id
            FROM terminal_workspace workspace
-           JOIN runs holder ON holder.run_id = ?
           WHERE workspace.id = 1
             AND workspace.generation = ? AND workspace.sandbox_id = ?
             AND workspace.operation_run_id = ?
             AND workspace.lifecycle_claim_id IS NULL
-            AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}`,
-        input.runId,
+            AND ${HOLDER_IS_LIVE}`,
         input.sandboxGeneration,
         input.sandboxId,
         input.runId,
+        input.now,
       ));
       if (!authorized) return false;
 
@@ -1213,13 +1305,12 @@ export class WorkstreamTerminalStorage {
           AND sandbox_generation = ? AND state = 'submitting'
           AND EXISTS (
             SELECT 1 FROM terminal_workspace workspace
-            JOIN runs holder ON holder.run_id = ?
              WHERE workspace.id = 1
                AND workspace.generation = terminal_tasks.sandbox_generation
                AND workspace.sandbox_id = ?
                AND workspace.operation_run_id = ?
                AND workspace.lifecycle_claim_id IS NULL
-               AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+               AND ${HOLDER_IS_LIVE}
           )
         RETURNING task_id`,
       input.commandDeadlineAt,
@@ -1227,9 +1318,9 @@ export class WorkstreamTerminalStorage {
       input.effectIntentId,
       input.runId,
       input.sandboxGeneration,
-      input.runId,
       input.sandboxId,
       input.runId,
+      input.now,
     )) !== null;
   }
 
@@ -1282,13 +1373,12 @@ export class WorkstreamTerminalStorage {
           AND state IN ('planned', 'submitting', 'running')
           AND EXISTS (
             SELECT 1 FROM terminal_workspace workspace
-            JOIN runs holder ON holder.run_id = ?
              WHERE workspace.id = 1
                AND workspace.generation = terminal_tasks.sandbox_generation
                AND workspace.sandbox_id = ?
                AND workspace.operation_run_id = ?
                AND workspace.lifecycle_claim_id IS NULL
-               AND holder.status NOT IN ${TERMINAL_YIELDED_RUN_STATUSES}
+               AND ${HOLDER_IS_LIVE}
           )
         RETURNING task_id`,
       input.state,
@@ -1305,9 +1395,9 @@ export class WorkstreamTerminalStorage {
       input.effectIntentId,
       input.runId,
       input.sandboxGeneration,
-      input.runId,
       input.sandboxId,
       input.runId,
+      input.now,
     )) !== null;
   }
 
