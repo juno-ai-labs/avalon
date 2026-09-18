@@ -23,7 +23,13 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId, asWorkstreamId, type ParentEffectEnvelope } from "@rally/contracts";
+import {
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  ParentEffectSchema,
+  type ParentEffectEnvelope,
+} from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
@@ -321,14 +327,11 @@ async function seedCompletedRun(
  * effects a path enqueues, the more reliably the read loses. Flushing on demand
  * and reading the parent is the deterministic half.
  *
- * The parent keeps them because nothing here drains it: `wrangler.test.jsonc`
- * declares the activity queue as a producer with no consumer, so no Queue
- * message ever arrives to acknowledge an effect out of `durable_outbox`. Its
- * own alarm only marks rows `inflight`, and `deliverDirectoryEffectsEagerly` —
- * the one other path that reaches these rows, running inside
- * `acceptSubstreamEffects` under `waitUntil` — deliberately delivers without
- * acknowledging (`workstream-do.ts`), leaving the outbox untouched. So a
- * directory assertion here reads rows nothing can take away.
+ * The outbox is transport, not projection authority: creation recovery can
+ * successfully deliver and delete a directory row before this helper parks the
+ * parent. Directory assertions therefore read `workstream_state_changes`
+ * through `viewerProjectionEffect`; this helper is for immutable activity and
+ * notification effects that the test deliberately leaves queued.
  */
 /**
  * Wait for a pending message's promotion to land its canonical turn. Admission
@@ -387,18 +390,20 @@ async function viewerProjectionVersion(
     ).toArray()[0]?.next_version ?? 0) - 1);
 }
 
-/** The durable child projection survives after its queued envelope is delivered. */
-async function storedViewerProjection(
+/** The latest durable viewer projection, independent of whether its outbox row already drained. */
+async function viewerProjectionEffect(
   userId: string,
   workstreamId = WORKSTREAM_ID,
-): Promise<Record<string, unknown> | null> {
+): Promise<Extract<ParentEffectEnvelope["effect"], { kind: "directory_user" }> | null> {
   return runInDurableObject(parentStub(workstreamId), (_instance, state) => {
-    const row = state.storage.sql.exec<{ effect_json: string }>(
-      `SELECT effect_json FROM substream_user_directory
-        WHERE substream_id = '0' AND user_id = ?`,
-      userId,
+    const row = state.storage.sql.exec<{ state_json: string }>(
+      `SELECT state_json FROM workstream_state_changes
+        WHERE state_key = ? ORDER BY waterline DESC LIMIT 1`,
+      `user:${userId}`,
     ).toArray()[0];
-    return row ? JSON.parse(row.effect_json) as Record<string, unknown> : null;
+    if (!row) return null;
+    const effect = ParentEffectSchema.parse(JSON.parse(row.state_json));
+    return effect.kind === "directory_user" ? effect : null;
   });
 }
 
@@ -509,15 +514,14 @@ describe("adding somebody to a work stream", () => {
     expect(added.status).toBe(200);
 
     const envelopes = await deliveredEffects(stub);
-    const viewer = envelopes.filter((envelope) => (
-      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
-    ));
+    const viewer = await viewerProjectionEffect(INVITEE_ID);
     const activity = envelopes.filter((envelope) => (
       envelope.effect.kind === "activity_event"
       && envelope.effect.eventType === "workstream_participant_added"
     ));
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
-    expect([viewer.length, activity.length, notification.length]).toEqual([1, 1, 1]);
+    expect(viewer).toMatchObject({ kind: "directory_user", userId: INVITEE_ID });
+    expect([activity.length, notification.length]).toEqual([1, 1]);
 
     const activityEffect = activity[0]!.effect;
     if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
@@ -646,9 +650,7 @@ describe("naming somebody when the work stream is created", () => {
       ).one().count).toBe(0);
     });
     const envelopes = await deliveredEffects(stub);
-    expect(envelopes.some((envelope) => (
-      "userId" in envelope.effect && envelope.effect.userId === INVITEE_ID
-    ))).toBe(false);
+    expect(await viewerProjectionEffect(INVITEE_ID)).toBeNull();
     expect(envelopes.some((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -757,15 +759,10 @@ describe("naming somebody when the work stream is created", () => {
       envelope.effect.kind === "participant_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ));
-    const viewer = envelopes.find((envelope) => (
-      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
-    ));
+    const viewer = await viewerProjectionEffect(INVITEE_ID);
     expect(mentionNotifications).toHaveLength(1);
     expect(participantNotifications).toHaveLength(0);
-    // A successful parent alarm may forward and delete the queued viewer row
-    // before this later read. Its child projection is committed atomically
-    // with that enqueue and is the durable witness after delivery.
-    expect(viewer?.effect ?? await storedViewerProjection(INVITEE_ID)).toMatchObject({
+    expect(viewer).toMatchObject({
       kind: "directory_user",
       userId: INVITEE_ID,
       youAreMentioned: true,
@@ -785,15 +782,14 @@ describe("naming somebody when the work stream is created", () => {
     await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
 
     const envelopes = await deliveredEffects(stub);
-    const viewer = envelopes.filter((envelope) => (
-      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
-    ));
+    const viewer = await viewerProjectionEffect(INVITEE_ID);
     const activity = envelopes.filter((envelope) => (
       envelope.effect.kind === "activity_event"
       && envelope.effect.eventType === "workstream_participant_added"
     ));
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
-    expect([viewer.length, activity.length, notification.length]).toEqual([1, 1, 1]);
+    expect(viewer).toMatchObject({ kind: "directory_user", userId: INVITEE_ID });
+    expect([activity.length, notification.length]).toEqual([1, 1]);
 
     const notificationEffect = notification[0]!.effect;
     if (notificationEffect.kind !== "participant_notification") {
@@ -1120,10 +1116,13 @@ describe("who a create is allowed to tell", () => {
       && envelope.effect.eventType === "workstream_participant_added"
     ))).toHaveLength(0);
     // Seated all the same: not telling somebody is not leaving them out.
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "directory_user"
-      && (envelope.effect.userId === INVITEE_ID || envelope.effect.userId === SECOND_INVITEE_ID)
-    ))).toHaveLength(2);
+    await expect(Promise.all([
+      viewerProjectionEffect(INVITEE_ID, CREATE_WITHOUT_NOTIFY_ID),
+      viewerProjectionEffect(SECOND_INVITEE_ID, CREATE_WITHOUT_NOTIFY_ID),
+    ])).resolves.toEqual([
+      expect.objectContaining({ kind: "directory_user", userId: INVITEE_ID }),
+      expect.objectContaining({ kind: "directory_user", userId: SECOND_INVITEE_ID }),
+    ]);
   });
 
   it("tells every person named, once each, gated on their own row", async () => {
