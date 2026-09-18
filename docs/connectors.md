@@ -86,6 +86,58 @@ later decision.
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
+| `packages/contracts/src/connector-api-keys.ts` | Per provider: the page that issues its API key, and the key format the provider documents — the one declaration the API's request schema, the adapter's own check and the desktop field all read. |
+| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. Every surface that takes a key uses it — Granola's and Ashby's setup modals, and **Replace workspace API key**, which appears only for an installation whose provider still takes one. |
+
+### Pasting an API key
+
+Some connectors are configured by pasting a key rather than by an OAuth round
+trip, and the product rule for that step is one key and nothing else: somebody
+pastes it and Rally does the rest. Two things are declared per provider in
+`packages/contracts/src/connector-api-keys.ts`, and every surface that takes a
+key reads them from there — the Worker's request schema, the adapter's own
+check, and the desktop key field:
+
+- **Where the key is issued.** `issuingUrl` is the provider page that creates
+  the key — Ashby's admin API keys page — so the link opens the place the key
+  comes from rather than a documentation page to read first. Granola is the exception in the other direction: its workspace
+  keys are created in the Granola desktop app and it publishes no web page that
+  issues one, so that entry points at the help-centre article and the modal's
+  numbered steps carry the rest.
+- **What a key looks like**, but only where the provider documents it.
+  `format` holds an anchored pattern, the placeholder the empty field shows, and
+  the sentence shown when a paste does not match. Granola documents `grn_`; that
+  pattern is the same object the API's request schema and the adapter's own
+  check use, which is what stopped the three copies of it drifting. **Ashby
+  declares no format, deliberately.** It documents none — its authentication
+  page shows a key only as a basic-auth username — and a prefix guessed here
+  would reject a valid key at the exact step this exists to smooth, so a
+  provider with no documented format is checked only for being non-empty.
+
+A mismatch is said out loud under the field, not left as a Connect button that
+refuses to light up with no reason given — but not while somebody is still
+typing the key: the verdict waits for a paste or for the field to be left,
+because a half-typed key is not a wrong key. The submit button beside it asks
+`connectorApiKeyAcceptable`, so the message and the gate cannot answer
+differently.
+
+**Fireflies has no entry, and that is the worked example of what this list
+means.** It still has workspace installations — the ones made before that scope
+was withdrawn keep their tools, their ingress and their activity — but no
+Fireflies key is pasted into Rally any more. The personal connection is OAuth,
+the workspace setup was removed, and `replaceInstallationApiKey` refuses a new
+credential for a scope the connector no longer connects, with 422
+`connector_scope_not_connectable`, before the key is validated or stored. Such
+a connection works until its key changes and no further; deleting it is the
+management that remains. An entry here would describe a paste that cannot
+happen, and `isConnectorApiKeyProvider` — which is what **Replace workspace API
+key** asks before drawing a field — would offer one.
+
+The catalog is keyed on `ConnectorApiKeyProviders`, its own list, rather than on
+the installation-provider enum the same three names happen to fill today.
+"Somebody pastes a key into it" and "Rally manages its event subscriptions" are
+different questions, and a connector installed over OAuth would otherwise have
+to invent an issuing page to satisfy the guard.
 
 ### Authorization model
 
@@ -1242,6 +1294,42 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
+
+**What changed:** The Ashby and Fireflies cards keep only the sentence that says
+what the connector gives you — "Hiring, candidates, interviews, applicant
+tracking, and pipelines." and "Meeting transcripts, summaries, and the action
+items they name." Where an API key is pasted, the link now opens the provider
+page that issues the key, the field shows the documented shape as its
+placeholder, and a paste that cannot be that provider's key says so under the
+field. Issuing page and documented format are declared once per provider in
+`packages/contracts/src/connector-api-keys.ts`, which the API's request schema,
+the Granola adapter's own check and the desktop field all now read.
+
+**Why:** Both card descriptions had been written for engineers — "its beta MCP
+server", "personal recruiting queries", "independently authorized workspace
+application events" — and were three to four lines where every other card is
+two. The grid stretches a row to its tallest card, so those two rows padded
+their neighbours with empty space, and the words that were left told a person
+nothing they could act on. Separately, the Granola key pattern existed three
+times in the tree, and the desktop copy of it only disabled the button: someone
+pasting a personal token instead of a workspace key saw a dead Connect and no
+reason for it.
+
+**Considered and rejected:** Inventing a prefix for Ashby and Fireflies so every
+provider could be checked the same way. Neither documents one, and a guessed
+pattern rejects a valid key at the one step this change exists to smooth — so
+those entries declare no format and the field only requires a non-empty paste.
+Also rejected: a second regex in the renderer, which is how the three Granola
+copies happened.
+
+**Consequences:** A connector added with an API key declares its issuing page
+and, only if the provider documents one, its format — and gets the link, the
+placeholder and the mismatch message from that. The card description is the
+plain sentence naming what the connector gives you; the scope story belongs in
+the setup modal, which has room for it.
+
 
 ### 2026-09-17 — A Granola event tells the run which note it is about
 
