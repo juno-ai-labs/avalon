@@ -1116,10 +1116,11 @@ Because API deployment is continuous, a merge to `main` is a production release.
 The deploy job applies configured deployments' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
 
 Migrations `0090_drop_legacy_product_tables.sql`,
-`0094_retire_agent_inference_payload_ledger.sql`, and
-`0097_email_routes_use_full_address.sql` are deliberate reverse-order
-exceptions. Each deletes tables or columns the previous Worker still names, so
-applying either first would break live requests until deployment finished — or
+`0094_retire_agent_inference_payload_ledger.sql`,
+`0097_email_routes_use_full_address.sql`, `0106_configurable_regions.sql`, and
+`0113_drop_legacy_observability_tables.sql` are deliberate reverse-order
+exceptions. These change schemas or deployment identifiers the previous Worker
+still expects, so applying them first can break live requests until deployment finished — or
 indefinitely if deployment failed. The deployment workflow reads each remote
 pending-migration ledger; when one configured Worker-first migration is the sole
 pending entry in a region, it deploys the replacement Workers first and applies
@@ -1135,6 +1136,14 @@ still has them. For 0097, the replacement Worker probes
 `workstream_email_routes`: before the migration it reserves and resolves by the
 legacy `local_part`; afterward it writes and resolves the full `email_address`.
 Its owner-reconciliation path preserves the regional full address in both shapes.
+For 0106, deploy support for configured deployment identifiers before rebuilding
+region-constrained tables. For 0113, stop querying legacy regional observability
+tables before dropping them; the dedicated telemetry and audit stores already
+serve all producers. The pre-retirement Global health check must pass before the
+drop. Rolling back to the old reaper afterward stops telemetry delivery because
+its first query names a removed table; roll forward with compatible code instead.
+A manual deploy with migrations disabled postpones the drop and leaves inactive
+legacy rows unreaped until a migration-enabled deploy completes the cleanup.
 Therefore a failed Worker deploy leaves the old schema untouched,
 while a failed migration leaves the compatible Worker serving the old schema.
 Detection comes from the remote ledger, not the triggering Git diff, so a
@@ -2002,7 +2011,7 @@ To distinguish capture from export failure without the web interface, query the
 Global D1 outbox and Queue metadata through the APIs/CLI:
 
 ```text
-pnpm --filter @rally/api exec wrangler d1 execute avalon-global --remote \
+pnpm --filter @rally/api exec wrangler d1 execute avalon-global-telemetry --remote \
   --command "SELECT event_id, analytics_lakehouse_state, accepted_at, analytics_lakehouse_delivered_at FROM telemetry_accepted_events WHERE event_id = '<event-uuid>'"
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse
 pnpm exec dotenv -e .env.local -- wrangler queues info avalon-global-analytics-events-lakehouse-dead-letter

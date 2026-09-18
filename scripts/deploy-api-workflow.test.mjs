@@ -190,6 +190,7 @@ test('applies Worker-first D1 migrations after the compatible Worker', async () 
     'List the pending remote migrations for Global',
     'Apply the remote D1 migrations to Global',
     'Deploy the Global Worker',
+    'Verify Global health before schema retirement',
     'Apply Worker-first D1 migrations in Global after the compatible Worker',
     'Verify regional health',
   ].map((name) => workflow.indexOf(`- name: ${name}`));
