@@ -42,7 +42,7 @@ describe("Avalon tool prose coverage", () => {
     // `run_subagent` is pushed onto the workstream plugin after construction,
     // and the discovery tools are injected unprefixed by Bind.
     for (const wireName of [
-      "workstream_run_subagent",
+      "run_subagent",
       "list_plugins",
       "search_plugins",
       "load_plugin",

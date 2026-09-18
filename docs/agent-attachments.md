@@ -156,7 +156,7 @@ set, while model tools use bounded point, batch, aggregate, and keyset-page
 queries. A workspace principal never inherits a user's private-note view.
 Knowledge of a resource ID or cursor does not bypass this query.
 
-`workstream_list_resources` returns 25 rows by default and at most 50, optionally
+`list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
 principal, work stream, filters, size, ordering key, and a monotonic work-stream
 inventory revision. SubstreamAgent advances that revision for relationship, message-
@@ -165,21 +165,21 @@ not hydration timestamps or derivative processing bookkeeping. A continuation
 compares it before and after its bounded queries, so a relevant change
 invalidates the scan rather than mixing old and new pages.
 
-`workstream_read_resource` targets 12,000 and never exceeds 24,000 UTF-16
+`read_resource` targets 12,000 and never exceeds 24,000 UTF-16
 characters. Every result reports exact range, total, and character counts on
 both sides, with independently usable previous and next cursors.
-`workstream_search_resource` scans deterministic in-memory ranges from the
+`search_resource` scans deterministic in-memory ranges from the
 already bounded derivative, centers passages on actual phrase or term matches,
 returns no more than five passages or 20,000 passage characters, and gives every
 passage a read cursor against the same derivative version.
 
-`workstream_view_resource` accepts up to eight unique image IDs, keeps valid
+`view_resource` accepts up to eight unique image IDs, keeps valid
 members in request order, and returns a JSON inclusion summary followed by
 ephemeral image parts. The JSON is the only durable receipt. A replay
 reauthorizes every dependency, verifies the exact derivative hashes, and
 rebuilds those parts from the selected regional derivative. Missing visual bytes
 invalidate the receipt and re-execute the safe read; they never degrade to stale
-JSON without pixels. `workstream_summarize_resource` makes one isolated inference
+JSON without pixels. `summarize_resource` makes one isolated inference
 over at most 80,000 characters sampled across the derivative. The model selects
 Rally-generated source IDs, which the server maps to exact ranges rather than
 trusting model-authored offsets. All model-authored strings are capped, and a
@@ -192,8 +192,8 @@ resource and message-attachment totals plus non-empty groups for the same eight
 natural-language kinds used by the list tool. The aggregate comes from a grouped
 query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
 type, or content, so its size is constant in the number of resources. Exact
-entries remain discoverable through `workstream_list_resources`, followed by
-`workstream_list_resources_next`, until `nextPageId` is null.
+entries remain discoverable through `list_resources`, followed by
+`list_resources_next`, until `nextPageId` is null.
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before

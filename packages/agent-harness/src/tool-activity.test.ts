@@ -13,22 +13,25 @@ describe("tool activity names", () => {
       .toBe("Searching the public web");
     expect(toolActivityName({ toolName: "web_search", status: "completed" }))
       .toBe("Searched the public web");
-    expect(toolActivityName({ toolName: "workstream_list_resources", status: "completed" }))
+    expect(toolActivityName({ toolName: "list_resources", status: "completed" }))
       .toBe("Listed attached resources");
     expect(hasAvalonToolProse("workstream_read")).toBe(false);
-    expect(toolActivityName({ toolName: "workstream_search_resource", status: "started" }))
+    expect(toolActivityName({ toolName: "search_resource", status: "started" }))
       .toBe("Searching an attached resource");
-    expect(toolActivityName({ toolName: "workstream_view_resource", status: "completed" }))
+    expect(toolActivityName({ toolName: "view_resource", status: "completed" }))
       .toBe("Viewed attached images");
-    expect(toolActivityName({ toolName: "workstream_summarize_resource", status: "completed" }))
+    expect(toolActivityName({ toolName: "summarize_resource", status: "completed" }))
       .toBe("Summarized an attached resource");
     expect(toolActivityName({ toolName: "table_insert_rows", status: "started" }))
       .toBe("Adding durable table rows");
   });
 
   it("covers the sub-agent and discovery tools under their real wire names", () => {
-    // `run_subagent` is installed on the workstream plugin, so the name that
-    // reaches a row is prefixed; the discovery tools are injected unprefixed.
+    // `rally:workstream` now advertises `run_subagent` unprefixed, and rows
+    // written before that still hold `workstream_run_subagent`. The discovery
+    // tools were always injected unprefixed.
+    expect(toolActivityName({ toolName: "run_subagent", status: "completed" }))
+      .toBe("Ran a focused sub-agent");
     expect(toolActivityName({ toolName: "workstream_run_subagent", status: "completed" }))
       .toBe("Ran a focused sub-agent");
     expect(toolActivityName({ toolName: "list_plugins", status: "completed" }))
@@ -37,8 +40,11 @@ describe("tool activity names", () => {
       .toBe("Searching connected plugins");
     expect(toolActivityName({ toolName: "load_plugin", status: "completed" }))
       .toBe("Loaded a plugin");
-    expect(hasAvalonToolProse("run_subagent")).toBe(false);
+    expect(hasAvalonToolProse("run_subagent")).toBe(true);
     expect(hasAvalonToolProse("workstream_run_subagent")).toBe(true);
+    // A name neither spelling produces still has none.
+    expect(hasAvalonToolProse("workstream_read")).toBe(false);
+    expect(hasAvalonToolProse("subagent_run")).toBe(false);
   });
 
   it("names a connector row after the action, not just the connector", () => {
@@ -119,7 +125,7 @@ describe("tool activity names", () => {
   it("never words a failed row as success", () => {
     expect(toolActivityName({ toolName: "web_search", status: "failed" }))
       .toBe("Could not search the public web");
-    expect(toolActivityName({ toolName: "workstream_read_resource", status: "failed" }))
+    expect(toolActivityName({ toolName: "read_resource", status: "failed" }))
       .toBe("Could not read an attached resource");
     // One wording for reads and writes alike: the call never reached the provider.
     expect(toolActivityName({ toolName: "github_1_issues_create", status: "failed", plugin: github }))
@@ -164,6 +170,41 @@ describe("tool activity names", () => {
       .toBe("Could not check out a repository");
     expect(toolActivityName({ toolName: "terminal_checkout_repository", status: "failed" }))
       .toBe("Could not check out a repository");
+  });
+
+  it("words a work stream row the same under its current and its retired wire name", () => {
+    for (const [current, retired] of [
+      ["list_resources", "workstream_list_resources"],
+      ["read_resource", "workstream_read_resource"],
+      ["schedule_wakeup", "workstream_schedule_wakeup"],
+      ["run_subagent", "workstream_run_subagent"],
+    ]) {
+      for (const status of ["started", "completed", "failed"] as const) {
+        expect(toolActivityName({ toolName: retired!, status }))
+          .toBe(toolActivityName({ toolName: current!, status }));
+      }
+    }
+  });
+
+  it("words the Sidekick, agent and generation rows under both spellings", () => {
+    expect(toolActivityName({ toolName: "post_result", status: "completed" }))
+      .toBe("Posted the result to the work stream");
+    expect(toolActivityName({ toolName: "sidekick_post_result", status: "completed" }))
+      .toBe("Posted the result to the work stream");
+    // `send_message` and `reply` are the two agent tools whose bare names do not
+    // say who they reach, so the row says it for them.
+    expect(toolActivityName({ toolName: "send_message", status: "completed" }))
+      .toBe("Messaged a teammate");
+    expect(toolActivityName({ toolName: "agents_send_message", status: "completed" }))
+      .toBe("Messaged a teammate");
+    expect(toolActivityName({ toolName: "reply", status: "started" }))
+      .toBe("Replying to a teammate");
+    expect(toolActivityName({ toolName: "generate_image", status: "completed" }))
+      .toBe("Generated an image");
+    expect(toolActivityName({ toolName: "multimodal_generation_generate_image", status: "completed" }))
+      .toBe("Generated an image");
+    expect(toolActivityName({ toolName: "generate_audio", status: "failed" }))
+      .toBe("Could not generate a voice recording");
   });
 
   it("keeps wording rows a retired tool already wrote", () => {

@@ -6,13 +6,13 @@ import type { HarnessTool, HarnessToolContext, HarnessToolResult } from "@rally/
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { ToolReceiptFence } from "../durable-objects/workstream-tool-receipt-storage";
 
-function pageInput(prefix: string, operation: string, previous = false) {
+function pageInput(prefix: string, wirePrefix: string, operation: string, previous = false) {
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const schema = z.strictObject({ pageId: z.string()
     .regex(new RegExp(`^${escapedPrefix}_[a-z]+_[a-z]+_[a-z]+_[a-z]+$`, "u"))
     .describe("Copy the page ID returned by this plugin. Send it alone; filters and page size are retained automatically.") });
   const field = previous ? "previousPageId" : operation === "read_resource" ? "nextPageId or readPageId" : "nextPageId";
-  const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${stableWireToolName(prefix, operation)} to start a new read.`;
+  const message = `Send only {"pageId":"<copied ID>"}. pageId must start with "${prefix}_", followed by exactly four lowercase words separated by underscores. Copy ${field} exactly from a tool result; do not invent or repair an ID. If that field is null, stop: there is no page. If you have no ID, call ${stableWireToolName(wirePrefix, operation)} to start a new read.`;
   function validateInput(input: unknown) {
     return schema.safeParse(input).success ? null : new z.ZodError([
       { code: "custom", path: ["pageId"], message },
@@ -28,7 +28,20 @@ function pageInput(prefix: string, operation: string, previous = false) {
 export interface PaginationHost {
   receipts: Pick<ToolReceiptObjectPort, "issuePage" | "claimPage">;
   fence: ToolReceiptFence | (() => ToolReceiptFence);
+  /**
+   * The namespace a minted page ID carries (`workstream_brave_clever_…`). It is
+   * required and non-empty: `tool-page-storage` builds every ID as
+   * `<prefix>_<four words>` and validates that shape on the way back in.
+   */
   prefix: string;
+  /**
+   * The plugin's *model-facing* wire prefix, for the tool names these
+   * descriptions tell the model to call. Usually the same string as `prefix`,
+   * and deliberately not the same field: a plugin that declares no wire prefix
+   * still needs a page-ID namespace, and naming `workstream_list_resources` in
+   * a description would point the model at a tool this run does not advertise.
+   */
+  wirePrefix?: string;
   connectionId: string | null;
 }
 
@@ -37,6 +50,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
   const pagination = tool.definition.pagination;
   if (!pagination) return [tool];
   const sourceOnly = pagination.sourceOnly === true;
+  const wirePrefix = host.wirePrefix ?? host.prefix;
   const operation = tool.definition.name;
   const schema = tool.definition.inputSchema;
   const properties = z.record(z.string(), z.unknown()).parse(schema.properties ?? {});
@@ -107,7 +121,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
   const first: HarnessTool = {
     ...tool,
     definition: { ...tool.definition, inputSchema: firstSchema,
-      description: pagination.sourceOnly ? tool.definition.description : `${tool.definition.description} Starts a new read. For another page, call ${stableWireToolName(host.prefix, `${operation}_next`)} with the returned nextPageId.`,
+      description: pagination.sourceOnly ? tool.definition.description : `${tool.definition.description} Starts a new read. For another page, call ${stableWireToolName(wirePrefix, `${operation}_next`)} with the returned nextPageId.`,
     },
     validateInput: (input) => firstKeys.safeParse(input).error
       ?? validateToolArguments(input, firstSchema) ?? tool.validateInput?.(input) ?? null,
@@ -119,10 +133,10 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
     },
   };
   if (pagination.sourceOnly) return [first];
-  const nextInput = pageInput(host.prefix, operation);
+  const nextInput = pageInput(host.prefix, wirePrefix, operation);
   const next: HarnessTool = {
     definition: { ...tool.definition, name: `${operation}_next`,
-      description: `Read the next page of ${stableWireToolName(host.prefix, operation)}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
+      description: `Read the next page of ${stableWireToolName(wirePrefix, operation)}. Copy nextPageId from its result. A null nextPageId means there are no more pages. Each page ID can be consumed once.`,
       inputSchema: z.toJSONSchema(nextInput.schema),
     },
     validateInput: nextInput.validateInput,
@@ -133,7 +147,7 @@ export function withToolPagination(tool: HarnessTool, host: PaginationHost): Har
     },
   };
   if (operation !== "read_resource") return [first, next];
-  const previousInput = pageInput(host.prefix, operation, true);
+  const previousInput = pageInput(host.prefix, wirePrefix, operation, true);
   return [first, next, {
     ...next,
     validateInput: previousInput.validateInput,

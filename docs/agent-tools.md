@@ -72,11 +72,13 @@ gone. Two things make a name qualify, and either is enough:
 
 - **The plugin is always active**, so a prefix on it distinguishes nothing — the
   model cannot load it, cannot unload it, and has no second source of the same
-  capability to tell it apart from. `rally_discovery`, `rally_skills`, and
-  `rally_core` are these.
-- **The canonical name is already the one the model knows.** `rally_terminal` is
-  loadable, but `read_file`, `edit_file`, `write_file`, `apply_patch`, and
-  `run_command` are the names a model has seen tens of thousands of times in
+  capability to tell it apart from. `rally_discovery`, `rally_skills`,
+  `rally_core`, `rally_workstream`, `rally_agents`, and `rally_sidekick_result`
+  are these.
+- **The canonical name is already the one the model knows.** `rally_terminal`
+  and `rally_multimodal_generation` are loadable, but `read_file`, `edit_file`,
+  `write_file`, `apply_patch`, `run_command`, `generate_image` and
+  `generate_audio` are names a model has seen tens of thousands of times in
   pretraining, and `terminal_read_file` is not one of them. That is the third
   test at the top of this document, and the prefix was failing it.
 
@@ -84,7 +86,23 @@ gone. Two things make a name qualify, and either is enough:
 `memory_`/`table_`, because they fail the naming half: their canonical names are
 local verbs (`search`, `query`, `create`, `add`, `update`), two of them
 identical, and bare verbs are the naming the rest of this document exists to
-prevent.
+prevent. `rally_web` keeps `web_` for the opposite reason: `web_search` and
+`web_fetch` *are* the pretrained names, and stripping the prefix would leave
+bare `search` and `fetch`. `rally_sidekicks` keeps `sidekick_` because
+unprefixed its `plugins_list` and `plugins_search` would sit beside
+`rally_discovery`'s `list_plugins` and `search_plugins` — near-identical names
+for different tools, which is worse than either prefix. Connector plugins can
+never qualify: their prefix is per *connection* (`google_1`, `google_2`), and it
+is the only thing telling two connections of one connector apart.
+
+**Two of the unprefixed names do not say who they act on.** `rally_agents`'
+`send_message` and `reply` reach another *agent*, not a person and not a
+connector, and nothing in the bare name says so. They were unprefixed anyway,
+deliberately: the plugin's instructions name the addressee in every sentence
+that reaches for one, and the transcript rows say "Messaged a teammate" rather
+than "Sent a message". If a model is seen sending an agent message where a
+person was meant, that pair is the first place to look, and giving those two
+tools better canonical names is the fix rather than restoring the prefix.
 
 **Bind only guarantees the absence of a collision for always-active plugins.**
 Its duplicate-wire-name check covers those; for a loadable plugin two identical
@@ -642,7 +660,7 @@ its normal authorization query. New private continuation state needs no HMAC or
 artificial expiry; old signed cursors are decoded only for stored receipts.
 
 An authorized wrong-tool call may carry a bounded `suggestedCall` for exactly
-`workstream_read_resource`, `workstream_view_resource`, their two
+`read_resource`, `view_resource`, their two
 `sidekick`-prefixed twins, or `import_resource`. The structured-failure
 sanitizer accepts only those strict shapes, the nine registered kinds, bounded
 MIME/reason values, and the existing fixed recovery fields. It does not forward
@@ -666,8 +684,8 @@ that built the page.
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
-| `workstream_describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
-| `workstream_query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
+| `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
+| `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
 
 Both are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
 statement, not by the transaction** — an always-rollback transaction is not an
@@ -681,15 +699,15 @@ are handled as untrusted content wherever they surface.
 
 The work-stream runtime now exposes five bounded content operations. The old
 `workstream_read` hard-capped index is replaced by
-`workstream_list_resources`, whose first call accepts an optional natural-
+`list_resources`, whose first call accepts an optional natural-
 language kind and whose page-ID-only continuations can exhaust more than fifty
-resources. `workstream_read_resource` returns 12,000 characters by default and
+resources. `read_resource` returns 12,000 characters by default and
 at most 24,000, with exact characters before and after plus previous/next page IDs.
-`workstream_search_resource` derives bounded ranges from one versioned
+`search_resource` derives bounded ranges from one versioned
 derivative in memory and returns at most five passages and 20,000 characters.
-`workstream_view_resource` returns a
+`view_resource` returns a
 JSON-only inclusion summary plus as many as eight ephemeral visual parts, and
-`workstream_summarize_resource` runs one isolated reader over deterministic,
+`summarize_resource` runs one isolated reader over deterministic,
 server-identified ranges with an optional untrusted prompt. Every continuation is
 reauthorized and bound to the current inventory or derivative version.
 
@@ -706,16 +724,16 @@ that remediation.
 The deferred `rally:multimodal-generation` plugin owns image generation,
 editing, and text-to-speech. It is registered only when the main Azure
 inference endpoint and key are both configured, and Bind exposes its tools as
-`multimodal_generation_generate_image` and
-`multimodal_generation_edit_image`, and
-`multimodal_generation_generate_audio`. All three are serial
+`generate_image` and
+`edit_image`, and
+`generate_audio`. All three are serial
 `record_before_execute` writes with a five-minute timeout.
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
-| `multimodal_generation_generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
-| `multimodal_generation_edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
-| `multimodal_generation_generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
+| `generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
+| `edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
+| `generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
 
 Both calls use Azure's `gpt-image-2` deployment. The caller controls only the
 prompt, title, and advertised size: moderation is fixed to `low`, quality to
@@ -939,7 +957,7 @@ future agent tool or plugin, not just this family.
   [...] }` — which is the only form that both passes xAI and survives
   sanitization with its `required` intact, because the branch then carries the
   `properties` the pruning resolves against.
-  `workstream_list_resources` and `workstream_read_resource` are built that way
+  `list_resources` and `read_resource` are built that way
   and never broke. `apps/api/test/tool-schema-sanitization.test.ts` walks every
   authored schema through the real sanitizer and fails on either defect. A tool
   schema Rally does *not* author — a hosted MCP server's, which arrives at run
