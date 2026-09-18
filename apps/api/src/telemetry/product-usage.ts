@@ -4,6 +4,8 @@ import type {
   TelemetryEventProperties,
 } from '@rally/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
+import { runtimeDeferral, type WorkDeferral } from '../lib/defer';
+import { diagnosticErrorCode, logStructuredEvent } from '../observability/logger';
 import {
   apiTelemetryEnvelope,
   emitAuthenticatedApiTelemetry,
@@ -73,7 +75,7 @@ interface ProductTelemetryInput<TName extends TelemetryEventName> {
   eventId: string;
 }
 
-export async function emitProductUsageTelemetry<TName extends TelemetryEventName>(
+async function acceptProductUsageTelemetry<TName extends TelemetryEventName>(
   env: Env,
   input: ProductTelemetryInput<TName>,
 ): Promise<void> {
@@ -99,4 +101,25 @@ export async function emitProductUsageTelemetry<TName extends TelemetryEventName
     role: null,
   };
   await emitAuthenticatedApiTelemetry(env, auth, event);
+}
+
+/**
+ * Register observational product telemetry on the current runtime lifecycle.
+ * Product behavior never waits for analytics identity lookup, D1 acceptance,
+ * or lakehouse queue staging.
+ */
+export function emitProductUsageTelemetry<TName extends TelemetryEventName>(
+  env: Env,
+  input: ProductTelemetryInput<TName>,
+  defer: WorkDeferral = runtimeDeferral,
+): void {
+  defer(acceptProductUsageTelemetry(env, input).catch((error: unknown) => {
+    logStructuredEvent(env, 'warn', 'product_usage_telemetry_failed', {
+      event_id: input.eventId,
+      event_name: input.name,
+      operation_id: input.operationId,
+      workspace_id: input.workspaceId,
+      error_code: diagnosticErrorCode(error, 'product_usage_telemetry_failed'),
+    });
+  }));
 }

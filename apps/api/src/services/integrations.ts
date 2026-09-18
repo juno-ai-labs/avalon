@@ -1591,6 +1591,7 @@ export async function classifyWorkstreamMessage(
     workspaceId: string;
     workstreamId: string;
     userId: string;
+    defer: (promise: Promise<unknown>) => void;
   },
 ): Promise<AddressingClassification> {
   const traceId = crypto.randomUUID();
@@ -1638,7 +1639,7 @@ export async function classifyWorkstreamMessage(
       },
       // Both cascade stages share one diagnostic sink, so a JEV failure remains
       // visible even when the OpenRouter fallback returns a usable decision.
-      onDiagnostic: async (diagnostic) => {
+      onDiagnostic: (diagnostic) => {
         const provider = diagnostic.provider ?? "openrouter";
         if (provider === "typesafe" && diagnostic.stage === "complete") {
           typesafeStatus = diagnostic.success ? "success" : "failure";
@@ -1678,13 +1679,13 @@ export async function classifyWorkstreamMessage(
             validation_issues: diagnostic.validationIssues,
           },
         );
-        await captureStructuredInferenceDiagnostic(env, {
+        input.defer(captureStructuredInferenceDiagnostic(env, {
           source: "addressing_classifier",
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
           traceId,
           requestId: traceId,
-        }, diagnostic);
+        }, diagnostic));
       },
     });
     logStructuredEvent(env, "info", "addressing_classifier_outcome", {
@@ -3908,13 +3909,13 @@ export async function runWorkstreamHarness(
             const invocation = await loadToolInvocation(env, input, event.toolCallId);
             if (invocation) {
               await emit({ type: "tool_failed", invocation });
-              await emitAgentToolTerminalTelemetry(env, {
+              emitAgentToolTerminalTelemetry(env, {
                 workspaceId: input.workspaceId,
                 workstreamId: input.parentId,
                 harnessRunId: input.harnessRunId,
                 invocationId: invocation.id,
                 ...automationRunProvenance(input),
-              }).catch(() => undefined);
+              });
               // The run ends here, so this is the only place the halt is
               // recorded. Without it an ambiguity that leaves the receipt row
               // untouched — a coordinate reused after it settled — reaches the
@@ -3966,7 +3967,7 @@ export async function runWorkstreamHarness(
                 occurredAtUtc: new Date().toISOString(),
               });
             }
-            await emitAgentToolStartedTelemetry(env, {
+            emitAgentToolStartedTelemetry(env, {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
@@ -3984,7 +3985,7 @@ export async function runWorkstreamHarness(
                 : input.executionPrincipal.type === "workspace"
                   ? "system"
                   : "workstream",
-            }).catch(() => undefined);
+            });
             await emit({ type: "tool_started", invocation });
           }
           break;
@@ -4064,13 +4065,13 @@ export async function runWorkstreamHarness(
             }
             await emit({ type: "tool_completed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed");
-            await emitAgentToolTerminalTelemetry(env, {
+            emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
               ...automationRunProvenance(input),
-            }).catch(() => undefined);
+            });
           }
           attachmentGrounding.onCompleted(event);
           break;
@@ -4192,13 +4193,13 @@ export async function runWorkstreamHarness(
           if (invocation) {
             await emit({ type: "tool_failed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed");
-            await emitAgentToolTerminalTelemetry(env, {
+            emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
               harnessRunId: input.harnessRunId,
               invocationId: invocation.id,
               ...automationRunProvenance(input),
-            }).catch(() => undefined);
+            });
           }
           attachmentGrounding.onFailed(event);
           break;
@@ -7318,7 +7319,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           };
         }
         await publishWorkstreamEvent(env, input.workspaceId, input.parentId, { type: "elicitation_created", elicitation });
-        await emitProductUsageTelemetry(env, {
+        emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,
           ...(input.executionPrincipal.type === 'user'
             ? { userId: input.executionPrincipal.userId }
@@ -7334,7 +7335,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           },
           operationId: input.harnessRunId,
           eventId: id,
-        }).catch(() => undefined);
+        });
         return { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
       },
     },

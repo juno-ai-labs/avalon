@@ -87,7 +87,9 @@ made to satisfy them without rebuilding RPC on top of it, which
   touches again.
 - **The work is genuinely fire-and-forget**: telemetry, projections,
   notifications, audit trails, anything where the sender's job is done the moment
-  the fact is recorded somewhere durable.
+  the fact is recorded somewhere durable. A runtime `waitUntil` deferral is not
+  that durable hand-off: use it only for observational work that may be lost
+  before acceptance, never when retry must survive deployment or runtime reset.
 - **The two sides should deploy independently.** A service binding names a
   *script*, and deploying a caller before its target script exists fails the
   deploy. A queue is a resource both sides bind to, so neither ordering breaks.

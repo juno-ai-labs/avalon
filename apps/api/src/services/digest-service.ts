@@ -422,7 +422,7 @@ export class DigestService {
       : days.length === 7
         ? times.length === 1 ? "daily" as const : "multiple_daily" as const
         : times.length === 1 ? "weekly" as const : "multiple_weekly" as const;
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: "digest_schedule_updated",
@@ -436,7 +436,7 @@ export class DigestService {
       },
       operationId: scheduleId,
       eventId: newId(),
-    }).catch(() => undefined);
+    });
     return schedule;
   }
 

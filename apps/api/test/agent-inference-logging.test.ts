@@ -1,11 +1,14 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 import type { InferenceRequestEvent } from "@rally/agent-harness";
+import type { Env } from "../src/env";
 import { createAgentInferenceLogger } from "../src/services/agent-inference-logging";
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
-function fixture() {
-  const put = vi.fn();
+function fixture(options: { beforePut?: () => Promise<void> } = {}) {
+  const put = vi.fn(async () => {
+    await options.beforePut?.();
+  });
   const env = createTestEnv({
     DB: createTestD1Database({
       prepare() {
@@ -13,8 +16,19 @@ function fixture() {
       },
     }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put }),
+    ...(options.beforePut
+      ? {
+          INFERENCE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["INFERENCE_LAKEHOUSE"]>>({
+            async send() {},
+          }),
+          INFERENCE_LAKEHOUSE_QUEUE: createCloudflareTestBinding<Queue>({
+            async send() {},
+          }),
+        }
+      : {}),
     LOG_LEVEL: "error",
     AVALON_REGION: "global",
+    APP_ENV: "production",
   });
   return { env, put };
 }
@@ -176,5 +190,39 @@ describe("agent inference logging", () => {
 
     expect(logged).not.toHaveBeenCalled();
     logged.mockRestore();
+  });
+
+  it("does not make provider dispatch wait for exact request archival", async () => {
+    let releasePut!: () => void;
+    const putReleased = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    const { env, put } = fixture({ beforePut: async () => { await putReleased; } });
+    env.LOG_LEVEL = "info";
+    const deferred: Promise<unknown>[] = [];
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+      requestId: "run-1",
+      source: "workstream",
+    }, (promise) => deferred.push(promise));
+
+    const callback = logger.onRequest(request);
+    let callbackSettled = false;
+    void callback.then(() => { callbackSettled = true; });
+    try {
+      await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+      await Promise.resolve();
+      expect(callbackSettled).toBe(true);
+
+      let archiveSettled = false;
+      void deferred[0]!.then(() => { archiveSettled = true; });
+      await Promise.resolve();
+      expect(archiveSettled).toBe(false);
+    } finally {
+      releasePut();
+      await callback;
+      await Promise.all(deferred);
+    }
   });
 });
