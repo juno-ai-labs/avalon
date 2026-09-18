@@ -58,7 +58,8 @@
     "tw-fade": "^0.8.0",
     "ws": "8.21.0",
     "zod": "catalog:",
-    "zustand": "latest"
+    "zustand": "latest",
+    "@rally/ui": "workspace:*"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1108.0",
