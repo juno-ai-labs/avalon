@@ -10,6 +10,7 @@ import type { z } from "zod";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
+import { conversationParentStub } from "../conversation-parent-client";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import { workspaceDOName } from "../../durable-objects/names";
@@ -38,10 +39,17 @@ type ApplyInput = z.infer<typeof ApplyTerminalNetworkPolicyRequestSchema>;
 
 interface SandboxRow {
   workstream_id: string;
+  /** The conversation whose object owns the sandbox; a work stream can have several. */
+  substream_id: string;
   provider_sandbox_id: string;
   state: string;
   generation: number;
   title: string;
+}
+
+/** One sandbox's identity in this service's failure and outcome bookkeeping. */
+function sandboxKey(sandbox: Pick<SandboxRow, "workstream_id" | "substream_id">): string {
+  return `${sandbox.workstream_id}:${sandbox.substream_id}`;
 }
 
 export class TerminalSettingsService {
@@ -112,7 +120,9 @@ export class TerminalSettingsService {
       throw new ApiError(409, "terminal_policy_unchanged", "The Terminal network policy is unchanged. Edit the mode or destinations before reviewing it.");
     }
     const sandboxes = await this.loadActiveSandboxes();
-    const affectedWorkstreamIds = sandboxes.map((sandbox) => sandbox.workstream_id);
+    // Several conversations of one work stream can each hold a sandbox; the
+    // preview names the work stream once.
+    const affectedWorkstreamIds = [...new Set(sandboxes.map((sandbox) => sandbox.workstream_id))];
     const mutationId = newId();
     const timestamp = nowIso();
     await (await this.workspace()).recordTerminalPolicyPreview({
@@ -133,7 +143,10 @@ export class TerminalSettingsService {
       customDomains: compiled.customDomains,
       remainingCustomSlots: compiled.remainingCustomSlots,
       affectedWorkstreamIds,
-      affectedWorkstreams: sandboxes.map((sandbox) => ({ id: sandbox.workstream_id, title: sandbox.title })),
+      affectedWorkstreams: affectedWorkstreamIds.map((id) => ({
+        id,
+        title: sandboxes.find((sandbox) => sandbox.workstream_id === id)!.title,
+      })),
       warning: input.mode === "full_internet"
         ? "Full internet lets Terminal code contact arbitrary public destinations. Active sandboxes will stop and stay stopped until the next Terminal tool call."
         : "Trusted only applies Rally-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
@@ -184,6 +197,7 @@ export class TerminalSettingsService {
       const terminal = createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
         sandbox.workstream_id,
+        sandbox.substream_id,
       );
       await terminal.cancelUnsettledTasks(epochMs);
       if (sandbox.state === "running") {
@@ -194,8 +208,9 @@ export class TerminalSettingsService {
           this.provider!,
           this.auth.workspaceId,
           sandbox.workstream_id,
+          sandbox.substream_id,
         )(sandbox.provider_sandbox_id, sandbox.generation).catch(() => {
-          failures.push(`${sandbox.workstream_id}:final_diff`);
+          failures.push(`${sandboxKey(sandbox)}:final_diff`);
         });
       }
       try {
@@ -213,10 +228,10 @@ export class TerminalSettingsService {
           now: epochMs,
         });
       } catch {
-        failures.push(`${sandbox.workstream_id}:stop`);
+        failures.push(`${sandboxKey(sandbox)}:stop`);
         try {
           await this.provider!.deleteSandbox(sandbox.provider_sandbox_id);
-          deleted.add(sandbox.workstream_id);
+          deleted.add(sandboxKey(sandbox));
           await terminal.settlePolicyTransition({
             lifecycleState: "failed",
             failureCode: "policy_stop_failed_deleted",
@@ -228,7 +243,7 @@ export class TerminalSettingsService {
             now: epochMs,
           });
         } catch {
-          failures.push(`${sandbox.workstream_id}:delete`);
+          failures.push(`${sandboxKey(sandbox)}:delete`);
           await terminal.settlePolicyTransition({
             lifecycleState: "failed",
             failureCode: "policy_quarantine_failed",
@@ -246,7 +261,7 @@ export class TerminalSettingsService {
     if (failures.length === 0) {
       const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
       for (const sandbox of affected) {
-        if (deleted.has(sandbox.workstream_id)) continue;
+        if (deleted.has(sandboxKey(sandbox))) continue;
         try {
           await this.provider!.updateNetworkPolicy(
             sandbox.provider_sandbox_id,
@@ -255,14 +270,14 @@ export class TerminalSettingsService {
           const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
           if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_mismatch");
         } catch {
-          failures.push(`${sandbox.workstream_id}:policy`);
+          failures.push(`${sandboxKey(sandbox)}:policy`);
         }
       }
     }
 
     if (failures.length > 0) {
       for (const sandbox of affected) {
-        if (deleted.has(sandbox.workstream_id)) continue;
+        if (deleted.has(sandboxKey(sandbox))) continue;
         try {
           await this.provider!.updateNetworkPolicy(
             sandbox.provider_sandbox_id,
@@ -273,7 +288,7 @@ export class TerminalSettingsService {
           if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_rollback_mismatch");
         } catch {
           await this.provider!.deleteSandbox(sandbox.provider_sandbox_id).then(async () => {
-            deleted.add(sandbox.workstream_id);
+            deleted.add(sandboxKey(sandbox));
             await createTerminalPortFactory(this.env)(
               this.auth.workspaceId,
               sandbox.workstream_id,
@@ -295,10 +310,11 @@ export class TerminalSettingsService {
         reason: failures.slice(0, 10).join("; "),
         sandboxOutcomes: affected.slice(0, 100).map((sandbox) => ({
           workstreamId: sandbox.workstream_id,
+          substreamId: sandbox.substream_id,
           title: sandbox.title,
-          outcome: deleted.has(sandbox.workstream_id)
+          outcome: deleted.has(sandboxKey(sandbox))
             ? "deleted"
-            : failures.includes(`${sandbox.workstream_id}:delete`)
+            : failures.includes(`${sandboxKey(sandbox)}:delete`)
               ? "quarantined"
               : "stopped",
         })),
@@ -306,10 +322,11 @@ export class TerminalSettingsService {
       });
     }
 
-    for (const sandbox of affected.filter((entry) => !deleted.has(entry.workstream_id))) {
+    for (const sandbox of affected.filter((entry) => !deleted.has(sandboxKey(entry)))) {
       await createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
         sandbox.workstream_id,
+        sandbox.substream_id,
       ).settlePolicyTransition({
         lifecycleState: "stopped",
         failureCode: null,
@@ -369,21 +386,36 @@ export class TerminalSettingsService {
     for (let offset = 0; offset < entries.length; offset += 20) {
       const page = entries.slice(offset, offset + 20);
       const loaded = await Promise.all(page.map(async (entry) => {
-        const sandbox = await createTerminalPortFactory(this.env)(
-          this.auth.workspaceId,
-          entry.workstream_id,
-        ).policyTarget();
-        return sandbox
-          ? {
-              workstream_id: entry.workstream_id,
-              provider_sandbox_id: sandbox.sandboxId,
-              state: sandbox.lifecycleState,
-              generation: sandbox.generation,
-              title: entry.title,
-            }
-          : null;
+        // Every conversation of the work stream that owns a sandbox, from the
+        // work stream's own object: a side thread's sandbox is under the same
+        // egress policy as the main conversation's. A work stream that lists
+        // none is asked about its main conversation, as before conversations
+        // reported their own.
+        const { items } = await (await conversationParentStub(this.env, {
+          workspaceId: this.auth.workspaceId,
+          parentKind: "workstream",
+          parentId: entry.workstream_id,
+        })).childTerminalDeadlines({ workspaceId: this.auth.workspaceId, parentId: entry.workstream_id });
+        const substreamIds = items.length > 0 ? items.map((item) => item.substreamId) : ["0"];
+        return Promise.all(substreamIds.map(async (substreamId) => {
+          const sandbox = await createTerminalPortFactory(this.env)(
+            this.auth.workspaceId,
+            entry.workstream_id,
+            substreamId,
+          ).policyTarget();
+          return sandbox
+            ? {
+                workstream_id: entry.workstream_id,
+                substream_id: substreamId,
+                provider_sandbox_id: sandbox.sandboxId,
+                state: sandbox.lifecycleState,
+                generation: sandbox.generation,
+                title: entry.title,
+              }
+            : null;
+        }));
       }));
-      rows.push(...loaded.filter((row): row is SandboxRow => row !== null));
+      rows.push(...loaded.flat().filter((row): row is SandboxRow => row !== null));
     }
     return rows;
   }

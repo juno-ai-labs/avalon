@@ -390,6 +390,7 @@ export function createDaytonaTerminalProvider(
           labels: {
             "rally.workspace": input.workspaceId,
             "rally.workstream": input.workstreamId,
+            "rally.substream": input.substreamId,
             "rally.generation": String(input.generation),
           },
         }, { timeout: 60 }));

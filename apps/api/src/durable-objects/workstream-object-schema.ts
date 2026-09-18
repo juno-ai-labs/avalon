@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 62;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 63;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3118,6 +3118,21 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 62,
     description: "freeze legacy participant authority during a forward-only grant handoff",
     statements: PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA,
+  },
+  {
+    version: 63,
+    description: "record which conversation a Terminal lease holder ran in",
+    // NULL for a holder whose run row is in this object's own `runs` table,
+    // which is every holder there was before conversations could share a
+    // sandbox. Set only for a holder that ran in another conversation of the
+    // same work stream — a background agent using its owner's sandbox — whose
+    // liveness this object cannot read in its own transaction. The CHECK keeps
+    // the column meaningless without a holder; the lease columns' own pairing
+    // CHECK is in the promoted table and is not repeated here.
+    statements: [
+      `ALTER TABLE terminal_workspace ADD COLUMN operation_run_substream_id TEXT
+         CHECK (operation_run_substream_id IS NULL OR operation_run_id IS NOT NULL)`,
+    ],
   },
 ];
 

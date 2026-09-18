@@ -14,10 +14,14 @@ import {
   ConversationParentListChildrenRequestSchema,
   ConversationParentListChildrenResultSchema,
   ConversationParentRetirementChildrenResultSchema,
+  ConversationParentTerminalDeadlinesRequestSchema,
+  ConversationParentTerminalDeadlinesResultSchema,
   type ConversationParentKind,
   type ConversationParentListChildrenRequest,
   type ConversationParentListChildrenResult,
   type ConversationParentRetirementChildrenResult,
+  type ConversationParentTerminalDeadlinesRequest,
+  type ConversationParentTerminalDeadlinesResult,
 } from "@rally/contracts/conversation-parent";
 import { asSubstreamId, type Region, type WorkspaceId } from "@rally/contracts";
 import { z } from "zod";
@@ -350,6 +354,38 @@ export abstract class ConversationParentDurableObject extends ScheduledDurableOb
     const request = ConversationParentListChildrenRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
     return ConversationParentListChildrenResultSchema.parse({ children: this.childRegistry() });
+  }
+
+  /**
+   * Which of this parent's conversations own a Terminal sandbox, and when
+   * each next needs the lifecycle sweep.
+   *
+   * Read from the children's own directory projections, which every child
+   * sends whether or not the parent forwards it to the workspace: the
+   * workspace directory carries one deadline per parent, the earliest, and
+   * this is how the sweep that deadline wakes finds the conversation it
+   * belongs to. Ordered by deadline so a caller acting on the first few acts
+   * on the most overdue.
+   */
+  async childTerminalDeadlines(
+    input: ConversationParentTerminalDeadlinesRequest,
+  ): Promise<ConversationParentTerminalDeadlinesResult> {
+    await this.migrationsReady();
+    const request = ConversationParentTerminalDeadlinesRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    return ConversationParentTerminalDeadlinesResultSchema.parse({
+      items: this.parentSql.exec<{ substream_id: string; next_terminal_action_at: string }>(
+        `SELECT substream_id,
+                json_extract(effect_json, '$.nextTerminalActionAt') AS next_terminal_action_at
+           FROM substream_directory
+          WHERE json_extract(effect_json, '$.kind') = 'directory_common'
+            AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+          ORDER BY next_terminal_action_at, substream_id`,
+      ).toArray().map((row) => ({
+        substreamId: row.substream_id,
+        nextTerminalActionAt: row.next_terminal_action_at,
+      })),
+    });
   }
 
   /**

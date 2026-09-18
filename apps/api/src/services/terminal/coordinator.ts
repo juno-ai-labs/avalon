@@ -13,16 +13,22 @@ import type {
 } from "../../durable-objects/workstream-terminal-protocol";
 import {
   TERMINAL_OPERATION_LEASE_MS,
+  TERMINAL_YIELDED_RUN_STATUS_LIST,
   type TerminalSandboxRecord,
 } from "../../durable-objects/workstream-terminal-storage";
 import type { Env } from "../../env";
 import { sha256 } from "../../lib/crypto";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import { logStructuredEvent } from "../../observability/logger";
+import {
+  createHarnessRunPortFactory,
+  type HarnessRunPortFactory,
+} from "../../runtime/harness-run-port";
 import type { ResourcePortFactory } from "../../runtime/resource-port";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
+import type { TerminalRunScope } from "./authority";
 import {
   terminalAcquisitionDeadlineAt,
   TERMINAL_OUTPUT_ROOT,
@@ -86,6 +92,43 @@ export interface TerminalAcquisitionObservation {
   durationMs: number;
   repositorySelected: boolean;
   localFilesRetained: boolean;
+}
+
+/**
+ * Which conversation the coordinator's sandbox belongs to, and which one the
+ * run holding it executes in.
+ *
+ * The two differ only for a background agent, which uses the sandbox of the
+ * conversation that (transitively) started it. Then the lease it takes is
+ * held by a run whose row lives in another object, and `runsPort` is how the
+ * coordinator asks that object whether such a holder has yielded.
+ */
+export interface TerminalSandboxScope extends TerminalRunScope {
+  runsPort: HarnessRunPortFactory;
+}
+
+const YIELDED_RUN_STATUSES = new Set<string>(TERMINAL_YIELDED_RUN_STATUS_LIST);
+
+/**
+ * The Daytona name a conversation's sandbox is created under.
+ *
+ * The main conversation keeps the derivation every deployed sandbox was
+ * created with, so a work stream's existing sandbox is still found by name.
+ * Any other conversation folds its substream in: before it did, a private
+ * side thread of a work stream reserved the main conversation's name, the
+ * provider refused the duplicate, and the fallback lookup by name handed the
+ * thread the main conversation's sandbox under a second, independent lease.
+ */
+export async function terminalSandboxStableName(
+  workspaceId: string,
+  workstreamId: string,
+  substreamId: string,
+): Promise<string> {
+  const identity = substreamId === "0"
+    ? `${workspaceId}:${workstreamId}`
+    : `${workspaceId}:${workstreamId}:${substreamId}`;
+  const stableHash = await sha256(identity);
+  return `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
 }
 
 function plusMinutes(now: Date, minutes: number): number {
@@ -157,7 +200,28 @@ export class TerminalSandboxCoordinator {
       context: HarnessToolContext,
       observation: TerminalAcquisitionObservation,
     ) => Promise<void>,
+    /**
+     * The main conversation, holding its own sandbox, unless the plugin says
+     * otherwise: the default is what every run was before a conversation's
+     * sandbox could be used by the agents it starts.
+     */
+    private readonly scope: TerminalSandboxScope = {
+      runSubstreamId: "0",
+      authoritySubstreamId: "0",
+      runsPort: createHarnessRunPortFactory(env),
+    },
   ) {}
+
+  /**
+   * The conversation to record as the lease holder's, or `null` when the
+   * holder's run row is in the sandbox's own object and the storage can read
+   * its liveness itself.
+   */
+  private holderSubstreamId(): string | null {
+    return this.scope.runSubstreamId === this.scope.authoritySubstreamId
+      ? null
+      : this.scope.runSubstreamId;
+  }
 
   async claimMutation(context: HarnessToolContext): Promise<TerminalSandboxMutationLease> {
     if (this.emergencyDisabled) {
@@ -375,17 +439,37 @@ export class TerminalSandboxCoordinator {
   ): Promise<TerminalSandboxRecord> {
     const terminal = this.terminal(context);
     const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
+    const runSubstreamId = this.holderSubstreamId();
     let claimed = await terminal.claimOperation({
       runId: context.harnessRunId,
+      runSubstreamId,
       generation: row.generation,
       leaseExpiresAt,
       now,
     });
+    let yieldedForeignHolder: { runId: string; substreamId: string } | null = null;
+    if (!claimed) {
+      // The storage could not read the holder's liveness if the holder ran in
+      // another conversation. Ask that conversation, and hand the answer back
+      // as an exact identity to take over from.
+      yieldedForeignHolder = await this.yieldedForeignHolder(context, row);
+      if (yieldedForeignHolder) {
+        claimed = await terminal.claimOperation({
+          runId: context.harnessRunId,
+          runSubstreamId,
+          generation: row.generation,
+          leaseExpiresAt,
+          now,
+          yieldedForeignHolder,
+        });
+      }
+    }
     if (!claimed) {
       claimed = await this.recoverYieldedOperation(
         context,
         row,
         now,
+        yieldedForeignHolder,
       );
     }
     if (!claimed) {
@@ -396,6 +480,33 @@ export class TerminalSandboxCoordinator {
       );
     }
     return claimed;
+  }
+
+  /**
+   * The lease holder as an identity to take over from, when it ran in another
+   * conversation and that conversation says it has yielded; otherwise `null`.
+   *
+   * Asked over the wire rather than inside the claim because the holder's run
+   * row is in the other conversation's object. The answer cannot go stale: a
+   * yielded run never resumes its lease, and the takeover names the exact
+   * holder, so a lease that moved on in between is simply not taken.
+   */
+  private async yieldedForeignHolder(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+  ): Promise<{ runId: string; substreamId: string } | null> {
+    if (
+      !row.operationRunId
+      || !row.operationRunSubstreamId
+      || row.operationRunId === context.harnessRunId
+    ) return null;
+    const holder = await this.scope
+      .runsPort(context.workspaceId, context.workstreamId, row.operationRunSubstreamId)
+      .run({ runId: row.operationRunId });
+    // No row is what the storage's own predicate reads as yielded for a local
+    // holder: a run that does not exist cannot be executing.
+    if (holder && !YIELDED_RUN_STATUSES.has(holder.status)) return null;
+    return { runId: row.operationRunId, substreamId: row.operationRunSubstreamId };
   }
 
   /**
@@ -410,10 +521,12 @@ export class TerminalSandboxCoordinator {
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
     now: number,
+    yieldedForeignHolder: { runId: string; substreamId: string } | null = null,
   ): Promise<TerminalSandboxRecord | null> {
     const sandboxId = row.sandboxId;
     if (!sandboxId) return null;
     const terminal = this.terminal(context);
+    const runSubstreamId = this.holderSubstreamId();
     const claimId = newId(now);
     const renewClaim = async (): Promise<void> => {
       const renewedAt = this.clock.now().getTime();
@@ -434,6 +547,7 @@ export class TerminalSandboxCoordinator {
       claimId,
       claimExpiresAt: now + TERMINAL_OPERATION_LEASE_MS,
       now,
+      yieldedForeignHolder,
     });
     if (!recoveryClaimed) return null;
 
@@ -445,6 +559,7 @@ export class TerminalSandboxCoordinator {
       const recovered = sandboxRetired
         ? await terminal.retireYieldedOperationRecovery({
             runId: context.harnessRunId,
+            runSubstreamId,
             generation: row.generation,
             sandboxId,
             claimId,
@@ -454,6 +569,7 @@ export class TerminalSandboxCoordinator {
           })
         : await terminal.settleYieldedOperationRecovery({
             runId: context.harnessRunId,
+            runSubstreamId,
             generation: row.generation,
             sandboxId,
             claimId,
@@ -577,13 +693,17 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    const stableHash = await sha256(`${context.workspaceId}:${context.workstreamId}`);
-    const stableName = `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
+    const stableName = await terminalSandboxStableName(
+      context.workspaceId,
+      context.workstreamId,
+      this.scope.authoritySubstreamId,
+    );
     return this.terminal(context).reserveFirstGeneration({
       stableName,
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
+      runSubstreamId: this.holderSubstreamId(),
       operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
@@ -603,6 +723,7 @@ export class TerminalSandboxCoordinator {
         stableName: requireStableName(row),
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
+        substreamId: this.scope.authoritySubstreamId,
         generation: row.generation,
         domainAllowList: domains,
         environment: { AVALON_RESOURCE_DIR: TERMINAL_OUTPUT_ROOT },
@@ -774,6 +895,8 @@ export class TerminalSandboxCoordinator {
       logStructuredEvent(this.env, "info", "terminal_sandbox_start_settled_after_error", {
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
+        substream_id: this.scope.runSubstreamId,
+        terminal_substream_id: this.scope.authoritySubstreamId,
         harness_run_id: context.harnessRunId,
         sandbox_generation: row.generation,
         reason: error instanceof Error ? error.name : "unknown",
@@ -832,6 +955,8 @@ export class TerminalSandboxCoordinator {
     logStructuredEvent(this.env, "warn", "terminal_sandbox_replaced_after_loss", {
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
+      substream_id: this.scope.runSubstreamId,
+      terminal_substream_id: this.scope.authoritySubstreamId,
       harness_run_id: context.harnessRunId,
       sandbox_generation: row.generation,
       lifecycle_state: row.lifecycleState,
@@ -842,6 +967,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
+      runSubstreamId: this.holderSubstreamId(),
       operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
@@ -862,6 +988,7 @@ export class TerminalSandboxCoordinator {
       authorityFingerprint,
       networkRevision,
       runId: context.harnessRunId,
+      runSubstreamId: this.holderSubstreamId(),
       operationLeaseExpiresAt: this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS,
       ...deadlines(this.clock.now()),
       now,
