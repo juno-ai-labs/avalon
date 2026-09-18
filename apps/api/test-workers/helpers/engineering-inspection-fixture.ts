@@ -44,3 +44,22 @@ export async function seedInspectableWorkspace(
     )`),
   ]);
 }
+
+/**
+ * A second workspace, equally open and active, for the cross-workspace fences.
+ *
+ * Only the rows: the tables are already there from the first call. It has to be
+ * genuinely active, or a refusal proves nothing — it would come from the route
+ * resolution rather than from the directory the fence is meant to consult.
+ */
+export async function seedSecondInspectableWorkspace(
+  database: D1Database,
+  input: { workspaceId: string; at: string },
+): Promise<void> {
+  await database.batch([
+    database.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(input.workspaceId),
+    database.prepare(`INSERT INTO workspace_product_authority_routes
+      (workspace_id, generation, state, updated_at) VALUES (?, 1, 'active', ?)`)
+      .bind(input.workspaceId, input.at),
+  ]);
+}

@@ -35,7 +35,10 @@ import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridg
 import type { Env } from "../src/env";
 import { registerArtifact } from "../src/services/terminal/site-resource-bridge";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
+import {
+  seedInspectableWorkspace,
+  seedSecondInspectableWorkspace,
+} from "./helpers/engineering-inspection-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000fa10");
@@ -45,6 +48,7 @@ const RESOURCE_ID = "00000000-0000-7000-8000-00000000fa13";
 const ARTIFACT_ID = asArtifactId("00000000-0000-7000-8000-00000000fa14");
 const UNREGISTERED_ID = asArtifactId("00000000-0000-7000-8000-00000000fa15");
 const SESSION_ID = "00000000-0000-7000-8000-00000000fa16";
+const OTHER_WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000fa17");
 const HOSTNAME_STUB = ArtifactHostnameStubSchema.parse("quiet-amber-fox-run");
 const NOW = "2026-09-17T10:00:00.000Z";
 const TEST_ENV: Env = env;
@@ -152,6 +156,9 @@ beforeEach(async () => {
     at: NOW,
   });
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
+  await seedSecondInspectableWorkspace(env.DB, { workspaceId: OTHER_WORKSPACE_ID, at: NOW });
+  await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", OTHER_WORKSPACE_ID)))
+    .initializeWorkspace(OTHER_WORKSPACE_ID, "wnam");
 });
 
 describe("engineering inspection of a live web artifact's supervisor", () => {
@@ -232,6 +239,35 @@ describe("engineering inspection of a live web artifact's supervisor", () => {
       bindings: [],
     });
     expect(tables.rows).toEqual([]);
+  });
+
+  it("refuses a real artifact addressed through a workspace that does not hold it", async () => {
+    await publishArtifact();
+    const inspection = bridge();
+
+    // The second workspace is active and open, so a refusal here is the
+    // registry's and not the route's. What it protects is that the object
+    // consulted is the *caller's* workspace, never one derived from the target:
+    // registry rows live in each WorkspaceDO's own storage, so asking the wrong
+    // workspace must find nothing.
+    expect(await inspection.resolveArtifact({
+      workspaceId: OTHER_WORKSPACE_ID,
+      artifactId: ARTIFACT_ID,
+    })).toEqual({ found: false });
+    expect(await inspection.runArtifactSql({
+      workspaceId: OTHER_WORKSPACE_ID,
+      artifactId: ARTIFACT_ID,
+      authorityGeneration: 1,
+      query: { sql: "CREATE TABLE crossed_from_another_workspace (id INTEGER)", bindings: [] },
+    })).toEqual({ found: false });
+
+    // The sentinel is the proof: the real supervisor still holds its own
+    // identity row and nothing the refused statement would have written.
+    const supervisor = await hostStub(ARTIFACT_ID).runInspectionSql({
+      sql: "SELECT name FROM sqlite_schema WHERE name = 'crossed_from_another_workspace'",
+      bindings: [],
+    });
+    expect(supervisor.rows).toEqual([]);
   });
 
   it("reaches the supervisor's own database and not the stateful artifact's facet", async () => {

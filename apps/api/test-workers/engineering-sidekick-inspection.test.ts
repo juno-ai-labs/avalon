@@ -24,7 +24,10 @@ import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
+import {
+  seedInspectableWorkspace,
+  seedSecondInspectableWorkspace,
+} from "./helpers/engineering-inspection-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef10");
@@ -32,6 +35,7 @@ const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000ef11");
 const ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ef12");
 const SIDEKICK_ID = asAutomationId("00000000-0000-7000-8000-00000000ef13");
 const SESSION_ID = "00000000-0000-7000-8000-00000000ef14";
+const OTHER_WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef15");
 const NOW = "2026-09-17T10:00:00.000Z";
 const TEST_ENV: Env = env;
 
@@ -105,6 +109,9 @@ beforeEach(async () => {
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
     .initializeWorkspace(WORKSPACE_ID, "wnam");
   await seedRoom();
+  await seedSecondInspectableWorkspace(env.DB, { workspaceId: OTHER_WORKSPACE_ID, at: NOW });
+  await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", OTHER_WORKSPACE_ID)))
+    .initializeWorkspace(OTHER_WORKSPACE_ID, "wnam");
 });
 
 describe("engineering inspection of a Sidekick's own object", () => {
@@ -169,6 +176,39 @@ describe("engineering inspection of a Sidekick's own object", () => {
       bindings: [],
     });
     expect(tables.rows).toEqual([]);
+  });
+
+  it("refuses a real Sidekick addressed through a workspace that does not hold it", async () => {
+    await createSidekick();
+    const inspection = bridge();
+
+    // The second workspace is active and open, so a refusal here is the
+    // directory's and not the route's. What it protects is that the object
+    // consulted is the *caller's* workspace, never one derived from the target:
+    // directory rows live in each WorkspaceDO's own storage, so asking the
+    // wrong workspace must find nothing.
+    expect(await inspection.resolveSidekick({
+      workspaceId: OTHER_WORKSPACE_ID,
+      sidekickId: SIDEKICK_ID,
+    })).toEqual({ found: false });
+    expect(await inspection.runSidekickSql({
+      workspaceId: OTHER_WORKSPACE_ID,
+      sidekickId: SIDEKICK_ID,
+      authorityGeneration: 1,
+      query: { sql: "CREATE TABLE crossed_from_another_workspace (id INTEGER)", bindings: [] },
+    })).toEqual({ found: false });
+
+    // The sentinel is the proof: the real Sidekick still holds its own identity
+    // row and nothing the refused statement would have written.
+    const sidekick = await sidekickStub(SIDEKICK_ID).runInspectionSql({
+      sql: "SELECT name FROM sqlite_schema WHERE name = 'crossed_from_another_workspace'",
+      bindings: [],
+    });
+    expect(sidekick.rows).toEqual([]);
+    expect((await sidekickStub(SIDEKICK_ID).runInspectionSql({
+      sql: "SELECT automation_id FROM automation WHERE id = 1",
+      bindings: [],
+    })).rows).toEqual([{ automation_id: SIDEKICK_ID }]);
   });
 
   it("refuses a stale caller generation and a quarantined workspace route", async () => {
