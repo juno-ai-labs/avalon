@@ -240,6 +240,11 @@ run settlement, and user actions therefore do not wait for receipt rereads,
 analytics identity lookup, D1 acceptance, or lakehouse Queue staging. The
 canonical tool/run receipts and the product mutations that precede emission stay
 awaited; only the derived telemetry continuation moves off their critical path.
+For Worker requests the primitive uses `waitUntil`. Durable Objects need no
+extra lifetime extension while asynchronous I/O is pending, and Cloudflare's
+Durable Object `waitUntil` method is a compatibility no-op. Neither mechanism is
+a durable retry fence: telemetry can still be lost to deployment or runtime
+reset before D1, R2, or Queue accepts its hand-off.
 The established requested/completed pair remains a separately named admission
 funnel for correlated desktop runs; it is not mapped to the same reserved event.
 
@@ -1884,8 +1889,8 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ### 2026-09-17 — Product actions no longer await observational telemetry
 
-API-generated product, tool, and run telemetry now uses one shared Cloudflare
-lifecycle deferral. Product behavior no longer waits for authoritative receipt
+Converted product, tool, and run emitters now use one shared Cloudflare
+lifecycle deferral. Their callers no longer wait for authoritative receipt
 rereads made only to derive telemetry, analytics identity lookup, D1 acceptance,
 or lakehouse Queue staging; failures are named in structured operational logs.
 The product mutation and canonical run/tool receipts remain awaited before an

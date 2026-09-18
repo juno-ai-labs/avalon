@@ -192,8 +192,11 @@ as proof that a model call committed product state.
 - A capture archive or Queue-send failure emits `inference_lakehouse_stage_failed`
   and does not fail the inference. The object is removed when Queue acceptance
   itself fails. Exact request and attempt capture is registered with the owning
-  Worker invocation through `waitUntil`; hashing, R2, Queue, Pipeline, and sink
-  work are all off the provider and result critical paths.
+  runtime lifecycle. Worker invocations register it through `waitUntil`;
+  Durable Objects already remain active while asynchronous I/O is pending, and
+  their `waitUntil` compatibility method adds no lifetime. Hashing and the R2 /
+  Queue hand-off are off the provider and result critical paths. Capture remains
+  best effort until that hand-off is accepted; it is not a durable retry fence.
 - Invalid or cross-region pointers are poison: the consumer logs and acknowledges
   them so they cannot retry forever. Missing, corrupt, or schema-invalid archived
   bytes and Pipeline failures retry and eventually reach the Global DLQ.
@@ -553,9 +556,11 @@ trace showed archive staging consuming about 1.8 seconds before a roughly
 400-millisecond JEV call, which made observational persistence the dominant
 controlled latency. Dropping exact archives was rejected because they are the
 evidence used for evals and incident diagnosis; bare floating promises were
-rejected because Workers may end an invocation after its response. Future
-inference callers must use the shared lifecycle deferral rather than recreating
-either failure mode.
+rejected because Workers may end an invocation after its response. The shared
+deferral guards synchronous registration failure and observes promise rejection;
+it does not promise completion across deployment or runtime reset. Future
+inference callers must use that primitive rather than recreating either failure
+mode.
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 

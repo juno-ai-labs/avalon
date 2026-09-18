@@ -69,9 +69,9 @@ workOpportunityRoutes.post(
     const auth = getAuth(c);
     const contexts = await new WorkOpportunityService(c.env, auth).recordImpressions(input.opportunityIds);
     const contextById = new Map(contexts.map((context) => [context.opportunityId, context]));
-    await Promise.all(input.opportunityIds.map(async (opportunityId, index) => {
+    for (const [index, opportunityId] of input.opportunityIds.entries()) {
       const context = contextById.get(opportunityId);
-      if (!context) return;
+      if (!context) continue;
       emitProductUsageTelemetry(c.env, {
         workspaceId: auth.workspaceId,
         userId: auth.userId,
@@ -88,8 +88,8 @@ workOpportunityRoutes.post(
         },
         operationId: opportunityId,
         eventId: newId(),
-      });
-    }));
+      }, requestDeferral(c));
+    }
     return c.body(null, 204);
   },
 );
@@ -117,7 +117,7 @@ workOpportunityRoutes.delete("/:id", zValidator("param", idParam), zValidator("q
       },
       operationId: id,
       eventId: resourceTelemetryEventId(id, 8),
-    });
+    }, requestDeferral(c));
   }
   return c.body(null, 204);
 });
@@ -171,7 +171,7 @@ workOpportunityRoutes.post(
         },
         operationId: c.req.valid("param").id,
         eventId: resourceTelemetryEventId(c.req.valid("param").id, 9),
-      });
+      }, requestDeferral(c));
     }
     return c.json(StartedWorkOpportunityResponseSchema.parse(started), 201);
   },

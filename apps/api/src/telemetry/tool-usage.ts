@@ -107,6 +107,17 @@ interface ToolTerminalRow {
   automation_run_id: string | null;
 }
 
+export interface AgentToolTerminalTelemetryInput {
+  workspaceId: WorkspaceId;
+  workstreamId: string;
+  harnessRunId: string;
+  invocationId: string;
+  replayed?: boolean;
+  /** Set on an automation run's loop; the provenance rides on the loop input. */
+  automationId?: string | undefined;
+  automationRunId?: string | undefined;
+}
+
 function objectJson(value: string | null): Record<string, unknown> {
   if (!value) return {};
   try {
@@ -145,16 +156,7 @@ function terminalRunKind(row: ToolTerminalRow): AgentToolStartedTelemetryInput['
  */
 async function acceptAgentToolTerminalTelemetry(
   env: Env,
-  input: {
-    workspaceId: WorkspaceId;
-    workstreamId: string;
-    harnessRunId: string;
-    invocationId: string;
-    replayed?: boolean;
-    /** Set on an automation run's loop; the provenance rides on the loop input. */
-    automationId?: string | undefined;
-    automationRunId?: string | undefined;
-  },
+  input: AgentToolTerminalTelemetryInput,
   defer: WorkDeferral,
 ): Promise<void> {
   const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
@@ -219,7 +221,7 @@ async function acceptAgentToolTerminalTelemetry(
 
 export function emitAgentToolTerminalTelemetry(
   env: Env,
-  input: Parameters<typeof acceptAgentToolTerminalTelemetry>[1],
+  input: AgentToolTerminalTelemetryInput,
   defer: WorkDeferral = runtimeDeferral,
 ): void {
   defer(acceptAgentToolTerminalTelemetry(env, input, defer).catch((error: unknown) => {

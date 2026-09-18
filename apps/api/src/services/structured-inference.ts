@@ -168,7 +168,7 @@ export async function runStructuredInference<T>(
     reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal;
     onModelResolved?: (model: string) => void;
-    /** Test or host override for exact-envelope archive lifecycle. */
+    /** Owning lifecycle override for exact-envelope archive work. */
     defer?: WorkDeferral;
   } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: { model: string; fallbackModels: string[] } }),
 ): Promise<{
