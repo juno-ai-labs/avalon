@@ -177,6 +177,26 @@ describe('useRetainedWorkstreamSocket for an automation parent', () => {
   });
 });
 
+describe('standalone conversation subscriptions', () => {
+  it.each(['0', '00000000-0000-7000-8000-00000000c001'])('opens only the addressed feed for substream %s', async (substreamId) => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const parentId = '00000000-0000-7000-8000-00000000b001';
+    const Wrapper = createWrapper();
+    function Conversation(): React.JSX.Element {
+      const connection = useRetainedWorkstreamSocket(api, parentId, true, 'workstream', substreamId);
+      return <div>{connection.state}</div>;
+    }
+    const view = render(<Wrapper><Conversation /></Wrapper>);
+    await flushPromises();
+    expect(api.getSocketTicket).toHaveBeenCalledWith(parentId, substreamId, expect.anything(), 0, false, expect.anything(), WORKSTREAM_OPEN_TIMEOUT_BASE_MS);
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    view.unmount();
+    expect(FakeWebSocket.instances[0]?.close).toHaveBeenCalled();
+  });
+});
+
 describe('WorkstreamSocketPool', () => {
   it('opens and retains the presence-free control/feed pair after a one-second hover', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });

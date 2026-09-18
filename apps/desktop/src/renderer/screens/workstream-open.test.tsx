@@ -15,6 +15,10 @@ const api = vi.hoisted(() => ({
   removeSubstreamParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getConnections: vi.fn(),
+  listScopeInvitations: vi.fn(),
+  getScopeSharingOptions: vi.fn(),
+  listManagedScopeGrants: vi.fn(),
   removeParticipant: vi.fn(),
   prepareSubstream: vi.fn(),
   confirmSubstream: vi.fn(),
@@ -26,8 +30,9 @@ const restoreTranscriptPosition = vi.hoisted(() => vi.fn());
 
 /** Set by the tests that need a signed-in author; null everywhere else. */
 const session = vi.hoisted(() => ({ current: null as unknown }));
-vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api, session: session.current }),
+vi.mock('../lib/collaboration-session', () => ({
+  useOptionalCollaborationSession: () => null,
+  useCollaborationSession: () => ({ api, session: session.current }),
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
@@ -41,6 +46,7 @@ vi.mock('../lib/workstream-socket-pool', () => ({
 
 vi.mock('../lib/workspace-socket', () => ({
   useWorkspaceSocket: () => ({ presenceUserIdsByWorkstream: {} }),
+  useOptionalWorkspaceSocket: () => null,
 }));
 
 vi.mock('../lib/use-file-attachments', () => ({
@@ -76,6 +82,9 @@ import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
 import { STOPPING_LABEL } from '../components/agent-work-timing';
+import { ConversationSurface } from './conversation-surface';
+import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -152,6 +161,9 @@ describe('socket-first work-stream open', () => {
     vi.clearAllMocks();
     session.current = null;
     api.getWorkspaceMembers.mockResolvedValue([]);
+    api.listScopeInvitations.mockResolvedValue({ status: "ready", invitations: [] });
+    api.getScopeSharingOptions.mockResolvedValue({ scopes: [], completeWorkstreamTargets: null });
+    api.listManagedScopeGrants.mockResolvedValue({ status: "ready", grants: [] });
     retainedSocket.mockReturnValue({
       activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
@@ -161,6 +173,26 @@ describe('socket-first work-stream open', () => {
       state: 'connecting',
       workspaceSocketState: 'connecting',
     });
+  });
+
+  it('uses only the selected guest conversation roster despite a cached workspace directory', async () => {
+    const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Shared person', email: 'shared@example.test', timezone: 'UTC' };
+    session.current = { user: member, workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: null, accessClass: 'guest' } };
+    const childId = '00000000-0000-7000-8000-000000000662';
+    const boot = recoveryBoot({ participants: [member] });
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    cache.setQueryData(workstreamDetailQueryKey(workstreamId, childId), boot);
+    cache.setQueryData(orderedTranscriptQueryKey(workstreamId, childId), boot.transcript);
+    cache.setQueryData(['workspace-members'], [{ ...member, id: 'hidden', name: 'Hidden workspace person' }]);
+    render(<Tooltip.Provider><QueryClientProvider client={cache}><MemoryRouter>
+      <ConversationSurface parentKind="workstream" parentId={workstreamId} substreamId={childId}
+        renderHeader={({ openParticipantDialog }) => <button onClick={openParticipantDialog}>People</button>} />
+    </MemoryRouter></QueryClientProvider></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'People' }));
+    expect(await screen.findByText('Shared person')).toBeVisible();
+    expect(screen.queryByText('Hidden workspace person')).not.toBeInTheDocument();
+    expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
+    expect(api.getConnections).not.toHaveBeenCalled();
   });
 
   function historyBoot(id = workstreamId): WorkstreamBoot {
@@ -749,7 +781,7 @@ describe('socket-first work-stream open', () => {
     expect(screen.queryByRole('button', { name: 'Open Child artifact' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
-    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to main conversation' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'New member participant actions' })).toBeVisible();
@@ -1009,7 +1041,7 @@ describe('socket-first work-stream open', () => {
     });
 
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
-    fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to work stream' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to main conversation' }));
     expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
 
@@ -1017,7 +1049,7 @@ describe('socket-first work-stream open', () => {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from work stream' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
 
     expect(await screen.findByText('Adam cannot remove Katherine')).toBeInTheDocument();
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
@@ -1055,11 +1087,11 @@ describe('socket-first work-stream open', () => {
     });
 
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
-    fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to work stream' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to main conversation' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, katherine.id));
     const dialog = screen.getByRole('dialog', { name: 'Add a participant' });
     expect(dialog).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Add Jordan to work stream' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add Jordan to main conversation' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, jordan.id));
     expect(api.addParticipant).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
@@ -1095,7 +1127,7 @@ describe('socket-first work-stream open', () => {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from work stream' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
     await waitFor(() => expect(api.removeParticipant).toHaveBeenCalledWith(workstreamId, adam.id));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a participant' })).not.toBeInTheDocument());
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([katherine]);
