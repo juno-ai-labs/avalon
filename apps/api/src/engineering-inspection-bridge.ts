@@ -1,6 +1,10 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  ArtifactInspectionInputSchema,
+  ArtifactSqlInspectionInputSchema,
+  EngineeringArtifactListLookupSchema,
+  EngineeringArtifactTargetLookupSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
@@ -20,6 +24,8 @@ import {
   WorkstreamInspectionInputSchema,
   WorkstreamSqlInspectionInputSchema,
   type EngineeringInspectionRpcBinding,
+  type EngineeringArtifactListLookup,
+  type EngineeringArtifactTargetLookup,
   type EngineeringSidekickListLookup,
   type EngineeringSidekickTargetLookup,
   type EngineeringSqlLookup,
@@ -33,7 +39,12 @@ import {
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 
-import { automationDOName, conversationObjectName, workspaceDOName } from "./durable-objects/names";
+import {
+  artifactHostDOName,
+  automationDOName,
+  conversationObjectName,
+  workspaceDOName,
+} from "./durable-objects/names";
 import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
@@ -41,7 +52,11 @@ import {
   type InspectionWorkstreamRoute,
 } from "./engineering-inspection-routes";
 import type { Env } from "./env";
-import { durableObjectStubForWorkspace } from "./lib/durable-object-namespace";
+import {
+  durableObjectStubForArtifact,
+  durableObjectStubForWorkspace,
+  workspacePlacementAffinity,
+} from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -65,6 +80,17 @@ const WorkstreamDirectoryRowSchema = z.strictObject({
 
 const SubstreamDirectoryRowSchema = z.strictObject({
   substream_id: z.string(),
+});
+
+const ArtifactRegistryRowSchema = z.strictObject({
+  artifact_id: z.string(),
+  workstream_id: z.string(),
+  resource_id: z.string(),
+  mode: z.string(),
+  stateful: z.number().int().min(0).max(1),
+  current_version: z.number().int().positive(),
+  hostname_stub: z.string().nullable(),
+  updated_at: z.number().int().nonnegative(),
 });
 
 const SidekickDirectoryRowSchema = z.strictObject({
@@ -154,6 +180,37 @@ async function resolveInspectionSidekickRoute(
     bindings: [input.sidekickId, input.workspaceId],
   });
   return directory.rows.length === 0 ? null : route;
+}
+
+/**
+ * An artifact is fenced by its workspace for the same reason a Sidekick is, and
+ * with more need of it: ArtifactHostDO's name carries no workspace segment at
+ * all, so nothing about the name itself proves the caller may reach it, and
+ * every artifact UUID in the account is a valid object name.
+ *
+ * `artifact_registry` lives in WorkspaceDO beside the resource authority rather
+ * than in D1, and it is the only place that says which artifacts a workspace
+ * has. An unregistered UUID is refused here rather than materializing an empty
+ * supervisor.
+ */
+async function resolveInspectionArtifactRoute(
+  env: Env,
+  input: { workspaceId: string; artifactId: string },
+  expectedGeneration?: number,
+): Promise<InspectionWorkspaceRoute | null> {
+  const route = await resolveInspectionWorkspaceRoute(
+    env,
+    input.workspaceId,
+    expectedGeneration,
+  );
+  if (!route) return null;
+  const workspace = await workspaceStub(env, input.workspaceId);
+  const registry = await workspace.runInspectionSql({
+    sql: `SELECT artifact_id FROM artifact_registry
+           WHERE artifact_id = ? AND workspace_id = ?`,
+    bindings: [input.artifactId, input.workspaceId],
+  });
+  return registry.rows.length === 0 ? null : route;
 }
 
 /**
@@ -285,6 +342,41 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  async listArtifacts(input: unknown): Promise<EngineeringArtifactListLookup> {
+    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listArtifacts");
+    if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
+      return { found: false };
+    }
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    const result = await workspace.runInspectionSql({
+      sql: `SELECT artifact_id, workstream_id, resource_id, mode, stateful,
+                   current_version, hostname_stub, updated_at
+              FROM artifact_registry
+             WHERE workspace_id = ?
+             ORDER BY updated_at DESC, artifact_id`,
+      bindings: [request.workspaceId],
+    });
+    return EngineeringArtifactListLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        items: z.array(ArtifactRegistryRowSchema).parse(result.rows).map((row) => ({
+          workspaceId: request.workspaceId,
+          artifactId: row.artifact_id,
+          region: this.env.AVALON_REGION,
+          workstreamId: row.workstream_id,
+          resourceId: row.resource_id,
+          mode: row.mode,
+          stateful: row.stateful === 1,
+          currentVersion: row.current_version,
+          hostnameStub: row.hostname_stub,
+          updatedAt: row.updated_at,
+        })),
+      },
+    });
+  }
+
   async resolveWorkspace(input: unknown): Promise<EngineeringWorkspaceTargetLookup> {
     const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "resolveWorkspace");
     const route = await resolveInspectionWorkspaceRoute(this.env, request.workspaceId);
@@ -345,6 +437,21 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  async resolveArtifact(input: unknown): Promise<EngineeringArtifactTargetLookup> {
+    const request = parseRpcInput(ArtifactInspectionInputSchema, input, "resolveArtifact");
+    const route = await resolveInspectionArtifactRoute(this.env, request);
+    if (!route) return { found: false };
+    return EngineeringArtifactTargetLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        artifactId: request.artifactId,
+        authorityGeneration: route.authority_generation,
+      },
+    });
+  }
+
   async runWorkspaceSql(input: unknown): Promise<EngineeringSqlLookup> {
     const request = parseRpcInput(WorkspaceSqlInspectionInputSchema, input, "runWorkspaceSql");
     if (!await resolveInspectionWorkspaceRoute(
@@ -361,6 +468,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workstreamId: null,
         substreamId: null,
         sidekickId: null,
+        artifactId: null,
         result: await workspace.runInspectionSql(request.query),
       },
     });
@@ -383,6 +491,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workstreamId: route.workstream_id,
         substreamId: null,
         sidekickId: null,
+        artifactId: null,
         result: await workstream.runInspectionSql(request.query),
       },
     });
@@ -415,6 +524,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workstreamId: request.workstreamId,
         substreamId: request.substreamId,
         sidekickId: null,
+        artifactId: null,
         result: await substream.runInspectionSql(request.query),
       },
     });
@@ -441,7 +551,39 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workstreamId: null,
         substreamId: null,
         sidekickId: request.sidekickId,
+        artifactId: null,
         result: await sidekick.runInspectionSql(request.query),
+      },
+    });
+  }
+
+  async runArtifactSql(input: unknown): Promise<EngineeringSqlLookup> {
+    const request = parseRpcInput(ArtifactSqlInspectionInputSchema, input, "runArtifactSql");
+    if (!await resolveInspectionArtifactRoute(
+      this.env,
+      request,
+      request.authorityGeneration,
+    )) return { found: false };
+    // The workspace's own affinity, the way the publish path passes it. The
+    // platform honours a location hint only on an object's first lookup and a
+    // registered artifact has had one, so this changes nothing here — but
+    // passing the fallback would be a lie about where the object belongs.
+    const artifact = durableObjectStubForArtifact(
+      this.env,
+      this.env.ARTIFACT_HOSTS,
+      artifactHostDOName(this.env.AVALON_REGION, asArtifactId(request.artifactId)),
+      await workspacePlacementAffinity(this.env, request.workspaceId),
+    );
+    return EngineeringSqlLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        sidekickId: null,
+        artifactId: request.artifactId,
+        result: await artifact.runInspectionSql(request.query),
       },
     });
   }
