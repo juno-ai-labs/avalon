@@ -1295,6 +1295,29 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
 
+### 2026-09-18 — Named resource watches own their polling checkpoints
+
+**What changed:** A resource-watch poll now loads the watched resource identity
+and the watch row's cursor, passes that target to the adapter, and compare-and-
+swap commits progress back to that watch. Canva uses the primitive for two
+personal, explicitly opted-in design observations while its live tools continue
+through the hosted-MCP pass-through.
+
+**Why:** The previous workflow scheduled by watch id but always read and wrote
+the connection cursor. That happened to fit Google's account-wide change feeds,
+but two named designs on one personal Canva connection would share a baseline
+and the adapter could not know which design to inspect.
+
+**Considered and rejected:** Storing a selected design in connection config or
+creating a Canva-only workflow. Both make one connection pretend it has one
+resource and duplicate polling persistence the platform already owns.
+
+**Consequences:** Connection schedules keep their existing cursor. Resource
+watches receive `config.pollTarget` and a watch-local `cursor`; providers must
+validate both before calling out. The Canva connector remains absent unless the
+regional `CANVA_CONNECTOR_ENABLED` gate is exactly `true`, so pending callback
+approval cannot produce an unusable catalog entry.
+
 ### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
 
 **What changed:** The Ashby and Fireflies cards keep only the sentence that says

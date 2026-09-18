@@ -948,4 +948,68 @@ describe("workspace schema migration in workerd", () => {
       expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
     });
   });
+
+  it("admits Canva on a populated v60 object and enforces one active personal connection per owner", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("populated-v60-canva-upgrade");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 60),
+        component: "workspace_do",
+        workerVersionId: "worker-v60",
+        now: 1_000,
+      });
+      state.storage.sql.exec(`INSERT INTO workspace_identity
+        (id, workspace_id, region, placement_affinity, created_at, updated_at)
+        VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`);
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+        VALUES ('connection-fireflies', 'workspace-1', 'fireflies', 'personal', 'user-1',
+         'Fireflies personal', '["fireflies.personal.read"]', 'plugin_fireflies', 'healthy', '{}', '{}',
+         '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`);
+      state.storage.sql.exec(`INSERT INTO connector_oauth_attempts
+        (id, region, provider, user_id, workspace_id, status, connection_id, expires_at, created_at, updated_at)
+        VALUES ('attempt-fireflies', 'global', 'fireflies', 'user-1', 'workspace-1', 'succeeded',
+         'connection-fireflies', '2026-09-18T01:00:00.000Z', '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`);
+
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: "workspace_do",
+        workerVersionId: "worker-current",
+        now: 2_000,
+      });
+
+      expect(state.storage.sql.exec(`SELECT connection_id FROM connector_oauth_attempts WHERE id = 'attempt-fireflies'`).one())
+        .toEqual({ connection_id: 'connection-fireflies' });
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+        VALUES ('connection-canva', 'workspace-1', 'canva', 'personal', 'user-1', 'Canva',
+         '["canva.personal.mcp"]', 'plugin_canva', 'healthy', '{}', '{}',
+         '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`);
+      state.storage.sql.exec(`INSERT INTO connector_oauth_attempts
+        (id, region, provider, user_id, workspace_id, status, expires_at, created_at, updated_at)
+        VALUES ('attempt-canva', 'global', 'canva', 'user-1', 'workspace-1', 'pending',
+         '2026-09-18T01:00:00.000Z', '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`);
+      expect(() => state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+        VALUES ('connection-canva-2', 'workspace-1', 'canva', 'personal', 'user-1', 'Canva again',
+         '["canva.personal.mcp"]', 'plugin_canva_2', 'healthy', '{}', '{}',
+         '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`)).toThrow();
+      expect(() => state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+        VALUES ('connection-canva-workspace', 'workspace-1', 'canva', 'workspace', NULL, 'Canva workspace',
+         '["canva.personal.mcp"]', 'plugin_canva_workspace', 'healthy', '{}', '{}',
+         '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`)).not.toThrow();
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%\_v61%' ESCAPE '\'`).one())
+        .toEqual({ count: 0 });
+    });
+  });
+
 });

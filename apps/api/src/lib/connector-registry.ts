@@ -2,6 +2,7 @@ import {
   createConnectorRegistry,
   type CustomMcpConnectorConfig,
   type FirefliesConnectorConfig,
+  type CanvaConnectorConfig,
   type GranolaConnectorConfig,
   type GitHubConnectorConfig,
   type LinearConnectorConfig,
@@ -58,6 +59,14 @@ export function firefliesConnectorConfig(env: Env): FirefliesConnectorConfig | n
   if (env.FIREFLIES_CONNECTOR_ENABLED !== "true") return null;
   return {
     redirectUri: new URL("/connections/fireflies/callback", env.PUBLIC_API_BASE_URL).toString(),
+  };
+}
+
+/** Canva remains absent until its regional server callback is approved and enabled. */
+export function canvaConnectorConfig(env: Env): CanvaConnectorConfig | null {
+  if (env.CANVA_CONNECTOR_ENABLED !== "true") return null;
+  return {
+    redirectUri: new URL("/connections/canva/callback", env.PUBLIC_API_BASE_URL).toString(),
   };
 }
 
@@ -172,6 +181,7 @@ export function connectorSupportsResourceHydration(
 function buildConnectorRegistry(env: Env) {
   const customMcp = customMcpConnectorConfig(env);
   const fireflies = firefliesConnectorConfig(env);
+  const canva = canvaConnectorConfig(env);
   const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
@@ -184,6 +194,7 @@ function buildConnectorRegistry(env: Env) {
     customMcp,
     ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
     ...(fireflies ? { fireflies } : {}),
+    ...(canva ? { canva } : {}),
     granola,
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),

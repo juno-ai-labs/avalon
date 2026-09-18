@@ -23,6 +23,11 @@ describe("connector connection card contract", () => {
     expect(CONNECTOR_CONNECTION_STATE_WIRE_NAME).toBe("get_connector_connection_state");
   });
 
+  it("admits Canva only as a personal card", () => {
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "canva", scope: "personal" }).success).toBe(true);
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "canva", scope: "workspace" }).success).toBe(false);
+  });
+
   it("accepts only closed connector connection states", () => {
     expect(ConnectorConnectionStateResultSchema.parse({
       connectorId: "slack",

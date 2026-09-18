@@ -13,6 +13,7 @@ import {
   ConnectorError,
   CustomMcpCapabilities,
   FirefliesCapabilities,
+  CanvaCapabilities,
   GoogleCapabilityScopes,
   GranolaCapabilities,
   LinearCapabilityScopes,
@@ -294,6 +295,7 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   // metadata, and Rally asks for exactly those. There is no Rally-authored
   // scope vocabulary to map a capability onto here.
   ashby: { "ashby.personal.mcp": [] },
+  canva: { [CanvaCapabilities.personalMcp]: [] },
   custom_mcp: {
     [CustomMcpCapabilities.tools]: [],
   },
@@ -1745,6 +1747,7 @@ export class ConnectionService {
       || connection.connector_type === "notion"
       || connection.connector_type === "slack"
       || (connection.connector_type === "ashby" && connection.scope === "personal")
+      || (connection.connector_type === "canva" && connection.scope === "personal")
       || (connection.connector_type === "fireflies" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
     ) {
@@ -4212,6 +4215,14 @@ function verifiedIdentityConfig(
     providerUserId: null,
     handle: null,
     verifiedEmail: stringField(credentials, "verifiedEmail") ?? stringField(credentials, "userEmail"),
+    identityDisplayName: stringField(credentials, "providerAccountName"),
+  };
+  // Canva's hosted MCP grant exposes no stable directory-user identity.
+  if (provider === "canva") return {
+    providerTenantId: providerAccountId,
+    providerUserId: null,
+    handle: null,
+    verifiedEmail: null,
     identityDisplayName: stringField(credentials, "providerAccountName"),
   };
   if (provider === "granola") return {

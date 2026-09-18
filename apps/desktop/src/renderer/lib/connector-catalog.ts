@@ -43,6 +43,15 @@ export const connectorProviders = [
     capabilities: ['ashby.workspace.events'],
   },
   {
+    id: 'canva' as const,
+    provider: ConnectorConnectionCardCatalog.canva.providerType,
+    name: 'Canva',
+    description: 'Find, generate, edit, comment on, resize, and export Canva designs. Connecting lets Rally read and change your Canva designs, folders, assets and brand kit.',
+    mark: ConnectorConnectionCardCatalog.canva.iconName,
+    scopes: ['you'] as const,
+    capabilities: ['canva.personal.mcp'],
+  },
+  {
     id: 'fireflies' as const,
     provider: ConnectorConnectionCardCatalog.fireflies.providerType,
     name: 'Fireflies',

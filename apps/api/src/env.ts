@@ -232,6 +232,8 @@ export interface Env {
    * Fireflies must still start.
    */
   FIREFLIES_CONNECTOR_ENABLED?: string;
+  /** Regional Canva rollout gate. Unset keeps the connector absent. */
+  CANVA_CONNECTOR_ENABLED?: string;
   POSTHOG_PROJECT_TOKEN?: string;
   /** Global-only signer for onboarding telemetry capabilities. regional validates
    * them through the narrow Global telemetry-control RPC. */

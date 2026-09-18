@@ -1,3 +1,4 @@
+import Canva from '@thesvg/react/canva';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
 import GoogleDrive from '@thesvg/react/google-drive';
@@ -47,10 +48,11 @@ export type PluginBrandMarkComponent =
 
 /** The brands Rally connects to that have a mark of their own. */
 export const PLUGIN_BRAND_MARKS: Record<
-  'ashby' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
+  'ashby' | 'canva' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
   ashby: { Mark: Ashby, mono: true },
+  canva: { Mark: Canva, mono: false },
   fireflies: { Mark: Fireflies, mono: true },
   github: { Mark: Github, mono: true },
   google: { Mark: Google, mono: true },
@@ -95,6 +97,7 @@ export function connectorBrandMark(
 ): PluginBrandMark | null {
   switch (connectorType) {
     case 'ashby': return 'ashby';
+    case 'canva': return 'canva';
     case 'fireflies': return 'fireflies';
     case 'github': return 'github';
     case 'google': return displayName?.includes('Drive') ? 'google-drive' : 'google';

@@ -96,7 +96,7 @@ export const WORKSPACE_DOMAIN_SCHEMA_STATEMENTS = [
   `CREATE TABLE connector_connections (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
-    connector_type TEXT NOT NULL CHECK (connector_type IN ('google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+    connector_type TEXT NOT NULL CHECK (connector_type IN ('canva', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
     scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
     owner_user_id TEXT,
     provider_account_id TEXT,
@@ -137,7 +137,7 @@ export const WORKSPACE_DOMAIN_SCHEMA_STATEMENTS = [
   `CREATE TABLE connector_oauth_attempts (
     id TEXT PRIMARY KEY,
     region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
-    provider TEXT NOT NULL CHECK (provider IN ('google', 'github', 'granola', 'linear', 'notion', 'slack')),
+    provider TEXT NOT NULL CHECK (provider IN ('canva', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
     user_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),

@@ -24,6 +24,7 @@ function fullRegistry() {
   const footer = ["-----END", "PRIVATE KEY-----"].join(" ");
   const oauth = { clientId: "client", clientSecret: "secret", redirectUri: "https://api.example.com/callback" };
   return createConnectorRegistry({
+    canva: { redirectUri: "https://api.example.com/callback" },
     fireflies: { redirectUri: "https://api.example.com/callback" },
     granola: { redirectUri: "https://api.example.com/callback" },
     google: oauth,

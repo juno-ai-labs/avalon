@@ -114,6 +114,30 @@ describe("connector poll reliability", () => {
     )).resolves.toBe("superseded");
   });
 
+  it("does not let a stale resource-watch poll overwrite that watch's newer cursor", async () => {
+    const newer = JSON.stringify({ initialized: true, updatedAt: "2026-01-01T00:00:03.000Z" });
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        const statement = {
+          bind() { return statement; },
+          async first() {
+            if (sql.startsWith("UPDATE resource_watches")) return null;
+            if (sql.startsWith("SELECT cursor_json FROM resource_watches")) return { cursor_json: newer };
+            throw new Error("unexpected watch cursor query");
+          },
+        };
+        return statement;
+      },
+    });
+    await expect(commitConnectorCursor(database, {
+      workspaceId, connectionId, pollScheduleId: scheduleId,
+    }, {
+      cursorOwner: "watch",
+      baseCursorJson: "{}",
+      cursorJson: JSON.stringify({ initialized: true }),
+    }, "2026-01-01T00:00:04.000Z")).resolves.toBe("superseded");
+  });
+
   it("advances the owning schedule or resource watch instead of the unused connection timestamp", async () => {
     const statements: Array<{ sql: string; values: unknown[] }> = [];
     const database = createTestD1Database({
