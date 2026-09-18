@@ -13,7 +13,7 @@ still appears throughout the tree; what it is coupled to, and what is
 deliberately not being renamed, is in
 [`docs/rally-rebrand-inventory.md`](docs/rally-rebrand-inventory.md).
 
-We re-branded **Automatons** into **Sidekicks**.
+We re-branded an **Automation** into a **Sidekick**.
 
 ## How we build
 
