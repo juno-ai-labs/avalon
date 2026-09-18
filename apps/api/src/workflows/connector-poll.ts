@@ -22,7 +22,7 @@ interface StoredPollResult {
   activityIds: string[];
   cursorJson: string;
   baseCursorJson: string;
-  cursorOwner: "connection" | "watch";
+  cursorOwner: "connection" | "watch" | "none";
   nextPollAt: string | null;
   streamErrors?: Array<{ streamId: string; code: string; message: string }>;
 }

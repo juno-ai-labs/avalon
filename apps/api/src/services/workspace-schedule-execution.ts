@@ -654,7 +654,8 @@ async function startConnectorPoll(
     region: RegionSchema.parse(ctx.env.AVALON_REGION),
     workspaceId: schedule.workspace_id,
     connectionId,
-    pollScheduleId: schedule.id
+    pollScheduleId: schedule.id,
+    targetKind: "connection",
   });
   const workflowId = `poll-${schedule.id}-${Date.parse(schedule.next_run_at)}`;
 
@@ -685,7 +686,8 @@ async function runResourceWatch(
     region: RegionSchema.parse(ctx.env.AVALON_REGION),
     workspaceId: watch.workspace_id,
     connectionId: watch.connection_id,
-    pollScheduleId: watch.id
+    pollScheduleId: watch.id,
+    targetKind: "resource_watch",
   });
   const workflowId = `watch-${watch.id}-${Date.parse(watch.next_poll_at)}`;
   try {
