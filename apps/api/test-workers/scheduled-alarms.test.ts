@@ -120,6 +120,14 @@ afterEach(async () => {
   } catch {
     // The object may never have been created, or may already be gone.
   }
+  try {
+    const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await runInDurableObject(agent, (_instance, state) => state.storage.deleteAlarm());
+  } catch {
+    // The root conversation may never have been created, or may be gone.
+  }
 });
 
 describe("the shared Durable Object alarm list", () => {
