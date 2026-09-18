@@ -154,7 +154,8 @@ the address reservation, the authoritative SubstreamAgent work-stream/opening
 turn/run write, the canonical `transcript_turn_upserted` publication, and the
 Workflows round trip that starts the run. It then synchronously drains the committed directory facts
 through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
-changes the minimal D1 route from `verified` to `active`, and activates email —
+changes the minimal
+D1 route from `verified` to `active`, and activates email —
 only then does it answer. The one thing off the path is the naming call, which
 was already deferred before this module existed.
 
@@ -204,6 +205,9 @@ than whichever rejection landed first.
   header conditional on `contextLabel` rather than on authorship alone for
   exactly this case; removing that exception leaves a member reading a brief
   under their own name with nothing on screen to account for it.
+- **Oversized opening text gets the same actionable refusal for Main and child
+  creation.** The length-only guard runs before session processing; accepted
+  bodies still pass all authentication, validation and scope checks.
 - **The opening turn commits and publishes before the harness launch.** Both
   events land in the same Durable Object log, and a client resyncing from a
   sequence must not see the run start before the canonical turn that triggered
@@ -385,6 +389,17 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-09-17 — Keep grant handoff off ordinary creation
+
+Ordinary and system-created workstreams retain the existing local participant
+writer. Scoped sharing prepares only the addressed authorities when the first
+invitation is created. Eager handoff during creation was rejected because it
+added D1 and parent/source RPCs before route activation and moved ordinary
+message-driven participant additions onto a cross-object path before sharing
+was needed. First-share preparation already has durable receipts and recovery;
+creation must not duplicate that work. Slack and digest producers continue to
+use `provisionWorkstreamObject`; replay keeps their initial roster intact.
 
 ### 2026-09-14 — New work streams start with the opening message
 

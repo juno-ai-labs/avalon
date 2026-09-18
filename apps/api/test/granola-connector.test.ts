@@ -591,6 +591,7 @@ function fixture() {
       workspace_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       status TEXT NOT NULL,
+      access_class TEXT NOT NULL DEFAULT 'member',
       PRIMARY KEY (workspace_id, user_id)
     );
     CREATE TABLE audit_events (

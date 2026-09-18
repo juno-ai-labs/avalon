@@ -794,6 +794,7 @@ function publicSession(value: WireSession): DesktopSession {
           name: value.workspace.name,
           region: value.workspace.region,
           role: value.workspace.role,
+          ...(value.workspace.accessClass ? { accessClass: value.workspace.accessClass } : {}),
           timezone: value.workspace.timezone,
         }
       : null,
@@ -2163,7 +2164,8 @@ function workspaceSummary(workspace: {
   name: string;
   slug: string;
   region: RallyRegion;
-  role: 'owner' | 'admin' | 'member';
+  role: 'owner' | 'admin' | 'member' | null;
+  accessClass?: 'member' | 'guest';
   createdAt: string;
 }): DesktopWorkspaceSummary {
   return {
@@ -2172,6 +2174,7 @@ function workspaceSummary(workspace: {
     slug: workspace.slug,
     region: workspace.region,
     role: workspace.role,
+    ...(workspace.accessClass ? { accessClass: workspace.accessClass } : {}),
     createdAt: workspace.createdAt,
   };
 }

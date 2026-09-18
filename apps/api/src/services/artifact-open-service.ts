@@ -1,7 +1,7 @@
 /**
  * Minting one person's access to one live artifact.
  *
- * This is the only door into an artifact origin, and it is the place work-stream
+ * This is the only door into an artifact origin, and it is the place resource
  * visibility is checked *at open time* — the supervisor object re-checks it on
  * every request afterwards, because a grant frozen at open is exactly the
  * regression `access-revocation.md` records.
@@ -23,17 +23,16 @@ import {
   asArtifactId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
 } from "@rally/contracts";
 
-import { artifactHostDOName, workstreamDOName } from "../durable-objects/names";
+import { artifactHostDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
+import { AuthorizationService, requireAuthorizedRead } from "./authorization-service";
 import { ApiError } from "../lib/api-error";
 import { ensureArtifactHostname } from "./artifact-hostname";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import {
   durableObjectStubForArtifact,
-  durableObjectStubForWorkspace,
   workspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 
@@ -68,12 +67,10 @@ export class ArtifactOpenService {
   /**
    * Resolve an artifact and authorize its current viewer.
    *
-   * The two checks are deliberately separate authorities, and neither
-   * substitutes for the other: the registry says which artifact a resource is,
-   * and `WorkstreamDO` — which owns visibility in its own SQL — says whether
-   * this person may see the work stream it belongs to. A resource the caller
-   * cannot see and one that does not exist produce the same answer, so this
-   * endpoint is not an existence oracle.
+   * The registry locates the artifact; canonical resource authorization checks
+   * current membership and an accessible attachment. Parent readability alone
+   * cannot represent a child-only share or exclude an unshared public parent.
+   * Missing and forbidden artifacts have the same response.
    */
   private async resolveAuthorized(resourceId: string) {
     const workspaceId = this.auth.workspaceId;
@@ -91,22 +88,15 @@ export class ArtifactOpenService {
     if (!row) throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
 
     const workspace = asWorkspaceId(workspaceId);
-    const workstreamId = asWorkstreamId(row.workstream_id);
     const affinity = await workspacePlacementAffinity(this.env, workspaceId);
-    const workstream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSTREAM_DOS,
-      workspace,
-      workstreamDOName(this.env.AVALON_REGION, workspace, workstreamId),
-      affinity,
-    );
-    // Asked rather than inferred. Work-stream visibility is not a D1 fact — it
-    // lives in that object's own SQL — so no query here could answer it, and
-    // inferring it from resource visibility would be a second authority.
-    if (!await workstream.canReadWorkstream(asUserId(this.auth.userId))) {
-      // The same answer a nonexistent artifact gets: knowing an identifier
-      // grants nothing, and distinguishing the two would leak which artifacts
-      // exist in work streams the caller cannot see.
+    const [decision] = await new AuthorizationService(this.env).checkMany({
+      workspaceId: workspace, userId: asUserId(this.auth.userId), delegation: null,
+    }, [{ kind: "resource", workspaceId: workspace, resourceId }]);
+    if (!decision || decision.status === "unavailable") {
+      if (decision) requireAuthorizedRead(decision);
+      throw new ApiError(503, "authorization_unavailable", "Authorization could not be established. Retry the request.");
+    }
+    if (decision.status !== "allowed") {
       throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
     }
 

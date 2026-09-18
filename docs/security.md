@@ -287,6 +287,17 @@ immutable versioned objects and promotes only validated mutable channel feeds.
 
 ### Authentication and authorization
 
+[Email sign-in](email-login.md) owns the configured passwordless challenge and
+resumable identity-session protocol. It does not itself grant workspace access.
+
+[Browser sessions](browser-sessions.md) place an opaque HttpOnly, host-only cookie
+in front of the same session authority. Only `/browser` accepts that cookie;
+mutations require the exact configured Origin. Workspace selection addresses a
+separate incarnation-bound session per workspace, so tabs cannot switch each
+other's authority. The HTTP adapter mints a request-local bearer internally and
+never exposes desktop session tokens in browser JSON. The same-origin browser
+host serves the lite client with shared collaboration components and ticketed sockets.
+
 Google identity OAuth uses state and PKCE. The desktop starts it with POST, then
 opens only the provider URL containing opaque state. Every identity and connector
 callback is completed by the owning regional server before the temporary
@@ -312,10 +323,45 @@ workspace scope on every request under either path. A failed activation cannot
 fall back to the currently active workspace or search other stored credentials.
 
 Identity and workspace middleware share one authenticated context within a single
-HTTP request. Workspace middleware still requires a workspace and role; an
-identity-only session cannot enter protected routes. Each new request verifies
+HTTP request. Identity middleware admits a guest relationship with a null role
+only when its current active membership and session incarnation match. Workspace
+middleware still requires a workspace and member role for member-only routes.
+Conversation feed snapshots, tickets, read-state and child title changes use the
+workspace-relationship middleware plus exact parent admission. For guests, that
+admission requires completed grant authority, never legacy workspace-public
+visibility. Identity-only sessions cannot enter either class of workspace route. Resource
+metadata/content/version/preview reads also use workspace-relationship admission,
+then canonical resource authorization. A guest's non-owned resource must have an
+attachment in a granted migrated conversation; workspace-public legacy visibility
+does not substitute for that grant. Content is checked again after the storage
+read before bytes are returned. Upload and unsent-draft deletion use the same
+workspace relationship and ordinary ownership checks. Attaching an existing file
+requires both target mutation authority and canonical source read access; unsent
+uploads must use message admission so their reservation and publication are
+preserved. Each new request verifies
 its token and reads current regional session/membership state again. This is not
 a cross-request cache and does not change revocation or regional isolation.
+
+Guest Sidekick rails use exact conversation admission and source-owned summaries
+rather than authoring details. A recommended or locally loaded ID still has to
+pass the source's personal-audience or owning-workstream rule. New guest agent
+runs discover only recommendations, workstream-owned Sidekicks and local loads;
+existing execution snapshots keep ordinary source revalidation. Removing a local
+load rechecks participation and archival state in that SubstreamAgent, without
+changing Main, siblings or workstream recommendations. Source history and parent
+management remain separate authorization paths.
+
+Workspace sessions carry `workspace_incarnation`, bound to the exact membership
+that admitted them. Migration 0110 backfills existing sessions; insert and
+workspace-selection triggers bind newly selected memberships. Reassigning the
+same workspace ID does not rebind a session. Promotion preserves membership
+incarnation, while removal/rejoin creates a different one. HTTP authentication,
+refresh rotation, and WorkspaceDO/WorkstreamDO/SubstreamAgent socket session
+checks require the stored and current incarnations to match. Refresh performs
+that check in the token-rotation update, so rejected old credentials do not
+rotate the session. Identity-only sessions remain valid for workspace selection.
+This supplements durable revocation delivery; it does not replace closing
+already-open sockets when access changes.
 
 Addressed native links use the distinct `workspace` host rather than routing
 query parameters. A pre-addressing desktop therefore rejects them instead of
@@ -943,6 +989,19 @@ Associated Domains entitlements; helpers retain their existing entitlement set.
 [Apple push](push-notifications.md) owns provisioning and release verification.
 
 ## Changelog
+
+### 2026-09-16 — Bind sessions to membership instances
+
+Guest promotion should retain a person's session, but removing and inviting the
+same person again must not revive credentials from earlier access. Sessions now
+store their admitting membership incarnation. Authentication, refresh rotation
+and all three socket session authorities compare that incarnation with the
+current relationship. Triggers cover both normal session creation and existing
+workspace-selection writers; only a different workspace selection rebinds.
+Relying solely on asynchronous revocation would leave a rejoin window, while
+binding to every membership revision would unnecessarily sign people out during
+promotion. Incarnation is the lifecycle boundary those two choices missed.
+
 
 ### 2026-09-16 — Receipt-owned pagination replaces model-held provider tokens
 

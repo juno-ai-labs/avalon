@@ -311,6 +311,11 @@ the app.
 
 #### The system work stream
 
+Creation uses the existing `provisionWorkstreamObject` path and keeps the
+recipient as its only initial participant. It does not perform a grant handoff
+before delivery; first sharing prepares that authority when needed. Replaying
+provisioning preserves the original local roster.
+
 The agent loop is work-stream shaped end to end — the transcript is `messages`,
 and compaction, tool invocations and the realtime room all key off
 `workstream_id`. Running the *normal* loop therefore means having a work stream,

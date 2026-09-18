@@ -254,6 +254,6 @@ function emptyD1Meta(): D1Meta {
 }
 
 function seedMember(database: DatabaseSync) {
-  database.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
-  database.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')").run(workspaceId, userId);
+  database.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT, access_class TEXT DEFAULT 'member')`);
+  database.prepare("INSERT INTO workspace_members(workspace_id,user_id,status) VALUES (?, ?, 'active')").run(workspaceId, userId);
 }
