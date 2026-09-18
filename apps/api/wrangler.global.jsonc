@@ -75,6 +75,18 @@
       "migrations_dir": "../../packages/db/migrations"
     },
     {
+      "binding": "TELEMETRY_DB",
+      "database_name": "avalon-global-telemetry",
+      "database_id": "d0f4e537-bedf-4ce4-a22f-d80af64a52b9",
+      "migrations_dir": "../../packages/db/telemetry-migrations"
+    },
+    {
+      "binding": "AUDIT_DB",
+      "database_name": "avalon-global-audit",
+      "database_id": "34150bf3-2638-462c-92af-c20e541afd95",
+      "migrations_dir": "../../packages/db/audit-migrations"
+    },
+    {
       "binding": "PLATFORM_DB",
       "database_name": "rally-platform",
       "database_id": "39b6800c-7945-4c5b-80cb-e7cdd73af14a"

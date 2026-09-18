@@ -69,7 +69,7 @@ export class TelemetryCollector {
 
     const envelopeJson = canonicalTelemetryJson(event);
     const payloadHash = await telemetryPayloadHash(event, context);
-    const existing = await this.env.DB.prepare(
+    const existing = await this.env.TELEMETRY_DB.prepare(
       "SELECT payload_hash FROM telemetry_accepted_events WHERE event_id = ?",
     ).bind(event.eventId).first<{ payload_hash: string }>();
     if (existing) {
@@ -83,7 +83,7 @@ export class TelemetryCollector {
     const acceptedDeadline = addDays(acceptedAt, ACCEPTED_RETENTION_DAYS);
     const occurrenceTimestamp = normalizedTimestamp(event, acceptedAt);
     const statements = [
-      this.env.DB.prepare(
+      this.env.TELEMETRY_DB.prepare(
         `INSERT OR IGNORE INTO telemetry_accepted_events
           (event_id, payload_hash, envelope_json, route, routing_basis, analytics_subject_id,
            workspace_analytics_id, subject_user_id,
@@ -104,7 +104,7 @@ export class TelemetryCollector {
         "pending",
         null,
       ),
-      this.env.DB.prepare(
+      this.env.TELEMETRY_DB.prepare(
         `INSERT OR IGNORE INTO telemetry_delivery_receipts
           (event_id, payload_hash, route, result_code, created_at, delete_at)
          VALUES (?, ?, ?, 'accepted', ?, ?)`,
@@ -116,9 +116,9 @@ export class TelemetryCollector {
         acceptedDeadline,
       ),
     ];
-    await this.env.DB.batch(statements);
+    await this.env.TELEMETRY_DB.batch(statements);
 
-    const stored = await this.env.DB.prepare(
+    const stored = await this.env.TELEMETRY_DB.prepare(
       "SELECT payload_hash FROM telemetry_accepted_events WHERE event_id = ?",
     ).bind(event.eventId).first<{ payload_hash: string }>();
     const result = stored?.payload_hash === payloadHash ? "accepted" : "conflict";

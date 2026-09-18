@@ -90,6 +90,11 @@ function workspaceStub(workspaceId: string): DurableObjectStub<WorkspaceDO> {
  * those against the real migrations.
  */
 async function seedControlPlane(): Promise<void> {
+  await env.AUDIT_DB.prepare(`CREATE TABLE audit_events (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL, actor_user_id TEXT,
+      workstream_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
+    )`).run();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -135,11 +140,6 @@ async function seedControlPlane(): Promise<void> {
     env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL,
       revoked_at TEXT, expires_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL, actor_user_id TEXT,
-      workstream_id TEXT, action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
     )`),
     env.DB.prepare(`CREATE TABLE regional_onboarding_operations (
       operation_id TEXT PRIMARY KEY, platform_user_id TEXT NOT NULL, action TEXT NOT NULL,

@@ -62,6 +62,18 @@ function scheduling(instance: unknown): AlarmScheduling {
 async function seedAuthority(
   phase: "durable_object_open" | "maintenance_draining",
 ): Promise<void> {
+  await env.AUDIT_DB.prepare(`CREATE TABLE audit_events (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_user_id TEXT,
+      workstream_id TEXT,
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`).run();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY,
@@ -73,18 +85,6 @@ async function seedAuthority(
     env.DB.prepare(`INSERT INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, ?, 1, 1, 1)`).bind(phase),
-    env.DB.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
-      actor_type TEXT NOT NULL,
-      actor_user_id TEXT,
-      workstream_id TEXT,
-      action TEXT NOT NULL,
-      target_type TEXT NOT NULL,
-      target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )`),
   ]);
 }
 
