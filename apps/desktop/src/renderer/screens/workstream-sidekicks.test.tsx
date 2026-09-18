@@ -11,14 +11,16 @@ const api = vi.hoisted(() => ({
   getConversation: vi.fn(),
   getAttachedSidekicks: vi.fn(),
   getRecommendedSidekicks: vi.fn(),
+  getSidekickRecommendationOptions: vi.fn(),
   getWorkstreamSidekicks: vi.fn(),
   removeAttachedSidekick: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 const currentSession = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api, session: currentSession() }),
+vi.mock('../lib/collaboration-session', () => ({
+  useOptionalCollaborationSession: () => null,
+  useCollaborationSession: () => ({ api, session: currentSession() }),
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
@@ -32,6 +34,7 @@ vi.mock('../lib/workstream-socket-pool', () => ({
 
 vi.mock('../lib/workspace-socket', () => ({
   useWorkspaceSocket: () => ({ presenceUserIdsByWorkstream: {} }),
+  useOptionalWorkspaceSocket: () => null,
 }));
 
 vi.mock('../lib/use-file-attachments', () => ({
@@ -153,6 +156,7 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getRecommendedSidekicks.mockResolvedValue([]);
+    api.getSidekickRecommendationOptions.mockResolvedValue({ canManage: false, items: [] });
     api.getConnections.mockResolvedValue([]);
     api.getAttachedSidekicks.mockResolvedValue([
       { id: 'attached-1', name: 'Editorial guidance', description: 'Write clearly.', available: true },
@@ -176,7 +180,7 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     api.removeAttachedSidekick.mockRejectedValue(new Error('Removal failed in main.'));
     renderScreen(true);
     fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this substream' }));
     expect(await screen.findByText('Removal failed in main.')).toBeVisible();
     expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
     fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
@@ -200,6 +204,29 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
     fireEvent.click(screen.getByRole('link', { name: 'Switch main' }));
     expect(await screen.findByRole('button', { name: 'Main guide' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Child guide' })).not.toBeInTheDocument();
+  });
+
+  it('checks recommendation eligibility for the selected child instead of reusing Main metadata', async () => {
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([
+      { id: 'recommended', name: substreamId === childId ? 'Child recommendation' : 'Main recommendation', description: '', available: true },
+    ]));
+    renderScreen();
+    expect(await screen.findByRole('button', { name: 'Main recommendation' })).toBeVisible();
+    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
+    expect(await screen.findByRole('button', { name: 'Child recommendation' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Main recommendation' })).not.toBeInTheDocument();
+    expect(api.getRecommendedSidekicks).toHaveBeenCalledWith(workstreamId, expect.any(AbortSignal), childId);
+  });
+
+  it('uses scoped summaries for guests without opening the member authoring directory', async () => {
+    currentSession.mockReturnValue({ user: { id: 'guest', name: 'Guest', email: 'guest@example.test' },
+      workspace: { id: 'workspace', accessClass: 'guest', role: null } });
+    api.getRecommendedSidekicks.mockResolvedValue([{ id: 'owned', name: 'Owned guide', description: '', available: true }]);
+    renderScreen();
+    expect(await screen.findByRole('button', { name: 'Owned guide' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(api.getWorkstreamSidekicks).not.toHaveBeenCalled();
   });
 
   it('reads a refusal as a room with none, and still lists what the conversation loaded', async () => {

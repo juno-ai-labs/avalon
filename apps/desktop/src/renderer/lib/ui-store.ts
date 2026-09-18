@@ -40,15 +40,8 @@ interface UiState {
 export const MIN_RAIL_WIDTH = 280;
 export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
-export const COLLAPSED_SIDEBAR_WIDTH = 96;
-export const MIN_SIDEBAR_WIDTH = 240;
-export const MAX_SIDEBAR_WIDTH = 400;
-export const DEFAULT_SIDEBAR_WIDTH = 280;
-/** The main conversation width GrokBot protects before forcing the icon rail. */
-export const SIDEBAR_CONTENT_MIN_WIDTH = 424;
-/** Drag thresholds include GrokBot's ten-pixel hysteresis on expansion. */
-export const SIDEBAR_COLLAPSE_DRAG_THRESHOLD = 210;
-export const SIDEBAR_EXPAND_DRAG_THRESHOLD = 220;
+export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
+import { MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'rally.sidebar-collapsed';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';

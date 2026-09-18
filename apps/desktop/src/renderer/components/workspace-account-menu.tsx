@@ -1,28 +1,17 @@
+import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { desktopBridge } from '../lib/platform';
 import type { WorkspaceAttention } from '@rally/contracts';
-import {
-  Check,
-  ChevronDown,
-  LoaderCircle,
-  LogOut,
-  Plus,
-  Settings,
-  Sparkles,
-} from 'lucide-react';
+import { Check, LoaderCircle, LogOut, Plus, Settings, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-import type {
-  DesktopPendingWorkspaceInvitation,
-  DesktopWorkspaceSummary,
-  RallyRegion,
-} from '../../common/desktop';
+import type { DesktopPendingWorkspaceInvitation, DesktopWorkspaceSummary, RallyRegion } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountActionProgress } from '../lib/app-session';
 import type { WorkspaceMember } from '../lib/types';
 import { uuidV7 } from '../lib/telemetry';
-import { Avatar, Button, Modal } from './primitives';
+import { Button, Modal } from './primitives';
 import { RelativeTime } from './relative-time';
 
 export interface WorkspaceAccountMenuProps {
@@ -64,7 +53,6 @@ export interface WorkspaceAccountMenuProps {
 function regionLabel(region: RallyRegion): string {
   return region;
 }
-
 
 /** What the dot means when nothing is waiting on this person. */
 export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
@@ -213,22 +201,8 @@ export function WorkspaceAccountMenu({
         open={menuOpen}
       >
         <DropdownMenu.Trigger asChild>
-          <button
-            aria-label={[
-              currentUser.name,
-              activeWorkspace.name, backgroundAttentionDescription,
-            ].filter(Boolean).join(', ')}
-            className="account-trigger window-no-drag"
-            type="button"
-          >
-            <Avatar member={currentUser} size="small" />
-            <span className="account-copy">
-              <strong>{currentUser.name}</strong>
-              {presentation === 'workspace' && <span>{activeWorkspace.name}</span>}
-            </span>
-            {presentation === 'workspace' && backgroundHasAttention && <span aria-hidden="true" className="account-attention-dot" />}
-            {presentation === 'workspace' && <ChevronDown aria-hidden="true" size={14} />}
-          </button>
+          <AccountTrigger currentUser={currentUser} workspaceName={activeWorkspace.name}
+            description={backgroundAttentionDescription} presentation={presentation} hasAttention={backgroundHasAttention} />
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content
