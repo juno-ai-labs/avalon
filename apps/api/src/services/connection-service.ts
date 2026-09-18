@@ -402,7 +402,7 @@ export class ConnectionService {
     const connector = telemetryConnector(connection.connector_type);
     const auth = this.requireAuth();
     if (!connector) return;
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: auth.workspaceId,
       userId: auth.userId,
       name: "connector_action_completed",
@@ -419,7 +419,7 @@ export class ConnectionService {
       eventId: newId(),
     });
     if (previousHealth !== appliedHealth) {
-      await emitProductUsageTelemetry(this.env, {
+      emitProductUsageTelemetry(this.env, {
         workspaceId: auth.workspaceId,
         userId: auth.userId,
         name: "connector_health_changed",
@@ -446,7 +446,7 @@ export class ConnectionService {
     const connector = telemetryConnector(connection.connector_type);
     const auth = this.requireAuth();
     if (!connector) return;
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: auth.workspaceId,
       userId: auth.userId,
       name: "connector_setup_completed_v2",

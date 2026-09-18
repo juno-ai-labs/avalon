@@ -234,6 +234,17 @@ telemetry ingest.
 Each durable invocation also produces one terminal result with latency and replay
 state, while each root run produces an authoritative terminal event with trigger,
 time-to-first-output, turns, tool/write counts, model route, and fallback state.
+These observational reads and regional analytics writes are registered on the
+current Cloudflare invocation with the shared lifecycle deferral. Tool execution,
+run settlement, and user actions therefore do not wait for receipt rereads,
+analytics identity lookup, D1 acceptance, or lakehouse Queue staging. The
+canonical tool/run receipts and the product mutations that precede emission stay
+awaited; only the derived telemetry continuation moves off their critical path.
+For Worker requests the primitive uses `waitUntil`. Durable Objects need no
+extra lifetime extension while asynchronous I/O is pending, and Cloudflare's
+Durable Object `waitUntil` method is a compatibility no-op. Neither mechanism is
+a durable retry fence: telemetry can still be lost to deployment or runtime
+reset before D1, R2, or Queue accepts its hand-off.
 The established requested/completed pair remains a separately named admission
 funnel for correlated desktop runs; it is not mapped to the same reserved event.
 
@@ -506,8 +517,8 @@ Run focused suites from their package directories:
 ```bash
 pnpm --filter @rally/contracts test
 pnpm --filter @rally/db test
-pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/tool-usage-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts
+pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/product-usage-deferral.test.ts test/tool-usage-telemetry.test.ts test/run-outcome-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts test-workers/runtime-deferral.test.ts
 pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/main-process-network-recovery.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts
@@ -595,8 +606,10 @@ alone would hand every token in its map every route.
 
 The route gate is the only telemetry work allowed before the first renderer and is
 bounded to two seconds. Normal desktop collection writes small validated files and
-flushes in batches of 50 every 30 seconds. Regional acceptance performs only
-validation plus a D1 batch; destination calls and symbolication are deferred.
+flushes in batches of 50 every 30 seconds. API telemetry ingest awaits validation
+plus its durable D1 acceptance boundary. Telemetry derived from product actions
+registers that whole acceptance flow on the current Worker invocation, while
+destination calls and symbolication remain deferred as before.
 Crash processing selects ten reports per pass and Global delivery selects five.
 
 The engineering budgets remain: API ingest p95 under 25 ms, typical desktop
@@ -1873,6 +1886,19 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-17 — Product actions no longer await observational telemetry
+
+Converted product, tool, and run emitters now use one shared Cloudflare
+lifecycle deferral. Their callers no longer wait for authoritative receipt
+rereads made only to derive telemetry, analytics identity lookup, D1 acceptance,
+or lakehouse Queue staging; failures are named in structured operational logs.
+The product mutation and canonical run/tool receipts remain awaited before an
+observation is scheduled. Making every caller hand-roll `waitUntil` was rejected
+because it had already produced both synchronous latency and untracked floating
+promises, while a larger telemetry job abstraction would duplicate the existing
+D1 outbox and Queue recovery design. Direct telemetry ingest still awaits its
+durable acceptance result because that result is the endpoint's product.
 
 ### 2026-09-17 — Recover Electron connection resets across sleep and wake
 

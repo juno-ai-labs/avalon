@@ -3,6 +3,7 @@ import type {
   InferenceRequestEvent,
 } from "@rally/agent-harness";
 import type { Env } from "../env";
+import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
 import { logStructuredEvent } from "../observability/logger";
 import {
   captureStreamingInferenceAttempt,
@@ -30,11 +31,15 @@ export interface AgentInferenceLogger {
 export function createAgentInferenceLogger(
   env: Env,
   context: AgentInferenceLogContext,
+  defer: WorkDeferral = runtimeDeferral,
 ): AgentInferenceLogger {
   return {
-    onRequest: (request) => captureStreamingInferenceRequest(env, context, request),
-    onAttempt: async (attempt) => {
-      await captureStreamingInferenceAttempt(env, context, attempt);
+    onRequest: (request) => {
+      defer(captureStreamingInferenceRequest(env, context, request));
+      return Promise.resolve();
+    },
+    onAttempt: (attempt) => {
+      defer(captureStreamingInferenceAttempt(env, context, attempt));
       if (!attempt.success && attempt.disposition !== "cancelled") {
         logStructuredEvent(env, "warn", "agent_inference_attempt_failed", {
           request_id: context.requestId,
@@ -58,6 +63,7 @@ export function createAgentInferenceLogger(
           provider_error_detail: attempt.providerError?.detail,
         });
       }
+      return Promise.resolve();
     },
   };
 }

@@ -67,7 +67,7 @@ async function emitInvitationTerminal(
   } as const;
   const namespace = { created: 11, revoked: 12, accepted: 13, declined: 14 }[input.action];
   if (input.workspaceBound) {
-    await emitProductUsageTelemetry(env, {
+    emitProductUsageTelemetry(env, {
       workspaceId: asWorkspaceId(invitation.workspace_id),
       userId: input.userId,
       name: "workspace_invitation_terminal",

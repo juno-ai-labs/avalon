@@ -325,13 +325,13 @@ export async function launchWorkstreamHarness(
         errorJson: JSON.stringify(memberSafeError),
         now: Date.now(),
       });
-    await emitCorrelatedRunOutcome(executionEnv, {
+    emitCorrelatedRunOutcome(executionEnv, {
       workspaceId: input.workspaceId,
       parentId: input.workstreamId,
       harnessRunId: id,
       telemetryOperationId: input.telemetryOperationId,
       telemetrySubjectUserId: input.telemetrySubjectUserId,
-    }).catch(() => undefined);
+    });
     // The work stream and its run exist whatever the caller does with the 503,
     // so anyone already watching is told the run failed rather than left on a
     // `running` row that nothing will move.

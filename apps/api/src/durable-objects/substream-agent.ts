@@ -4659,7 +4659,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         metrics: outcome.metrics,
       });
     }
-    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
+    emitCorrelatedRunOutcome(executionEnv, input);
 
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
