@@ -344,7 +344,7 @@ type RenderedSystemPrompt = {
 };
 
 class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded" | "context_length_exceeded">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
   }
@@ -2057,6 +2057,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       : error instanceof ProviderCircuitOpenError
         ? "provider_circuit_open" as const
         : null;
+    // Below `timedOut` with the provider arms, and for the same reason: a
+    // rejection that arrives with the clock already expired reports the
+    // deadline, because the wall clock is the thing the member can act on.
+    // Above the catch-all, because it is the catch-all it exists to stop — the
+    // endpoint named the limit it enforced and `harness_execution_failed`
+    // throws that away. Reached only when the route plan is exhausted: a
+    // candidate with a larger window is still tried first, and this is what is
+    // left when every one of them refused the prompt too.
+    const contextLengthRejection = isProviderContextLengthRejection(error);
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
@@ -2065,7 +2074,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         ? error.code
       : timedOut
         ? "run_wall_time_limit_exceeded"
-      : providerCode ?? "harness_execution_failed";
+      : providerCode ?? (contextLengthRejection ? "context_length_exceeded" as const : "harness_execution_failed");
     const failure: HarnessFailure = {
       kind: error instanceof HarnessLimitError
         ? error.code === "context_limit_exceeded"
@@ -2083,6 +2092,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? "provider"
         : error instanceof ProviderCircuitOpenError
           ? "routing"
+        : contextLengthRejection
+          ? "context"
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
@@ -3369,6 +3380,55 @@ function replaceSystemMessage(messages: ProviderMessages, content: string): void
   const next: ProviderSystemMessage = { role: "system", content };
   if (index >= 0) messages[index] = next;
   else messages.unshift(next);
+}
+
+/**
+ * The machine code every OpenAI-compatible endpoint uses to refuse a prompt
+ * longer than it accepts, and the shapes it arrives in.
+ *
+ * Azure, OpenAI, and the Foundry deployments behind them all answer HTTP 400
+ * with `error.code` set to this string, so the direct read covers them. The
+ * nested pattern is for OpenRouter, which does *not* adopt the upstream code:
+ * it reports its own numeric `400` and forwards the endpoint's envelope inside
+ * `metadata.raw`, where the code survives as an escaped JSON pair. Matching it
+ * there reads a bounded machine code out of the body Rally already captured,
+ * which is the same thing `providerDeclaredTransportFailure` does below — not a
+ * search of the provider's prose, which is free text that changes without
+ * notice and would classify an unrelated rejection that happens to mention a
+ * length.
+ */
+const CONTEXT_LENGTH_REJECTION_CODE = "context_length_exceeded";
+const NESTED_CONTEXT_LENGTH_REJECTION_CODE =
+  /\\?"code\\?"\s*:\s*\\?"context[_-]length[_-]exceeded\\?"/i;
+
+/**
+ * Did the endpoint refuse this request because the prompt was too long?
+ *
+ * A 400 is Rally's request shape, and the invariant in `docs/agent-harness.md`
+ * is that a request Rally owns is never named as the provider's. This does not
+ * break it: the failure is still Rally's, and it is reported with kind
+ * `context` rather than `provider`. What changes is only that Rally stops
+ * discarding a reason the endpoint handed it. `harness_execution_failed` tells
+ * a member Rally broke in a way retrying cannot help and hands an operator
+ * nothing to look at; the 400 body said exactly which limit was crossed. A
+ * generic code on a path that had the reason in hand is a defect — see the
+ * rule in `CLAUDE.md` — and this is that path.
+ *
+ * Both envelope shapes are covered through `runHarness` rather than here: what
+ * is worth pinning is that a run reports the code, and a predicate that agrees
+ * with a fixture while the catch above it drops the answer proves nothing.
+ */
+function isProviderContextLengthRejection(error: unknown): boolean {
+  if (!(error instanceof OpenRouterError || error instanceof AzureOpenAIError)) return false;
+  const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+    ?.providerError;
+  if (!providerError) return false;
+  if (
+    typeof providerError.code === "string"
+    && providerError.code.trim().toLowerCase().replaceAll("-", "_") === CONTEXT_LENGTH_REJECTION_CODE
+  ) return true;
+  return providerError.detail !== undefined
+    && NESTED_CONTEXT_LENGTH_REJECTION_CODE.test(providerError.detail);
 }
 
 function providerDeclaredTransportFailure(details: unknown): {
