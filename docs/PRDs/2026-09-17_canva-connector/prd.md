@@ -357,10 +357,9 @@ that starts an editing transaction owns closing it.
    can speak for Juno Labs. Nothing about a server-side redirect works until it
    is granted. The application was submitted on 2026-09-18 with a pre-launch
    estimate of 1,000–10,000 aggregate monthly MCP tool calls across all users
-   and workspaces, including a launch buffer. Approval remains pending. Proposed
-   callbacks are `https://api.rallywith.ai/connections/canva/callback` and
-   `https://eu.api.rallywith.ai/connections/canva/callback`; neither is implemented
-   or approved. Local authorization does not establish production eligibility.
+   and workspaces, including a launch buffer. Approval remains pending. The proposed
+   callback is `https://api.rallywith.ai/connections/canva/callback`; it is not
+   implemented or approved. Local authorization does not establish production eligibility.
 2. **Decide the client identity**: CIMD, which means publishing a client metadata
    document at an HTTPS URL and holding no client secret, or DCR, which Canva
    documents as deprecated but still serves. CIMD is the recommendation.
