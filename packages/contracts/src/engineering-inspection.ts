@@ -2,7 +2,9 @@ import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
 import { RegionSchema } from "./index";
+import { AutomationIdSchema } from "./automation-agent";
 import {
+  ArtifactIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -66,6 +68,53 @@ export const EngineeringSubstreamSchema = deferredZodSchema(() => z.strictObject
 }));
 export type EngineeringSubstream = z.infer<typeof EngineeringSubstreamSchema>;
 
+/**
+ * One Sidekick as its workspace's directory holds it.
+ *
+ * `sidekickId` is an `AutomationId` because that is the identifier the product
+ * stores, names the object with, and keys every route by; only the operator's
+ * vocabulary was renamed. `lifecycle` is reported rather than filtered on: a
+ * paused or deleted Sidekick still has an object, and it is the one an operator
+ * most often needs to open.
+ */
+export const EngineeringSidekickSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+  region: RegionSchema,
+  lifecycle: z.string(),
+  scope: z.string(),
+  owningWorkstreamId: WorkstreamIdSchema.nullable(),
+  title: z.string(),
+  // Not bounded below: the column carries no CHECK, and one odd timestamp
+  // must not make a whole workspace's Sidekicks unlistable.
+  nextRunAt: z.number().int().nullable(),
+  projectedAt: z.number().int().nonnegative(),
+}));
+export type EngineeringSidekick = z.infer<typeof EngineeringSidekickSchema>;
+
+/**
+ * One live web artifact as its workspace's registry holds it.
+ *
+ * `stateful` is the artifact's own shape, not this object's: a stateful
+ * artifact keeps its data in a Durable Object facet with its own SQLite
+ * database, which the supervisor's inspection RPC does not reach. Reported so
+ * an operator knows before querying that `run_artifact_sql` will show the
+ * supervisor and not the artifact's tables.
+ */
+export const EngineeringArtifactSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  artifactId: ArtifactIdSchema,
+  region: RegionSchema,
+  workstreamId: WorkstreamIdSchema,
+  resourceId: z.string(),
+  mode: z.string(),
+  stateful: z.boolean(),
+  currentVersion: z.number().int().positive(),
+  hostnameStub: z.string().nullable(),
+  updatedAt: z.number().int().nonnegative(),
+}));
+export type EngineeringArtifact = z.infer<typeof EngineeringArtifactSchema>;
+
 export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
 
@@ -92,6 +141,18 @@ export const SubstreamInspectionInputSchema = deferredZodSchema(() => z.strictOb
 }));
 export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
 
+export const SidekickInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+}));
+export type SidekickInspectionInput = z.infer<typeof SidekickInspectionInputSchema>;
+
+export const ArtifactInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  artifactId: ArtifactIdSchema,
+}));
+export type ArtifactInspectionInput = z.infer<typeof ArtifactInspectionInputSchema>;
+
 const AuthorityGenerationSchema = z.number().int().positive();
 
 export const EngineeringWorkspaceTargetSchema = deferredZodSchema(() => z.strictObject({
@@ -111,6 +172,16 @@ export const EngineeringSubstreamTargetSchema = deferredZodSchema(() => Engineer
 }).strict());
 export type EngineeringSubstreamTarget = z.infer<typeof EngineeringSubstreamTargetSchema>;
 
+export const EngineeringSidekickTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
+  sidekickId: AutomationIdSchema,
+}).strict());
+export type EngineeringSidekickTarget = z.infer<typeof EngineeringSidekickTargetSchema>;
+
+export const EngineeringArtifactTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
+  artifactId: ArtifactIdSchema,
+}).strict());
+export type EngineeringArtifactTarget = z.infer<typeof EngineeringArtifactTargetSchema>;
+
 export const WorkspaceSqlInspectionInputSchema = deferredZodSchema(() => WorkspaceInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
@@ -128,6 +199,18 @@ export const SubstreamSqlInspectionInputSchema = deferredZodSchema(() => Substre
   query: InspectionSqlRequestSchema,
 }).strict());
 export type SubstreamSqlInspectionInput = z.infer<typeof SubstreamSqlInspectionInputSchema>;
+
+export const SidekickSqlInspectionInputSchema = deferredZodSchema(() => SidekickInspectionInputSchema.unwrap().extend({
+  authorityGeneration: AuthorityGenerationSchema,
+  query: InspectionSqlRequestSchema,
+}).strict());
+export type SidekickSqlInspectionInput = z.infer<typeof SidekickSqlInspectionInputSchema>;
+
+export const ArtifactSqlInspectionInputSchema = deferredZodSchema(() => ArtifactInspectionInputSchema.unwrap().extend({
+  authorityGeneration: AuthorityGenerationSchema,
+  query: InspectionSqlRequestSchema,
+}).strict());
+export type ArtifactSqlInspectionInput = z.infer<typeof ArtifactSqlInspectionInputSchema>;
 
 function lookupResultSchema<T extends z.ZodType>(value: T) {
   return z.discriminatedUnion("found", [
@@ -151,6 +234,20 @@ export const EngineeringSubstreamListLookupSchema = deferredZodSchema(() => look
 })));
 export type EngineeringSubstreamListLookup = z.infer<typeof EngineeringSubstreamListLookupSchema>;
 
+export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  items: z.array(EngineeringSidekickSchema),
+})));
+export type EngineeringSidekickListLookup = z.infer<typeof EngineeringSidekickListLookupSchema>;
+
+export const EngineeringArtifactListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  items: z.array(EngineeringArtifactSchema),
+})));
+export type EngineeringArtifactListLookup = z.infer<typeof EngineeringArtifactListLookupSchema>;
+
 export const EngineeringWorkspaceTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringWorkspaceTargetSchema,
 ));
@@ -172,11 +269,46 @@ export type EngineeringSubstreamTargetLookup = z.infer<
   typeof EngineeringSubstreamTargetLookupSchema
 >;
 
+export const EngineeringSidekickTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
+  EngineeringSidekickTargetSchema,
+));
+export type EngineeringSidekickTargetLookup = z.infer<
+  typeof EngineeringSidekickTargetLookupSchema
+>;
+
+export const EngineeringArtifactTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
+  EngineeringArtifactTargetSchema,
+));
+export type EngineeringArtifactTargetLookup = z.infer<
+  typeof EngineeringArtifactTargetLookupSchema
+>;
+
+/**
+ * `sidekickId` and `artifactId` are **optional and omitted**, not nullable like
+ * the two ids above them, and that asymmetry is load-bearing rather than
+ * untidy.
+ *
+ * This object is `strict`, and the MCP Worker parses every regional SQL
+ * response through it. `.github/workflows/deploy-api.yml` deploys the regional
+ * Workers first and the MCP last, so mid-rollout an upgraded bridge answers an
+ * MCP still running the previous build of this schema. A required key — even a
+ * nullable one — is an unknown key to that build, and strict parsing would
+ * reject it: every existing SQL tool would fail for the length of the window.
+ * Omitting the key instead leaves the three pre-existing results byte-identical
+ * to what the old schema expects, while an older region that does not send them
+ * still parses here.
+ *
+ * So a result carries only the id naming the kind of object it ran against.
+ * Making these required, or adding the next object kind's id as a required
+ * field, reintroduces the same rollout break.
+ */
 export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema.nullable(),
   substreamId: SubstreamIdSchema.nullable(),
+  sidekickId: AutomationIdSchema.optional(),
+  artifactId: ArtifactIdSchema.optional(),
   result: InspectionSqlResultSchema,
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
@@ -186,10 +318,16 @@ export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
   listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
+  listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;
+  listArtifacts(input: WorkspaceInspectionInput): Promise<EngineeringArtifactListLookup>;
   resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
   resolveWorkstream(input: WorkstreamInspectionInput): Promise<EngineeringWorkstreamTargetLookup>;
   resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
+  resolveSidekick(input: SidekickInspectionInput): Promise<EngineeringSidekickTargetLookup>;
+  resolveArtifact(input: ArtifactInspectionInput): Promise<EngineeringArtifactTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runWorkstreamSql(input: WorkstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runSidekickSql(input: SidekickSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
 }
