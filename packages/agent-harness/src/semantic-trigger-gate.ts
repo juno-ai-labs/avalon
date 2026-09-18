@@ -108,7 +108,7 @@ export const semanticTriggerQuestions = {
  * nothing to do. A refusal is silent, and the member asked to be told. The
  * optimization's objective prices a miss at three times a false fire for that
  * reason, and the whole argument is in
- * `packages/agent-harness/evals/semantic-trigger/objective.md`.
+ * `docs/semantic-activity-triggers.md`.
  *
  * **What the threshold actually buys here.** Swept over 274 cases and pooled
  * across runs, this question's utility is flat from `0` to about `0.5` and falls
@@ -125,6 +125,12 @@ export const semanticTriggerQuestions = {
  * `docs/adding-security-defensive-and-other-limits.md` is why this took a
  * measurement instead of a guess; `docs/semantic-activity-triggers.md` carries
  * the sweep.
+ *
+ * **The harness that produced those numbers is not in the tree**, so nothing here
+ * re-runs the comparison and nothing fails if this question or this number is
+ * edited. Treat both as measured values without a regression test behind them:
+ * changing either means rebuilding the corpus and the sweep first, not reasoning
+ * about the prose.
  */
 export const SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -239,14 +245,23 @@ export async function judgeSemanticTriggerCondition(
 export async function judgeSemanticTriggerConditions(
   input: Omit<SemanticTriggerGateInput, "condition"> & { conditions: readonly string[] },
 ): Promise<SemanticTriggerDecision> {
-  let last: SemanticTriggerDecision | null = null;
+  // An outage on any branch outranks a clean refusal on another. These are an OR,
+  // so a condition the classifier could not judge might have been the one that
+  // matched, and reporting whichever condition happened to run last turned
+  // "unavailable, then a clean not_met" into a clean not_met — dropping the
+  // `failureKind` an operator needs and making the reported reason depend on the
+  // order the author wrote the triggers in. The first outage is kept rather than
+  // the last so the reported one is deterministic.
+  let outage: SemanticTriggerDecision | null = null;
+  let refusal: SemanticTriggerDecision | null = null;
   for (const condition of input.conditions) {
     const decision = await judgeSemanticTriggerCondition({ ...input, condition });
     if (decision.admit) return decision;
-    last = decision;
+    if (decision.code === "classifier_unavailable") outage ??= decision;
+    refusal = decision;
   }
   // An empty condition list cannot reach here: the caller only gates an event
   // whose accepted revision supplied at least one condition, and a gate asked
   // about nothing would otherwise report an admission it never judged.
-  return last ?? { admit: false, code: "classifier_unavailable", confidence: null, model: null };
+  return outage ?? refusal ?? { admit: false, code: "classifier_unavailable", confidence: null, model: null };
 }
