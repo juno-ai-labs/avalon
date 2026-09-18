@@ -90,13 +90,6 @@ const firefliesStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("fireflies.personal.read")).length(1),
 });
-// Fireflies documents no key prefix and no length, so there is nothing to
-// validate here beyond a non-empty string. The provider's own `user` query is
-// the check, and setup runs it before anything is stored.
-const firefliesWorkspace = z.strictObject({
-  apiKey: z.string().trim().min(1),
-  idempotencyKey: z.string().uuid(),
-});
 const granolaStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("granola.personal.read")).length(1),
@@ -265,15 +258,6 @@ connectionRoutes.post("/fireflies/start", zValidator("json", firefliesStart), as
     }),
   )));
 });
-connectionRoutes.post("/fireflies/workspace", zValidator("json", firefliesWorkspace), async (c) =>
-  c.json(ConnectorInstallationSetupResponseSchema.parse(
-    await new ConnectionService(c.env, getAuth(c)).createWorkspaceInstallation({
-      provider: "fireflies",
-      apiKey: c.req.valid("json").apiKey,
-      idempotencyKey: c.req.valid("json").idempotencyKey,
-      signal: c.req.raw.signal,
-    }),
-  ), 201));
 connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(

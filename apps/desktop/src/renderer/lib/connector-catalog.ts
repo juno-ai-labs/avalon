@@ -48,9 +48,13 @@ export const connectorProviders = [
     name: 'Fireflies',
     description: "Your own Fireflies meetings through its live tools, or the team's transcripts and summaries through an admin API key.",
     mark: ConnectorConnectionCardCatalog.fireflies.iconName,
-    scopes: ['you', 'workspace'] as const,
-    personalCapabilities: ['fireflies.personal.read'],
-    capabilities: ['fireflies.workspace.read'],
+    // Personal only. The workspace connection was one administrator's API key
+    // that every member read through, so it handed the whole workspace every
+    // meeting that key can see; the adapter still serves connections made
+    // before that was withdrawn, and `connectableScopes` in
+    // `packages/connectors/src/fireflies.ts` is the server saying the same.
+    scopes: ['you'] as const,
+    capabilities: ['fireflies.personal.read'],
   },
   {
     id: 'granola' as const,
