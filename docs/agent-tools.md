@@ -65,6 +65,18 @@ plugin prefix: Bind prepends the plugin's short wire name when it renders the
 model-facing name, so a tool called `github_list_issues` inside the GitHub
 plugin reaches the model as `github_github_list_issues`.
 
+Some plugins declare **no prefix at all**, and their canonical names reach the
+model unchanged. That is reserved for the always-active ones — `rally_discovery`,
+`rally_skills`, and `rally_core` — because a prefix on a plugin the model can
+neither load nor unload distinguishes nothing. The price is that their canonical
+names have to be **globally** unambiguous, since nothing namespaces them: a
+plugin earns an empty prefix only when every one of its tools is named well
+enough to stand alone. `rally_memory` and `rally_tables` are always active and
+keep `memory_`/`table_` for exactly that reason — their canonical names are
+local verbs (`search`, `query`, `create`, `add`, `update`), two of them
+identical, and bare verbs are the naming the rest of this document exists to
+prevent.
+
 `longRunning` is optional tool-definition metadata, not an input argument.
 True adds a short background-execution hint to the model-visible description
 when tools are loaded and advertised; false or omission leaves it unchanged.
@@ -73,7 +85,7 @@ The model may call an already-asynchronous tool directly, and a background
 agent may execute it without delegating again. Image generation and editing
 are the initial annotated tools.
 
-`core_get_connector_connection_state` and `core_show_connector_connection` are
+`get_connector_connection_state` and `show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
 id and `personal`/`workspace` scope. The read returns `connected`,
 `reconnect_required`, or `not_connected` from the caller-visible WorkspaceDO
@@ -90,11 +102,11 @@ history rather than depending on a transient started event.
 
 The model-facing flow is deliberately literal:
 
-1. Call `core_get_connector_connection_state` with `connectorId` and `scope`.
+1. Call `get_connector_connection_state` with `connectorId` and `scope`.
 2. If it returns `connected`, continue the task and do not show a card.
 3. If it returns `reconnect_required` or `not_connected` and that blocks the
    task, explain the blocker briefly.
-4. Call `core_show_connector_connection` with the same values, then stop the
+4. Call `show_connector_connection` with the same values, then stop the
    connector-dependent work for that run. Do not claim the connection worked.
 
 ### 1. Fail loud, never silently ignore an input

@@ -4675,7 +4675,7 @@ async function loadRunPromptContext(
     // Volatile execution metadata stays in the durable host and does not become
     // a synthetic model-visible user message. Trigger evidence remains explicit
     // untrusted user data, and exact wall-clock time is available through the
-    // authoritative core_current_time tool.
+    // authoritative current_time tool.
     systemPrompt: `${agentCoordinationRoleGuidance(input)}\n` + renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
@@ -6813,18 +6813,21 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
       ? [{
           canonicalId: AVALON_CORE_PLUGIN_ID,
           modelId: "rally_core",
-          shortWireName: "core",
+          // No wire prefix. Every tool here is always active and already named
+          // unambiguously, so `core_` only lengthened the name the model reads
+          // and repeated a plugin it can neither load nor unload.
+          shortWireName: "",
           description: "Use Rally's universally available core utilities.",
           systemMessage: [
             ...(coreTools.some((tool) => tool.definition.name === "current_time")
-              ? ["Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps."]
+              ? ["Use current_time when exact current time or timezone matters; never infer it from transcript timestamps."]
               : []),
             ...(coreTools.some((tool) => tool.definition.name === "request_elicitation")
-              ? ["Use core_request_elicitation for one structured blocking question that must pause the run for human input."]
+              ? ["Use request_elicitation for one structured blocking question that must pause the run for human input."]
               : []),
             ...(coreTools.some((tool) => tool.definition.name === "get_connector_connection_state")
               && coreTools.some((tool) => tool.definition.name === "show_connector_connection")
-              ? ["For a connector, call core_get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call core_show_connector_connection with the same connectorId and scope. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              ? ["For a connector, call get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call show_connector_connection with the same connectorId and scope. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
               : []),
           ].join(" "),
           tools: coreTools,
@@ -6925,7 +6928,7 @@ function createAvalonWebPlugin(tools: HarnessTool[]): HarnessPlugin | null {
  *
  * `local` is what "5:26pm" means without further qualification: the acting
  * person's zone for a user run, the workspace's for a workspace run. Both
- * `core_current_time` and the wake-up tools resolve it the same way, so a model
+ * `current_time` and the wake-up tools resolve it the same way, so a model
  * that checks the time and then schedules against it gets one consistent
  * answer.
  */
@@ -7283,7 +7286,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       execute: async (raw, context) => {
         const args = RequestElicitationInputSchema.parse(raw);
         const providerIdempotencyKey = requireProviderIdempotencyKey(
-          "core_request_elicitation",
+          "request_elicitation",
           context.providerIdempotencyKey,
         );
         const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);

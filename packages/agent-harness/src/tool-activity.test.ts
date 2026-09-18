@@ -128,6 +128,27 @@ describe("tool activity names", () => {
       .toBe("Memory prune failed");
   });
 
+  it("words a core tool the same under its current and its retired wire name", () => {
+    // `rally:core` dropped its `core_` wire prefix; every row written before
+    // that still stores the prefixed name and is worded from it on every read.
+    expect(toolActivityName({ toolName: "current_time", status: "completed" }))
+      .toBe("Checked the current time");
+    expect(toolActivityName({ toolName: "core_current_time", status: "completed" }))
+      .toBe("Checked the current time");
+    expect(toolActivityName({ toolName: "request_elicitation", status: "started" }))
+      .toBe("Asking for a decision");
+    expect(toolActivityName({ toolName: "core_request_elicitation", status: "started" }))
+      .toBe("Asking for a decision");
+    expect(toolActivityName({ toolName: "show_connector_connection", status: "completed" }))
+      .toBe("Prepared a connector");
+    expect(toolActivityName({ toolName: "core_show_connector_connection", status: "completed" }))
+      .toBe("Prepared a connector");
+    expect(toolActivityName({ toolName: "get_connector_connection_state", status: "failed" }))
+      .toBe("Could not check a connector's connection");
+    expect(toolActivityName({ toolName: "core_get_connector_connection_state", status: "failed" }))
+      .toBe("Could not check a connector's connection");
+  });
+
   it("keeps wording rows a retired tool already wrote", () => {
     // `workstream_create_artifact` no longer exists, but the rows it wrote do,
     // and they are worded from the stored name every time they are read.
