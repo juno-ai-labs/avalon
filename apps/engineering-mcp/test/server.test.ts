@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
 import type { AccessPrincipal } from "../src/access";
@@ -26,6 +26,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     listSubstreams: vi.fn<EngineeringInspectionRpcBinding["listSubstreams"]>(
       async () => ({ found: false }),
     ),
+    listSidekicks: vi.fn<EngineeringInspectionRpcBinding["listSidekicks"]>(
+      async () => ({ found: false }),
+    ),
     resolveWorkspace: vi.fn<EngineeringInspectionRpcBinding["resolveWorkspace"]>(
       async () => ({ found: false }),
     ),
@@ -35,6 +38,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     resolveSubstream: vi.fn<EngineeringInspectionRpcBinding["resolveSubstream"]>(
       async () => ({ found: false }),
     ),
+    resolveSidekick: vi.fn<EngineeringInspectionRpcBinding["resolveSidekick"]>(
+      async () => ({ found: false }),
+    ),
     runWorkspaceSql: vi.fn<EngineeringInspectionRpcBinding["runWorkspaceSql"]>(
       async () => ({ found: false }),
     ),
@@ -42,6 +48,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
       async () => ({ found: false }),
     ),
     runSubstreamSql: vi.fn<EngineeringInspectionRpcBinding["runSubstreamSql"]>(
+      async () => ({ found: false }),
+    ),
+    runSidekickSql: vi.fn<EngineeringInspectionRpcBinding["runSidekickSql"]>(
       async () => ({ found: false }),
     ),
   };
@@ -81,7 +90,7 @@ describe("Rally engineering MCP tools", () => {
     expect(response.result).toMatchObject({ tools: expect.any(Array) });
   });
 
-  it("publishes the six initial tools with mutation annotations on SQL", async () => {
+  it("publishes every inventory and SQL tool with mutation annotations on SQL", async () => {
     const env: Env = {
       GLOBAL_INSPECTION: regionalBinding("global"),
       ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
@@ -93,9 +102,11 @@ describe("Rally engineering MCP tools", () => {
       "list_workspaces",
       "list_workstreams",
       "list_substreams",
+      "list_sidekicks",
       "run_workspace_sql",
       "run_workstream_sql",
       "run_substream_sql",
+      "run_sidekick_sql",
     ]);
     for (const tool of result.tools.filter((item) => item.name.startsWith("run_"))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -168,6 +179,7 @@ describe("Rally engineering MCP tools", () => {
         workspaceId,
         workstreamId,
         substreamId,
+        sidekickId: null,
         result: {
           columns: ["answer"],
           rows: [{ answer: 42 }],
@@ -205,6 +217,55 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(global.runSubstreamSql).not.toHaveBeenCalled();
     expect(enterprise.runSubstreamSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes bound Sidekick SQL to the SidekickDO in exactly one regional authority", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb7");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000eb8");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveSidekick).mockResolvedValue({
+      found: true,
+      value: { region: "global", workspaceId, sidekickId, authorityGeneration: 4 },
+    });
+    vi.mocked(global.runSidekickSql).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        sidekickId,
+        result: {
+          columns: ["lifecycle"],
+          rows: [{ lifecycle: "paused" }],
+          rowsRead: 1,
+          rowsWritten: 0,
+        },
+      },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      {
+        name: "run_sidekick_sql",
+        arguments: { workspaceId, sidekickId, sql: "SELECT lifecycle FROM automation" },
+      },
+    );
+    const result = response.result as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      region: "global",
+      sidekickId,
+      result: { rows: [{ lifecycle: "paused" }] },
+    });
+    expect(global.runSidekickSql).toHaveBeenCalledWith({
+      workspaceId,
+      sidekickId,
+      authorityGeneration: 4,
+      query: { sql: "SELECT lifecycle FROM automation", bindings: [] },
+    });
+    expect(enterprise.runSidekickSql).not.toHaveBeenCalled();
   });
 
   it("does not execute SQL when both regions resolve the target", async () => {

@@ -1,7 +1,8 @@
 # Engineering MCP
 
 The engineering MCP is Rally's authenticated operator path to the authoritative
-SQLite database inside a workspace, work stream, or substream Durable Object.
+SQLite database inside a workspace, work stream, substream, or Sidekick Durable
+Object.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It is not a product API and it is never available to Rally users
@@ -17,8 +18,7 @@ by virtue of product membership.
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
   authority inherit that RPC. WorkspaceDO, WorkstreamDO, SubstreamAgent, and
-  AutomationDO therefore have the capability, although this MCP initially
-  routes only the first three.
+  SidekickDO have the capability, and this MCP routes all four.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
@@ -42,14 +42,28 @@ The regional bridge uses D1 only for identity and routing:
 | `list_workspaces` | Regional `workspaces` plus the workspace authority ledger | D1 identity inventory from configured deployments |
 | `list_workstreams` | Active workspace route at the open regional authority generation | `workspace_workstream_directory` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
+| `list_sidekicks` | Active workspace route at the open regional authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the active workspace route generation | WorkspaceDO SQLite |
 | `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | WorkstreamDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
+| `run_sidekick_sql` | Resolve the active workspace route and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
 `list_substreams` returns the complete tuple so an MCP client can pass it to the
-SQL tool without reconstructing identity.
+SQL tool without reconstructing identity. `run_sidekick_sql` takes a workspace ID
+for the same reason, and `list_sidekicks` returns the pair.
+
+A Sidekick's ID is an `AutomationId`: the product renamed the concept, not the
+identifier, and the object is still named `<region>:<workspace>:automation:<id>`.
+The tools are fenced on the workspace rather than on that ID's own route,
+because a Sidekick and a work stream share one parent-ID namespace in
+`workstream_authority_routes` — a Sidekick's conversation is registered there
+under the Sidekick's ID — so an active route cannot tell the two apart. Naming a
+SidekickDO from a work-stream ID would create an object that never existed. The
+`automation_directory` row is what distinguishes them, and it is also why a
+Sidekick created since its last directory projection is refused: refusing an
+object that exists is recoverable, materializing one that does not is not.
 
 The shared Durable Object base waits for the object's checked-in migrations,
 runs the supplied statement through `ctx.storage.sql.exec`, and returns column
@@ -68,7 +82,8 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
   the generation so a cutover between resolution and execution fails closed.
 - Main substream `0` needs no directory row: route activation happens only after
   creation or import initializes that object. Child substreams still require a
-  directory membership row before their stub is obtained.
+  directory membership row before their stub is obtained, and so does every
+  Sidekick.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
 - The Access application is separate from Ace and has its own audience, while
@@ -88,10 +103,17 @@ permits schema reads, arbitrary queries, and mutations because production
 inspection and repair are the product requirement. Product code must continue
 to use typed domain RPCs and must never depend on this surface.
 
-AutomationDO inherits inspection through the requested scheduler hierarchy,
-but no automation MCP tool is registered; an automation's conversations are
-`SubstreamAgent`s reached with the substream tools under the automation id as
-the parent.
+A Sidekick has two inspectable halves and they are reached by different tools.
+`run_sidekick_sql` opens SidekickDO itself — its definition revisions,
+schedules, and run history. Its *conversations* are `SubstreamAgent`s, reached
+with the substream tools under the Sidekick's ID as the parent, exactly as a
+work stream's are.
+
+`ArtifactHostDO` and `SlackReactionTicker` hold SQLite this MCP cannot reach.
+Neither inherits the inspection RPC — the first extends the migratable base
+without it, and the second is not a scheduled authority at all — so routing
+either is a change to its class, not a tool registration. Neither has been asked
+for.
 
 The Worker does not retain query history, cache results, copy databases, or
 provide a D1 fallback. It also does not turn Access identity into Rally product
@@ -116,6 +138,12 @@ identity or authorization.
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
 on real WorkspaceDO, WorkstreamDO, and SubstreamAgent instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
+
+`apps/api/test-workers/engineering-sidekick-inspection.test.ts` drives the
+bridge's Sidekick tools against a Sidekick created through the real path, and
+proves the fence in the direction that matters: a work stream holding an active
+route but no directory row is refused, and the statement it carried leaves no
+trace in the object that ID would have named.
 
 `apps/engineering-mcp/test/server.test.ts` exercises the production Agents SDK
 MCP handler, tool discovery, cross-region aggregation, destructive annotations,
@@ -166,6 +194,38 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-18 — Route SidekickDO, fenced on workspace directory membership
+
+**What changed:** `list_sidekicks` and `run_sidekick_sql` open a Sidekick's own
+object. Every inspectable class is now routed. A Sidekick resolves through its
+workspace's active route plus an `automation_directory` row, and
+`EngineeringSqlLookup` carries a nullable `sidekickId` beside the work-stream
+and substream IDs.
+
+**Why:** SidekickDO inherited the inspection RPC when the shared base was added
+but was left unrouted, so a Sidekick's definition revisions, schedules, and run
+history were the one authoritative SQLite database an operator could not open —
+the substream tools reach only its conversations.
+
+**Considered and rejected:** Resolving a Sidekick from its own row in
+`workstream_authority_routes`, the way `run_workstream_sql` resolves a work
+stream, was rejected outright. That table is keyed by parent ID whatever the
+parent's kind, and a Sidekick's conversation occupies it under the Sidekick's
+own ID, so an active route proves a parent exists and not which kind it is.
+Passing a work-stream ID would then have named — and thereby created — an empty
+SidekickDO, breaking the invariant that a tool never materializes an absent
+object. D1 carries no parent-kind column to fix that, and adding one to make an
+operator console's lookup cheaper was not worth a product migration.
+
+**Consequences:** The directory is a projection, so a Sidekick created since the
+last projection landed is refused until its row arrives. That is deliberate:
+refusing an object that exists is recoverable in a way that materializing one
+that does not is not. Each Sidekick SQL call also costs one WorkspaceDO
+inspection read before execution, the same shape a child substream's parent
+check already pays. `ArtifactHostDO` and `SlackReactionTicker` remain unroutable
+because neither inherits the RPC; reaching them is a change to their class
+hierarchy, and nobody has asked.
 
 ### 2026-08-30 — Admit hosted origins to the MCP transport
 

@@ -1,5 +1,7 @@
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  EngineeringSidekickListLookupSchema,
+  EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamListLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
@@ -10,6 +12,7 @@ import {
   ListEngineeringWorkspacesResultSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
+  AutomationIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -153,6 +156,19 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return found.value;
   }));
 
+  server.registerTool("list_sidekicks", {
+    description: "List every Sidekick in the authoritative WorkspaceDO for a workspace ID, in every lifecycle including deleted.",
+    inputSchema: { workspaceId: WorkspaceIdSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ workspaceId }) => tool(principal, "list_sidekicks", { workspace_id: workspaceId }, async () => {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSidekicks({ workspaceId })));
+    const found = oneRegionalResult(
+      results.map((result) => EngineeringSidekickListLookupSchema.parse(result)),
+      `Workspace ${workspaceId}`,
+    );
+    return found.value;
+  }));
+
   server.registerTool("run_workspace_sql", {
     description: "Run arbitrary SQLite against a WorkspaceDO. Statements may mutate production state.",
     inputSchema: { workspaceId: WorkspaceIdSchema, ...sqlInputSchema },
@@ -226,6 +242,34 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Substream ${substreamId}`);
+    },
+  ));
+
+  server.registerTool("run_sidekick_sql", {
+    description: "Run arbitrary SQLite against a SidekickDO — a Sidekick's own object, not its conversation. The workspace ID is required because it is part of the Durable Object name. Statements may mutate production state.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      sidekickId: AutomationIdSchema,
+      ...sqlInputSchema,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, ({ workspaceId, sidekickId, sql, bindings = [] }) => tool(
+    principal,
+    "run_sidekick_sql",
+    { workspace_id: workspaceId, sidekick_id: sidekickId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSidekick({ workspaceId, sidekickId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringSidekickTargetLookupSchema.parse(result)),
+        `Sidekick ${sidekickId}`,
+      );
+      return executedSql(await resolved.binding.runSidekickSql({
+        workspaceId,
+        sidekickId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Sidekick ${sidekickId}`);
     },
   ));
 
