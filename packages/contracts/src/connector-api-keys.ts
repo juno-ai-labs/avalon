@@ -8,8 +8,19 @@
  * catalog's guard. A connector belongs on this list when somebody pastes a key
  * into Rally for it, and on that one when Rally manages event subscriptions for
  * it; a provider can be on either alone.
+ *
+ * Fireflies is the worked example of that, and of why it is not
+ * `ConnectorInstallationProviders`. It still has an installation — the
+ * workspace connections made before that scope was withdrawn keep their tools,
+ * their ingress and their activity — but no Fireflies key is pasted into Rally
+ * any more: the personal connection is OAuth, the workspace setup was removed,
+ * and `replaceInstallationApiKey` refuses a new credential for a scope the
+ * connector no longer connects (422 `connector_scope_not_connectable`) before
+ * it is validated or stored. A surviving connection works until its key
+ * changes and no further, so an entry here would describe a paste that cannot
+ * happen — and, through `isConnectorApiKeyProvider`, offer a field for it.
  */
-export const ConnectorApiKeyProviders = ["ashby", "fireflies", "granola"] as const;
+export const ConnectorApiKeyProviders = ["ashby", "granola"] as const;
 export type ConnectorApiKeyProvider = (typeof ConnectorApiKeyProviders)[number];
 
 /**
@@ -55,13 +66,6 @@ export const ConnectorApiKeyGuidanceCatalog = {
     issuingLabel: "Create the key in Ashby",
     // Ashby documents no format: its authentication page shows a key only as a
     // basic-auth username. Nothing to check that would not be a guess.
-    format: null,
-  },
-  fireflies: {
-    issuingUrl: "https://app.fireflies.ai/integrations/custom/fireflies",
-    issuingLabel: "Copy the key from Fireflies",
-    // Fireflies documents no format either — its authorization page describes
-    // the header, not the key.
     format: null,
   },
   granola: {

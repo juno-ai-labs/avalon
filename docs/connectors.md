@@ -87,7 +87,7 @@ later decision.
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 | `packages/contracts/src/connector-api-keys.ts` | Per provider: the page that issues its API key, and the key format the provider documents — the one declaration the API's request schema, the adapter's own check and the desktop field all read. |
-| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. Every surface that takes a key uses it: Granola's and Ashby's setup modals, and **Replace workspace API key** for whichever installation is in front of you. |
+| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. Every surface that takes a key uses it — Granola's and Ashby's setup modals, and **Replace workspace API key**, which appears only for an installation whose provider still takes one. |
 
 ### Pasting an API key
 
@@ -99,10 +99,8 @@ key reads them from there — the Worker's request schema, the adapter's own
 check, and the desktop key field:
 
 - **Where the key is issued.** `issuingUrl` is the provider page that creates
-  the key — Ashby's admin API keys page, Fireflies' API integration page for
-  the workspace connections made before that scope was withdrawn — so
-  the link opens the place the key comes from rather than a documentation page
-  to read first. Granola is the exception in the other direction: its workspace
+  the key — Ashby's admin API keys page — so the link opens the place the key
+  comes from rather than a documentation page to read first. Granola is the exception in the other direction: its workspace
   keys are created in the Granola desktop app and it publishes no web page that
   issues one, so that entry points at the help-centre article and the modal's
   numbered steps carry the rest.
@@ -110,11 +108,11 @@ check, and the desktop key field:
   `format` holds an anchored pattern, the placeholder the empty field shows, and
   the sentence shown when a paste does not match. Granola documents `grn_`; that
   pattern is the same object the API's request schema and the adapter's own
-  check use, which is what stopped the three copies of it drifting. **Ashby and
-  Fireflies declare no format, deliberately.** Neither documents a format, and a
-  prefix guessed here would reject a valid key at the exact step this exists to
-  smooth — so a provider with no documented format is checked only for being
-  non-empty.
+  check use, which is what stopped the three copies of it drifting. **Ashby
+  declares no format, deliberately.** It documents none — its authentication
+  page shows a key only as a basic-auth username — and a prefix guessed here
+  would reject a valid key at the exact step this exists to smooth, so a
+  provider with no documented format is checked only for being non-empty.
 
 A mismatch is said out loud under the field, not left as a Connect button that
 refuses to light up with no reason given — but not while somebody is still
@@ -123,10 +121,17 @@ because a half-typed key is not a wrong key. The submit button beside it asks
 `connectorApiKeyAcceptable`, so the message and the gate cannot answer
 differently.
 
-Fireflies keeps an entry although no new Fireflies workspace connection can be
-made: the ones made before that scope was withdrawn are still served, and
-rotating their key through **Replace workspace API key** is the path that entry
-answers for.
+**Fireflies has no entry, and that is the worked example of what this list
+means.** It still has workspace installations — the ones made before that scope
+was withdrawn keep their tools, their ingress and their activity — but no
+Fireflies key is pasted into Rally any more. The personal connection is OAuth,
+the workspace setup was removed, and `replaceInstallationApiKey` refuses a new
+credential for a scope the connector no longer connects, with 422
+`connector_scope_not_connectable`, before the key is validated or stored. Such
+a connection works until its key changes and no further; deleting it is the
+management that remains. An entry here would describe a paste that cannot
+happen, and `isConnectorApiKeyProvider` — which is what **Replace workspace API
+key** asks before drawing a field — would offer one.
 
 The catalog is keyed on `ConnectorApiKeyProviders`, its own list, rather than on
 the installation-provider enum the same three names happen to fill today.

@@ -262,18 +262,33 @@ describe('workspace event controls', () => {
   // guessed about it.
   it('accepts an opaque replacement key for a provider that documents no format', async () => {
     const api = new RallyApi('https://api.example.test', null);
-    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'fireflies',
-      state: 'current', selectedEvents: ['meeting.transcribed'], registrations: [registration('meeting.transcribed', 'current', 'whe_2')] } });
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(),
+      state: 'current', registrations: [registration('applicationSubmit', 'current', 'whe_2')] } });
     const replace = vi.spyOn(api, 'replaceInstallationApiKey').mockResolvedValue(undefined as never);
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
     fireEvent.click(screen.getByText('Replace workspace API key'));
     const field = screen.getByLabelText('New API key');
     fireEvent.paste(field);
-    fireEvent.change(field, { target: { value: 'opaque-fireflies-key' } });
+    fireEvent.change(field, { target: { value: 'opaque-ashby-key' } });
     expect(screen.queryByRole('alert')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
-    await waitFor(() => expect(replace).toHaveBeenCalledWith(connectionId, 'opaque-fireflies-key'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(connectionId, 'opaque-ashby-key'));
+  });
+
+  // The server refuses a replacement credential for a scope the connector no
+  // longer connects, before it is validated or stored, so offering the field
+  // would be offering a paste that comes back 422. Fireflies is the connector
+  // that is in that state: its workspace installations survive, its key cannot
+  // be replaced, and it is deliberately absent from the API-key catalog.
+  it('offers no key replacement for an installation whose provider takes no key', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), provider: 'fireflies',
+      state: 'current', selectedEvents: ['meeting.transcribed'], registrations: [registration('meeting.transcribed', 'current', 'whe_2')] } });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+    expect(screen.getByRole('button', { name: 'Refresh status' })).toBeVisible();
+    expect(screen.queryByText('Replace workspace API key')).toBeNull();
   });
 
   // Typing a key is not pasting a wrong one: the verdict waits for the field
