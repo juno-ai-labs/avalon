@@ -61,7 +61,8 @@ Deployment applies both independent schemas before activating the API Worker.
 The cutover starts fresh; pre-cutover rows in the regional database are inactive
 history, not copied or read by the new delivery path. Applied regional migrations
 remain immutable. Opt-out purges pending events in the background through the
-request's start timestamp; delivery also checks the canonical user preference.
+request-entry timestamp inclusively; delivery also checks the canonical user
+preference and rechecks pending identity transitions after selecting events.
 
 ## How it works
 
