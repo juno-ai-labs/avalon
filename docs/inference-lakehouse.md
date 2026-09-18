@@ -219,6 +219,11 @@ as proof that a model call committed product state.
 
 `apps/api/test/inference-lakehouse.test.ts` proves exact archive/pointer/delivery,
 hash verification, oversized fallback, and poison-message acknowledgement.
+`apps/api/test/agent-inference-logging.test.ts`,
+`structured-inference-deferral.test.ts`, and
+`addressing-classifier-logging.test.ts` hold the real R2 stage open and prove it
+does not block provider dispatch or results. `apps/api/test-workers/runtime-deferral.test.ts`
+smoke-tests the shared primitive against real workerd.
 `apps/api/test-workers/queue-dispatch.test.ts` proves the real Worker dispatches
 the queue before product maintenance fencing. Harness tests prove exact request
 and response events. `scripts/ensure-cloudflare-inference-lakehouse.test.mjs`
