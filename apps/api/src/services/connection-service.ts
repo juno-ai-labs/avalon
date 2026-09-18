@@ -896,10 +896,15 @@ export class ConnectionService {
     if (!adapter.manifest.supportedScopes.includes(input.scope)) {
       throw new ApiError(422, "invalid_connector_scope", `${adapter.manifest.displayName} does not support ${input.scope} connections`);
     }
+    // Only a new connection. A reconnect carries the connection it is
+    // reauthorizing, and re-consenting as the identity already attached to it
+    // is what keeps a connection behind a closed scope working, which is the
+    // whole point of narrowing this rather than `supportedScopes`.
+    //
     // Asked of every provider rather than of the one that closed a scope: the
     // desktop stops offering the button, and this is what a client built
     // before it, or anything else holding the route, is answered with.
-    if (!connectorScopeIsConnectable(adapter, input.scope)) {
+    if (!input.connectionId && !connectorScopeIsConnectable(adapter, input.scope)) {
       throw new ApiError(422, "connector_scope_not_connectable", `${adapter.manifest.displayName} is not accepting new ${input.scope} connections`);
     }
     const supported = new Set(adapter.manifest.capabilities.map((capability) => capability.id));
@@ -1256,6 +1261,14 @@ export class ConnectionService {
     const adapter = this.registry().get(provider);
     if (!adapter.manifest.supportedScopes.includes(stateData.scope)) {
       throw new ApiError(422, "invalid_connector_scope", `${adapter.manifest.displayName} no longer supports ${stateData.scope} connections`);
+    }
+    // The same rule as the start, applied again here because the state
+    // outlives the deploy that closed the scope: an authorization begun while
+    // the scope was open must not land a connection after it is shut. A state
+    // carrying a connection is a reconnect, and completing one keeps what
+    // exists working rather than making something new.
+    if (!stateData.connectionId && !connectorScopeIsConnectable(adapter, stateData.scope)) {
+      throw new ApiError(422, "connector_scope_not_connectable", `${adapter.manifest.displayName} is not accepting new ${stateData.scope} connections`);
     }
     if (provider === "linear") {
       assertLinearScopeCapabilities(stateData.scope, stateData.capabilities);
@@ -2418,6 +2431,17 @@ export class ConnectionService {
     if (connection.scope !== "workspace" || connection.status === "disabled") throw new ApiError(409, "connector_disabled", "Only an enabled workspace event connection can replace its API key");
     const adapter = this.registry().get(connection.connector_type);
     if (!adapter.installationManagement) throw new ApiError(422, "installation_unavailable", "This connector does not manage workspace event credentials");
+    // Before the key is validated, let alone stored. A replacement key is a
+    // different administrator's account as easily as the same one's — the
+    // provider decides what it reaches, and Fireflies publishes nothing that
+    // says what a key covers — so accepting one into a scope Rally has closed
+    // would grant the access this connector stopped granting, through a
+    // connection that already exists. Reauthorizing the identity already
+    // attached to a connection stays allowed; supplying a new credential for
+    // it does not.
+    if (!connectorScopeIsConnectable(adapter, connection.scope)) {
+      throw new ApiError(422, "connector_scope_not_connectable", `${adapter.manifest.displayName} is not accepting new ${connection.scope} credentials`);
+    }
     await this.adoptGranolaInstallation(connection);
     const object = await this.workspaceObject(connection.workspace_id);
     const installation = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id });

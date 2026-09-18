@@ -810,15 +810,25 @@ Connectors expose one of two provider-facing activity facets while sharing the s
 - `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
 
-**A connector that no longer accepts a *new* connection in one of its scopes
-says so in `connectableScopes`,** which is read through
-`connectorScopeIsConnectable` and enforced in `beginProvider` and
-`createWorkspaceInstallation`. It is deliberately not `supportedScopes`:
-narrowing that would take the tools, the events and the webhook ingress away
-from the connections a workspace already made, which is a data migration rather
-than a product decision. This one closes the door and leaves what is behind it
-working. Fireflies declares `["personal"]`; every other connector omits it and
-inherits `supportedScopes`.
+**A connector that will no longer take a *credential* in one of its scopes says
+so in `connectableScopes`,** read through `connectorScopeIsConnectable`. It is
+deliberately not `supportedScopes`: narrowing that would take the tools, the
+events and the webhook ingress away from the connections a workspace already
+made, which is a data migration rather than a product decision. This one closes
+the door and leaves what is behind it working. Fireflies declares
+`["personal"]`; every other connector omits it and inherits `supportedScopes`.
+
+The line it draws is **a new grant, not a new request**, and four places in
+`ConnectionService` enforce it, all answering `connector_scope_not_connectable`:
+`beginProvider` and `completeProvider` refuse a *creating* authorization —
+one carrying no `connectionId`, since a state minted before the scope closed
+must not land a connection after it — `createWorkspaceInstallation` refuses a
+new installation, and `replaceInstallationApiKey` refuses a new provider key
+for an existing one, because a replacement key is a different administrator's
+account as easily as the same one's. Reauthorizing a connection that exists is
+allowed, as is every path that reads, repairs with the credential already
+stored, or disconnects: `replaceConnectorInstallationCredentials` is the only
+writer of a new provider credential, so that boundary is the whole of it.
 
 **A connector whose events reach Rally in only some connection scopes says so
 in `activityConnectionScopes`,** which narrows `manifest.supportedScopes` for
@@ -1467,10 +1477,14 @@ PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
 
 ### 2026-09-18 — Fireflies takes no new workspace connection
 
-**What changed:** A connector may now declare `connectableScopes`, the scopes a
-*new* connection may be created in, narrowing `supportedScopes` the way
+**What changed:** A connector may now declare `connectableScopes`, the scopes it
+will still take a credential in, narrowing `supportedScopes` the way
 `activityConnectionScopes` and `capabilityConnectionScopes` already narrow it
-elsewhere. Fireflies declares `["personal"]`. The desktop catalog offers only
+elsewhere. Fireflies declares `["personal"]`. Creating a connection, completing
+an authorization that carries no connection, creating a workspace installation
+and replacing an installation's API key are all refused for a closed scope;
+reauthorizing an existing connection, repairing it and disconnecting it are
+not. The desktop catalog offers only
 **Connect for me** for it, `POST /connections/fireflies/workspace` and the
 two-stage setup dialog behind it are deleted, and the **Manage events** window
 is no longer offered for a connector whose workspace scope is closed. The
@@ -1497,8 +1511,10 @@ option was leaving the route and refusing at the desktop, which leaves anything
 holding the route connecting a scope the product has withdrawn.
 
 **Consequences:** `supportedScopes` now answers "what can this adapter serve"
-and `connectableScopes` answers "what may somebody still start", and a surface
-that offers a connection has to read the second. An existing Fireflies workspace
+and `connectableScopes` answers "what will it still take a credential for", and
+a surface that offers a connection has to read the second. Hiding a button is
+not the boundary — the four service paths are, which is why a replacement API
+key is refused there rather than only in the window that used to offer one. An existing Fireflies workspace
 connection keeps its tools, its ingress and its activity, and its row keeps
 **Delete**; it has no **Manage events** and no **Refresh**, so removing it is
 the only management left. Reopening the scope is one line in

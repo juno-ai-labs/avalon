@@ -165,6 +165,13 @@ async function fixture(options: { connectorEnabled?: boolean } = {}) {
           WHERE provider = 'fireflies' ORDER BY dedupe_key`).toArray());
   }
 
+  /** The sealed credential exactly as the object holds it, bytes and all. */
+  async function credentialEnvelope(connectionId: string) {
+    return runInDurableObject(stub, (_instance: WorkspaceDO, state) =>
+      state.storage.sql.exec<{ encrypted_credentials: string; credential_iv: string }>(
+        'SELECT encrypted_credentials, credential_iv FROM connector_connections WHERE id = ?', connectionId).toArray()[0]);
+  }
+
   async function installation(connectionId: string) {
     const read = await request(`/connections/${connectionId}/installation`, owner);
     expect(read.status).toBe(200);
@@ -216,7 +223,8 @@ async function fixture(options: { connectorEnabled?: boolean } = {}) {
   }
 
   return {
-    workspaceId, owner, member, stub, testEnv, request, deliver, drainQueue, activities, receipts, installation, setup, queue,
+    workspaceId, owner, member, stub, testEnv, request, deliver, drainQueue, activities, receipts, installation,
+    credentialEnvelope, setup, queue,
   };
 }
 
@@ -273,6 +281,24 @@ describe('the Fireflies workspace installation', () => {
     await f.drainQueue('event');
     expect(await f.activities()).toEqual([]);
     expect(await f.receipts()).toBe(0);
+  });
+
+  it('hands neither the API key nor the signing secret back through any read', async () => {
+    const f = await fixture();
+    const { connectionId, signingSecret } = await f.setup();
+    // The connection that survives the closed scope is the one holding a key
+    // whose reach Rally cannot state, and Rally showed its signing secret
+    // exactly once. Neither may come back out of a read: the connection list
+    // is what every member's client fetches, and the installation is what an
+    // administrator opens.
+    const listed = await f.request('/connections', f.owner);
+    expect(listed.status).toBe(200);
+    expect(JSON.stringify(listed.body)).not.toContain(signingSecret);
+    expect(JSON.stringify(listed.body)).not.toContain(validApiKey);
+    const read = await f.request(`/connections/${connectionId}/installation`, f.owner);
+    expect(read.status).toBe(200);
+    expect(JSON.stringify(read.body)).not.toContain(signingSecret);
+    expect(JSON.stringify(read.body)).not.toContain(validApiKey);
   });
 
   it('rejects an unsigned, mis-signed, stale, or unsubscribed delivery without writing anything', async () => {
@@ -569,5 +595,39 @@ describe('the Fireflies workspace installation', () => {
     })).rejects.toMatchObject({ status: 422, code: 'connector_scope_not_connectable' });
     const connections = await f.request('/connections', f.owner);
     expect(z.object({ items: z.array(ConnectionSchema) }).parse(connections.body).items).toEqual([]);
+  });
+
+  it('refuses a workspace authorization start, and still allows an existing connection to reauthorize', async () => {
+    const f = await fixture();
+    const service = new ConnectionService(f.testEnv, f.owner);
+    // `/connections/fireflies/start` pins the scope to personal in its body
+    // schema, so the route can never reach this. The guard is asserted where
+    // it lives, because a caller that reaches the service another way — an
+    // older client, another route added later — is what it is there for.
+    await expect(service.beginProvider('fireflies', {
+      scope: 'workspace', capabilities: ['fireflies.workspace.read'], desktopHandoffVersion: 2,
+    })).rejects.toMatchObject({ status: 422, code: 'connector_scope_not_connectable' });
+    // A reconnect carries the connection it reauthorizes, and a closed scope
+    // does not strand what is already connected: this one is refused by the
+    // adapter, which is the next check along, rather than by the scope gate.
+    const { connectionId } = await f.setup();
+    await expect(service.beginProvider('fireflies', {
+      scope: 'workspace', capabilities: ['fireflies.workspace.read'], connectionId, desktopHandoffVersion: 2,
+    })).rejects.toMatchObject({ code: 'invalid_configuration' });
+  });
+
+  it('refuses a replacement API key for the closed scope without touching the stored credential', async () => {
+    const f = await fixture();
+    const { connectionId } = await f.setup();
+    const before = await f.credentialEnvelope(connectionId);
+    // The one path that admits a *new* provider credential into a connection
+    // that already exists. A replacement key is a different administrator's
+    // account as easily as the same one's, so accepting it would grant the
+    // workspace-wide access this connector stopped granting.
+    await expect(new ConnectionService(f.testEnv, f.owner).replaceInstallationApiKey(
+      connectionId, 'llllllllllllllllllllllllllllllll', new AbortController().signal,
+    )).rejects.toMatchObject({ status: 422, code: 'connector_scope_not_connectable' });
+    expect(await f.credentialEnvelope(connectionId)).toEqual(before);
+    expect((await f.installation(connectionId))?.generation).toBe(1);
   });
 });
