@@ -1646,7 +1646,9 @@ the shared rejection-observing `Preparation` primitive, while independent
 transcript bootstrap reads load together. Each result is still awaited before
 the same consuming authority boundary, and immutable run-scope persistence,
 plugin activation, the final liveness pulse, and provider dispatch retain their
-order.
+order. Attachment replay's existing five-second wall-clock budget still begins
+immediately before receipt outputs are restored; overlapping work does not
+start that deadline early.
 
 **Why:** Production traces showed roughly 2.7 seconds after substream
 confirmation completed but before the first provider request. These reads were

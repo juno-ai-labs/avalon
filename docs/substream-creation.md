@@ -541,29 +541,31 @@ substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
 
-### 2026-09-18 — Bootstrap the reserved child during preparation
+### 2026-09-18 — Warm the reserved child during preparation
 
 **What changed:** Once the parent has durably reserved a child ID, preparation
-starts that child's idempotent runtime bootstrap alongside context capture and
-transformation, and awaits both before returning. Confirmation retains the same
-bootstrap call as a recovery fence, but normally reaches a current-schema
-object.
+starts that child's side-effect-free schema wake alongside context capture and
+transformation. Confirmation retains the authoritative bootstrap as its
+generation fence, but normally reaches an already initialized object.
 
 **Why:** Production confirmation traces attributed 2,793 ms of a 4,525 ms API
 flow to the first child bootstrap. That work needed the reserved ID, not the
 opening message, so placing it after the person pressed send made cold schema
 setup part of inference-start latency unnecessarily.
 
-**Considered and rejected:** Deferring bootstrap past the preparation response
-would make confirmation race unobserved work, while removing it from
-confirmation would weaken retry and cross-deploy recovery. Provisioning during
-preparation was also rejected because it would create product state before the
-opening message and model choice exist.
+**Considered and rejected:** Deferring the wake past the preparation response
+would make confirmation race unobserved work. Performing the authoritative
+bootstrap during preparation was also rejected: it would pin the child to the
+then-current generation across human think-time. Provisioning remains in
+confirmation because it creates product state from the opening message and
+model choice.
 
 **Consequences:** A cancelled preparation may leave an empty, unpublished
-Durable Object, just as it already leaves a durable parent receipt. It has no
-directory or participant visibility. Confirmation remains idempotent and still
-owns provisioning, context installation, opening admission, and publication.
+Durable Object in preparing mode, just as it already leaves a durable parent
+receipt. It has no directory or participant visibility. Wake failure is logged
+but does not fail preparation; confirmation remains the retryable authority
+fence and still owns bootstrap, provisioning, context installation, opening
+admission, and publication.
 
 ### 2026-09-15 — Share prepared conversation file ownership
 

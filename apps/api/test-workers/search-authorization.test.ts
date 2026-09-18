@@ -99,7 +99,7 @@ describe('projected search authorization', () => {
     expect(authority).toHaveBeenCalledTimes(1);
   });
 
-  it('records retry intent before an initial authority lookup can fail', async () => {
+  it('commits retry intent even when its immediate publish fails', async () => {
     const stub = env.WORKSPACE_DOS.getByName('search-authorization-atomic-fill');
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');
     // The retry row is due immediately. Keep its transport unavailable while
