@@ -192,6 +192,24 @@ async function resolveInspectionSidekickRoute(
  * than in D1, and it is the only place that says which artifacts a workspace
  * has. An unregistered UUID is refused here rather than materializing an empty
  * supervisor.
+ *
+ * **Membership is weaker here than it is for a Sidekick, and knowingly so.**
+ * `createAutomation` creates the SidekickDO before anything records it, so a
+ * directory row there implies the object. The artifact publish path is the
+ * other way round: `resource-bridge.ts` writes this registry row and only then
+ * calls `pointArtifactAtVersion`, which is what initializes the supervisor —
+ * deliberately last, so that serving never points at bytes a viewer cannot yet
+ * read. Between those two calls, and permanently if the second never returns,
+ * a registered artifact has no supervisor, and running SQL against it creates
+ * an empty one.
+ *
+ * That window is left open rather than closed by reordering the publish path,
+ * which would make the pointer commit before the row that describes it, or by a
+ * readiness column, which is a WorkspaceDO migration and a product write for an
+ * operator console's benefit. What an operator sees in the gap is a supervisor
+ * with schema and no `artifact_state` row — which is the diagnosis of exactly
+ * that half-finished publish, so the refusal it would take to hide it would
+ * cost more than it saves. `docs/engineering-mcp.md` states the exception.
  */
 async function resolveInspectionArtifactRoute(
   env: Env,
