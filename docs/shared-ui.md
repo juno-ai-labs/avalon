@@ -16,6 +16,10 @@ actions to the same components rather than drawing a second design.
 - The browser host owns email entry, cookie session restoration and its scoped
   directory. Its collaboration adapter supplies selected-conversation data.
 
+The application error boundary is shared, with host-specific error reporting.
+Both collaboration hosts use the existing API query defaults: no focus refresh
+unless a query opts in, and no retry for a rejected 4xx request.
+
 ## How it works
 
 Shared components receive presentation data and callbacks. They never import an
