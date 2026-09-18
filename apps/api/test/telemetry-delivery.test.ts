@@ -1,4 +1,8 @@
 import "../../../tests/isolated-region";
+import { Hono } from "hono";
+import { asUserId } from "@rally/contracts";
+import type { HonoAppEnv } from "../src/env";
+import { authenticatedTelemetryRoutes } from "../src/routes/telemetry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TelemetryCollector } from "../src/telemetry/collector";
 import { processTelemetryOutbox } from "../src/telemetry/delivery";
@@ -85,6 +89,72 @@ describe("Global telemetry delivery", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("holds events when an identity transition commits during candidate selection", async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at,
+      product_analytics_enabled) VALUES ('018f22f2-4c22-7abc-8def-0123456789ad', 'google-1', 'person@example.com', 'Person', ?, ?, 1)`).run(now, now);
+    const db = sqliteD1(database);
+    const deliverTelemetryBatch = vi.fn(async () => ({ postHog: { result: "delivered" as const, requestId: "test", retryAfterMs: null } }));
+    const env = createTestEnv({ DB: db, AVALON_REGION: "global", POSTHOG_HOST: "https://us.i.posthog.com", POSTHOG_PROJECT_TOKEN: "phc_test", TELEMETRY_DELIVERY: { deliverTelemetryBatch } });
+    await new TelemetryCollector(env).accept(envelope("018f22f2-4c22-7abc-8def-0123456789ab"), {
+      route: "global", routingBasis: "explicit_binding", analyticsSubjectId: "person-1",
+      subjectUserId: "018f22f2-4c22-7abc-8def-0123456789ad", workspaceAnalyticsId: null,
+    });
+    const prepare = db.prepare.bind(db);
+    const intercepted = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      const statement = prepare(sql);
+      if (sql.includes("SELECT e.event_id")) {
+        const all = statement.all.bind(statement);
+        vi.spyOn(statement, "all").mockImplementation(async () => {
+          const result = await all();
+          database.prepare(`INSERT INTO telemetry_profile_jobs
+            (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+             properties_json, version, state, created_at, delete_at)
+            VALUES ('transition-1', '018f22f2-4c22-7abc-8def-0123456789ad', 'epoch_transition', 'person-1', 'epoch-1', '{}',
+                    1, 'pending', ?, '2026-11-10T20:00:00.000Z')`).run(now);
+          return result;
+        });
+      }
+      return statement;
+    });
+    await expect(processTelemetryOutbox(env)).resolves.toMatchObject({ selected: 0, delivered: 0 });
+    expect(deliverTelemetryBatch).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT delivery_state FROM telemetry_accepted_events").get()).toEqual({ delivery_state: "pending" });
+    intercepted.mockRestore();
+    database.close();
+  });
+
+  it("purges through the inclusive request-entry cutoff when opting out", async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at,
+      product_analytics_enabled, product_analytics_preference_version)
+      VALUES ('018f22f2-4c22-7abc-8def-0123456789ad', 'google-1', 'person@example.com', 'Person', ?, ?, 1, 1)`).run(now, now);
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global" });
+    for (const [index, eventId] of ["018f22f2-4c22-7abc-8def-0123456789ab", "018f22f2-4c22-7abc-8def-0123456789ac"].entries()) {
+      vi.setSystemTime(new Date(Date.parse(now) + index));
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global", routingBasis: "explicit_binding", analyticsSubjectId: "person-1",
+        subjectUserId: "018f22f2-4c22-7abc-8def-0123456789ad", workspaceAnalyticsId: null,
+      });
+    }
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("requestReceivedAt", Date.parse(now));
+      c.set("auth", { userId: asUserId("018f22f2-4c22-7abc-8def-0123456789ad"), workspaceId: null, sessionId: "session-1", region: "global", role: null });
+      await next();
+    });
+    app.route("/telemetry", authenticatedTelemetryRoutes);
+    const response = await app.request("/telemetry/preference", {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false, expectedVersion: 1 }),
+    }, env);
+    expect(response.status).toBe(200);
+    expect(database.prepare("SELECT event_id FROM telemetry_accepted_events").all()).toEqual([
+      { event_id: "018f22f2-4c22-7abc-8def-0123456789ac" },
+    ]);
+    database.close();
   });
 
   it("batches pending rows and records successful acknowledgement", async () => {
