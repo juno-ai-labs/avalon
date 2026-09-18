@@ -4,6 +4,7 @@ import { granolaPage } from "./tool-pagination";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import type { ConnectorInstallationManagement } from "./installation";
 import type { ToolDefinition } from "@rally/contracts";
+import { connectorApiKeyAcceptable } from "@rally/contracts";
 import { z } from "zod";
 import {
   isProviderCredentialRejection,
@@ -1205,7 +1206,7 @@ function degradedGranolaDelivery(condition: string, reasonCode: string): {
 
 function requireApiKey(value: string): string {
   const apiKey = value.trim();
-  if (!/^grn_[\x21-\x7E]{1,508}$/u.test(apiKey)) {
+  if (!connectorApiKeyAcceptable("granola", apiKey)) {
     throw new ConnectorError("invalid_configuration", "A valid Granola API key is required");
   }
   return apiKey;

@@ -9,6 +9,7 @@ export const ConnectorInstallationProviderSchema = z.enum(["ashby", "fireflies",
  * to produce a silently wrong button rather than a type error.
  */
 export const ConnectorInstallationProviders = ConnectorInstallationProviderSchema.options;
+export type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallationProviderSchema>;
 export const ConnectorRegistrationSchema = z.strictObject({
   key: z.string().min(1), providerId: z.string().min(1).nullable(), events: z.array(z.string().min(1)).min(1),
   adoptingExistingDestination: z.boolean().default(false),
