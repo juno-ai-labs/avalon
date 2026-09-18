@@ -1,0 +1,33 @@
+{
+  "name": "@rally/browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm build:client && wrangler dev",
+    "build:client": "vite build",
+    "build": "pnpm build:client && wrangler deploy --dry-run --outdir dist-worker",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
+    "test": "pnpm build:client && vitest run"
+  },
+  "dependencies": {
+    "@rally/contracts": "workspace:*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "catalog:",
+    "@rally/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20260827.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "5.2.0",
+    "typescript": "catalog:",
+    "vite": "7.3.6",
+    "vitest": "catalog:",
+    "wrangler": "4.126.0",
+    "tailwindcss": "3.4.19",
+    "autoprefixer": "10.5.4"
+  }
+}

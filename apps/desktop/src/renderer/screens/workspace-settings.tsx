@@ -472,6 +472,11 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api),
     staleTime: 30_000,
   });
+  const promoteGuest = useMutation({
+    mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
+      api!.promoteWorkspaceGuest(guest.id, { incarnation: guest.incarnation, expectedRevision: guest.revision }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+  });
   const leavingClosesWorkspace = members.data?.length === 1;
   const departWorkspace = useMutation({
     mutationFn: () => leaveWorkspace(workspace.id, leavingClosesWorkspace ? 'abandoned' : 'left'),
@@ -1282,10 +1287,20 @@ export function WorkspaceSettingsScreen({
                     <div className="settings-member-row" key={member.id}>
                       <Avatar member={member} size="medium" />
                       <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                      <Badge className="role-badge">{member.role ?? 'member'}</Badge>
+                      <div className="settings-member-actions">
+                        <Badge className="role-badge">{member.accessClass === 'guest' ? 'Guest' : member.role ?? 'member'}</Badge>
+                        {isAdmin && member.accessClass === 'guest' && member.incarnation && member.revision && (
+                          <Button disabled={promoteGuest.isPending} aria-label={`Make ${member.name} a member`}
+                            onClick={() => promoteGuest.mutate({ id: member.id, incarnation: member.incarnation!, revision: member.revision! })}>
+                            Make member
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
+
+                {promoteGuest.error && <InlineError>{promoteGuest.error.message}</InlineError>}
 
                 {isSettingAvailable(settings.invitations, settingsContext) && (
                   <div className="settings-subsection">

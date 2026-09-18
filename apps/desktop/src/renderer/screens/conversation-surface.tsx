@@ -1,3 +1,4 @@
+import { ScopeSharingPanel } from "../components/scope-sharing-panel";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -2411,6 +2412,8 @@ export function ConversationSurface({
       />}
 
       <AddParticipantDialog
+        sharing={participantDialogOpen && parentKind === 'workstream' && api && session?.workspace ?
+          <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
         error={addParticipant.error?.message ?? removeParticipant.error?.message}
