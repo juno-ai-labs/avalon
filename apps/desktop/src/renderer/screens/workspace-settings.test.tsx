@@ -3,7 +3,7 @@ import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { useState } from 'react';
 import { coreSettingsProvider } from '../settings/registry';
@@ -37,6 +37,7 @@ const api = vi.hoisted(() => ({
   reconnectConnection: vi.fn(),
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
+  setWorkspaceMemberRole: vi.fn(),
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
@@ -1897,6 +1898,28 @@ describe('Workspace settings', () => {
       { timeout: 10_000 },
     );
   }, 30_000);
+
+  it('offers an administrator the promotion beside every member but the owner, and offers a member none', async () => {
+    api.setWorkspaceMemberRole.mockResolvedValue(undefined);
+    renderSettings();
+    openSettingsSection('Workspace');
+    expect(await screen.findByText('Sam')).toBeVisible();
+    // The owner's own row carries no control: theirs is the one role the server
+    // refuses to reassign, so a button beside it could only ever fail.
+    expect(screen.getAllByRole('button', { name: 'Make administrator' })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Make administrator' }));
+    await waitFor(
+      () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(member.id, 'admin'),
+      { timeout: 10_000 },
+    );
+
+    cleanup();
+    renderSettings({ ...workspace, currentUser: member });
+    openSettingsSection('Workspace');
+    expect(await screen.findByText('Adam')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Make administrator' })).not.toBeInTheDocument();
+  });
 
   it('does not expose invitation management to regular members', async () => {
     renderSettings({ ...workspace, currentUser: member });
