@@ -1,3 +1,6 @@
+import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
+import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
+import { SharedDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { SessionImportPreviewSchema, type SessionImportPreview, type SessionImportPreviewRequestSchema } from "@rally/contracts";
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
@@ -65,6 +68,7 @@ import {
   ConnectorInstallationSetupResponseSchema,
   OnboardingJourneySchema,
   SidekickAttachmentsSchema,
+  SidekickRecommendationOptionsSchema,
   type SidekickAttachment,
   type UpdateOnboardingJourney,
 } from '@rally/contracts';
@@ -82,6 +86,7 @@ import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
+import type { CookieClientSession } from '@rally/contracts/client-session';
 import { logDebug } from '../../common/logger';
 import { requestSocketTicket } from './socket-ticket-request';
 import { normalizeElicitation } from './elicitation';
@@ -560,14 +565,36 @@ export class RallyApi {
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
   private renewalInFlight: Promise<string | null> | null = null;
+  private sessionRevision = 0;
 
   constructor(
     readonly baseUrl: string,
-    private session: DesktopSession | null,
+    private session: DesktopSession | CookieClientSession | null,
   ) {}
 
-  setSession(session: DesktopSession | null): void {
+  setSession(session: DesktopSession | CookieClientSession | null): void {
+    ++this.sessionRevision;
     this.session = session;
+  }
+
+  private get accessToken(): string | null {
+    return this.session && 'accessToken' in this.session ? this.session.accessToken : null;
+  }
+
+  private get socketSchema() {
+    const session = this.session;
+    if (!session || !('authentication' in session) || session.authentication !== 'cookie') return socketTicketSchema;
+    return socketTicketSchema.transform((ticket, ctx): SocketTicket => {
+      if (!session.workspace) { ctx.addIssue({ code: 'custom', message: 'A browser socket requires a selected workspace' }); return z.NEVER; }
+      const source = new URL(ticket.url);
+      if (!source.pathname.startsWith('/socket/')) { ctx.addIssue({ code: 'custom', path: ['url'], message: 'Invalid browser socket destination' }); return z.NEVER; }
+      const target = new URL(this.baseUrl, location.origin);
+      target.pathname = `/regional/${encodeURIComponent(session.workspace.region)}${source.pathname}`;
+      target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
+      target.search = source.search;
+      target.hash = '';
+      return { ...ticket, url: target.toString() };
+    });
   }
 
   /**
@@ -597,8 +624,10 @@ export class RallyApi {
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+    const cookie = this.session !== null && 'authentication' in this.session && this.session.authentication === 'cookie';
+    if (cookie) headers.delete('Authorization');
     try {
-      return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
+      return await fetch(`${this.baseUrl}${path}`, { ...init, headers, ...(cookie ? { credentials: 'same-origin' as const } : {}) });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw networkApiError('Rally could not reach the selected regional service.', error);
@@ -609,14 +638,18 @@ export class RallyApi {
    * nothing newer to retry under. Signing out mid-flight clears the session,
    * and an unauthenticated replay would only fail again. */
   private async renewedCredential(rejectedToken: string): Promise<string | null> {
-    const current = this.session?.accessToken ?? null;
+    const current = this.accessToken;
     // A token that already moved on was renewed by a concurrent request, so
     // replay against the current one instead of burning another rotation.
     if (current !== rejectedToken) return current;
     const renew = this.renewCredential;
     if (!renew) return null;
+    const revision = this.sessionRevision;
     this.renewalInFlight ??= renew()
       .then((session) => {
+        // A completed sign-out, workspace switch or browser session replacement
+        // cannot be undone by an older native credential renewal.
+        if (revision !== this.sessionRevision) return this.accessToken === session.accessToken ? session.accessToken : null;
         this.session = session;
         return session.accessToken === rejectedToken ? null : session.accessToken;
       })
@@ -628,7 +661,7 @@ export class RallyApi {
   }
 
   private async execute(path: string, init: RequestInit): Promise<Response> {
-    const accessToken = this.session?.accessToken ?? null;
+    const accessToken = this.accessToken;
     const response = await this.send(path, init, accessToken);
     if (response.status !== 401 || accessToken === null) return response;
     // The clone drains the body now, so nothing is left outstanding across the
@@ -768,7 +801,7 @@ export class RallyApi {
   async getWorkspace(signal?: AbortSignal): Promise<Workspace> {
     const raw = await this.request('/workspace', { schema: WireWorkspaceSchema, signal });
     let currentUser: WorkspaceMember | undefined = this.session?.user
-      ? { ...this.session.user, timezone: this.session.user.timezone ?? 'America/Los_Angeles', role: raw.role }
+      ? { ...this.session.user, timezone: this.session.user.timezone ?? 'America/Los_Angeles', role: raw.role, ...(raw.accessClass ? { accessClass: raw.accessClass } : {}) }
       : undefined;
     if (!currentUser) {
       const members = await this.getWorkspaceMembers(signal);
@@ -848,6 +881,9 @@ export class RallyApi {
     return page.items.map((member) => ({
       ...mapUser(member.user),
       role: member.role,
+      ...(member.incarnation ? { incarnation: member.incarnation } : {}),
+      ...(member.revision ? { revision: member.revision } : {}),
+      ...(member.accessClass ? { accessClass: member.accessClass } : {}),
       // Carried, not dropped: the roster is the only list that can contain a
       // membership the work-stream endpoints will refuse, and a caller that
       // cannot see the status has no way to keep one out of a picker. The
@@ -864,6 +900,12 @@ export class RallyApi {
     await this.requestVoid(`/workspace/members/${encodeURIComponent(userId)}/role`, {
       method: 'PATCH',
       body: { role },
+    });
+  }
+
+  async promoteWorkspaceGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {
+    return this.request(`/workspace/members/${encodeURIComponent(userId)}/promote`, {
+      method: 'POST', body: PromoteWorkspaceGuestSchema.parse(input), schema: WorkspaceRelationshipSchema,
     });
   }
 
@@ -929,12 +971,18 @@ export class RallyApi {
     return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
   }
 
-  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal): Promise<SidekickAttachment[]> {
-    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  }
+
+  getSidekickRecommendationOptions(workstreamId: string, substreamId = '0', signal?: AbortSignal) {
+    return this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekick-recommendation-options`, {
+      signal, schema: SidekickRecommendationOptionsSchema,
+    });
   }
 
   async setRecommendedSidekick(workstreamId: string, sidekickId: string, attached: boolean, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}?substreamId=${encodeURIComponent(substreamId)}`, {
+    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}`, {
       method: attached ? 'PUT' : 'DELETE', schema: SidekickAttachmentsSchema,
     })).items;
   }
@@ -947,6 +995,36 @@ export class RallyApi {
   async getAutomations(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const page = await this.request('/automations', { schema: wireAutomationPageSchema, signal });
     return page.items.map(mapAutomationSummary);
+  }
+
+  async listManagedScopeGrants(target: ScopeGrantTarget, signal?: AbortSignal) {
+    return this.request('/sharing/grants/list', { method: 'POST', body: { target }, schema: ManagedScopeGrantsSchema, signal });
+  }
+
+  async revokeScopeGrant(input: z.infer<typeof RevokeScopeGrantSchema>) {
+    return this.request('/sharing/grants/revoke', { method: 'POST', body: RevokeScopeGrantSchema.parse(input), schema: ScopeGrantMutationResultSchema });
+  }
+
+  async getScopeSharingOptions(parentId: string, signal?: AbortSignal) {
+    return this.request(`/sharing/${encodeURIComponent(parentId)}/options`, { schema: ScopeSharingOptionsSchema, signal });
+  }
+
+  async listScopeInvitations(target: ScopeGrantTarget, signal?: AbortSignal) {
+    return this.request('/sharing/list', { method: 'POST', body: { target }, schema: ScopeInvitationsListSchema, signal });
+  }
+
+  async createScopeInvitations(input: Omit<CreateScopeInvitations, 'actorUserId' | 'workspaceId'>) {
+    return this.request('/sharing', { method: 'POST', body: input, schema: ScopeInvitationResultSchema });
+  }
+
+  async revokeScopeInvitation(parentId: string, invitationId: string, expectedRevision: number) {
+    return this.request(`/sharing/${encodeURIComponent(parentId)}/${encodeURIComponent(invitationId)}`, {
+      method: 'DELETE', body: { expectedRevision }, schema: ScopeInvitationResultSchema,
+    });
+  }
+
+  async getSharedDirectory(signal?: AbortSignal) {
+    return this.request('/sharing/directory', { schema: SharedDirectorySchema, signal });
   }
 
   /**
@@ -1439,6 +1517,9 @@ export class RallyApi {
     // front of it. `person://` covers durable mention Markdown that is pasted
     // or replayed; `@` covers composer and hand-typed mentions.
     if (!text.includes('@') && !text.includes('person://')) return [];
+    // Guests resolve selected identities from their authorized conversation roster.
+    // A hand-typed name does not grant access to the workspace-wide directory.
+    if (this.session?.workspace?.accessClass === 'guest') return resolveMentionPayload(text, selected, []);
     const members = existingRoster ?? await this.getWorkspaceMembers();
     // People only, and only here: what a name in the text resolves to has to
     // agree with what the composer that wrote it offered and highlighted.
@@ -1477,7 +1558,7 @@ export class RallyApi {
     onProgress?: (percentage: number) => void,
     signal?: AbortSignal,
   ): Promise<WorkstreamResource> {
-    const accessToken = this.session?.accessToken ?? null;
+    const accessToken = this.accessToken;
     try {
       return await this.sendUpload(file, draftId, accessToken, onProgress, signal);
     } catch (error) {
@@ -1883,7 +1964,7 @@ export class RallyApi {
     return requestSocketTicket(
       (attemptSignal) => this.request(
         `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
-        { schema: socketTicketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
+        { schema: this.socketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
       ),
       { ownerSignal: signal, timeoutMs },
     );
@@ -1892,7 +1973,7 @@ export class RallyApi {
   getWorkspaceSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
     return requestSocketTicket(
       (attemptSignal) => this.request('/workspace/socket', {
-        schema: socketTicketSchema,
+        schema: this.socketSchema,
         signal: attemptSignal,
       }),
       { ownerSignal: signal },
@@ -1906,7 +1987,7 @@ export class RallyApi {
   ): Promise<SocketTicket> {
     return requestSocketTicket(
       (attemptSignal) => this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
-        schema: socketTicketSchema,
+        schema: this.socketSchema,
         signal: attemptSignal,
         ...(requestId ? { requestId } : {}),
       }),
@@ -1916,7 +1997,7 @@ export class RallyApi {
 
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
     signal?.throwIfAborted();
-    const request = this.request('/realtime/transcription/socket', { schema: socketTicketSchema, signal });
+    const request = this.request('/realtime/transcription/socket', { schema: this.socketSchema, signal });
     if (!signal) return request;
     // A shared credential renewal can outlive fetch cancellation. Settle this
     // caller immediately without cancelling another caller's credential renewal.
@@ -2100,22 +2181,6 @@ export class RallyApi {
 
   async createAshbyWorkspaceConnection(apiKey: string, idempotencyKey: string) {
     return this.request('/connections/ashby/workspace', {
-      method: 'POST', body: { apiKey, idempotencyKey },
-      schema: ConnectorInstallationSetupResponseSchema,
-    });
-  }
-
-  /**
-   * The response carries the endpoint URL and signing secret the administrator
-   * has to paste into Fireflies, and it is the only time Rally will hand them
-   * over. Nothing here writes either to disk.
-   */
-  async createFirefliesWorkspaceConnection(apiKey: string, idempotencyKey: string) {
-    reportTelemetryProductIntent({
-      kind: 'connector_setup_requested_v2', connector: 'fireflies', scope: 'workspace',
-      method: 'api_key', capabilityCount: telemetryCountBucket(1),
-    });
-    return this.request('/connections/fireflies/workspace', {
       method: 'POST', body: { apiKey, idempotencyKey },
       schema: ConnectorInstallationSetupResponseSchema,
     });

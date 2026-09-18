@@ -1,8 +1,10 @@
+import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
+import { createQueryClient } from "./lib/query-client";
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Region } from "@rally/contracts/regions";
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
-import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
+import { QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { Cable, RefreshCcw } from 'lucide-react';
+import { type PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { logError } from '../common/logger';
@@ -47,43 +49,13 @@ import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { WorkstreamScreen } from './screens/workstream';
 import { WorkstreamLandingScreen } from './screens/workstream-landing';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: (attempt, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && attempt < 2,
-      refetchOnWindowFocus: false,
-    },
-    mutations: { retry: false },
-  },
-});
+const queryClient = createQueryClient();
 
-class ErrorBoundary extends Component<PropsWithChildren, { error: Error | null }> {
-  override state: { error: Error | null } = { error: null };
-
-  static getDerivedStateFromError(error: Error): { error: Error } {
-    return { error };
-  }
-
-  override componentDidCatch(error: Error, info: ErrorInfo): void {
+function ErrorBoundary({ children }: PropsWithChildren): React.JSX.Element {
+  return <AppErrorBoundary onError={(error, info) => {
     logError('rally', 'renderer error boundary caught an error', error, info.componentStack);
     reportJavascriptError(error, 'react_boundary');
-  }
-
-  override render(): React.ReactNode {
-    if (this.state.error) {
-      return (
-        <main className="fatal-error-screen window-drag">
-          <section className="fatal-error-card window-no-drag">
-            <AlertTriangle aria-hidden="true" size={22} />
-            <h1>Rally needs to reopen this view</h1>
-            <p>{this.state.error.message}</p>
-            <Button className="button-primary" onClick={() => window.location.reload()}>Reload Rally</Button>
-          </section>
-        </main>
-      );
-    }
-    return this.props.children;
-  }
+  }}>{children}</AppErrorBoundary>;
 }
 
 function ServiceSetupState({
@@ -232,7 +204,7 @@ function WorkspaceApp(): React.JSX.Element {
   // One definition of this read, shared with every surface that needs the
   // viewer's own role — see `lib/use-workspace.ts` for why the session's copy
   // is no longer good enough for a gate.
-  const workspace = useWorkspaceQuery();
+  const workspace = useWorkspaceQuery({ api, session });
   useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -281,7 +253,7 @@ function WorkspaceApp(): React.JSX.Element {
       {mainSurface ? <HashRouter useTransitions={false}>
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
-            <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
+            <WorkspaceWorkstreamSockets api={workspace.error ? null : api} enabled={session?.workspace?.accessClass !== 'guest'}>
               {content}
             </WorkspaceWorkstreamSockets>
           </WorkspaceOnboardingJourney>

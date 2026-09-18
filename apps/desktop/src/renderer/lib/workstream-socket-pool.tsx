@@ -423,7 +423,7 @@ export function useRetainedWorkstreamSocket(
     api,
     parentId,
     enabled && !matchesRetainedConnection,
-    false,
+    true,
     'active_workstream',
     undefined,
     true,

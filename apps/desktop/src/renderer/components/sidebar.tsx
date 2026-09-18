@@ -1,3 +1,4 @@
+import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
 import { NewWorkstreamMenu } from "./new-workstream-menu";
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -5,69 +6,23 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
-import {
-  Archive,
-  ChevronsLeft,
-  Check,
-  CircleHelp,
-  Clock,
-  Cog,
-  Copy,
-  EyeOff,
-  Globe2,
-  GripVertical,
-  Info,
-  LogOut,
-  Megaphone,
-  Menu,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  Smartphone,
-} from 'lucide-react';
+import { Archive, ChevronsLeft, Check, CircleHelp, Clock, Cog, Copy, EyeOff, Globe2, GripVertical, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Plus, PanelLeftClose, PanelLeftOpen, Settings, Smartphone } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import {
-  formatDateTime,
-  formatTime,
-  groupActivityItems,
-  nextRecencyBoundary,
-  recencyGroupBatchFilter,
-  workstreamMarkerStatus,
-  type RecencyGroup,
-  workstreamRecencyAt,
-} from '../lib/format';
+import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, workstreamMarkerStatus, type RecencyGroup, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
-import {
-  markSurfaceEntrypoint,
-  markWorkstreamFeedOpenStarted,
-  markWorkstreamNavigation,
-  reportTelemetryProductIntent,
-  telemetryVisibility,
-} from '../lib/telemetry';
+import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import {
-  COLLAPSED_SIDEBAR_WIDTH,
-  MAX_SIDEBAR_WIDTH,
-  MIN_SIDEBAR_WIDTH,
-  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
-  SIDEBAR_CONTENT_MIN_WIDTH,
-  SIDEBAR_EXPAND_DRAG_THRESHOLD,
-  useUiStore,
-} from '../lib/ui-store';
+import { COLLAPSED_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_EXPAND_DRAG_THRESHOLD, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip, TitleSkeleton } from './primitives';
+import { Avatar, Button, DragHint, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
 import { ProjectSidebarSection } from './project-sidebar-section';
 import { RelativeTime } from './relative-time';
 import { SidebarSearch } from './sidebar-search';
@@ -213,7 +168,6 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
-
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -779,7 +733,7 @@ function WorkstreamRow({
             aria-description={workstream.scope === 'workspace' ? PUBLIC_SCOPE_NAME : undefined}
             aria-describedby={previewOpen ? `workstream-preview-${workstream.id}` : undefined}
             aria-label={[naming ? 'Rally is naming this work stream' : workstream.title, drag?.position].filter(Boolean).join(', ')}
-            className={({ isActive }) => clsx(
+            className={({ isActive }: { isActive: boolean }) => clsx(
               'sidebar-row workstream-row',
               isActive && 'is-active',
               workstream.hasUnread && 'is-unread',
@@ -792,7 +746,7 @@ function WorkstreamRow({
             // href, leaving the wrapper's handlers to fire on a link drag that
             // the sidebar has no way to reorder.
             draggable={false}
-            onClick={(event) => {
+            onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
               if (event.defaultPrevented || event.button !== 0
                 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
               closePreview();
@@ -814,25 +768,11 @@ function WorkstreamRow({
             }}
             to={`/workstreams/${workstream.id}`}
           >
-            <span className="sidebar-row-icon">
-              <WorkstreamGlyph appearance={workstream.appearance} id={workstream.id} size={36} />
-              {workstream.scope === 'workspace' && <PublicMarker />}
-              {/* Personal attention markers on completed runs must remain visible. */}
-              {markerStatus !== 'completed' && (
-                <span className="workstream-row-status">
-                  <StatusDot compact status={markerStatus} tooltip />
-                </span>
-              )}
-            </span>
-            <span className="sidebar-row-main">
-              <span className="sidebar-row-title">
-                <span className="sidebar-row-title-copy">
-                  {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
-                  {naming ? <TitleSkeleton /> : workstream.title}
-                </span>
-              </span>
-              {workstream.hasUnread && <RelativeTime className="sidebar-row-activity" format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
-            </span>
+            <NavigationRowContent id={workstream.id} title={workstream.title} appearance={workstream.appearance} naming={naming}
+              marks={<>{workstream.scope === 'workspace' && <PublicMarker />}{markerStatus !== 'completed' &&
+                <span className="workstream-row-status"><StatusDot compact status={markerStatus} tooltip /></span>}</>}
+              titlePrefix={workstream.systemKind ? <Cog aria-label="System work stream" size={11} /> : undefined}
+              activity={workstream.hasUnread ? <RelativeTime className="sidebar-row-activity" format={formatSidebarActivityTime} value={workstream.lastActivityAt} /> : undefined} />
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
                 looking at it. The position — and only the position — rides on
@@ -1690,7 +1630,7 @@ export function Sidebar({
         <Menu size={17} />
       </IconButton>
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
-      <aside
+      <NavigationFrame
         aria-label="Rally navigation"
         className={clsx('sidebar', compact && 'is-compact', sidebarOpen && 'is-mobile-open', (resizing || keyResizing) && 'is-resizing')}
         data-sidebar-collapsed={compact ? '' : undefined}
@@ -1786,8 +1726,6 @@ export function Sidebar({
               workstreams={visibleWorkstreams}
             />
           )}
-
-
 
           {/* Only when something is pinned. An empty heading would be a
               standing invitation to a feature the reader has not used, sitting
@@ -2099,7 +2037,7 @@ export function Sidebar({
             </span>
           </div>
         </DragHint>
-      </aside>
+      </NavigationFrame>
       <Modal
         footer={(
           <>

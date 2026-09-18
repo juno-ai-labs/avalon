@@ -1428,6 +1428,29 @@ describe('Workspace settings', () => {
     expect(screen.getByRole('button', { name: 'Manage events for Granola workspace events', hidden: true })).toBeInTheDocument();
   });
 
+  it('offers Fireflies to a person and never to the workspace', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue(['fireflies']);
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000021', connectorType: 'fireflies', scope: 'workspace',
+      displayName: 'Fireflies workspace meetings', capabilities: ['fireflies.workspace.read'], status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const firefliesCard = (await screen.findByText('Fireflies')).closest('article');
+    expect(firefliesCard).not.toBeNull();
+    // One administrator's key is every member's read of every meeting it can
+    // see, so there is no workspace connection to start.
+    expect(within(firefliesCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
+    // The workspace connection a customer already has keeps its row — it still
+    // receives meetings — and offers no webhook console over it.
+    expect(screen.getByText('Fireflies workspace meetings')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Manage events for Fireflies workspace meetings', hidden: true })).not.toBeInTheDocument();
+
+    fireEvent.click(await enabledConnectAction(firefliesCard!, 'Connect for me'));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith('fireflies', 'you', ['fireflies.personal.read']));
+  });
+
   it('offers the read-only X connector only at workspace scope', async () => {
     renderSettings();
     openSettingsSection('Connections');
