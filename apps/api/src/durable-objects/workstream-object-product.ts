@@ -51,6 +51,7 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
 import {
   connectorRegistryForEnv,
   connectorSupportsResourceHydration,
@@ -469,7 +470,7 @@ export class WorkstreamObjectProductService {
     private readonly transcript = new WorkstreamTranscriptStorage(storage),
     private readonly loops = new SubstreamLoopStorage(storage),
     private readonly externalSubstreamId: () => SubstreamId = () => asSubstreamId("0"),
-    private readonly defer: (promise: Promise<unknown>) => void = (promise) => { void promise; },
+    private readonly defer: WorkDeferral = runtimeDeferral,
   ) {}
 
   private conversationLoopId(root: RootRow): string {

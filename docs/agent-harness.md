@@ -59,10 +59,12 @@ rows with its request id, success, latency, and response size. The inference
 lakehouse retains exact provider request and response envelopes plus usage,
 including schema-invalid JEV responses, under the shared trace id; Workers Logs
 keep indexed operational fields rather than duplicating message content or
-credential-shaped fields. Exact-envelope lakehouse staging is registered on the
-owning Durable Object's `waitUntil`; hashing, R2 persistence, and queue delivery
-therefore remain alive after classification without delaying provider dispatch,
-the provider deadline, or message admission.
+credential-shaped fields. Exact-envelope lakehouse staging uses the shared
+runtime deferral. In a Worker invocation that registers the work with
+`waitUntil`; in the owning Durable Object, Cloudflare already keeps the object
+active while its asynchronous I/O is pending and `waitUntil` itself adds no
+extra lifetime. Hashing, R2 persistence, and queue delivery therefore leave the
+classification critical path without becoming a bare floating promise.
 
 The addressing classifier has a production-replay eval at
 `packages/agent-harness/evals/addressing`. The raw JSONL is a caller-supplied,
@@ -1323,8 +1325,9 @@ would make archive latency consume the provider's budget while still delaying
 the request. Dropping archive persistence was also rejected because the exact
 provider exchange is the evidence used to evaluate and diagnose the classifier.
 The classifier receives an explicit deferral port from its Durable Object; deep
-shared inference services use the same runtime-backed primitive, so the work is
-neither on the critical path nor an untracked floating promise.
+shared inference services use the same runtime-backed primitive. This is
+best-effort observational persistence, not durable retry: a deployment or
+runtime reset can still end work that no durable hand-off accepted.
 
 ### 2026-09-17 — Use JEV first and a measured exact fallback for addressing
 
