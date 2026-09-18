@@ -1,3 +1,4 @@
+import { ShareConversationButton, ShareConversationDialog } from "../components/scope-sharing-panel";
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 
 import { useEffect, useRef, useState } from 'react';
@@ -77,6 +78,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const { api, session } = useCollaborationSession();
+  const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
@@ -426,6 +428,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
   return (
     <>
+    {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
@@ -460,11 +463,13 @@ export function WorkstreamScreen(): React.JSX.Element {
           mainActions={(guest ? selectedSubstreamId === '0' : parent.data) ? {
             onMakePublic: guest || parent.data?.systemKind ? undefined : makePublic,
             publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
+            onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,
             onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuError(null); },
             onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
           } : undefined}
           substreamActions={{
+            onShare: (target) => setSharingSubstream(target.substreamId),
             onCopyLink: session?.workspace ? copyRowLink : undefined,
             onRename: (child) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuError(null); },
             onArchive: (child) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuError(null); },
@@ -473,6 +478,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       )}
       renderHeader={(context) => (
         <WorkstreamHeader
+          actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id}
+            parentId={id} substreamId={selectedSubstreamId} /> : null}
           currentUserId={session?.user.id ?? null}
           grokBotMode
           substreamId={selectedSubstreamId}
