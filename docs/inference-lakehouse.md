@@ -562,8 +562,10 @@ becomes product-state repair authority.
 ### 2026-09-17 — Measure inference start without making observation part of it
 
 Streaming request rows now record the user journey's receipt and provider
-dispatch boundaries in `metadata`, while the regional logger emits the same
-content-free duration. Streaming requests and attempts, standalone structured
+first-dispatch boundaries in `metadata`, while the regional logger emits the
+same content-free duration only for the first durable attempt. Later provider
+requests and recovered attempts omit the SLO duration. Streaming requests and
+attempts, standalone structured
 requests and responses, addressing diagnostics, and tool/run analytics register
 their observation through the shared Cloudflare lifecycle deferral instead of
 awaiting R2 and Queue staging on a product critical path. A production addressing

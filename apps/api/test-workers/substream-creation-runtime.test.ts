@@ -392,14 +392,12 @@ describe("substream preparation on workerd", () => {
       const target = instance as unknown as { env: Env };
       target.env = new Proxy(target.env, { get: (env, key) => key === "OPENROUTER_PRIMARY_MODEL"
         ? "google/gemini-2.5-flash-lite" : Reflect.get(env, key) });
-      // Suppress only the recovery hint so this test proves the current
-      // invocation starts the durable pending input. The SQL input itself is
-      // still produced by the real product admission below.
+      // Suppress alarm execution, not activation itself, so a provider call can
+      // only come from the current invocation's eager drain. The durable alarm
+      // remains armed as the recovery authority.
       const wakeups = instance as unknown as {
-        requestPersistentLoopActivation: () => Promise<void>;
         runDueAlarmWork: () => Promise<void>;
       };
-      wakeups.requestPersistentLoopActivation = async () => {};
       wakeups.runDueAlarmWork = async () => {};
       state.storage.sql.exec(`UPDATE workstream SET model_override = 'google/gemini-2.5-flash-lite' WHERE id = 1`);
     });

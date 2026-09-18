@@ -111,7 +111,7 @@ conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageL
    */
   modelOverride: AgentModelOverrideSchema.optional(),
 })), async (c) => {
-  const requestReceivedAt = Date.now();
+  const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
   const result = await requestFlowSpan(c, "substream.create", { flow: "substream_create" }, (span) =>
     new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
