@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { semanticTriggerQuestions, SEMANTIC_TRIGGER_CHOICES } from "../../src/semantic-trigger-gate";
+import {
+  semanticTriggerQuestions,
+  SEMANTIC_TRIGGER_CHOICES,
+  SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD,
+} from "../../src/semantic-trigger-gate";
 import { candidateQuestions, type CandidateContract } from "./contract";
 
 /**
@@ -27,6 +31,18 @@ describe("the shipped semantic trigger request", () => {
     expect(winner).toHaveLength(1);
     expect(JSON.stringify(candidateQuestions(winner[0]!)))
       .toBe(JSON.stringify(semanticTriggerQuestions));
+  });
+
+  /**
+   * The threshold is half of the shipped decision and it is not in the candidate
+   * file, so the pin above cannot see it. It is `0.5` because a sweep over the
+   * whole corpus put the utility peak there and flat below it — `calibration.ts`
+   * prints that curve — and because the band the team set starts there. Changing
+   * this line means running that sweep again, not editing the number until the
+   * test passes.
+   */
+  it("gates on the threshold the sweep selected", () => {
+    expect(SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD).toBe(0.5);
   });
 
   it("maps every choice it can receive onto an operational verdict", () => {

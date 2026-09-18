@@ -84,12 +84,16 @@ function argument(name: string): string | undefined {
 function main(): void {
   const reportsDir = argument("reports") ?? "evals/semantic-trigger/reports";
   const only = argument("candidates")?.split(",");
+  // Pooling dev and holdout runs together would hide the one thing the split
+  // exists to show, so a threshold is read from one split at a time.
+  const split = argument("split") ?? "dev";
   const cases = new Map(loadCases(argument("cases") ?? "evals/semantic-trigger/cases.jsonl")
     .map((testCase) => [testCase.id, testCase]));
   const generations = readdirSync(reportsDir)
     .filter((name) => name.endsWith(".json"))
     .sort()
-    .map((name) => JSON.parse(readFileSync(join(reportsDir, name), "utf8")) as GenerationFile);
+    .map((name) => JSON.parse(readFileSync(join(reportsDir, name), "utf8")) as GenerationFile)
+    .filter((generation) => split === "all" || generation.split === split);
 
   const pooled = new Map<string, {
     mapping: Record<string, Verdict>;
