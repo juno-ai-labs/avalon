@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55 } from "../src/durable-objects/workspace-do";
+import { CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V61 } from "../src/durable-objects/workspace-do";
 import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables";
 
 /**
@@ -28,6 +28,6 @@ describe("the connector_connections rebuild inventory", () => {
       .map((table) => table.name);
     database.close();
 
-    expect([...dependents].sort()).toEqual([...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55].sort());
+    expect([...dependents].sort()).toEqual([...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V61].sort());
   });
 });

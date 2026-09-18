@@ -9,6 +9,7 @@ function resultWithStreamCode(code: string) {
     activityIds: [],
     cursor: {},
     baseCursorJson: "{}",
+    cursorOwner: "connection",
     streamErrors: [{ streamId: "calendar", code, message: "provider content omitted" }],
   };
 }

@@ -280,6 +280,23 @@ credential failure from an MCP protocol/surface failure. Inspect the provider's
 current `tools/list` response when a formerly working prompt loses a tool—do not
 patch a historical snapshot into Rally.
 
+### 2026-09-18 — Canva reuses the live hosted-MCP surface behind a launch gate
+
+**What changed:** Canva declares one personal hosted-MCP capability against
+`https://mcp.canva.com/mcp`; tools are still discovered live and conservatively
+classified by the shared pass-through. The connector is built only in regions
+whose explicit Canva gate is enabled.
+
+**Why:** Canva's published and live catalogs already disagree, and its Rally
+callback remains subject to provider approval. Copying tools into source would
+create a stale second authority, while unconditional registration would show a
+connection members cannot complete.
+
+**Consequences:** Enabling a region asserts that its configured HTTPS callback
+has been accepted. The interim loopback path and CIMD are not invented here;
+they remain separate launch decisions. Provider descriptions, annotations and
+results remain untrusted, and 401 recovery uses the shared credential door.
+
 ### 2026-09-03 — A hosted server can be named by a connection rather than by source
 
 **What changed:** `createHostedMcpPassthrough` accepts a `serverUrl` resolver as

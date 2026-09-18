@@ -64,6 +64,7 @@ export {
   type HostedMcpTool,
 } from "./hosted-mcp";
 import { createCustomMcpConnector, type CustomMcpConnectorConfig } from "./custom-mcp";
+import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createAshbyConnector, type AshbyConnectorConfig } from "./ashby";
 import { createFirefliesConnector, type FirefliesConnectorConfig } from "./fireflies";
@@ -183,6 +184,13 @@ export {
   SLACK_MARKDOWN_BLOCK_LIMIT,
   type SlackMarkdownMessage,
 } from "./slack-markdown";
+export {
+  CANVA_MCP_URL,
+  CanvaAgentPluginDescriptor,
+  CanvaCapabilities,
+  createCanvaConnector,
+  type CanvaConnectorConfig,
+} from "./canva";
 export {
   createFirefliesConnector,
   verifyFirefliesSignature,
@@ -5192,6 +5200,7 @@ export function connectorSupportsSurface(
 export function createConnectorRegistry(input: {
   observer?: ConnectorObserver;
   customMcp?: CustomMcpConnectorConfig;
+  canva?: CanvaConnectorConfig;
   ashby?: AshbyConnectorConfig;
   fireflies?: FirefliesConnectorConfig;
   granola?: GranolaConnectorConfig;
@@ -5210,6 +5219,10 @@ export function createConnectorRegistry(input: {
       input.customMcp.fetch ?? globalThis.fetch,
       input.observer,
     ),
+  }));
+  if (input.canva) adapters.push(createCanvaConnector({
+    ...input.canva,
+    fetch: instrumentConnectorFetch("canva", input.canva.fetch ?? globalThis.fetch, input.observer),
   }));
   if (input.ashby) adapters.push(createAshbyConnector({
     ...input.ashby,

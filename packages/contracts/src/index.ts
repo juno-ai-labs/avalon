@@ -751,7 +751,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["ashby", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["ashby", "canva", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -3034,7 +3034,7 @@ export const ConnectorPollWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
   connectionId: IdSchema,
-  pollScheduleId: IdSchema
+  pollScheduleId: IdSchema,
 });
 
 export const AddressingClassificationSchema = z.object({

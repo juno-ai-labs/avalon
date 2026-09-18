@@ -22,6 +22,7 @@ interface StoredPollResult {
   activityIds: string[];
   cursorJson: string;
   baseCursorJson: string;
+  cursorOwner: "connection" | "watch";
   nextPollAt: string | null;
   streamErrors?: Array<{ streamId: string; code: string; message: string }>;
 }
@@ -96,6 +97,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
             activityIds: parsed.activityIds,
             cursorJson: JSON.stringify(parsed.cursor),
             baseCursorJson: parsed.baseCursorJson,
+            cursorOwner: parsed.cursorOwner,
             nextPollAt: parsed.nextPollAt ? new Date(parsed.nextPollAt).toISOString() : null,
             ...(parsed.streamErrors?.length ? { streamErrors: parsed.streamErrors } : {}),
           };

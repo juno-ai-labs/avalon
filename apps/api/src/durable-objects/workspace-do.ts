@@ -1149,6 +1149,11 @@ export const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55 = [
   "connector_installations",
 ] as const;
 
+/** Frozen dependent inventory for the v61 Canva parent rebuild. */
+export const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V61 = [
+  ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55,
+] as const;
+
 /**
  * Every table that cascades from `memory_scopes`, parent-first, so a restore
  * in this order never inserts a child before its parent. The last three reach
@@ -3278,7 +3283,81 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
   "PRAGMA defer_foreign_keys = OFF"
 ]
-}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }, { version: 60, description: "index explicit scope grants for guest discovery", statements: [...SCOPE_GRANT_DIRECTORY_SCHEMA] }];
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }, { version: 60, description: "index explicit scope grants for guest discovery", statements: [...SCOPE_GRANT_DIRECTORY_SCHEMA] }, {
+  version: 61,
+  description: "admit personal Canva connections without losing connector dependents",
+  statements: [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V61.map((table) =>
+      `CREATE TABLE ${table}_v61_hold AS SELECT * FROM ${table}`),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V61.map((table) => `DELETE FROM ${table}`),
+    `CREATE TABLE connector_connections_v61 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('ashby', 'canva', 'custom_mcp', 'fireflies', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v61 SELECT * FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v61 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id) WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id) WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_workspace_connection_unique ON connector_connections(workspace_id) WHERE connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_personal_connection_unique ON connector_connections(workspace_id, owner_user_id) WHERE connector_type = 'fireflies' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX canva_personal_connection_unique ON connector_connections(workspace_id, owner_user_id) WHERE connector_type = 'canva' AND scope = 'personal' AND status <> 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V61.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v61_hold`,
+      `DROP TABLE ${table}_v61_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v61 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL,
+      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'canva', 'custom_mcp', 'fireflies', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v61 SELECT * FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v61 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx ON connector_oauth_attempts(telemetry_operation_id) WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
+}];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;

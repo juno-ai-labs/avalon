@@ -7625,11 +7625,12 @@ function rethrowFirecrawlToolError(
 
 export async function pollConnectorConnection(
   env: Env,
-  input: { workspaceId: string; connectionId: string },
+  input: { workspaceId: string; connectionId: string; pollScheduleId?: string },
 ): Promise<{
   activityIds: string[];
   cursor: unknown;
   baseCursorJson: string;
+  cursorOwner: "connection" | "watch";
   nextPollAt?: string | null;
   streamErrors?: ConnectorActivityStreamError[];
 }> {
@@ -7637,6 +7638,18 @@ export async function pollConnectorConnection(
     `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
   ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
   if (!row) throw new Error("Connector connection is unavailable");
+  const watch = input.pollScheduleId ? await env.DB.prepare(
+    `SELECT rw.id, rw.cursor_json, r.id AS resource_id, r.provider_resource_id,
+            r.resource_type, r.title, r.metadata_json
+       FROM resource_watches rw
+       JOIN resources r ON r.id = rw.resource_id AND r.workspace_id = rw.workspace_id
+      WHERE rw.id = ?1 AND rw.workspace_id = ?2 AND rw.connection_id = ?3 AND rw.enabled = 1
+      LIMIT 1`,
+  ).bind(input.pollScheduleId, input.workspaceId, input.connectionId).first<{
+    id: string; cursor_json: string; resource_id: string; provider_resource_id: string | null;
+    resource_type: string; title: string; metadata_json: string;
+  }>() : null;
+  const cursorOwner = watch ? "watch" as const : "connection" as const;
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
@@ -7653,14 +7666,25 @@ export async function pollConnectorConnection(
     ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id),
     grantedScopes: parseJson(row.granted_scopes_json, []),
     credentials,
-    cursor: parseJson(row.cursor_json, {}),
-    config: { ...parseJson<Record<string, unknown>>(row.config_json, {}), region: env.AVALON_REGION },
+    cursor: parseJson(watch?.cursor_json ?? row.cursor_json, {}),
+    config: {
+      ...parseJson<Record<string, unknown>>(row.config_json, {}),
+      region: env.AVALON_REGION,
+      ...(watch ? { pollTarget: {
+        watchId: watch.id,
+        resourceId: watch.resource_id,
+        providerResourceId: watch.provider_resource_id,
+        resourceType: watch.resource_type,
+        title: watch.title,
+        metadata: parseJson(watch.metadata_json, {}),
+      } } : {}),
+    },
   };
   const registry = connectorRegistryForEnv(env);
   const adapter = registry.get(String(row.connector_type));
-  const baseCursorJson = typeof row.cursor_json === "string" ? row.cursor_json : "{}";
+  const baseCursorJson = watch?.cursor_json ?? (typeof row.cursor_json === "string" ? row.cursor_json : "{}");
   if (!adapter.poll && !adapter.pollingActivity) {
-    return { activityIds: [], cursor: context.cursor, baseCursorJson, nextPollAt: null };
+    return { activityIds: [], cursor: context.cursor, baseCursorJson, cursorOwner, nextPollAt: null };
   }
   const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
   // A poll runs inside a Workflow step, which ends when this function returns.
@@ -7689,6 +7713,7 @@ export async function pollConnectorConnection(
     activityIds: [...activityIds],
     cursor: result.cursor,
     baseCursorJson,
+    cursorOwner,
     nextPollAt: result.nextPollAt ?? null,
     ...(result.streamErrors?.length ? { streamErrors: result.streamErrors } : {}),
   };
@@ -7822,10 +7847,28 @@ export type ConnectorCursorCommit = "committed" | "already_committed" | "superse
 
 export async function commitConnectorCursor(
   database: D1Database,
-  input: Pick<ConnectorPollWorkflowInput, "workspaceId" | "connectionId">,
-  result: { cursorJson: string; baseCursorJson: string; streamErrors?: ConnectorActivityStreamError[] },
+  input: Pick<ConnectorPollWorkflowInput, "workspaceId" | "connectionId"> & { pollScheduleId?: string },
+  result: { cursorJson: string; baseCursorJson: string; cursorOwner?: "connection" | "watch"; streamErrors?: ConnectorActivityStreamError[] },
   now: string,
 ): Promise<ConnectorCursorCommit> {
+  if (result.cursorOwner === "watch") {
+    if (!input.pollScheduleId) throw new Error("connector_watch_cursor_target_missing");
+    const updated = await database.prepare(
+      `UPDATE resource_watches
+          SET cursor_json = ?1, updated_at = ?2
+        WHERE id = ?3 AND workspace_id = ?4 AND connection_id = ?5
+          AND enabled = 1 AND cursor_json = ?6
+        RETURNING id`,
+    ).bind(result.cursorJson, now, input.pollScheduleId, input.workspaceId, input.connectionId, result.baseCursorJson)
+      .first<{ id: string }>();
+    if (updated?.id === input.pollScheduleId) return "committed";
+    const current = await database.prepare(
+      `SELECT cursor_json FROM resource_watches
+        WHERE id = ?1 AND workspace_id = ?2 AND connection_id = ?3 AND enabled = 1 LIMIT 1`,
+    ).bind(input.pollScheduleId, input.workspaceId, input.connectionId).first<{ cursor_json: string }>();
+    if (!current) throw new Error("connector_watch_cursor_commit_failed");
+    return current.cursor_json === result.cursorJson ? "already_committed" : "superseded";
+  }
   const errorJson = result.streamErrors?.length
     ? JSON.stringify({ code: "connector_activity_streams_degraded", streams: result.streamErrors })
     : null;

@@ -90,6 +90,10 @@ const firefliesStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("fireflies.personal.read")).length(1),
 });
+const canvaStart = z.strictObject({
+  scope: z.literal("personal"),
+  capabilities: z.array(z.literal("canva.personal.mcp")).length(1),
+});
 const granolaStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.literal("granola.personal.read")).length(1),
@@ -254,6 +258,14 @@ connectionRoutes.post("/fireflies/start", zValidator("json", firefliesStart), as
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
     c, service, await service.beginProvider("fireflies", {
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
+  )));
+});
+connectionRoutes.post("/canva/start", zValidator("json", canvaStart), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
+    c, service, await service.beginProvider("canva", {
       ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
     }),
   )));
@@ -504,6 +516,10 @@ connectionCallbackRoutes.get("/ashby/callback", zValidator("query", googleCallba
 connectionCallbackRoutes.get("/fireflies/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "fireflies", query, (service, code, state) => service.completeProvider("fireflies", code, state));
+});
+connectionCallbackRoutes.get("/canva/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  return connectorCallback(c, "canva", query, (service, code, state) => service.completeProvider("canva", code, state));
 });
 connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");

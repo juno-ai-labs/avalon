@@ -94,6 +94,7 @@ describe("boundary contracts", () => {
   it("uses one connector OAuth provider catalog across protocol consumers", () => {
     expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
     expect(ConnectorOAuthProviders).toContain("granola");
+    expect(ConnectorOAuthProviders).toContain("canva");
   });
 
   it("represents provider members as external actors without manufacturing Avalon users", () => {
