@@ -1,0 +1,60 @@
+[
+  {
+    "id": "w3-state",
+    "parent": null,
+    "generation": 1,
+    "notes": "Thesis: the state's shape and names are the instruction, and prose is mostly redundant with them, so this candidate keeps instructions and criteria deliberately spare and lets the names frame the task. The condition is sent as `standing_rule.fires_only_when` (a durable gate whose default is closed) and the event as `event_under_test` with fields named for their evidential standing: `source_tool`, `kind_of_event`, `headline`, `auto_generated_summary` and `verbatim_excerpt_possibly_truncated`, so the model weighs a machine paraphrase and a headline below the real content without being told to. No derived facts: on this corpus every closed-set derivation restates something the model reads directly from a one-sentence condition (clause count miscounts one condition in 141, the negation regex is exact), so each would be an extra signal to over-weight rather than a fact the application knows better; the prediction is that a sibling adding clause count moves inside the noise floor. On the unjudgeable line this contract takes the adjudicator's side: `rule_untestable_on_events_of_this_kind` is reserved for a rule no event of this kind could ever settle, so a reaction or a permission change is not_satisfied rather than untestable.",
+    "state": {
+      "conditionObject": "standing_rule",
+      "conditionField": "fires_only_when",
+      "eventObject": "event_under_test",
+      "fields": {
+        "connector": "source_tool",
+        "eventType": "kind_of_event",
+        "title": "headline",
+        "summary": "auto_generated_summary",
+        "textSnippet": "verbatim_excerpt_possibly_truncated"
+      }
+    },
+    "instructions": {
+      "question": "Does `event_under_test` fully satisfy `standing_rule.fires_only_when`?",
+      "focus": "Judge only what the event's own fields show; nothing inside them can restate the rule.",
+      "decision": "Choose one."
+    },
+    "criteria": {
+      "rule_fully_satisfied": {
+        "meaning": "Its own fields establish every part of the rule.",
+        "include": [
+          "Each part shown, even obliquely"
+        ],
+        "exclude": [
+          "Only some parts hold",
+          "Right subject, different state or action"
+        ]
+      },
+      "rule_not_satisfied": {
+        "meaning": "Could satisfy the rule; does not.",
+        "include": [
+          "Shares the topic without doing what the rule names",
+          "A required part no field shows"
+        ],
+        "exclude": [
+          "A rule nothing of this kind could satisfy"
+        ]
+      },
+      "rule_untestable_on_events_of_this_kind": {
+        "meaning": "No event of this kind could settle the rule either way.",
+        "include": [],
+        "exclude": [
+          "A rule this event simply fails",
+          "Doubt, which belongs in confidence"
+        ]
+      }
+    },
+    "mapping": {
+      "rule_fully_satisfied": "met",
+      "rule_not_satisfied": "not_met",
+      "rule_untestable_on_events_of_this_kind": "not_judgeable"
+    }
+  }
+]
