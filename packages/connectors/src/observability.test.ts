@@ -1,5 +1,7 @@
+import type { NormalizedActivity } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   authorizedConnection,
   ConnectorError,
@@ -13,6 +15,35 @@ import {
 } from "./index";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000201");
+
+function activityShape(): Omit<NormalizedActivity, "id"> {
+  return {
+    workspaceId: WORKSPACE_ID,
+    region: "global",
+    connectionId: "connection-201",
+    connectionScope: "workspace",
+    connectionOwnerUserId: null,
+    provider: "granola",
+    providerEventId: "delivery-301",
+    eventType: "note.access_granted",
+    resourceType: "granola_note",
+    providerResourceId: "not_1234567890abcd",
+    actor: {},
+    subject: {},
+    occurredAt: "2026-09-16T12:51:00.000Z",
+    receivedAt: "2026-09-16T12:51:01.000Z",
+    title: "Granola note access granted",
+    summary: "",
+    textSnippet: "",
+    payloadRef: null,
+    visibility: { scope: "workspace" },
+    targetUserIds: [],
+    entityKeys: [],
+    dedupeKey: "delivery-301",
+    rawContentHash: null,
+    metadata: {},
+  };
+}
 
 function connection() {
   return authorizedConnection({
@@ -28,6 +59,54 @@ function connection() {
 }
 
 describe("connector observability", () => {
+  it("names the failing field when a provider's response does not match the adapter's schema", () => {
+    // The real failure this exists for: Fireflies answered `get_meeting_summary`
+    // with HTTP 200 and a body whose shape had drifted. A `ZodError` is not a
+    // `ConnectorError`, so it landed as `unexpected_error` — twice, identically,
+    // naming nothing. The Sidekick had no summary to write and sent no email.
+    const rejection = z.looseObject({
+      summary: z.looseObject({ topics_discussed: z.array(z.string()).nullish() }).nullish(),
+    }).safeParse({ summary: { topics_discussed: [{ name: "pricing" }] } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    const code = connectorObservationErrorCode(rejection.error);
+    expect(code).not.toBe("unexpected_error");
+    expect(code).toContain("summary.topics_discussed.0");
+    // Not `response_invalid`. This classifies every adapter operation, and
+    // `executeTool` parses the model's own arguments through the same `.parse`,
+    // so naming the provider would pin a model's malformed input on it.
+    expect(code).not.toContain("response");
+    expect(code).toContain("schema_invalid");
+  });
+
+  it("never logs a health-check message, which an adapter may fill from a provider's own error", async () => {
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      healthCheck: () => Promise.resolve({
+        ok: false,
+        // What `x.ts` does: return a caught provider error's own text, which is
+        // the provider's body and may carry anything it chose to put there.
+        message: "Upstream rejected token sk-live-4f9a for alex@juno-labs.com",
+        reasonCode: "provider_refused",
+      }),
+    }, observer);
+
+    await adapter.healthCheck(connection());
+
+    const recorded = JSON.stringify(observations);
+    expect(recorded).toContain("provider_refused");
+    expect(recorded).not.toContain("sk-live-4f9a");
+    expect(recorded).not.toContain("alex@juno-labs.com");
+  });
+
+  it("keeps its own vocabulary for the errors that already had one", () => {
+    expect(connectorObservationErrorCode(new ConnectorError("unauthorized", "no"))).toBe("unauthorized");
+    expect(connectorObservationErrorCode(new Error("something else"))).toBe("unexpected_error");
+  });
+
+
   it("logs provider request starts and terminal outcomes at useful levels without URL content", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const observer: ConnectorObserver = (...entry) => observations.push(entry);
@@ -148,6 +227,51 @@ describe("connector observability", () => {
     expect(JSON.stringify(observations)).not.toContain("connector content must remain absent");
   });
 
+  it("carries a webhook source's derive through the wrapper and observes it, and adds none where there was none", async () => {
+    // The wrapper is the only copy of a source the host sees. Its first
+    // version rebuilt `verify` and `normalize` by name and nothing else, so a
+    // connector's `derive` existed in the adapter and nowhere the ingress
+    // could reach it.
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const base = createGenericWebhookConnector();
+    const derived = { ...activityShape(), eventType: "note.generated" };
+    const adapter = instrumentConnectorAdapter({
+      ...base,
+      manifest: { ...base.manifest, type: "granola" },
+      webhookActivity: {
+        ...base.webhookActivity!,
+        async derive(_connection, _activity, event) {
+          return event.eventType === "note.access_granted"
+            ? { activities: [derived], outcome: "derived" }
+            : { activities: [], outcome: "not_applicable" };
+        },
+      },
+    }, observer);
+    const envelope = {
+      deliveryId: "delivery-301",
+      eventType: "note.access_granted",
+      providerAccountId: null,
+      bodyHash: "hash",
+      receiptKey: "receipt",
+      event: {},
+    };
+
+    await expect(adapter.webhookActivity!.derive!(connection(), activityShape(), envelope, new AbortController().signal))
+      .resolves.toEqual({ activities: [derived], outcome: "derived" });
+    expect(observations).toContainEqual([
+      "debug",
+      "connector_operation_started",
+      expect.objectContaining({ connector_type: "granola", operation: "webhook_derive", delivery_id: "delivery-301", event_type: "note.access_granted" }),
+    ]);
+    expect(observations).toContainEqual([
+      "info",
+      "connector_operation_finished",
+      expect.objectContaining({ operation: "webhook_derive", outcome: "derived", derived_event_types: ["note.generated"] }),
+    ]);
+    expect(instrumentConnectorAdapter(base, observer).webhookActivity!.derive).toBeUndefined();
+  });
+
   it("retains identifiers from real Google and Linear tool shapes without adjacent content", async () => {
     const observations: Parameters<ConnectorObserver>[] = [];
     const adapter = instrumentConnectorAdapter({
@@ -218,7 +342,7 @@ describe("connector observability", () => {
     const degraded = instrumentConnectorAdapter({
       ...base,
       async healthCheck() {
-        return { ok: true, message: "usable", warning: "provider content omitted" };
+        return { ok: true, message: "usable", warning: "provider content omitted", reasonCode: "delivery_stopped" };
       },
     }, observer);
     const unhealthy = instrumentConnectorAdapter({
@@ -244,6 +368,9 @@ describe("connector observability", () => {
         operation: "health_check",
         outcome: "degraded",
         warning_present: true,
+        // The code crosses for a degraded result as it does for a failed one;
+        // the warning it explains is prose and stays out of the log.
+        reason_code: "delivery_stopped",
       }),
     ]);
     expect(observations).toContainEqual([
@@ -256,6 +383,92 @@ describe("connector observability", () => {
       }),
     ]);
     expect(JSON.stringify(observations)).not.toContain("provider content omitted");
+  });
+
+  it("names each failed stream's code on a poll, and never a stream's message", async () => {
+    // A poll whose every stream failed logged as `succeeded` with a count. The
+    // codes are the adapter's own or a schema rejection's paths; the messages
+    // can carry provider text and already reach the connection row.
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      async poll() {
+        return {
+          activities: [],
+          cursor: {},
+          streamErrors: [
+            { streamId: "calendar", code: "schema_invalid:items.0.start:invalid_type", message: "provider content must remain absent" },
+            { streamId: "mail", code: "unauthorized", message: "provider content must remain absent" },
+            { streamId: "drive", code: "unauthorized", message: "provider content must remain absent" },
+          ],
+        };
+      },
+    }, observer);
+
+    await adapter.poll!(connection(), new AbortController().signal);
+
+    expect(observations).toContainEqual([
+      "info",
+      "connector_operation_finished",
+      expect.objectContaining({
+        operation: "poll",
+        stream_error_count: 3,
+        stream_error_codes: ["schema_invalid:items.0.start:invalid_type", "unauthorized"],
+      }),
+    ]);
+    expect(JSON.stringify(observations)).not.toContain("provider content must remain absent");
+  });
+
+  it("names the field a returned tool-input rejection rejected, and not the value", () => {
+    // A returned `ZodError` had its paths in hand and logged the word
+    // `invalid`; the same rejection thrown would have been named.
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      validateToolInput(_name, args) {
+        const result = z.strictObject({ filters: z.array(z.strictObject({ status: z.enum(["open", "closed"]) })) }).safeParse(args);
+        return result.success ? null : result.error;
+      },
+    }, observer);
+
+    adapter.validateToolInput!("list_issues", { filters: [{ status: "member content must remain absent" }] });
+
+    expect(observations).toContainEqual([
+      "info",
+      "connector_operation_finished",
+      expect.objectContaining({
+        operation: "tool_input_validate",
+        outcome: "invalid",
+        code: "tool_input_invalid:filters.0.status:invalid_value",
+      }),
+    ]);
+    expect(JSON.stringify(observations)).not.toContain("member content must remain absent");
+  });
+
+  it("withholds the names of unknown keys a caller sent, which are the caller's data", () => {
+    // A strict tool schema refuses an extra argument by naming the key, and
+    // the key is whatever the model — or the member it was quoting — put
+    // there. The count and the code cross; the name does not.
+    const observations: Parameters<ConnectorObserver>[] = [];
+    const observer: ConnectorObserver = (...entry) => observations.push(entry);
+    const adapter = instrumentConnectorAdapter({
+      ...createGenericWebhookConnector(),
+      validateToolInput(_name, args) {
+        const result = z.strictObject({ title: z.string() }).safeParse(args);
+        return result.success ? null : result.error;
+      },
+    }, observer);
+
+    adapter.validateToolInput!("create_page", { title: "ok", PRIVATE_customer_alice_example_com: true });
+
+    expect(observations).toContainEqual([
+      "info",
+      "connector_operation_finished",
+      expect.objectContaining({ operation: "tool_input_validate", outcome: "invalid", code: "tool_input_invalid:-root-:unrecognized_keys" }),
+    ]);
+    expect(JSON.stringify(observations)).not.toContain("PRIVATE_customer_alice_example_com");
   });
 
   it("keeps connector behavior independent from observer failures", async () => {

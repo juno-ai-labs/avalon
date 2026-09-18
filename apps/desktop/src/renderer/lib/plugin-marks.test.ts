@@ -10,19 +10,22 @@ describe('PLUGIN_BRAND_MARKS', () => {
   });
 
   it('records which brands ship single-colour art', () => {
-    // Six do. Slack and Granola do not — their variant unions are
+    // Eight do. Slack and Granola do not — their variant unions are
     // `default | wordmark` and `default | light | dark` — so they render their
-    // palette and `.connector-mark` recolours it. If this flips upstream the
-    // table stops typechecking, which is the point of recording it.
+    // palette and `.connector-mark` recolours it. Ashby and Fireflies are local
+    // marks that only ship `mono`. If this flips upstream the table stops
+    // typechecking, which is the point of recording it.
     expect(PLUGIN_BRAND_MARKS.slack.mono).toBe(false);
     expect(PLUGIN_BRAND_MARKS.granola.mono).toBe(false);
-    for (const slug of ['github', 'google', 'google-drive', 'linear', 'notion', 'x'] as const) {
+    for (const slug of ['ashby', 'fireflies', 'github', 'google', 'google-drive', 'linear', 'notion', 'x'] as const) {
       expect(PLUGIN_BRAND_MARKS[slug].mono, slug).toBe(true);
     }
   });
 
   it('narrows a company name apart from the shapes no company owns', () => {
     expect(isPluginBrandMark('slack')).toBe(true);
+    expect(isPluginBrandMark('ashby')).toBe(true);
+    expect(isPluginBrandMark('fireflies')).toBe(true);
     expect(isPluginBrandMark('computer')).toBe(false);
     expect(isPluginBrandMark('webhook')).toBe(false);
   });
@@ -36,7 +39,7 @@ describe('connectorBrandMark', () => {
   });
 
   it('names a real mark for every connector Rally has an adapter for', () => {
-    const adapters = ['github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
+    const adapters = ['ashby', 'fireflies', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
     for (const connectorType of adapters) {
       const mark = connectorBrandMark(connectorType);
       expect(mark, connectorType).not.toBeNull();

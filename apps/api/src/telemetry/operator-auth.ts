@@ -13,7 +13,7 @@ import { timingSafeEqualText } from '../lib/crypto';
  * `TELEMETRY_OPERATORS_JSON` holds the telemetry roles, `support` and
  * `security`, for the restricted telemetry surface. `DEMO_OPERATORS_JSON`
  * holds the `demos` role, the credential Ace presents to retire a workspace
- * to prepare a demo, and to reconcile acquisition acknowledgements. They are two secrets rather than
+ * to prepare a demo, to reconcile acquisition acknowledgements, and to apply reviewed connector maintenance. They are two secrets rather than
  * one map with three roles because they are set and rotated by different
  * people for different reasons, and a Worker secret cannot be read back once
  * set: adding a `demos` token to the telemetry map meant overwriting tokens

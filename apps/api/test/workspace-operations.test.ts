@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import type { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
@@ -35,7 +36,7 @@ afterEach(() => {
 });
 
 /** A workspace row in the region the test names, so the door's row read has something to find. */
-function seedWorkspace(database: DatabaseSync, region: "global" | "eu"): void {
+function seedWorkspace(database: DatabaseSync, region: string): void {
   database.prepare(
     `INSERT INTO users(id, google_subject, email, name, created_at, updated_at)
      VALUES (?, ?, 'owner@example.test', 'Owner', ?, ?)`,
@@ -68,7 +69,7 @@ function emptyWorkspaceObjects(calls: string[]): Env["WORKSPACE_DOS"] {
   return binding;
 }
 
-function fixture(options: { workspaceRegion?: "global" | "eu"; objectCalls?: string[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync } {
+function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync } {
   const database = migratedSqliteDatabase();
   databases.push(database);
   if (options.workspaceRegion) seedWorkspace(database, options.workspaceRegion);
@@ -142,8 +143,8 @@ describe("the workspace retirement route", () => {
   it("refuses a workspace the other region owns, even though its row is in the table", async () => {
     // The predicate the door exists for. Against an empty table the 404 above
     // proves nothing about the region clause; this row is present, named by the
-    // request, and owned by EU — dropping `AND region = ?` admits it.
-    const { env, app } = fixture({ workspaceRegion: "eu" });
+    // request, and owned by enterprise — dropping `AND region = ?` admits it.
+    const { env, app } = fixture({ workspaceRegion: "enterprise" });
     const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
     const response = await app.request(`/internal/workspaces/${WORKSPACE_ID}/retire`, {
       method: "POST", headers, body: confirmed(WORKSPACE_ID),

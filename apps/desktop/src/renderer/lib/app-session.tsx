@@ -42,6 +42,8 @@ const connectorProviderNames = {
   custom_mcp: 'The MCP server',
   google: 'Google',
   github: 'GitHub',
+  ashby: 'Ashby',
+  fireflies: 'Fireflies',
   granola: 'Granola',
   linear: 'Linear',
   notion: 'Notion',
@@ -54,7 +56,9 @@ export interface PendingInvitation {
 }
 
 export interface PendingConnectorOAuth {
-  source?: 'onboarding';
+  source?: 'onboarding' | 'conversation';
+  connectorId?: string;
+  scope?: 'personal' | 'workspace';
   attemptId: string;
   provider: ConnectorOAuthProvider;
   region: Region;
@@ -173,9 +177,15 @@ export type AppSessionDesktopBridge = Pick<
   | 'surrenderActiveWorkspace'
 >;
 
+function configuredApiBase(runtime: RuntimeConfig, region: Region): string {
+  const url = runtime.api[region];
+  if (!url) throw new Error('The region is unavailable');
+  return url;
+}
+
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
   if (session.workspace) return session.workspace.region;
-  return runtime.api.eu === session.apiBaseUrl ? 'eu' : 'global';
+  return 'global';
 }
 
 function sessionsShareCacheScope(
@@ -254,7 +264,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       return;
     }
     const nextRegion = nextSession.workspace?.region
-      ?? (runtime?.api.eu === nextSession.apiBaseUrl ? 'eu' : 'global');
+      ?? 'global';
     setDeviceSelectedRegion(nextRegion);
     setRegion(nextRegion);
     if (nextSession.workspace) {
@@ -365,11 +375,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   // service, even when an existing session belongs to the other region.
   const invitationApi = useMemo(() => {
     if (!pendingInvitation || !runtime) return null;
-    return new RallyApi(runtime.api[pendingInvitation.region], null);
+    return new RallyApi(configuredApiBase(runtime, pendingInvitation.region), null);
   }, [pendingInvitation, runtime]);
 
   const createDevelopmentSession = useCallback(async () => {
-    if (!api) throw new Error('Choose a workspace region first.');
+    if (!api) throw new Error('Open a workspace first.');
     const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Rally Development');
     setSession(nextSession);
     if (nextSession.workspace) {
@@ -407,7 +417,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const reconnectAccountIdentity = useCallback(async (): Promise<void> => {
     if (!runtime) throw new Error('Rally is still loading its identity service.');
     const authAttempt = await bridge.createDesktopAuthAttempt({
-      apiBaseUrl: runtime.api.global,
+      apiBaseUrl: configuredApiBase(runtime, 'global'),
       region: 'global',
     });
     // Main honours only this attempt from here on, so whoever waited on an
@@ -416,7 +426,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // already retired.
     settleAccountSignIn(null, new AccountSignInSupersededError());
     try {
-      const identityApi = new RallyApi(runtime.api.global, null);
+      const identityApi = new RallyApi(configuredApiBase(runtime, 'global'), null);
       const url = await identityApi.beginGoogleLogin(
         'global',
         'rallywithai://auth/complete',
@@ -895,13 +905,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         else if (requireActiveWorkspace('Sign in before opening this work-stream link.')) openWorkstream();
         return;
       }
-      if (intent.kind === 'note') {
-        if (!requireActiveWorkspace('Sign in before opening this note.')) return;
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = `/notes/${intent.noteId}`;
-        return;
-      }
       if (intent.kind === 'settings') {
         const openSettings = async (): Promise<void> => {
           setDeepLinkError(null);
@@ -977,6 +980,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'connector-result') {
         const connectorName = intent.provider ? connectorProviderNames[intent.provider] : null;
         const applyConnectorResult = async (): Promise<void> => {
+          const pending = pendingConnectorOAuthRef.current;
+          const pendingMatches = pending !== null
+            && pending.provider === intent.provider
+            && (intent.attemptId === null || pending.attemptId === intent.attemptId)
+            && (intent.target === null || (
+              pending.workspaceId === intent.target.workspaceId
+              && pending.region === intent.target.region
+            ));
           if (intent.status === 'connected') {
             setDeepLinkError(null);
             await Promise.all([
@@ -984,17 +995,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               invalidateCachedWorkstreamDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
-            const pending = pendingConnectorOAuthRef.current;
-            const fromOnboarding = pending?.source === 'onboarding' && pending.provider === intent.provider && pending.workspaceId === intent.target?.workspaceId && pending.region === intent.target?.region;
-            if (intent.target && !fromOnboarding) await bridge.openSettings('connections');
-            setPendingConnectorOAuth(null);
+            const stayInPlace = pendingMatches
+              && (pending.source === 'onboarding' || pending.source === 'conversation');
+            if (intent.target && !stayInPlace) await bridge.openSettings('connections');
           } else {
             reportDeepLinkFailure(
               intent.status === 'denied'
                 ? `${connectorName ?? 'Connector'} authorization was cancelled.`
-                : `${connectorName ?? 'Connector'} could not be connected. Try again from Connections.`,
+                : `${connectorName ?? 'Connector'} could not be connected. Try again.`,
             );
           }
+          if (pendingMatches) setPendingConnectorOAuth(null);
         };
         if (intent.target) {
           await runInDeepLinkWorkspace(intent.target, applyConnectorResult);
@@ -1026,7 +1037,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setDeepLinkError(null);
       try {
         const nextSession = await bridge.exchangeDesktopTicket({
-          apiBaseUrl: runtime.api.global,
+          apiBaseUrl: configuredApiBase(runtime, 'global'),
           region: 'global',
           ticket: intent.ticket!,
           attemptId: intent.attemptId!,

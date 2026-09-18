@@ -1,10 +1,9 @@
 import {
   WorkstreamReadResourceOutputSchema,
-  WorkstreamSearchResourceOutputSchema,
-  WorkstreamSummarizeResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
   type ExecutionPrincipal,
 } from "@rally/contracts";
+import { z } from "zod";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { Env } from "../env";
@@ -179,16 +178,12 @@ export async function invalidateAttachmentToolReplay(
 
 
 function attachmentReceiptDependencies(canonicalToolName: string, output: unknown): ReceiptDependency[] {
-  if (canonicalToolName === "read_resource") {
-    const parsed = WorkstreamReadResourceOutputSchema.safeParse(output);
-    return parsed.success ? [{ resourceId: parsed.data.resourceId, derivativeSha256: parsed.data.version.sha256 }] : [];
-  }
-  if (canonicalToolName === "search_resource") {
-    const parsed = WorkstreamSearchResourceOutputSchema.safeParse(output);
-    return parsed.success ? [{ resourceId: parsed.data.resourceId, derivativeSha256: parsed.data.version.sha256 }] : [];
-  }
-  if (canonicalToolName === "summarize_resource") {
-    const parsed = WorkstreamSummarizeResourceOutputSchema.safeParse(output);
+  if (["read_resource", "read_resource_next", "read_resource_previous", "search_resource", "summarize_resource"].includes(canonicalToolName)) {
+    // Receipt dependencies are independent of the model-facing pagination
+    // envelope. This also accepts completed receipts from before page IDs.
+    const parsed = z.object({ resourceId: WorkstreamReadResourceOutputSchema.shape.resourceId,
+      version: WorkstreamReadResourceOutputSchema.shape.version,
+    }).safeParse(output);
     return parsed.success ? [{ resourceId: parsed.data.resourceId, derivativeSha256: parsed.data.version.sha256 }] : [];
   }
   if (canonicalToolName === "view_resource") {

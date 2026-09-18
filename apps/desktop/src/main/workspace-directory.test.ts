@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 import type { DesktopWorkspaceSummary } from '../common/desktop';
 import type { StoredAuth, StoredAuthSet, StoredProfile, StoredProfileSet } from './stored-auth';
@@ -12,11 +13,11 @@ const user = {
   createdAt: '2026-08-01T12:00:00.000Z',
 };
 
-function workspace(id: string, name: string, region: 'global' | 'eu' = 'global'): DesktopWorkspaceSummary {
+function workspace(id: string, name: string, region: string = 'global'): DesktopWorkspaceSummary {
   return { id, name, slug: name.toLowerCase().replace(/\s+/gu, '-'), region, role: 'member', createdAt: '2026-08-01T12:00:00.000Z' };
 }
 
-function credential(workspaceId: string, region: 'global' | 'eu' = 'global'): StoredAuth {
+function credential(workspaceId: string, region: string = 'global'): StoredAuth {
   return {
     version: 1,
     accessToken: `access-token-for-${workspaceId}-${region}`,
@@ -37,13 +38,13 @@ function profile(summary: DesktopWorkspaceSummary, cachedAt = '2026-09-01T12:00:
 
 const junoLabs = workspace('00000000-0000-7000-8000-0000000000a1', 'Juno Labs');
 const laCabra = workspace('00000000-0000-7000-8000-0000000000a2', 'La Cabra');
-const europe = workspace('00000000-0000-7000-8000-0000000000a3', 'Europe Studio', 'eu');
+const europe = workspace('00000000-0000-7000-8000-0000000000a3', 'Europe Studio', 'enterprise');
 const joinedElsewhere = workspace('00000000-0000-7000-8000-0000000000a4', 'Joined Elsewhere');
 
 const auth: StoredAuthSet = {
   version: 2,
   account: null,
-  workspaces: [credential(junoLabs.id), credential(laCabra.id), credential(europe.id, 'eu')],
+  workspaces: [credential(junoLabs.id), credential(laCabra.id), credential(europe.id, 'enterprise')],
   activeWorkspace: { workspaceId: junoLabs.id, region: 'global' },
   workspaceRecency: [
     { workspaceId: junoLabs.id, region: 'global' },
@@ -119,14 +120,14 @@ describe('merged workspace directory', () => {
   });
 
   it('does not confuse a same-id workspace in the other region with a stored one', () => {
-    const regionalTwin = { ...laCabra, region: 'eu' as const, name: 'La Cabra EU' };
+    const regionalTwin = { ...laCabra, region: 'enterprise' as const, name: 'La Cabra enterprise' };
     const merged = mergeWorkspaceDirectory([regionalTwin], storedWorkspaceSummaries(auth, profiles), auth);
 
     expect(merged.map((row) => [row.name, row.region, row.credentialStored])).toEqual([
       ['Juno Labs', 'global', true],
       ['La Cabra', 'global', true],
-      ['La Cabra EU', 'eu', false],
-      ['Europe Studio', 'eu', true],
+      ['La Cabra enterprise', 'enterprise', false],
+      ['Europe Studio', 'enterprise', true],
     ]);
   });
 });
@@ -157,6 +158,6 @@ describe('ended stored workspaces', () => {
 
   it('tells regions apart when the same id is listed for the other one', () => {
     expect(endedStoredWorkspaces(auth, profiles, [junoLabs, laCabra, { ...europe, region: 'global' }], discoveredAt))
-      .toEqual([{ workspaceId: europe.id, region: 'eu' }]);
+      .toEqual([{ workspaceId: europe.id, region: 'enterprise' }]);
   });
 });

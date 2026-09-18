@@ -85,7 +85,7 @@ block is not forgotten: its row stays at `none`, and the next load is a change
 of residency rather than a discovery.
 
 **Invalidation.** A kind's source can be replaced wholesale, as a Terminal
-checkout is by `terminal_checkout_repository`. `invalidateKind` moves every
+checkout is by `checkout_repository`. `invalidateKind` moves every
 block of the kind to `none`, pending deliveries included. This is the one
 transition that changes the prefix mid-run; the old repository's instructions
 have no successor message to supersede them.
@@ -229,8 +229,6 @@ by the tool loop, which no block can widen. Per-candidate symlink refusal and
 `realpath` containment are what keep a repository from planting
 `AGENTS.md -> .git/config` and having the probe deliver the checkout's Git
 credential header.
-
-## Changelog
 
 ### 2026-09-09 — The gate counts delivered blocks, the render reads prompt rows, unknown kinds are skipped
 

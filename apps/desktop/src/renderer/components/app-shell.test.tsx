@@ -10,7 +10,6 @@ import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
   invitationAccountMismatch,
-  showsAutomation,
   upsertProjectDirectory,
   windowControlsShellClass,
   batchArchiveSkipIds,
@@ -228,20 +227,6 @@ describe('applyPinnedWorkstreams', () => {
     // Rewriting the row would replace a status the socket is authoritative for
     // with whatever the pin response happened to carry.
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toBe(unchanged);
-  });
-});
-
-describe('showsAutomation', () => {
-  const automationId = '00000000-0000-7000-8000-000000000002';
-
-  it('catches the stable automation route in either lifecycle state', () => {
-    expect(showsAutomation(`/automations/${automationId}`, automationId)).toBe(true);
-  });
-
-  it('leaves a screen showing something else alone', () => {
-    expect(showsAutomation('/automations/new', automationId)).toBe(false);
-    expect(showsAutomation('/automations/00000000-0000-7000-8000-000000000009', automationId)).toBe(false);
-    expect(showsAutomation('/workstreams/new', automationId)).toBe(false);
   });
 });
 

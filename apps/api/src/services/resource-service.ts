@@ -1,6 +1,3 @@
-import { createAccessContext, requireAuthorizedRead } from './authorization-service';
-import { listedResourceVisibilitySql } from './resource-listing';
-import type { AccessContext } from './authorization-policy';
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
@@ -11,30 +8,35 @@ import {
   type ResourceVersionAuthor,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
+import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
-import { createResourceObjectPort } from "../runtime/resource-port";
-import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import {
   connectorRegistryForEnv,
   connectorSupportsResourceHydration,
 } from "../lib/connector-registry";
-import { truncateUtf16Safe } from "../lib/text";
-import { withAuthorizedConnection } from "./connector-connection-access";
-import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workspaceDOName } from "../durable-objects/names";
-import { verifyAttachmentMimeType } from "./attachment-mime-verification";
+import { truncateUtf16Safe } from "../lib/text";
+import { createResourceObjectPort } from "../runtime/resource-port";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import {
   materializeAttachmentDerivative,
   ocrPdfWithWorkersAi,
   type AuthorizedDerivativeResource,
 } from "./attachment-derivative-service";
-import { emitProductUsageTelemetry } from "../telemetry/product-usage";
-import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
+import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import { loadBrowserCompatibleImage } from "./attachment-model-content";
+import type { AccessContext } from './authorization-policy';
+import { createAccessContext, requireAuthorizedRead } from './authorization-service';
+import { withAuthorizedConnection } from "./connector-connection-access";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { listedResourceVisibilitySql } from './resource-listing';
+import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
+import { allocateResourceSlugBesideCreation } from "./resource-slug";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 function resourceTelemetryConnector(value: unknown):
   'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
@@ -42,8 +44,6 @@ function resourceTelemetryConnector(value: unknown):
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }
-import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 export interface ResolveResourceInput {
   connectionId: string;
@@ -87,13 +87,7 @@ const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
 
-const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note' OR EXISTS (
-  SELECT 1 FROM notes note_visibility
-  WHERE note_visibility.resource_id = r.id
-    AND note_visibility.workspace_id = r.workspace_id
-    AND note_visibility.archived_at IS NULL
-    AND (note_visibility.scope = 'workspace' OR note_visibility.owner_user_id = ?)
-))`;
+const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note')`;
 
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     c.connector_type AS connector_type,
@@ -147,7 +141,6 @@ export class ResourceService {
       listedResourceVisibilitySql('r'),
     ];
     const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
-    bindings.push(this.auth.userId);
 
     if (query) {
       const pattern = `%${escapeLikePattern(query)}%`;
@@ -205,7 +198,8 @@ export class ResourceService {
     };
   }
 
-  async upload(file: File, title: string | undefined, draftId: string) {
+  async upload(file: File, title: string | undefined, draftId: string,
+    importIdentity?: { operationId: string; sourceRole: "user" | "assistant"; sourceKind: "attachment" | "artifact"; fileIndex: string }) {
     const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
     if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);
@@ -215,9 +209,19 @@ export class ResourceService {
       workspaceId: this.auth.workspaceId,
       resourceId: id,
     });
-    if (exists) throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
     const bytes = new Uint8Array(await file.arrayBuffer());
     const contentSha256 = await sha256Hex(bytes);
+    if (exists) {
+      const existing = importIdentity ? await this.loadResource(id) : null;
+      const metadata = existing ? JSON.parse(String(existing['metadata_json'] ?? "{}")) as Record<string, unknown> : {};
+      if (existing && existing['uploaded_by_user_id'] === this.auth.userId
+        && existing['content_sha256'] === contentSha256
+        && existing['title'] === truncateUtf16Safe(title ?? file.name, 300)
+        && metadata['originalName'] === file.name
+        && metadata['declaredMimeType'] === truncateUtf16Safe(file.type || 'application/octet-stream', 160)
+        && JSON.stringify(metadata['importIdentity']) === JSON.stringify(importIdentity)) return this.get(id);
+      throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
+    }
     const declaredMimeType = truncateUtf16Safe(file.type || "application/octet-stream", 160);
     const verifiedMimeType = verifyAttachmentMimeType(bytes, file.name, declaredMimeType);
     // A draft UUID may be reused after deletion. Make each original object key
@@ -256,7 +260,8 @@ export class ResourceService {
       mimeType: verifiedMimeType,
       contentRef: key,
       contentSha256,
-      metadataJson: JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
+      metadataJson: JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType,
+        ...(importIdentity ? { importIdentity } : {}) }),
       uploadedByUserId: this.auth.userId,
       at,
     });
@@ -616,7 +621,7 @@ export class ResourceService {
       throw error;
     }
     await this.refreshScheduler();
-    void emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: 'workstream_resource_action_completed',
@@ -632,7 +637,7 @@ export class ResourceService {
       },
       operationId: id,
       eventId: newId(),
-    }).catch(() => undefined);
+    });
     return { watchEnabled: true };
   }
 
@@ -673,7 +678,7 @@ export class ResourceService {
       throw error;
     }
     await this.refreshScheduler();
-    void emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: 'workstream_resource_action_completed',
@@ -689,7 +694,7 @@ export class ResourceService {
       },
       operationId: id,
       eventId: newId(),
-    }).catch(() => undefined);
+    });
   }
 
   private async loadResource(id: string): Promise<Record<string, unknown>> {
@@ -698,7 +703,6 @@ export class ResourceService {
     ).bind(
       id,
       this.auth.workspaceId,
-      this.auth.userId,
       this.auth.userId,
       this.auth.userId,
     ).first<Record<string, unknown>>();

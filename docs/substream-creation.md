@@ -12,6 +12,19 @@ The platform currently uses summary-based context with
 `google/gemini-2.5-flash-lite` and creator-only membership. These are shared
 platform policies, not controls offered to the user.
 
+Prepared history may be supplied by the internal coordinator on confirmation.
+It uses the same canonical preparation/materialization and resource-reservation
+owner as a root conversation, before the parent publishes readiness. The durable
+preparation receipt rejects changed replay. The parent freezes the prepared-history
+hash (or no-history intent) when confirmation is first claimed, before any child
+installation yields. Concurrent and ready confirmations must match that intent;
+a ready child may only replay an already committed history installation. This
+prevents a confirmation without history from publishing ahead of one that requires
+it, and prevents adding initial history after publication. Parent migration 12
+treats previously claimed operations as no-history, preserving their original
+meaning. An ordinary opening can then start
+execution independently. See [prepared conversations](session-import.md).
+
 ## Where the code lives
 
 | File | Responsibility |
@@ -25,15 +38,21 @@ platform policies, not controls offered to the user.
 | `apps/api/src/durable-objects/substream-context-transfer.ts` | Frame-sized initial-context snapshot transfer. |
 | `apps/api/src/services/substream-initial-context.ts` | Inert seed to model-context conversion. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Main/child navigation, the creation state machine and its cache seeding, rename and archive dialogs, and `railChildren`, which draws the open substream's row under its own name. |
+| `apps/desktop/src/renderer/components/workstream-sidebar.tsx` | The center rail's rows, including the placeholder row a substream being created holds. |
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | The launch surface: branch provenance, the composer that starts a substream, its model pin, and the optimistic turn while one is being created. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Renders that surface in place of the conversation's own three rows, and `branchProvenance`, which chooses the turns it fades. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | The optimistic opening transcript and the child detail both launchers seed. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
+| `apps/ios/Rally/Network/RallyClient.swift` | Same prepare, confirm, cancel, rename and archive routes the desktop client calls. |
+| `apps/ios/Rally/Network/WorkstreamControlSocket.swift` | Parent `workstream_metadata` child directory on iPhone. |
+| `apps/ios/Rally/App/AppModel.swift` | iOS creation state machine: nothing reserved until submit, launch composer, then the child's feed socket. |
+| `apps/ios/Rally/Features/Chat/SubstreamSwitcher.swift` | Phone-shaped center rail: conversation chip, Main/child sheet, launch surface. |
 
 ## How it works
 
 The middle sidebar puts the main conversation first, then one full-width row per
-child, then **New substream**. Every row is the navigation sidebar's work-stream
+child — including, while one is being created, the child that does not exist
+yet — then **New substream**. Every row is the navigation sidebar's work-stream
 row — borderless, one 36px leading mark slot — and the mark is what tells them
 apart: the work stream's own tinted icon for the main conversation, a Tabler
 `corner-down-right` arrow for a child, and a Tabler `plus` for creation. The
@@ -123,6 +142,28 @@ child's detail before the navigation, so the child's screen paints the same turn
 in the same place rather than showing its opening state. A creation that fails
 takes the optimistic turn back off the screen and puts the words back in the
 composer.
+
+The rail draws the row from that same keystroke. It is the ordinary child row —
+the arrow in the mark slot, selected — carrying the title skeleton the header
+above it already shows, placed last in the list, where a child created now will
+be listed. **New substream** goes back to being the row that starts the next
+one. Two round trips is long enough that the conversation on screen having no
+row of its own was the surface saying nothing about the thing it was doing, and
+a plus row claiming to be where the reader is says it wrong. The skeleton rather
+than the first line of the message because the title is the server's to derive:
+a second answer here to what a first line is would disagree the moment either
+changed.
+
+The placeholder yields to the child's own row the moment the parent's directory
+carries it, which is **before** the navigation rather than at it: readiness
+broadcasts from inside the confirmation, so that frame can reach the window
+while the response is still in flight. The rail recognizes the row by the id
+preparation reserved — `prepare` answers with it, the child is provisioned under
+the same one, and `workstream.tsx` holds it for the attempt on screen. Without
+that the two would be drawn side by side, one conversation with two rows. While
+the published row stands in for a creation the route has not caught up with, it
+is the row marked current, because that is the conversation the launch surface
+is showing.
 
 The timer is the one thing the swap does not carry across, and deliberately: a
 work stream's creation writes its run and answers with the id, while a message
@@ -495,6 +536,62 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-09-15 — Share prepared conversation file ownership
+
+Prepared history may be supplied by the internal coordinator on confirmation.
+It uses the same canonical preparation/materialization and resource-reservation
+owner as a root conversation, before the parent publishes readiness. The durable
+preparation receipt rejects changed replay. The parent freezes the prepared-history
+hash (or no-history intent) when confirmation is first claimed, before any child
+installation yields. Concurrent and ready confirmations must match that intent;
+a ready child may only replay an already committed history installation. This
+prevents a confirmation without history from publishing ahead of one that requires
+it, and prevents adding initial history after publication. Parent migration 12
+treats previously claimed operations as no-history, preserving their original
+meaning. An ordinary opening can then start
+execution independently. See [prepared conversations](session-import.md).
+
+The separate durable preparation owner prevents file holds from depending on a
+live-message mailbox that imported history never creates. Fake pending messages
+and generation receipts were rejected because they conflate storage with execution.
+
+### 2026-09-11 — The rail holds a row for a substream being created
+
+**What changed:** From the keystroke that submits the launch composer until the
+created child is navigated to, the center rail draws that substream's row: the
+child row's arrow and selected background, the title skeleton the launch header
+already shows, last in the list. **New substream** stops being the current row
+for that stretch.
+
+**Why:** Creation is two round trips, and across them the rail showed no row for
+the conversation on screen — the plus row it was opened from was the only thing
+claiming to be where the reader was, which is not what that row means anywhere
+else. The row now says what is happening in the place the answer will land.
+
+**Considered and rejected:** Drawing the first line of the opening message as
+the row's title, which would leave the row unchanged at the swap: the server
+derives the provisional title, and a second answer to what a first line is
+would disagree the moment either changed — the same reason confirmation answers
+with the title rather than letting the caller compute one. Seeding a fabricated
+substream id so the row could come from the directory list: an id that names no
+conversation is the one thing the creation path refuses to invent. Keeping
+**New substream** current as well, which would mark two rows.
+
+**Consequences:** The row is a `div`, not a button — there is nowhere to
+navigate to, because the reader is already on the surface it stands for. Its
+name is therefore screen-reader-only text on the row itself rather than an
+`aria-label` on a control, and it sits outside `.workstream-context-copy`
+because the compact rail hides that element with `visibility: hidden`, which
+takes what is inside it out of the accessibility tree as well as off the screen;
+the skeleton beside it is `aria-hidden`, so the row is named once.
+
+The rail now depends on the id preparation reserves, not only on the creation
+being in flight: readiness broadcasts the directory from inside the
+confirmation, so the child's real row can arrive before the response does, and a
+placeholder that watched only the in-flight state stood beside it. Anything that
+changes what `prepare` answers with, or provisions the child under a different
+id than it reserved, will show up here as one conversation with two rows.
 
 ### 2026-09-11 — Manage conversations from their center-sidebar rows
 

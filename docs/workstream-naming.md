@@ -28,8 +28,6 @@ mid-call, or the event carrying the name never lands.
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-object-product.ts` | Where the grace is applied to a read: `directoryWorkstream` for a sidebar row, `summary` for the work stream itself. |
 | `apps/desktop/src/renderer/lib/naming-skeleton.ts` | `useNamingSkeleton` — the same rule applied to what the client already holds. Every renderer surface that shows a skeleton reads it from here. |
 
-## How it works
-
 ### The title a work stream is created with
 
 A model call cannot sit on the create path — the person who pressed enter is
@@ -293,6 +291,15 @@ changes: an answer kept in state would be the previous work stream's until an
 effect corrected it after paint, which is a frame of one work stream's request
 text under another's header.
 
+
+### Prepared history
+
+An unnamed prepared conversation uses the same first naming pass after its history
+is committed. The creation service requests canonical conversation context, reusing
+the existing transcript reader and context bounds. Imports use the source title as
+the objective and provisional fallback, leaving the final title and icon to this
+standard background path. Explicitly titled prepared scenarios retain their names.
+
 ## Invariants
 
 - **`title_status = 'naming'` is a promise that something will settle it.** Any
@@ -462,6 +469,18 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-09-15 — Name prepared conversations from canonical history
+
+**What changed:** The first background naming pass can read committed conversation
+context, using the existing transcript reader, prompt and title transition.
+
+**Why:** Imported conversations have no new opening prompt, and should receive an
+automatic name without asking the importer to choose one. A separate import naming
+pipeline would duplicate the naming policy and publication behavior.
+
+**Consequences:** Source titles remain provisional fallbacks. Explicitly titled
+prepared scenarios stay settled, and history installation never launches a run.
 
 ### 2026-09-10 — Substreams are named, and every address carries the substream
 

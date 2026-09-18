@@ -11,7 +11,9 @@ export type ApplicationOpenPhase = 'cold_start' | 'activation';
 export function initialApplicationOpenEntrypoint(input: {
   openedAtLogin: boolean;
   hasDeepLink: boolean;
-}): Extract<ApplicationOpenEntrypoint, 'system_start' | 'user_launch' | 'deep_link'> {
+  hasPushNotification?: boolean;
+}): Extract<ApplicationOpenEntrypoint, 'system_start' | 'user_launch' | 'deep_link' | 'push_notification'> {
+  if (input.hasPushNotification) return 'push_notification';
   if (input.openedAtLogin) return 'system_start';
   if (input.hasDeepLink) return 'deep_link';
   // Electron cannot distinguish Dock, Finder, Spotlight, or another ordinary
@@ -34,7 +36,7 @@ export class ApplicationOpenObserver {
     private readonly coalesceMs = 100,
   ) {}
 
-  launched(entrypoint: Extract<ApplicationOpenEntrypoint, 'system_start' | 'user_launch' | 'deep_link'>): void {
+  launched(entrypoint: Extract<ApplicationOpenEntrypoint, 'system_start' | 'user_launch' | 'deep_link' | 'push_notification'>): void {
     this.cancelPendingDock();
     this.explicitUntil = this.now() + this.coalesceMs;
     this.report(entrypoint, 'cold_start');

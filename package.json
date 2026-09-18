@@ -1,6 +1,6 @@
 {
   "name": "rally",
-  "version": "1.335.0",
+  "version": "1.388.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.0",
@@ -27,13 +27,11 @@
     "dev:api": "pnpm env:sync && node scripts/dev-regional-api.mjs",
     "dev:api:local": "pnpm env:sync && node scripts/dev-regional-api.mjs --local",
     "dev:desktop": "dotenv -e .env.local -- pnpm --filter @rally/desktop dev",
-    "dev:desktop:prod": "VITE_API_GLOBAL_URL=https://api.rallywith.ai VITE_API_EU_URL=https://eu.api.rallywith.ai RALLY_DEV_AUTH=false pnpm --filter @rally/desktop dev",
+    "dev:desktop:prod": "VITE_API_GLOBAL_URL=https://api.rallywith.ai RALLY_DEV_AUTH=false pnpm --filter @rally/desktop dev",
     "db:migrate": "pnpm env:sync && pnpm --filter @rally/api db:migrate",
     "db:migrate:remote": "dotenv -e .env.local -- pnpm --filter @rally/api db:migrate:remote",
-    "db:migrate:remote:eu": "dotenv -e .env.local -- pnpm --filter @rally/api db:migrate:remote:eu",
     "db:migrate:remote:list": "dotenv -e .env.local -- pnpm --filter @rally/api db:migrate:remote:list",
-    "db:migrate:remote:list:eu": "dotenv -e .env.local -- pnpm --filter @rally/api db:migrate:remote:list:eu",
-    "db:seed": "pnpm env:sync && pnpm --filter @rally/api db:seed && pnpm --filter @rally/api db:seed:eu",
+    "db:seed": "pnpm env:sync && pnpm --filter @rally/api db:seed",
     "db:baseline:create": "node scripts/create-d1-baseline.mjs",
     "db:baseline:verify": "dotenv -e .env.local -- node scripts/check-d1-baseline-against-remote.mjs",
     "health:regions": "node scripts/check-regional-health.mjs",
@@ -59,8 +57,7 @@
     "migrate:substream-agents": "node scripts/force-substream-agent-migrations.mjs",
     "migrate:substream-agents:probe": "pnpm --filter @rally/api exec wrangler dev --remote --config ../../scripts/substream-agent-jurisdiction-probe/wrangler.jsonc --port 8790",
     "deploy:ace": "dotenv -e .env.local -- pnpm --filter @rally/ace run deploy",
-    "deploy:global": "dotenv -e .env.local -- pnpm --filter @rally/api run deploy:global",
-    "deploy:eu": "dotenv -e .env.local -- pnpm --filter @rally/api run deploy:eu"
+    "deploy:global": "dotenv -e .env.local -- pnpm --filter @rally/api run deploy:global"
   },
   "devDependencies": {
     "@eslint/js": "latest",

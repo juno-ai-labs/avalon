@@ -17,6 +17,7 @@ import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
+import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 
 import type * as TelemetryModule from './telemetry';
@@ -420,6 +421,8 @@ describe('WorkspaceSocketProvider', () => {
 
   it('keeps one workspace socket, subscribes durably, and invalidates every workspace surface', async () => {
     const queryClient = new QueryClient();
+    const recommendationKey = ['recommended-sidekicks', 'idle-workstream'];
+    queryClient.setQueryData(recommendationKey, []);
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -461,6 +464,7 @@ describe('WorkspaceSocketProvider', () => {
       ['workspace-invitations'],
       ['connections'],
       ['connector-catalog'],
+      ['connector-installation'],
       ['github-repository-access'],
       ['terminal-workspace-settings'],
       ['digest-schedule'],
@@ -469,6 +473,7 @@ describe('WorkspaceSocketProvider', () => {
       ['sidekicks-library'],
       ['attached-sidekicks'],
       ['workstream-sidekicks'],
+      ['recommended-sidekicks'],
       ['note'],
       ['resources'],
       ['workstream-context'],
@@ -477,6 +482,7 @@ describe('WorkspaceSocketProvider', () => {
       ['telemetry-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
+    expect(queryClient.getQueryState(recommendationKey)?.isInvalidated).toBe(true);
     // The two sidebar lists are pushed whole, so a topic must never invalidate
     // them: nothing would refetch, and naming them here would suggest otherwise.
     for (const pushed of [['automations'], ['notes']]) {
@@ -498,14 +504,14 @@ describe('WorkspaceSocketProvider', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:01:00.000Z',
-      changedFlag: 'meeting-recording-enabled',
+      changedFlag: 'suggested-work-enabled',
       flags: {
         developerSettings: false,
-        meetingRecordingEnabled: true,
+        suggestedWorkEnabled: true,
         controlTowerRefreshSeconds: 60,
       },
     }));
-    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ meetingRecordingEnabled: true });
+    expect(queryClient.getQueryData(['feature-flags'])).toMatchObject({ suggestedWorkEnabled: true });
   });
 
   it('reports how deep a workspace reconnect had to go, and stops reporting at teardown', async () => {
@@ -550,16 +556,22 @@ describe('WorkspaceSocketProvider', () => {
     expect(socketTelemetry()).toEqual([]);
   });
 
-  it('calls an offline transition during the ticket request what it is', async () => {
+  it('times out a stranded reconnect ticket and starts another workspace attempt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     const queryClient = new QueryClient();
-    let releaseTicket: (() => void) | null = null;
-    const getWorkspaceSocketTicket = vi.fn(async () => {
-      await new Promise<void>((resolve) => { releaseTicket = resolve; });
-      return {
-        url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-        ticket: 'workspace-ticket',
-        protocols: socketTicketProtocols('workspace-ticket'),
-      };
+    const ticket = {
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    };
+    let requestCount = 0;
+    const getWorkspaceSocketTicket = vi.fn(() => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        return requestSocketTicket(() => new Promise<typeof ticket>(() => undefined));
+      }
+      return Promise.resolve(ticket);
     });
     render(
       <QueryClientProvider client={queryClient}>
@@ -572,16 +584,52 @@ describe('WorkspaceSocketProvider', () => {
       </QueryClientProvider>,
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances[0]!.open());
+    act(() => FakeWebSocket.instances[0]!.close(1012));
 
-    // The desktop drops off the network while the ticket is still in flight, so
-    // the offline handler finds no socket to close and records nothing.
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS));
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'workspace',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'one',
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('calls an offline transition during the ticket request what it is', async () => {
+    const queryClient = new QueryClient();
+    let ticketSignal: AbortSignal | undefined;
+    const getWorkspaceSocketTicket = vi.fn((signal?: AbortSignal) => {
+      ticketSignal = signal;
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>connected surface</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    expect(ticketSignal?.aborted).toBe(false);
+
+    // The desktop drops off the network while the ticket is still in flight.
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     window.dispatchEvent(new Event('offline'));
-    releaseTicket!();
     await flushPromises();
 
-    // Dialling anyway would have produced a transport error a moment later, and
-    // counted an ordinary walk out of Wi-Fi range as a broken connection.
+    expect(ticketSignal?.aborted).toBe(true);
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(socketTelemetry()).toEqual([{
       kind: 'realtime_socket_state',
@@ -780,13 +828,14 @@ describe('WorkspaceSocketProvider', () => {
   });
 
   it('paints the whole sidebar from the subscribe answer, without asking for it', async () => {
+    vi.useFakeTimers();
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
-    render(
+    const owner = render(
       <QueryClientProvider client={queryClient}>
         <WorkspaceSocketProvider
           api={{ getWorkspaceSocketTicket }}
@@ -809,7 +858,7 @@ describe('WorkspaceSocketProvider', () => {
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
-        meetingRecordingEnabled: false,
+        suggestedWorkEnabled: false,
         controlTowerRefreshSeconds: 60,
       },
       sidebar: {
@@ -883,21 +932,46 @@ describe('WorkspaceSocketProvider', () => {
       },
     }));
 
+    act(() => socket.message({
+      type: 'workspace_project_snapshot',
+      occurredAt: '2026-08-27T00:01:00.000Z',
+      projects: {
+        active: { waterline: 4, items: [] },
+        inactive: { waterline: 4, items: [] },
+      },
+    }));
+
     // All three painted from a frame nobody asked for.
     expect(queryClient.getQueryData(['workstreams']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000002' })]);
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
     expect(queryClient.getQueryData(['notes']))
-      .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000006', title: 'Standup' })]);
+      .toBeUndefined();
     expect(queryClient.getQueryData(['feature-flags']))
-      .toMatchObject({ meetingRecordingEnabled: false });
+      .toMatchObject({ suggestedWorkEnabled: false });
 
     // The point of the payload: the only thing the client said was where it
     // had got to. A directory request here would be the round trip this frame
     // exists to remove.
     const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as { type: string });
     expect(sent.map((frame) => frame.type)).toEqual(['subscribe', 'set_presence']);
+    // No screen observes these entries. The workspace subscription owns the
+    // directory and its ordering ledgers even when their screens are absent.
+    const keys = ['workstreams', 'automations', 'projects', 'projects-inactive', 'feature-flags',
+      'workstream-state-waterlines', 'workspace-directory-waterlines'].map((key) => [key]);
+    const snapshot = keys.map((key) => queryClient.getQueryData(key));
+    expect(snapshot.every((value) => value !== undefined)).toBe(true);
+    socket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(snapshot);
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
+    owner.unmount();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(keys.map(() => undefined));
+    queryClient.clear();
   });
 
   it('does not ask for the directory it was just handed', async () => {
@@ -1585,7 +1659,6 @@ describe('the workspace socket over the local cache', () => {
     await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, {
       workstreams: [summary({ id: remembered, title: 'Remembered row' }), summary({ id: forgotten, title: 'Archived elsewhere' })],
       automations: [],
-      notes: [],
       projects: { waterline: 2, items: [] },
       inactiveProjects: { waterline: 2, items: [] },
     });

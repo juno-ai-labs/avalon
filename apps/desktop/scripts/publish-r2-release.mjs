@@ -9,11 +9,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   assertNextReleaseVersion,
-  assertReleaseAfterMissingManifest,
   compareVersions,
   loadReleaseDirectory,
   normalizeReleasePrefix,
-  parseMacUpdateFeed,
   reconcileImmutableReleaseObject,
   releaseContentType,
   sha512File,
@@ -32,6 +30,20 @@ import {
   writeSiteReleaseConfigAtomically,
 } from './site-release-config.mjs';
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
+import {
+  FASTER_RELEASE_MANIFEST,
+  LEGACY_RELEASE_MANIFEST,
+  STABLE_CHANNEL_RECEIPT,
+  STABLE_RELEASE_MANIFEST,
+  encodeStableChannelReceipt,
+  parseStableChannelReceipt,
+} from './release-channels.mjs';
+import {
+  RELEASE_PUBLICATION_RECEIPT,
+  encodePreparedReleasePublication,
+  parsePreparedReleasePublication,
+  planReleasePointerPublication,
+} from './release-publication.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
@@ -39,7 +51,6 @@ const defaultReleaseDirectory = join(desktopDirectory, 'release/release');
 const defaultSiteConfigPath = join(repositoryDirectory, 'apps/site/release.config.json');
 const canonicalDmgName = 'Rally.dmg';
 const checksumsName = 'SHA256SUMS';
-const latestManifestName = 'latest-mac.yml';
 const releaseLockName = 'release-publish.lock';
 
 function parseArguments(argv) {
@@ -386,8 +397,57 @@ async function publishCanonicalDmg(versionedDmg, scratchDirectory) {
   console.log(`Promoted recovery installer ${publicUrl(canonicalDmgName)}`);
 }
 
-async function verifyPublicManifest(expectedBytes) {
-  const url = publicUrl(latestManifestName);
+async function restorePreparedPublication(publicationOptions, scratchDirectory) {
+  const artifacts = [
+    ...publicationOptions.artifactNames.map((name) => ({ name, objectName: name })),
+    {
+      name: publicationOptions.checksumsFile,
+      objectName: `${publicationOptions.version}/${publicationOptions.checksumsFile}`,
+    },
+  ];
+  const verified = [];
+  for (const artifact of artifacts) {
+    const recoveryPath = join(scratchDirectory, `prepared-${artifact.objectName.replaceAll('/', '_')}`);
+    if (!await getR2Object(`${prefix}/${artifact.objectName}`, recoveryPath)) {
+      throw new Error(`Prepared release artifact is missing: r2://${bucket}/${prefix}/${artifact.objectName}`);
+    }
+    if (await sha256File(recoveryPath) !== publicationOptions.sha256[artifact.name]) {
+      throw new Error(`Prepared release artifact SHA-256 mismatch: ${artifact.objectName}`);
+    }
+    verified.push({
+      ...artifact,
+      expectedSize: (await stat(recoveryPath)).size,
+      path: recoveryPath,
+      verificationId: await sha512File(recoveryPath),
+    });
+  }
+  await purgeAndVerifyImmutableReleaseUrls({
+    artifacts: verified.map((artifact) => ({
+      ...artifact,
+      name: artifact.objectName,
+      url: publicUrl(artifact.objectName),
+    })),
+    purgeUrls: purgePublicUrls,
+    verifyArtifact: async (artifact) => {
+      await verifyPublicArtifact(
+        artifact.name,
+        artifact.expectedSize,
+        artifact.verificationId,
+        { cacheBust: false },
+      );
+      await verifyPublicReleaseArtifactHash({
+        expectedHash: artifact.verificationId,
+        url: artifact.url,
+      });
+    },
+  });
+  const versionedDmg = verified.find((artifact) => artifact.name.endsWith('.dmg'));
+  if (!versionedDmg) throw new Error('Prepared release publication is missing its versioned DMG');
+  await publishCanonicalDmg(versionedDmg, scratchDirectory);
+}
+
+async function verifyPublicManifest(name, expectedBytes) {
+  const url = publicUrl(name);
   let failure = 'no response';
   for (let attempt = 0; attempt < 7; attempt += 1) {
     try {
@@ -404,6 +464,47 @@ async function verifyPublicManifest(expectedBytes) {
     await sleep(500 * 2 ** attempt);
   }
   throw new Error(`Public manifest verification failed for ${url}: ${failure}`);
+}
+
+async function publishManifest(name, bytes, scratchDirectory) {
+  const manifestKey = `${prefix}/${name}`;
+  const localManifestPath = join(scratchDirectory, name);
+  await writeFile(localManifestPath, bytes);
+  await putR2Object(manifestKey, localManifestPath, {
+    contentType: releaseContentType(name),
+    cacheControl: 'public, max-age=0, must-revalidate',
+  });
+  await purgePublicUrl(publicUrl(name));
+  await verifyPublicManifest(name, bytes);
+}
+
+async function publishStableReceipt(receipt, scratchDirectory) {
+  const bytes = encodeStableChannelReceipt(receipt);
+  const receiptPath = join(scratchDirectory, STABLE_CHANNEL_RECEIPT);
+  await writeFile(receiptPath, bytes);
+  await putR2Object(`${prefix}/${STABLE_CHANNEL_RECEIPT}`, receiptPath, {
+    contentType: 'application/json; charset=utf-8',
+    cacheControl: 'no-store',
+  });
+  await verifyR2Hash(
+    `${prefix}/${STABLE_CHANNEL_RECEIPT}`,
+    await sha512File(receiptPath),
+    join(scratchDirectory, `verified-${STABLE_CHANNEL_RECEIPT}`),
+  );
+}
+
+async function publishPreparedPublication(bytes, scratchDirectory) {
+  const receiptPath = join(scratchDirectory, RELEASE_PUBLICATION_RECEIPT);
+  await writeFile(receiptPath, bytes);
+  await putR2Object(`${prefix}/${RELEASE_PUBLICATION_RECEIPT}`, receiptPath, {
+    contentType: 'application/json; charset=utf-8',
+    cacheControl: 'no-store',
+  });
+  await verifyR2Hash(
+    `${prefix}/${RELEASE_PUBLICATION_RECEIPT}`,
+    await sha512File(receiptPath),
+    join(scratchDirectory, `verified-${RELEASE_PUBLICATION_RECEIPT}`),
+  );
 }
 
 const scratchDirectory = await mkdtemp(join(tmpdir(), 'rally-r2-release-'));
@@ -432,7 +533,7 @@ try {
     artifactNames: release.artifacts.map(({ name }) => name),
     canonicalDmgFile: canonicalDmgName,
     checksumsFile: checksumsName,
-    latestFile: latestManifestName,
+    latestFile: LEGACY_RELEASE_MANIFEST,
     bucket,
     prefix,
     downloadBaseUrl: baseUrl.origin,
@@ -459,105 +560,178 @@ try {
           publicUrl(`${release.feed.version}/${checksumsName}`),
         ],
         canonicalDmg: `${prefix}/${canonicalDmgName}`,
-        latestManifest: `${prefix}/${latestManifestName}`,
+        channelManifests: {
+          legacy: `${prefix}/${LEGACY_RELEASE_MANIFEST}`,
+          stable: `${prefix}/${STABLE_RELEASE_MANIFEST}`,
+          faster: `${prefix}/${FASTER_RELEASE_MANIFEST}`,
+        },
+        stableChannelReceipt: `${prefix}/${STABLE_CHANNEL_RECEIPT}`,
+        releasePublicationReceipt: `${prefix}/${RELEASE_PUBLICATION_RECEIPT}`,
+        stablePromotionIntervalHours: 24,
         siteRelease: proposedSiteConfig,
       }, null, 2));
       return;
     }
 
-    const existingManifestPath = join(scratchDirectory, 'existing-latest-mac.yml');
-    const hasManifest = await getR2Object(`${prefix}/${latestManifestName}`, existingManifestPath);
-    let releaseIsCommitted = false;
-    let liveArtifactNames = new Set();
-    if (hasManifest) {
-      const existingBytes = await readFile(existingManifestPath);
-      const existingFeed = parseMacUpdateFeed(existingBytes.toString('utf8'));
-      liveArtifactNames = new Set(existingFeed.files.map(({ url }) => url));
-      const comparison = compareVersions(existingFeed.version, release.feed.version);
+    const readExistingObject = async (name) => {
+      const path = join(scratchDirectory, `existing-${name}`);
+      return await getR2Object(`${prefix}/${name}`, path) ? await readFile(path) : undefined;
+    };
+    const preparedPublicationBytes = await readExistingObject(RELEASE_PUBLICATION_RECEIPT);
+    let candidateManifestBytes = release.manifestBytes;
+    let effectivePublicationOptions = publicationOptions;
+    let resumingPreparedPublication = false;
+    if (preparedPublicationBytes) {
+      let preparedPublication;
+      try {
+        preparedPublication = parsePreparedReleasePublication(
+          JSON.parse(preparedPublicationBytes.toString('utf8')),
+        );
+      } catch (error) {
+        throw new Error('Release publication receipt is invalid', { cause: error });
+      }
+      const comparison = compareVersions(preparedPublication.version, release.feed.version);
       if (comparison > 0) {
         throw new Error(
-          `Refusing to roll ${prefix} back from ${existingFeed.version} to ${release.feed.version}`,
+          `Release publication receipt ${preparedPublication.version} is ahead of candidate ${release.feed.version}`,
         );
       }
-      if (comparison < 0) {
-        assertNextReleaseVersion(existingFeed.version, release.feed.version);
+      if (comparison === 0) {
+        for (const [field, expected] of [
+          ['bucket', bucket],
+          ['prefix', prefix],
+          ['downloadBaseUrl', baseUrl.origin],
+          ['latestFile', LEGACY_RELEASE_MANIFEST],
+        ]) {
+          if (preparedPublication.publicationOptions[field] !== expected) {
+            throw new Error(`Release publication receipt ${field} does not match this publisher`);
+          }
+        }
+        candidateManifestBytes = preparedPublication.manifestBytes;
+        effectivePublicationOptions = preparedPublication.publicationOptions;
+        resumingPreparedPublication = true;
       }
-      if (comparison === 0 && !existingBytes.equals(release.manifestBytes)) {
-        throw new Error(`Release ${release.feed.version} already has different latest-mac.yml bytes in R2`);
-      }
-      releaseIsCommitted = comparison === 0;
-    } else {
-      assertReleaseAfterMissingManifest(currentSiteConfig.version, release.feed.version);
     }
 
-    // Each immutable payload is hash-verified through R2 and HEAD/Range-verified
-    // through the public custom domain before either mutable channel pointer moves.
-    const immutablePublicArtifacts = [];
-    for (const artifact of release.artifacts) {
-      immutablePublicArtifacts.push(
-        await uploadImmutableArtifact(
-          artifact,
-          scratchDirectory,
-          releaseIsCommitted,
-          liveArtifactNames,
-        ),
-      );
-    }
-    immutablePublicArtifacts.push(
-      await uploadImmutableArtifact(
-        checksumsArtifact,
-        scratchDirectory,
-        releaseIsCommitted,
-        liveArtifactNames,
-      ),
-    );
-
-    // Query parameters bypass a stale negative cache entry but updater clients do
-    // not use them. Purge every exact immutable URL as one fail-closed gate, then
-    // verify the ordinary no-query URLs before either mutable channel pointer moves.
-    await purgeAndVerifyImmutableReleaseUrls({
-      artifacts: immutablePublicArtifacts.map((artifact) => ({
-        ...artifact,
-        url: publicUrl(artifact.name),
-      })),
-      purgeUrls: purgePublicUrls,
-      verifyArtifact: async (artifact) => {
-        await verifyPublicArtifact(
-          artifact.name,
-          artifact.expectedSize,
-          artifact.verificationId,
-          { cacheBust: false },
-        );
-        await verifyPublicReleaseArtifactHash({
-          expectedHash: artifact.verificationId,
-          url: artifact.url,
-        });
-      },
+    const legacyManifestBytes = await readExistingObject(LEGACY_RELEASE_MANIFEST);
+    const stableManifestBytes = await readExistingObject(STABLE_RELEASE_MANIFEST);
+    const fasterManifestBytes = await readExistingObject(FASTER_RELEASE_MANIFEST);
+    const stableReceiptPath = join(scratchDirectory, `existing-${STABLE_CHANNEL_RECEIPT}`);
+    const hasStableReceipt = await getR2Object(`${prefix}/${STABLE_CHANNEL_RECEIPT}`, stableReceiptPath);
+    const stableReceipt = hasStableReceipt
+      ? parseStableChannelReceipt(JSON.parse(await readFile(stableReceiptPath, 'utf8')))
+      : undefined;
+    // This complete read/validation phase must precede every mutable pointer
+    // write. In particular, an orphan or ahead Stable receipt cannot leave
+    // Legacy or Faster advanced before the publisher discovers it.
+    const publicationPlan = planReleasePointerPublication({
+      candidateManifestBytes,
+      currentSiteVersion: currentSiteConfig.version,
+      fasterManifestBytes,
+      legacyManifestBytes,
+      now: Date.now(),
+      stableManifestBytes,
+      stableReceipt,
     });
-
-    // Recovery downloads use this stable alias. It moves only after the matching
-    // immutable DMG is verified, and before latest-mac.yml commits the channel.
-    await publishCanonicalDmg(versionedDmg, scratchDirectory);
-
-    // The update manifest is the R2 release commit point and must be the final
-    // object upload. Landing-page state is activated only after it verifies.
-    const manifestKey = `${prefix}/${latestManifestName}`;
-    const localManifestPath = join(scratchDirectory, latestManifestName);
-    await writeFile(localManifestPath, release.manifestBytes);
-    await putR2Object(manifestKey, localManifestPath, {
-      contentType: releaseContentType(latestManifestName),
-      cacheControl: 'public, max-age=0, must-revalidate',
-    });
-    await purgePublicUrl(publicUrl(latestManifestName));
-    await verifyPublicManifest(release.manifestBytes);
-
     const publishedSiteConfig = createPublishedSiteReleaseConfig(currentSiteConfig, {
-      ...publicationOptions,
+      ...effectivePublicationOptions,
       publishedAt: new Date().toISOString(),
     });
+
+    if (!resumingPreparedPublication) {
+      // Each immutable payload is hash-verified through R2 and HEAD/Range-verified
+      // through the public custom domain before either mutable channel pointer moves.
+      const immutablePublicArtifacts = [];
+      for (const artifact of release.artifacts) {
+        immutablePublicArtifacts.push(
+          await uploadImmutableArtifact(
+            artifact,
+            scratchDirectory,
+            publicationPlan.releaseIsCommitted,
+            publicationPlan.liveArtifactNames,
+          ),
+        );
+      }
+      immutablePublicArtifacts.push(
+        await uploadImmutableArtifact(
+          checksumsArtifact,
+          scratchDirectory,
+          publicationPlan.releaseIsCommitted,
+          publicationPlan.liveArtifactNames,
+        ),
+      );
+
+      // Query parameters bypass a stale negative cache entry but updater clients do
+      // not use them. Purge every exact immutable URL as one fail-closed gate, then
+      // verify the ordinary no-query URLs before either mutable channel pointer moves.
+      await purgeAndVerifyImmutableReleaseUrls({
+        artifacts: immutablePublicArtifacts.map((artifact) => ({
+          ...artifact,
+          url: publicUrl(artifact.name),
+        })),
+        purgeUrls: purgePublicUrls,
+        verifyArtifact: async (artifact) => {
+          await verifyPublicArtifact(
+            artifact.name,
+            artifact.expectedSize,
+            artifact.verificationId,
+            { cacheBust: false },
+          );
+          await verifyPublicReleaseArtifactHash({
+            expectedHash: artifact.verificationId,
+            url: artifact.url,
+          });
+        },
+      });
+
+      // Persist the exact manifest and site-record inputs before the first
+      // mutable object moves. A retry of this version resumes from these bytes
+      // even when rebuilding produced different signed artifacts.
+      await publishPreparedPublication(encodePreparedReleasePublication({
+        manifestBytes: candidateManifestBytes,
+        publicationOptions: effectivePublicationOptions,
+      }), scratchDirectory);
+
+      // Recovery downloads use this stable alias. It moves only after the matching
+      // immutable DMG and its prepared publication receipt are verified.
+      await publishCanonicalDmg(versionedDmg, scratchDirectory);
+    } else {
+      console.log(`Resuming Rally ${release.feed.version} from its prepared publication receipt`);
+      await restorePreparedPublication(
+        effectivePublicationOptions,
+        scratchDirectory,
+      );
+    }
+
+    // Stable moves only when its durable receipt permits another promotion.
+    // Faster moves on every release. Legacy is last so pre-channel clients do
+    // not observe the release before channel-aware state is recoverable.
+    let nextStableReceipt = publicationPlan.stableDecision.receipt;
+    if (publicationPlan.stableDecision.promote) {
+      await publishManifest(STABLE_RELEASE_MANIFEST, candidateManifestBytes, scratchDirectory);
+      // Start the rolling 24-hour window only after the manifest is publicly
+      // verified. Measuring from the earlier release transaction would permit
+      // the next promotion slightly less than 24 hours after this pointer moved.
+      nextStableReceipt = {
+        version: publicationPlan.candidateFeed.version,
+        promotedAt: new Date().toISOString(),
+      };
+    }
+    if (!stableReceipt
+      || nextStableReceipt.version !== stableReceipt.version
+      || nextStableReceipt.promotedAt !== stableReceipt.promotedAt) {
+      await publishStableReceipt(nextStableReceipt, scratchDirectory);
+    }
+    console.log(
+      publicationPlan.stableDecision.promote
+        ? `Promoted Stable to Rally ${nextStableReceipt.version} (${publicationPlan.stableDecision.reason})`
+        : `Kept Stable on Rally ${nextStableReceipt.version} (${publicationPlan.stableDecision.reason})`,
+    );
+    await publishManifest(FASTER_RELEASE_MANIFEST, candidateManifestBytes, scratchDirectory);
+    await publishManifest(LEGACY_RELEASE_MANIFEST, candidateManifestBytes, scratchDirectory);
     await writeSiteReleaseConfigAtomically(siteConfigPath, publishedSiteConfig);
     console.log(
-      `Published Rally ${release.feed.version}: immutable artifacts, recovery DMG, latest-mac.yml, then site activation`,
+      `Published Rally ${release.feed.version}: immutable artifacts, Faster, guarded Stable, then site activation`,
     );
   };
 

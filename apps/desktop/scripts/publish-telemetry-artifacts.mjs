@@ -1,3 +1,4 @@
+import { regions } from '../../../scripts/regions.mjs';
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import {
@@ -275,14 +276,11 @@ export async function publishTelemetryArtifacts(options = {}) {
   // artifact coordinate identical prevents a crash from requesting a symbol
   // tree that the release job never published.
   const buildId = release;
-  const buckets = [
-    { name: required('RALLY_GLOBAL_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'default' },
-    { name: required('RALLY_EU_TELEMETRY_R2_BUCKET', environment), jurisdiction: 'eu' },
-  ];
+  const buckets = Object.values(regions).map(({ bindingPrefix, jurisdiction }) => ({
+    name: required(`RALLY_${bindingPrefix}_TELEMETRY_R2_BUCKET`, environment),
+    jurisdiction: jurisdiction === 'us' ? 'default' : jurisdiction,
+  }));
   for (const bucket of buckets) assertSafePart(bucket.name, 'R2 bucket');
-  if (new Set(buckets.map(({ name }) => name)).size !== 2) {
-    throw new Error('Global and EU telemetry artifacts require distinct buckets');
-  }
 
   const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'rally-telemetry-artifacts-'));
   try {

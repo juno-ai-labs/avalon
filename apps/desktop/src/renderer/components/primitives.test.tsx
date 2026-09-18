@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { AvatarStack, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { AvatarStack, ConnectorMark, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -30,6 +31,24 @@ describe('RallyMark', () => {
     const { container } = render(<RallyMark className="test-mark" />);
     expect(container.querySelector('.rally-mark.test-mark')).not.toBeNull();
     expect(container.querySelector('svg')).toBeNull();
+  });
+});
+
+describe('ConnectorMark', () => {
+  it('draws Ashby and Fireflies as their own marks, not Lucide stand-ins', () => {
+    // `@thesvg/react` has neither slug. A Lucide briefcase or audio-lines
+    // glyph would carry `.lucide` and would not title itself with the company.
+    // Reverting those two rows to Lucide is the production break this pins.
+    const ashby = render(<ConnectorMark mark="ashby" />);
+    const fireflies = render(<ConnectorMark mark="fireflies" />);
+    expect(ashby.container.querySelector('.lucide')).toBeNull();
+    expect(fireflies.container.querySelector('.lucide')).toBeNull();
+    expect(ashby.container.querySelector('svg title')?.textContent).toBe('Ashby');
+    expect(fireflies.container.querySelector('svg title')?.textContent).toBe('Fireflies');
+    // The product icon is a serif A punched from a rounded square
+    // (ashbyhq.com/favicon.png), not the stacked marketing lockup.
+    expect(ashby.container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 192 192');
+    expect(ashby.container.querySelector('path')?.getAttribute('fill-rule')).toBe('evenodd');
   });
 });
 
@@ -665,6 +684,35 @@ describe('Modal', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('does not dismiss when a portaled menu item from inside it is chosen', async () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <Modal onOpenChange={onOpenChange} open title="Add a participant">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button type="button">Katherine participant actions</button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content className="menu-content">
+                <DropdownMenu.Item className="menu-item">Remove from work stream</DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </Modal>
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const remove = await screen.findByRole('menuitem', { name: 'Remove from work stream' });
+    fireEvent.pointerDown(remove, { button: 0 });
+    fireEvent.click(remove);
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });
 

@@ -32,6 +32,11 @@ and mutation hook beside it. Options can come from the same option data the
 control renders. Optional aliases describe genuine synonyms, not a parallel
 search catalogue.
 
+The Application page's **Update channel** is a device-local desktop preference.
+It renders through the shared dropdown and is indexed from the same Stable and
+Faster option labels. Browser fallback surfaces omit it because they cannot
+configure Electron's updater.
+
 `SettingsProvider` supplies entries with unique keys. The core provider derives
 entries from the definitions. Connection providers derive entries from the
 already-authorized connection snapshot: GitHub and MCP entries retain the
@@ -77,6 +82,23 @@ why they are inapplicable when searched, rather than leaving a search destinatio
 The Connections pane ends at the connector grid, without a page-level success
 or error log. Connection status remains on the cards, and setup dialogs retain
 their own validation feedback.
+
+Ashby setup exposes the exact labels **Connect for me** and
+**Connect for workspace**; the latter requires workspace administration. Exact
+searches for either label filter by the available scope. API-key searches reveal the setup entry point rather than creating a connection.
+Workspace setup has no event selection: Rally manages Ashby subscriptions
+automatically, while automations choose which event types they use.
+Personal owners can refresh their own OAuth connection. Administrators manage
+Ashby, Fireflies and Granola installations through **Manage events**. The main view shows
+plain status, the last event and explained **Test**, with **Get help** when needed.
+**Advanced** contains saved-status refresh, API-key replacement and technical
+recovery; subscription diagnostics are collapsed separately. Cleanup retry is
+shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. Rotation
+guidance is local information and does not change installation state. The
+workspace connection notification refreshes both list and installation queries,
+so open details do not retain a pre-repair snapshot. Management is unavailable
+offline; [installation lifecycle](connector-installation-lifecycle.md) owns its
+authorization and provider effects.
 
 ## Invariants
 
@@ -124,7 +146,45 @@ services and Electron IPC are existing test doubles, not assertions about live
 authorization. Real Electron checks cover positioning, keyboard navigation,
 scrolling and both appearances.
 
+## Notifications
+
+The `notifications` section is available only when the served
+`pushNotificationsEnabled` flag is true. Its device-level switch is registered
+in the same settings catalogue; unsigned builds explain that an installed release
+is required. Permission denial exposes a System Settings action.
+
 ## Changelog
+
+### 2026-09-15 — Make the desktop release channel a searchable device preference
+
+**What changed:** Application settings gained a Stable/Faster update-channel
+dropdown backed by the device preference file and the shared settings registry.
+
+**Why:** Release pace is a choice for one installed Mac, while the release
+service remains authoritative for which signed build each channel names.
+
+**Considered and rejected:** Treating Stable as a slower poll of the same latest
+manifest would still expose the same release immediately after a relaunch and
+would not create an actual release channel. Storing the choice on an account or
+workspace would unexpectedly move every installation together.
+
+**Consequences:** Stable is the migration default for old or invalid preference
+files. The browser hides the control, and changing from Faster to Stable never
+downgrades an installed build. A channel change invalidates in-flight and staged
+work from the old feed, disables its install-on-quit path, and checks the newly
+selected feed as soon as the old updater operation settles.
+
+### 2026-09-12 — Separate Ashby personal setup from shared event installation
+
+**What changed:** The catalogue exposes exact scope-specific Connect labels and searchable Ashby key controls and automatic event subscriptions. Manage events shows status and explained Test, keeping key replacement and technical recovery in Advanced; personal owners can refresh their own OAuth grant.
+
+**Why:** Setup and recovery must preserve personal versus administrator authority, and reading registration status or rotation instructions must not mutate the provider. Open details must follow the same pushed state as the connection list.
+
+**Considered and rejected:** Fuzzy scope-label matches that expose workspace-only results, automatic repair during status display, or a rotation-guidance request that marks a current installation as failed.
+
+**Consequences:** Availability and search share scope rules; workspace updates invalidate both connection and installation reads. Legacy Granola rows expose adoption through Test. Management actions remain unavailable offline.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
 
 ### 2026-09-10 — Internet access becomes its own page, and one strip draws every exclusive choice
 

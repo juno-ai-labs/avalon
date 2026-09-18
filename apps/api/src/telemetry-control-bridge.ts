@@ -6,7 +6,7 @@ import {
   mutateCanonicalTelemetryPreference,
 } from './telemetry/control';
 
-/** EU-to-Global telemetry control-plane entrypoint. Each method has its own
+/** Regional-to-Global telemetry control-plane entrypoint. Each method has its own
  * strict projection and returns no Global identity or destination data. */
 export class TelemetryControlBridge extends WorkerEntrypoint<Env> {
   mutatePreference(input: unknown) {

@@ -179,8 +179,6 @@ pnpm --filter @rally/api exec vitest run test/email-markdown.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 ```
 
-## Changelog
-
 ### 2026-08-28 — Created, so the classifier `citations.ts` grew is the one everybody reads
 
 **What changed:** `codeLines` — the fenced-and-indented classifier that

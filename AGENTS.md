@@ -13,6 +13,8 @@ still appears throughout the tree; what it is coupled to, and what is
 deliberately not being renamed, is in
 [`docs/rally-rebrand-inventory.md`](docs/rally-rebrand-inventory.md).
 
+We re-branded an **Automation** into a **Sidekick**.
+
 ## How we build
 
 **We design using a platform mindset**. We build simple & generic re-usable building blocks that are combined into complex and emergent behavior. For example: Lego Blocks are simple in that they have a set number of modular sizes but these simple shapes can be combined to build anything as they are modular.
@@ -20,6 +22,12 @@ deliberately not being renamed, is in
 Before you begin see if there is one or more individual primitives that can be built that can be combined to expose the more complex final behavior. Investigate if current primitives can be re-architected or de-composed into better primitives.
 
 Always have a platform mindset. You can always make a simple thing more complicated but never make a complex thing simpler.
+
+## Keeping the Legion up-to-date
+
+If you have a Slack connector available start a thread in Channel #firehose-agents (use the channel configured in your team) when you start a working in a new session (not when you open a new session as that is too early and you don't understand your task but once you start on your actual task). Then keep sending updates to that thread every 30-60 minutes based on the complexity and size of the task.
+
+If you are only doing (code) review then do not start a thread or send updates.
 
 ## Where we are
 
@@ -51,6 +59,18 @@ down gets relitigated by whoever touches it next — which, on a team this small
 is soon, and is probably you. Move fast on _what_ gets built. Do not move fast on
 whether it works, or on whether the next person can follow it.
 
+## Tool execution product policy
+
+**Rally never asks users to confirm individual tool calls.** This applies to
+reads and writes, built-in tools, connectors, hosted MCP, and future tools.
+Do not add tool-approval dialogs, confirmation queues, execution pauses, or model
+instructions asking permission before each tool call. Authentication, capability
+checks, execution receipts and safe handling of uncertain outcomes still apply.
+`mode: "write"` describes execution and retry policy; it does not imply human
+approval. Documentation claiming an existing tool-confirmation flow is incorrect
+and must be corrected, not implemented. See
+[`docs/hosted-mcp-connectors.md`](docs/hosted-mcp-connectors.md).
+
 ## Environment
 
 **Read [`docs/dev-environment.md`](docs/dev-environment.md) at the start of every
@@ -58,29 +78,6 @@ session, before running a setup, server, or browser-automation command.** It
 covers dependency installation, the local D1 database, starting both regional
 Workers, and running the Electron client headlessly. The container it assumes is
 defined in [`docs/sandbox.md`](docs/sandbox.md).
-
-- **Node.js 22 and pnpm 11.13.0.** The pnpm version is pinned by
-  `packageManager`; run `corepack enable` rather than using whatever pnpm the
-  image ships.
-- **In a sandbox, start the API with `pnpm dev:api:local`, not `pnpm dev:api`.**
-  The `ai` binding forces a remote proxy session that cannot be established
-  without Cloudflare credentials, and its failure takes both regions down.
-- When an outbound HTTPS request fails in a way that does not look like a
-  network error, read [`docs/sandbox-proxy.md`](docs/sandbox-proxy.md) before
-  retrying. Never disable TLS verification or unset `HTTPS_PROXY`.
-- **Debugging a production model run?** Start with
-  [`docs/runbook.md`](docs/runbook.md#inspecting-a-runs-raw-inference). Raw
-  inference for Global workspaces is in the Global lakehouse, not D1 or Workers
-  Logs; use the R2 SQL and Object HTTP APIs (not the web dashboard), filter by
-  canonical work-stream and substream IDs (`"0"` is the main feed), and keep
-  retrieved user content out of logs, tickets, commits, and agent responses.
-  EU inference is intentionally not archived, so stop after resolving an EU
-  workspace rather than falling back to D1, logs, or a cross-region query.
-  For backend or client analytics events, use
-  [`docs/runbook.md`](docs/runbook.md#querying-analytics-events-in-production):
-  the `avalon.analytics_events` lakehouse is Global-only, queried through R2 SQL
-  and Queue/D1 APIs rather than the web dashboard, and EU stays on the restricted
-  regional telemetry API without a Global fallback.
 
 ## Quality gates
 
@@ -168,6 +165,38 @@ resolution here.
 - Fix the cause. A flake rooted in code the change does not touch may be left
   unfixed — only then, and only if it is named in the report and the pull
   request description. Never leave an intermittent failure unmentioned.
+
+## Naming a schema failure
+
+**A rejection that reaches a log, a notice, an operator, or the far side of an
+RPC hop must name the field it rejected.** A `ZodError` knows exactly what was
+wrong and where, and almost every boundary in this tree throws that away: a
+Durable Object RPC reduces it to a bare `Error` with no `issues` and no message,
+`connectorObservationErrorCode` reads it as `unexpected_error` because it is not
+a `ConnectorError`, and `scheduledAlarmErrorCode` reads it as `handler_error`
+because its message is a JSON blob rather than a code.
+
+Four such boundaries lost the same information in one week, and each cost a
+separate diagnosis of the same bug.
+[`docs/naming-a-schema-failure.md`](docs/naming-a-schema-failure.md) records
+what that cost and holds the catalogue.
+
+- **Use `zodDiagnosticCode`, `describeZodIssues` or `codeShaped` from
+  `@rally/contracts`.** They are one implementation deliberately: a boundary
+  that writes its own is how the root path shipped spelled `(root)`, outside the
+  character class the operator notice required.
+- **Never widen what is reported to the caller.** Issue codes and _declared_
+  field names are schema shape and may cross. Record keys, `unrecognized_keys`
+  names from an untrusted caller, rejected values, and an adapter's `message` —
+  which may hold a caught provider error's own text — are data and may not.
+  Sanitizing a value to the code's character class is formatting, not redaction.
+- **A generic code is a defect, not a fallback.** `unexpected_error`,
+  `handler_error`, `ZodError`, `internal_error` and `unhealthy` on a path that
+  had the reason in hand are each a bug to fix in the change that finds one —
+  the same standing as a flaky test.
+- **An adapter that returns a failure owes its reason too.** A `{ ok: false,
+message }` is not exempt because it did not throw; Granola's health check
+  computed "webhook endpoint identity is missing" and the log said `unhealthy`.
 
 ## Capturing command output
 

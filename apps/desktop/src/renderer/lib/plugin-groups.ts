@@ -12,6 +12,7 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
 export type PluginGroupIcon =
   | PluginBrandMark
   | 'automations'
+  | 'background-agents'
   | 'computer'
   | 'image-generation'
   | 'plug'
@@ -109,6 +110,12 @@ const AUTOMATIONS_GROUP: PluginGroup = {
  * its icon is pinned to its canonical id rather than mutable display-name text.
  */
 const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
+  ['avalon:agents', {
+    key: 'name:Background agents',
+    name: 'Background agents',
+    icon: 'background-agents',
+    ...usedGroupVerbs('Background agents'),
+  }],
   ['rally:sidekicks', AUTOMATIONS_GROUP],
   // The id a transcript recorded before the Sidekick rename; a stored row
   // keeps it, so it keeps its glyph.
@@ -158,6 +165,8 @@ function connectorTypeForName(displayName: string): string | null {
   if (name.startsWith('github')) return 'github';
   if (name.startsWith('notion')) return 'notion';
   if (name.startsWith('linear')) return 'linear';
+  if (name.startsWith('ashby')) return 'ashby';
+  if (name.startsWith('fireflies')) return 'fireflies';
   if (name.startsWith('granola')) return 'granola';
   // Exactly "X", which is the connector's whole manifest name. A prefix match
   // on one letter would claim every later connector that starts with it.

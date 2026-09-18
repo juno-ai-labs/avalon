@@ -1,3 +1,4 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts";
 import { ApiError } from "./api-error";
 
@@ -23,8 +24,8 @@ export function createRegionRoutedState(region: Region, randomValue: string): st
 }
 
 export function regionFromRoutedState(state: string, label: string): Region {
-  const match = /^(global|eu)\.[A-Za-z0-9_-]{20,}$/u.exec(state);
-  if (!match) {
+  const match = /^([a-z][a-z0-9-]*)\.[A-Za-z0-9_-]{20,}$/u.exec(state);
+  if (!match || !isConfiguredRegion(match[1])) {
     throw new ApiError(401, "invalid_oauth_state", `${label} state is invalid or expired`);
   }
   return match[1] as Region;

@@ -10,7 +10,7 @@ import {
   RETIREMENT_REFUSAL_MESSAGE,
   isRetirementRefusal,
 } from "../durable-objects/object-retirement";
-import { logEvent } from "../observability/logger";
+import { diagnosticErrorCode, logEvent } from "../observability/logger";
 import { RequestValidationError } from "./validation";
 
 export const notFoundHandler: NotFoundHandler<HonoAppEnv> = (c) =>
@@ -68,11 +68,22 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     message = error.message;
   }
 
+  const errorCode = code === "internal_error" && !(error instanceof z.ZodError)
+    ? diagnosticErrorCode(error, code)
+    : code;
   logEvent(c, status >= 500 ? "error" : "warn", "request_failed", {
     code,
     status,
     error_name: error.name,
     detail_keys: details ? Object.keys(details).slice(0, 25) : [],
+    // A plain `Error` keeps its message off the row, because it may be
+    // anything. What is carried is what `diagnosticErrorCode` admits everywhere
+    // else — a bare constant such as `sidekick_missing`, or a code the
+    // diagnostics primitive composed, which is how a Durable Object's rejection
+    // reaches a route across the RPC hop — where the row otherwise said
+    // `internal_error` and `Error` and nothing else. A message with an
+    // identifier interpolated after a colon is neither, and stays off the row.
+    ...(errorCode === code ? {} : { error_code: errorCode }),
     // A raw ZodError reaching here is a response that failed its own contract.
     // Without the issue paths the log says only "internal_error", which names
     // neither the field nor the route; the paths and codes are schema shape, not

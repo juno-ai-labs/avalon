@@ -9,10 +9,10 @@ export interface FlagChangeMessage {
 export interface Env extends AccessEnvironment {
   ASSETS: Fetcher;
   GLOBAL_DB: D1Database;
-  EU_DB: D1Database;
+  [binding: `${string}_DB`]: D1Database;
   PRODUCT_FLAG_CHANGE_QUEUE: Queue<FlagChangeMessage>;
   GLOBAL_PRODUCT_FLAG_QUEUE: Queue;
-  EU_PRODUCT_FLAG_QUEUE: Queue;
+  [binding: `${string}_PRODUCT_FLAG_QUEUE`]: Queue;
   APP_ENV: 'development' | 'test' | 'staging' | 'production';
   APP_VERSION?: string;
   ACE_DEV_AUTH?: string;
@@ -29,9 +29,9 @@ export interface Env extends AccessEnvironment {
    * are configuration, never derived from a request. See `docs/ace.md`.
    */
   RALLY_API_BASE_URL: string;
-  RALLY_EU_API_BASE_URL: string;
+  [binding: `RALLY_${string}_API_BASE_URL`]: string;
   RALLY_OPERATOR_TOKEN: string;
-  RALLY_EU_OPERATOR_TOKEN: string;
+  [binding: `RALLY_${string}_OPERATOR_TOKEN`]: string;
 }
 
 export function devAuthEnabled(env: Env): boolean {

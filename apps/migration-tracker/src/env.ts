@@ -15,7 +15,7 @@ export interface Env extends AccessEnvironment {
    * and the page says so rather than pretending the dispatch succeeded.
    */
   GLOBAL_MIGRATION_COMMAND_QUEUE?: Queue<DurableObjectMigrationCommand>;
-  EU_MIGRATION_COMMAND_QUEUE?: Queue<DurableObjectMigrationCommand>;
+  [binding: `${string}_MIGRATION_COMMAND_QUEUE`]: Queue<DurableObjectMigrationCommand> | undefined;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;

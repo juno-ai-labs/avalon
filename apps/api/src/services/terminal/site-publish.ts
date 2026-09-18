@@ -1,7 +1,7 @@
 /**
  * What a published *directory* becomes, decided by what the model wrote.
  *
- * `terminal_publish_resource` widens to accept a directory, and gains no
+ * `publish_resource` widens to accept a directory, and gains no
  * parameter for what to do with it. The kind is resolved from the directory's
  * root entry alone, because a parameter restating what the files already say is
  * a parameter that can disagree with them — and the disagreement would be

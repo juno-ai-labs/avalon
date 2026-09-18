@@ -1859,7 +1859,7 @@ describe("canonical ordered work-stream transcript", () => {
         tool_calls: [{
           id: "provider-elicitation-call",
           type: "function",
-          function: { name: "core_request_elicitation", arguments: "{}" },
+          function: { name: "request_elicitation", arguments: "{}" },
         }],
       },
     }, NOW + 6, {
@@ -1935,6 +1935,162 @@ describe("canonical ordered work-stream transcript", () => {
       actor: "human",
     });
     expect(settled.loop.bind_state_revision).toBe(5);
+  });
+
+  it("activates the answer to a withheld question ahead of a message queued before it", async () => {
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const initial = await admitPendingInput({ storage, withAttachment: false });
+    await transcript.commitBindTransition(initializePersistentLoop(), NOW + 2);
+    sql.exec(`UPDATE substream_loops SET bind_state_revision = 1 WHERE id = 1`);
+    const activated = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: initial.inputId,
+      expectedLoopRevision: initial.loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 1,
+      receipt: {
+        substreamId: "0",
+        runId: "00000000-0000-7000-8000-000000000181",
+        executionEpoch: 1,
+        leaseOwner: "queued-owner",
+        leaseExpiresAt: NOW + 100_000,
+        executionContextJson: "{}",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message",
+        model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 3,
+    });
+    const turnId = "persistent-loop:turn:1";
+    const reservation = initial.loop.reserveAssistantTurn({
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "queued-owner",
+      expectedLoopRevision: activated.loop.revision,
+      receiptRunId: activated.receiptRunId,
+      turnId,
+      modelTurnIndex: 1,
+      streamId: "queued-stream",
+      now: NOW + 4,
+    });
+    await transcript.commitBindTransition({
+      kind: "assistant_reserved",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 3,
+      turnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+    }, NOW + 5, {
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "queued-owner",
+      expectedBindStateRevision: 2,
+    });
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 4,
+      turnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "provider-elicitation-call",
+          type: "function",
+          function: { name: "request_elicitation", arguments: "{}" },
+        }],
+      },
+    }, NOW + 6, {
+      executionId: activated.receiptRunId,
+      executionEpoch: 1,
+      leaseOwner: "queued-owner",
+      expectedBindStateRevision: 3,
+    });
+
+    const queued = await admitPendingInput({
+      storage,
+      inputId: "00000000-0000-7000-8000-000000000182",
+      clientMessageId: "client-queued-1",
+      text: "Also check staging @Ada",
+      bindContent: "Also check staging.",
+      withAttachment: false,
+    });
+    const elicitationId = "elicitation-queued";
+    sql.exec(
+      `INSERT INTO elicitation_requests
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+          minimum_selections, maximum_selections, target_user_id, status, answer_json,
+          answered_by_user_id, external_actor_json, created_at, answered_at)
+       VALUES (?, ?, ?, 'Which scope?', 'text', '[]', 0, NULL, NULL,
+               'answered', ?, 'user-1', NULL, ?, ?)`,
+      elicitationId,
+      activated.receiptRunId,
+      `${turnId}:tool:0`,
+      JSON.stringify("workspace"),
+      NOW + 6,
+      NOW + 7,
+    );
+    const answer = await admitPendingInput({
+      storage,
+      inputId: "00000000-0000-7000-8000-000000000183",
+      clientMessageId: `elicitation-response:${elicitationId}`,
+      text: "Answered workspace @Ada",
+      bindContent: "The person answered workspace.",
+      withAttachment: false,
+      messageType: "elicitation",
+      elicitationId,
+    });
+    // The run parked on the question, so the loop is idle with both inputs waiting.
+    sql.exec(
+      `UPDATE substream_loops
+          SET status = 'idle', active_execution_id = NULL, active_execution_epoch = NULL,
+              lease_owner = NULL, lease_expires_at = NULL, revision = revision + 1
+        WHERE id = 1`,
+    );
+    expect(answer.loop.pendingInputs().map((pending) => pending.input_id))
+      .toEqual([queued.inputId, answer.inputId]);
+
+    // The answer closes the withheld call, so it activates ahead of the
+    // message queued before it rather than the queue stopping at its head.
+    expect(transcript.nextActivationInput("persistent-loop")?.input_id).toBe(answer.inputId);
+    const resumed = await transcript.activatePendingInput({
+      loopId: "persistent-loop",
+      expectedInputId: answer.inputId,
+      expectedLoopRevision: answer.loop.loop()!.revision,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 4,
+      receipt: {
+        substreamId: "0",
+        runId: "00000000-0000-7000-8000-000000000184",
+        executionEpoch: 1,
+        leaseOwner: "queued-owner-2",
+        leaseExpiresAt: NOW + 100_000,
+        executionContextJson: "{}",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: "user-1" }),
+        origin: "human_message",
+        model: "test/model",
+      },
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 10,
+    });
+    expect(resumed.transitions.map((transition) => transition.kind))
+      .toEqual(["tool_result_accepted"]);
+    const projected = bindLoopNonSystemMessages(transcript.readBindProjection("persistent-loop")!);
+    expect(JSON.parse(String(projected.at(-1)?.content))).toMatchObject({
+      success: true,
+      data: { elicitationId, answer: "workspace" },
+    });
+    // The question is closed and its answer is a canonical turn, so the queued
+    // message is what the loop takes next.
+    expect(transcript.participantTurn(answer.inputId)).toMatchObject({ turnId: answer.inputId });
+    expect(answer.loop.pendingInputs().map((pending) => pending.input_id))
+      .toEqual([queued.inputId]);
   });
 
   it("appends a host authority's derived inputs at the settled step, closes them in the same commit, and replays without a second message", async () => {
@@ -2228,6 +2384,74 @@ describe("canonical ordered work-stream transcript", () => {
     ).one().root_fact_id).toBe(assistantFactId);
     expect(sql.exec(`SELECT COUNT(*) AS count FROM transcript_payloads
       WHERE payload_json LIKE '%Before tools%'`).one().count).toBe(1);
+  });
+
+  it("promotes active participant links in assistant prose into authoritative mentions", async () => {
+    const activeUserId = "00000000-0000-7000-8000-0000000000a1";
+    const removedUserId = "00000000-0000-7000-8000-0000000000a2";
+    const activeLink = `[@Alex](person://${activeUserId})`;
+    const removedLink = `[@Former member](person://${removedUserId})`;
+    const content = `Please ask ${activeLink}. Ignore ${removedLink}.`;
+    const { transcript, sql, storage } = open();
+    seedPendingInputRoot(sql);
+    sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, first_opened_at, updated_at)
+       VALUES (?, 'explicit', 'user-1', 'active', 0, ?, NULL, NULL, ?),
+              (?, 'explicit', 'user-1', 'removed', 1, ?, ?, NULL, ?)`,
+      activeUserId,
+      NOW,
+      NOW,
+      removedUserId,
+      NOW,
+      NOW + 1,
+      NOW + 1,
+    );
+    await transcript.commitBindTransition(initialize(), NOW);
+    const reserved = await reserveAssistantFixture({
+      transcript, storage, content, now: NOW + 1,
+    });
+    await expect(transcript.commitBindTransition(
+      reserved.transition,
+      NOW + 2,
+      reserved.executionFence,
+    )).rejects.toThrow("assistant_mention_effect_enqueue_required");
+    expect(transcript.participantTurn("run-1:turn:1")).toBeNull();
+    expect(transcript.readBindProjection("run-1")!.stateRevision).toBe(2);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM member_attention`).one()).toEqual({ count: 0 });
+
+    const deliveries: PendingInputDeliveryEffectInput[] = [];
+    await transcript.commitBindTransition(
+      reserved.transition,
+      NOW + 2,
+      reserved.executionFence,
+      (effects) => deliveries.push(...effects),
+    );
+
+    expect(transcript.participantTurn("run-1:turn:1")).toMatchObject({
+      attentionOrdinal: 1,
+      blocks: [expect.objectContaining({
+        mentions: [expect.objectContaining({
+          type: "person",
+          userId: activeUserId,
+          startOffset: content.indexOf(activeLink),
+          endOffset: content.indexOf(activeLink) + activeLink.length,
+        })],
+      })],
+    });
+    expect(deliveries).toEqual([expect.objectContaining({
+      actor: "assistant",
+      authorUserId: null,
+      mentionedUserIds: [activeUserId],
+      affectedUserIds: [activeUserId],
+    })]);
+    expect(sql.exec(
+      `SELECT latest_mention_attention_ordinal FROM member_attention WHERE user_id = ?`,
+      activeUserId,
+    ).one()).toEqual({ latest_mention_attention_ordinal: 1 });
+    expect(sql.exec(`SELECT next_attention_ordinal FROM workstream WHERE id = 1`).one())
+      .toEqual({ next_attention_ordinal: 2 });
   });
 
   it("repairs a host reservation whose Bind edge did not commit before settling failure", async () => {

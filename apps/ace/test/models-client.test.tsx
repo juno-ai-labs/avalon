@@ -77,16 +77,14 @@ describe('Ace Models client', () => {
     expect(container.textContent).toContain('Runs the main participant-visible work stream and the structured attachment-summary pass');
     expect(container.textContent).toContain('Targeted rules may still serve a different variation');
     const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'));
-    expect(modelButtons).toHaveLength(8);
+    expect(modelButtons).toHaveLength(6);
     expect(modelButtons.map((button) => button.querySelector('strong')?.textContent)).toEqual([
       '1Work-stream agent',
-      '2Addressing classifier',
-      '3Inline subagent',
-      '4Work-stream description',
-      '5Work-stream naming',
-      '6Meeting notes',
-      '7Suggested-work admission',
-      '8Suggested-work ranking',
+      '2Inline subagent',
+      '3Work-stream description',
+      '4Work-stream naming',
+      '5Suggested-work admission',
+      '6Suggested-work ranking',
     ]);
 
     const save = Array.from(container.querySelectorAll('button'))

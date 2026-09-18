@@ -430,17 +430,12 @@ test("the recorded production fingerprint covers every object the chain creates"
 });
 
 test("the recorded production fingerprint covers every region this checkout has", () => {
-  // One baseline serves every region, which is only sound if every region was
-  // actually looked at. Region discovery is config-driven now, so adding
-  // `wrangler.apac.jsonc` would otherwise leave this suite green against a
-  // recording captured from Global and EU alone.
+  // Retirement does not rewrite a historical production observation. Every
+  // current deployment must still be covered by the recorded baseline.
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  assert.deepEqual(
-    [...(recorded.regions ?? [])].sort(),
-    discoverRegions().map((entry) => entry.region).sort(),
-    "a region was added or removed since production-fingerprint.json was recorded; rerun "
-      + "`pnpm db:baseline:verify -- --record`",
-  );
+  for (const { region } of discoverRegions()) {
+    assert.ok(recorded.regions.includes(region), `Record the baseline fingerprint for ${region}`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -497,11 +492,11 @@ test("the region check reports a divergence between two hosted databases as itse
   const baseline = schemaFingerprint(table("CREATE TABLE t (id TEXT)"));
   const { ok, lines } = verifyAgainstRegions({
     expected: baseline,
-    regionSchemas: { global: table("CREATE TABLE t (id TEXT)"), eu: table("CREATE TABLE t (id INTEGER)") },
+    regionSchemas: { global: table("CREATE TABLE t (id TEXT)"), enterprise: table("CREATE TABLE t (id INTEGER)") },
   });
   assert.equal(ok, false);
-  assert.ok(lines.some((line) => line.startsWith("chain vs eu: MISMATCH")));
-  assert.ok(lines.some((line) => line.startsWith("global vs eu: MISMATCH")));
+  assert.ok(lines.some((line) => line.startsWith("chain vs enterprise: MISMATCH")));
+  assert.ok(lines.some((line) => line.startsWith("global vs enterprise: MISMATCH")));
   assert.ok(lines.some((line) => line.includes("definition differs:    table:t")));
 });
 
@@ -509,10 +504,10 @@ test("the region check passes only when the baseline and both regions agree", ()
   const table = [{ type: "table", name: "t", tbl_name: "t", sql: "CREATE TABLE t (id TEXT)" }];
   const { ok, lines } = verifyAgainstRegions({
     expected: schemaFingerprint(table),
-    regionSchemas: { global: table, eu: table },
+    regionSchemas: { global: table, enterprise: table },
   });
   assert.equal(ok, true);
-  assert.deepEqual(lines, ["chain vs global: match", "chain vs eu: match", "global vs eu: match"]);
+  assert.deepEqual(lines, ["chain vs global: match", "chain vs enterprise: match", "global vs enterprise: match"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -618,8 +613,8 @@ test("a bracket inside wrangler's own log lines is not mistaken for the payload"
 
 test("output carrying no payload at all is an error naming the region", () => {
   assert.throws(
-    () => parseWranglerJson("✘ [ERROR] could not open database", "eu"),
-    /wrangler returned no JSON for eu/u,
+    () => parseWranglerJson("✘ [ERROR] could not open database", "enterprise"),
+    /wrangler returned no JSON for enterprise/u,
   );
   assert.throws(() => parseWranglerJson("", "global"), /wrangler returned no JSON for global/u);
 });

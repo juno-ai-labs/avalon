@@ -73,7 +73,7 @@ function attachmentReceipt(overrides: Record<string, unknown>) {
     effectIntentId: "effect-1",
     runId: "run-1",
     toolCallId: "tool-read-1",
-    toolName: "workstream_read_resource",
+    toolName: "read_resource",
     mode: "read",
     connectionId: null,
     requestHash: "hash",
@@ -202,7 +202,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-invalid-arguments",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: {},
@@ -210,7 +210,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-invalid-arguments",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "resourceId or cursor is required",
@@ -229,7 +229,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-csv",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId: "00000000-0000-7000-8000-000000000777" },
@@ -237,7 +237,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-csv",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "The resource could not be converted",
@@ -257,7 +257,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-retry",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId: "00000000-0000-7000-8000-000000000777" },
@@ -265,7 +265,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-retry",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: { output: {}, summary: "verified" },
@@ -279,7 +279,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-failed",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId: "00000000-0000-7000-8000-000000000778" },
@@ -287,7 +287,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-failed",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "The resource could not be converted",
@@ -312,7 +312,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-failed-first",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId },
@@ -320,7 +320,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-failed-first",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "The resource could not be converted",
@@ -341,7 +341,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-recovery",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId },
@@ -349,7 +349,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-recovery",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: { output: { resourceId }, summary: "verified" },
@@ -368,7 +368,7 @@ describe("Bind host durability boundaries", () => {
       effectIntentId: "effect-1",
       runId: "run-1",
       toolCallId: "tool-read-1",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       mode: "read",
       connectionId: null,
       requestHash: "hash",
@@ -408,7 +408,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-view-mixed",
-      toolName: "workstream_view_resource",
+      toolName: "view_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceIds: [includedId, skippedId] },
@@ -416,7 +416,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-view-mixed",
-      toolName: "workstream_view_resource",
+      toolName: "view_resource",
       pluginId: "rally_core",
       policy,
       result: {
@@ -470,7 +470,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { cursor: "sealed-cursor" },
@@ -478,7 +478,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "The resource changed; restart the read from its resource ID",
@@ -491,7 +491,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-retry",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId },
@@ -499,12 +499,31 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-retry",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: { output: { resourceId }, summary: "Read resource" },
     } as never);
     expect(guard.boundary()).toBeNull();
+  });
+
+  it.each(["nextPageId", "previousPageId", "passages", "citations"])("grounds %s IDs to their resource among multiple active resources", (field) => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: field === "passages" ? "workstream.resources.search"
+      : field === "citations" ? "workstream.resources.summarize" : "workstream.resources.read" };
+    for (const resourceId of ["resource-a", "resource-b"]) {
+      const pageId = `workstream_quiet_amber_rapid_${resourceId === "resource-a" ? "otter" : "fox"}`;
+      guard.onStarted({ type: "tool_started", toolCallId: resourceId, toolName: "read_resource", pluginId: "rally:workstream", policy, input: { resourceId } } as never);
+      guard.onCompleted({ type: "tool_completed", toolCallId: resourceId, toolName: "read_resource", pluginId: "rally:workstream", policy,
+        result: { output: { resourceId, [field]: field === "passages" || field === "citations" ? [{ readPageId: pageId }] : pageId }, summary: "page" } } as never);
+    }
+    const readPolicy = { capability: "workstream.resources.read" };
+    guard.onStarted({ type: "tool_started", toolCallId: "next", toolName: "read_resource_next", pluginId: "rally:workstream", policy: readPolicy,
+      input: { pageId: "workstream_quiet_amber_rapid_otter" } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "next", toolName: "read_resource_next", pluginId: "rally:workstream", policy: readPolicy,
+      error: "Resource changed", data: { code: "resource_changed" }, phase: "execution", outcome: "definitive_failure" } as never);
+    expect(guard.boundary()).toContain("resource-a");
+    expect(guard.boundary()).not.toContain("resource-b");
   });
 
   it("recovers a uniquely active read after the model corrupts its opaque cursor", () => {
@@ -514,7 +533,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-first-page",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId },
@@ -522,7 +541,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-first-page",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: {
@@ -534,7 +553,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-corrupted-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { cursor: "issued-curs0r" },
@@ -542,7 +561,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-corrupted-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "Attachment cursor is invalid",
@@ -555,7 +574,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-explicit-recovery",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId, startCharacter: 12_000 },
@@ -563,7 +582,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-explicit-recovery",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: { output: attachmentReadPage(resourceId, null), summary: "Read recovery page" },
@@ -579,7 +598,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-terminal-page",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId, startCharacter: 12_000 },
@@ -587,7 +606,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-terminal-page",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: {
@@ -599,7 +618,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-corrupted-previous-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { cursor: "issued-previous-curs0r" },
@@ -607,7 +626,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-corrupted-previous-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "Attachment cursor is invalid",
@@ -620,7 +639,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-backwards-recovery",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId },
@@ -628,7 +647,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-read-backwards-recovery",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: { output: attachmentReadPage(resourceId, "next-page"), summary: "Restarted read" },
@@ -643,12 +662,12 @@ describe("Bind host durability boundaries", () => {
     const issuerScenarios = [
       {
         capability: "workstream.resources.search",
-        toolName: "workstream_search_resource",
+        toolName: "search_resource",
         output: attachmentSearchResult(resourceB, "search-read-cursor"),
       },
       {
         capability: "workstream.resources.summarize",
-        toolName: "workstream_summarize_resource",
+        toolName: "summarize_resource",
         output: attachmentSummaryResult(resourceB, "summary-read-cursor"),
       },
     ];
@@ -658,7 +677,7 @@ describe("Bind host durability boundaries", () => {
       guard.onStarted({
         type: "tool_started",
         toolCallId: `tool-read-a-${index}`,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy: readPolicy,
         input: { resourceId: resourceA },
@@ -666,7 +685,7 @@ describe("Bind host durability boundaries", () => {
       guard.onCompleted({
         type: "tool_completed",
         toolCallId: `tool-read-a-${index}`,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy: readPolicy,
         result: { output: attachmentReadPage(resourceA, "read-a-cursor"), summary: "Read A" },
@@ -692,7 +711,7 @@ describe("Bind host durability boundaries", () => {
       guard.onStarted({
         type: "tool_started",
         toolCallId: failedToolCallId,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy: readPolicy,
         input: { cursor: "corrupted-b-cursor" },
@@ -700,7 +719,7 @@ describe("Bind host durability boundaries", () => {
       guard.onFailed({
         type: "tool_failed",
         toolCallId: failedToolCallId,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy: readPolicy,
         error: "Attachment cursor is invalid",
@@ -715,7 +734,7 @@ describe("Bind host durability boundaries", () => {
       guard.onStarted({
         type: "tool_started",
         toolCallId: `tool-read-a-recovery-${index}`,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy: readPolicy,
         input: { resourceId: resourceA, startCharacter: 12_000 },
@@ -723,7 +742,7 @@ describe("Bind host durability boundaries", () => {
       guard.onCompleted({
         type: "tool_completed",
         toolCallId: `tool-read-a-recovery-${index}`,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy: readPolicy,
         result: {
@@ -801,7 +820,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-new-read",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { resourceId },
@@ -809,7 +828,7 @@ describe("Bind host durability boundaries", () => {
     guard.onCompleted({
       type: "tool_completed",
       toolCallId: "tool-new-read",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       result: { output: attachmentReadPage(resourceId, "new-cursor"), summary: "Read new page" },
@@ -817,7 +836,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-restored-running",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "Attachment cursor is invalid",
@@ -842,7 +861,7 @@ describe("Bind host durability boundaries", () => {
       guard.onStarted({
         type: "tool_started",
         toolCallId,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy,
         input: { resourceId },
@@ -850,7 +869,7 @@ describe("Bind host durability boundaries", () => {
       guard.onCompleted({
         type: "tool_completed",
         toolCallId,
-        toolName: "workstream_read_resource",
+        toolName: "read_resource",
         pluginId: "rally_core",
         policy,
         result: {
@@ -863,7 +882,7 @@ describe("Bind host durability boundaries", () => {
     guard.onStarted({
       type: "tool_started",
       toolCallId: "tool-read-ambiguous-corrupted-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       input: { cursor: "unknown-corrupted-cursor" },
@@ -871,7 +890,7 @@ describe("Bind host durability boundaries", () => {
     guard.onFailed({
       type: "tool_failed",
       toolCallId: "tool-read-ambiguous-corrupted-cursor",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       pluginId: "rally_core",
       policy,
       error: "Attachment cursor is invalid",

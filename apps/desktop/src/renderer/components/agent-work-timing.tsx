@@ -4,6 +4,21 @@ import { ThinkingOrb } from 'thinking-orbs';
 import { formatDuration } from '../lib/format';
 import { useAppearance } from '../lib/theme';
 
+/**
+ * One sentence for one state, so the row above the composer and the tooltip on
+ * the Stop button inside it cannot describe the same pending stop two ways.
+ *
+ * "work" rather than "response", because the response is not the last thing
+ * being waited on. A step is one accepted model response *plus* settlement of
+ * every tool call it already emitted, and the production run this came from
+ * shows the difference plainly: the response finished 7.0s after the click, and
+ * a tool it had already asked for then ran for 3.0s more. Naming the response
+ * promised a boundary that arrives while the agent is visibly still working —
+ * a tool row appearing above a line that says the response is what we are
+ * waiting on reads as the stop being ignored all over again.
+ */
+export const STOPPING_LABEL = 'Stopping once the current work finishes…';
+
 export interface AgentWorkTimingProps {
   active: boolean;
   /**
@@ -45,13 +60,36 @@ export interface AgentWorkTimingProps {
   icon?: React.ReactNode;
 }
 
-export function AgentCompactionIndicator(): React.JSX.Element {
+/**
+ * An activity row that names a state rather than timing one.
+ *
+ * `AgentWorkTiming` below counts, so its orb parks and its label changes tense;
+ * these rows do neither. They are always running, always say one sentence, and
+ * that sentence is both the visible label and the accessible name — there is no
+ * ticking number for a live region to read out, which is the whole reason the
+ * timing row needs a separate `activeName`.
+ *
+ * One component rather than one per state: the two callers below differed only
+ * in their sentence, and a third state copying the pair a third time is how the
+ * `role`, the live-region attributes, and the orb's props drift apart.
+ *
+ * `name` is the sentence a screen reader hears where that differs from the one
+ * on screen. Compaction is the case: the row reads "Compacting conversation
+ * context…" beside an orb that supplies the subject visually, and a reader who
+ * hears the line without the orb needs "Rally is" in front of it. It defaults
+ * to `label`, because a row whose visible line already names its subject — the
+ * pending stop does — would otherwise be made to say it twice.
+ */
+function ActivityStatusRow({ label, name = label }: {
+  label: string;
+  name?: string;
+}): React.JSX.Element {
   const appearance = useAppearance();
 
   return (
     <div
       aria-atomic="true"
-      aria-label="Rally is compacting the conversation context"
+      aria-label={name}
       aria-live="polite"
       className="agent-work-timing agent-work-timing-active"
       role="status"
@@ -64,11 +102,29 @@ export function AgentCompactionIndicator(): React.JSX.Element {
         state="solving"
         theme={appearance}
       />
-      <span aria-hidden="true" className="agent-work-timing-label">
-        Compacting conversation context…
-      </span>
+      <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
     </div>
   );
+}
+
+export function AgentCompactionIndicator(): React.JSX.Element {
+  return (
+    <ActivityStatusRow
+      label="Compacting conversation context…"
+      name="Rally is compacting the conversation context"
+    />
+  );
+}
+
+/**
+ * What the composer dock says between a Stop request and the run ending.
+ *
+ * It borrows the activity rows' shape because it is the same kind of line, but
+ * it is drawn in the dock rather than in the feed, and it carries no duration.
+ * `docs/conversation-surfaces.md` owns both reasons.
+ */
+export function RunStoppingIndicator(): React.JSX.Element {
+  return <ActivityStatusRow label={STOPPING_LABEL} />;
 }
 
 /**

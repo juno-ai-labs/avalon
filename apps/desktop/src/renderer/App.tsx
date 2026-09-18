@@ -1,19 +1,19 @@
-import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
-import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import type { Region } from "@rally/contracts/regions";
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { logError } from '../common/logger';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
+import { logError } from '../common/logger';
 import { AppShell } from './components/app-shell';
-import { WorkstreamLandingScreen } from './screens/workstream-landing';
-import { useOpenFirstWorkstream } from './lib/workstream-landing';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
+import { localCacheScope } from './lib/local-cache';
+import { FaviconApiProvider } from './lib/favicon-api';
+import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
 import { workspaceFromSession } from './lib/session-workspace';
 import {
@@ -29,23 +29,23 @@ import {
   uuidV7,
 } from './lib/telemetry';
 import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
+import type { Workspace } from './lib/types';
 import { useWindowActivationTracking } from './lib/window-activation';
 import { useEscapeClosesWindow } from './lib/window-escape';
-import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
-import { localCacheScope } from './lib/local-cache';
-import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
-import type { Workspace } from './lib/types';
+import { useOpenFirstWorkstream } from './lib/workstream-landing';
+import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationScreen } from './screens/automation';
 import { DeepLinkErrorScreen } from './screens/deep-link-error';
-import { MeetingNotesScreen } from './screens/meeting-notes';
-import { NoteDetailScreen } from './screens/note-detail';
+import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { NewWorkstreamScreen } from './screens/new-workstream';
-import { ProjectSpaceScreen } from './screens/project-space';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
-import { WorkstreamScreen } from './screens/workstream';
+import { ProjectSpaceScreen } from './screens/project-space';
+import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
+import { WorkstreamScreen } from './screens/workstream';
+import { WorkstreamLandingScreen } from './screens/workstream-landing';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -95,7 +95,7 @@ function ServiceSetupState({
   error: Error;
   onRetry: () => void;
   targetApiBaseUrl?: string;
-  targetRegion?: 'global' | 'eu';
+  targetRegion?: Region;
 }): React.JSX.Element {
   const { api, region, signOut } = useAppSession();
   const displayRegion = targetRegion ?? region;
@@ -108,12 +108,12 @@ function ServiceSetupState({
         <h1>{isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}</h1>
         <p>{error.message}</p>
         <dl>
-          <div><dt>Region</dt><dd>{displayRegion === 'eu' ? 'European Union' : 'United States'}</dd></div>
+          <div><dt>Region</dt><dd>{displayRegion}</dd></div>
           <div><dt>API endpoint</dt><dd className="mono">{targetApiBaseUrl ?? api?.baseUrl}</dd></div>
         </dl>
         <div className="setup-guidance">
           <strong>Local development</strong>
-          <p>Start the Cloudflare API for this region and confirm the safe <code>VITE_API_{displayRegion === 'eu' ? 'EU' : 'GLOBAL'}_URL</code> value in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
+          <p>Start the Cloudflare API for this region and confirm this deployment’s API URL in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
         </div>
         <div className="setup-actions">
           <Button onClick={() => void signOut()}>Return to sign in</Button>
@@ -250,7 +250,7 @@ function WorkspaceApp(): React.JSX.Element {
   }, [signOut, signOutIfCredentialCleared, surrenderActiveWorkspace, workspace.error]);
 
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const mainSurface = surface !== 'settings' && surface !== 'sidekicks' && surface !== 'meeting';
+  const mainSurface = surface !== 'settings' && surface !== 'sidekicks';
   // A window that closes on Escape has to do it before its screen exists, too.
   // `Opening workspace…` and the service-setup error are the states a person is
   // most stuck in, and until the profile lands neither Settings nor Sidekicks
@@ -320,18 +320,6 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
     return <SidekicksWindow />;
   }
 
-  const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
-  if (meetingSurface) {
-    return (
-      <HashRouter>
-        <TelemetryRouteObserver />
-        <Routes>
-          <Route element={<MeetingNotesScreen />} path="/meeting" />
-          <Route element={<Navigate replace to="/meeting" />} path="*" />
-        </Routes>
-      </HashRouter>
-    );
-  }
 
   return (
     <SpeechPlaybackProvider api={api!}>
@@ -343,7 +331,6 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
             <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
             <Route element={<NewWorkstreamScreen workspace={workspace} projectId="route" />} path="/projects/:projectId/workstreams/new" />
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
-            <Route element={<NoteDetailScreen />} path="/notes/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />
             <Route element={<AutomationScreen />} path="/sidekicks/:id" />
@@ -492,7 +479,9 @@ export default function App(): React.JSX.Element {
       <QueryClientProvider client={queryClient}>
         <Tooltip.Provider>
           <AppSessionProvider>
-            <AccountOnboardingGate><SessionGate /></AccountOnboardingGate>
+            <FaviconApiProvider>
+              <AccountOnboardingGate><SessionGate /></AccountOnboardingGate>
+            </FaviconApiProvider>
           </AppSessionProvider>
         </Tooltip.Provider>
       </QueryClientProvider>

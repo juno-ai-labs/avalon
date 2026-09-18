@@ -7,13 +7,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "eval:addressing": "tsx evals/addressing/run.ts",
+    "eval:addressing:providers": "tsx evals/addressing/benchmark-providers.ts",
+    "eval:addressing:report": "tsx evals/addressing/build-combination-report.ts",
+    "eval:addressing:judge": "tsx evals/addressing/judge.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@juno-ai/bind": "16.0.0",
     "@openrouter/sdk": "1.2.54",
     "@rally/contracts": "workspace:*",
-    "@juno-ai/bind": "13.0.0",
     "eventsource-parser": "latest",
     "zod": "catalog:"
   },

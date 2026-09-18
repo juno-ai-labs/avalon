@@ -15,15 +15,13 @@ const environment = {
   CLOUDFLARE_API_TOKEN: 'test-token',
 };
 
-test('the hosted-resource inventory comes from both regional Wrangler files', async () => {
+test('the hosted-resource inventory comes from configured regional Wrangler files', async () => {
   const buckets = await configuredR2Buckets();
 
   assert.deepEqual(buckets, [
     { region: 'global', binding: 'DESKTOP_RELEASES', name: 'avalon-desktop-releases', jurisdiction: 'default' },
     { region: 'global', binding: 'PAYLOADS', name: 'avalon-global-payloads', jurisdiction: 'default' },
     { region: 'global', binding: 'TELEMETRY_PAYLOADS', name: 'avalon-global-telemetry', jurisdiction: 'default' },
-    { region: 'eu', binding: 'PAYLOADS', name: 'avalon-eu-payloads', jurisdiction: 'eu' },
-    { region: 'eu', binding: 'TELEMETRY_PAYLOADS', name: 'avalon-eu-telemetry', jurisdiction: 'eu' },
   ]);
 });
 
@@ -45,31 +43,29 @@ test('checks and logs every configured bucket with its regional jurisdiction', a
     { name: 'avalon-desktop-releases', jurisdiction: null },
     { name: 'avalon-global-payloads', jurisdiction: null },
     { name: 'avalon-global-telemetry', jurisdiction: null },
-    { name: 'avalon-eu-payloads', jurisdiction: 'eu' },
-    { name: 'avalon-eu-telemetry', jurisdiction: 'eu' },
   ]);
-  assert.equal(lines.length, 5);
-  assert.match(lines.at(-1), /eu\/TELEMETRY_PAYLOADS.*avalon-eu-telemetry.*eu/u);
+  assert.equal(lines.length, 3);
+  assert.match(lines.at(-1), /global\/TELEMETRY_PAYLOADS.*avalon-global-telemetry.*default/u);
 });
 
 test('fails before deployment when a configured R2 bucket does not exist', async () => {
   const fetchImpl = async (input) => {
     const name = new URL(input).pathname.split('/').at(-1);
-    return name === 'avalon-eu-telemetry'
+    return name === 'avalon-global-telemetry'
       ? Response.json({ success: false }, { status: 404 })
       : Response.json({ success: true, result: { name } });
   };
 
   await assert.rejects(
     checkRequiredR2Buckets({ environment, fetchImpl, log: () => undefined }),
-    /eu\/TELEMETRY_PAYLOADS.*avalon-eu-telemetry.*HTTP 404/u,
+    /global\/TELEMETRY_PAYLOADS.*avalon-global-telemetry.*HTTP 404/u,
   );
 });
 
 test('the API deployment checks hosted R2 resources before remote mutations', async () => {
   const workflow = await readFile(join(repositoryDirectory, '.github/workflows/deploy-api.yml'), 'utf8');
   const resourceGate = workflow.indexOf('node scripts/check-cloudflare-r2-buckets.mjs');
-  const firstMigration = workflow.indexOf('- name: List the pending remote migrations for EU');
+  const firstMigration = workflow.indexOf('- name: List the pending remote migrations for Global');
 
   assert.notEqual(resourceGate, -1, 'API deploy must verify configured R2 buckets');
   assert.ok(resourceGate < firstMigration, 'R2 resource verification must precede remote migrations');

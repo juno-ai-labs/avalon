@@ -18,8 +18,6 @@ This page is the historical record for the retired feature. The four Suggested W
 
 The rollout tombstones are compatibility boundaries, not a dormant implementation or a re-enable switch. Reintroducing a work-stream suggestion product would be a new feature with new contracts and storage rather than a reversal of these migrations.
 
-## Changelog
-
 ### 2026-08-30 — Suggested context was removed
 
 **What changed:** Both producers, the activity classifier, acceptance and dismissal routes, realtime handling, desktop card, feedback projection, and object-local suggestion state were removed. Forward migrations discard pending feedback and cards while retaining accepted resource relationships as ordinary attachments. The accepted content's source audience survives only as an immutable generic privacy fence. Rolling-deploy parsers consume old resource and feedback envelopes without restoring the retired product vocabulary.

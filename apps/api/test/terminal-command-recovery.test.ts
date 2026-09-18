@@ -21,7 +21,7 @@ describe("Terminal command receipt recovery", () => {
     const plugin: HarnessPlugin = {
       canonicalId: "rally:terminal",
       modelId: "rally_terminal",
-      shortWireName: "terminal",
+      shortWireName: "",
       description: "Terminal",
       preload: false,
       tools: [{
@@ -92,7 +92,7 @@ describe("Terminal command receipt recovery", () => {
     const plugin: HarnessPlugin = {
       canonicalId: "rally:terminal",
       modelId: "rally_terminal",
-      shortWireName: "terminal",
+      shortWireName: "",
       description: "Terminal",
       preload: false,
       tools: [{ definition, execute }],
@@ -122,7 +122,7 @@ describe("Terminal command receipt recovery", () => {
     const plugin: HarnessPlugin = {
       canonicalId: "rally:terminal",
       modelId: "rally_terminal",
-      shortWireName: "terminal",
+      shortWireName: "",
       description: "Terminal",
       preload: false,
       tools: [{ definition, execute }],

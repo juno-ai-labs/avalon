@@ -23,6 +23,13 @@ readiness barrier that decides when a seeded demo is Ready, the durable
 preparation operation that drives them, and the operator API the Ace Demos
 page calls. **Open questions** below says what remains.
 
+
+Text-only openings may select `execution: history`: they materialize prepared
+conversation facts through the same authority path as imports, start idle and
+confirm canonical content without inventing a run. The memo opening uses this mode.
+Tool/elicitation scenarios retain ordinary scripted executions. See
+[prepared conversations and session import](session-import.md).
+
 ## Where the code lives
 
 | Path | Role |
@@ -46,8 +53,6 @@ page calls. **Open questions** below says what remains.
 | `packages/db/migrations/0102_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
 | `packages/db/migrations/0103_demo_seed_substreams.sql` | A fifth kind of confirmed action, and the conversation each action wrote to. |
 | `apps/api/src/services/substream-creation-service.ts` | Owned by [`substream-creation.md`](substream-creation.md); the seeder calls it with a summary gateway that answers from the pack. |
-
-## How it works
 
 ### Retiring a workspace
 
@@ -233,7 +238,7 @@ Two things are replaced, and both are decisions rather than writers:
   pricing read) emptily. A second chat-completion request is
   refused with a 400 rather than answered again: a seed has exactly one turn
   because a seeded run makes no tool calls, and without tool calls Bind asks
-  once. A question is a call to the real `core_request_elicitation` tool with
+  once. A question is a call to the real `request_elicitation` tool with
   arguments its schema validates, addressed to the room; the run parks on
   `needs_input`, and whoever answers starts an ordinary, unseeded run.
 
@@ -407,27 +412,6 @@ closes an operation whose workspace was allocated but never created without
 retiring anything; an abandon whose walk could not finish is asked again and
 returns to the objects that remain. A published demo is retired from the
 workspaces tab like any other workspace.
-
-**The operator API is behind the operator credential, in its own role and its
-own secret.** Each region's `DEMO_OPERATORS_JSON` holds a token in the `demos`
-role, which can start, read, retry and abandon preparations, read the
-template's cast candidates, and retire a workspace — and nothing else. It is a
-secret of its own, the same shape as the telemetry surface's
-`TELEMETRY_OPERATORS_JSON` and parsed by the same code, so setting or rotating
-Ace's token never touches the telemetry tokens
-([`workspace-retirement.md`](workspace-retirement.md#changelog) records why).
-Every operator router names the secret it reads and the roles it admits, so
-the telemetry router refuses `demos`, this router refuses the telemetry
-roles, and a token filed in the wrong secret is refused either way. Retirement takes the confirmation the page
-collected — the operator typed or pasted the id — and refuses unless it names
-the workspace, and refuses an id this region's `workspaces` table does not
-hold, so the irreversible call cannot be made by a page that forgot to ask nor
-"succeed" against an id the other region owns. Demos are prepared in Global:
-the EU deployment carries the routes, binds no Workflow, and answers
-`demo_region_unsupported` before anything else is checked; a Global deployment
-without the binding answers `demo_preparation_unavailable`, a 503 for this tool
-rather than a boot failure for the region, because `DEMO_PREPARATION_WORKFLOW`
-is deliberately outside the environment's boot contract in every region.
 
 ## Invariants
 
@@ -634,19 +618,6 @@ is required in production Global only — absent, the routes answer
 template is a Global workspace, and the template check refuses an operation in
 a region whose D1 does not hold it.
 
-`0100` creates `demo_operations`, `demo_operation_phases` and
-`demo_seed_receipts` in both regions, as every migration in
-`packages/db/migrations` does; the EU tables stay empty. `DemoPreparationWorkflow`
-is bound in the Global Worker only — `wrangler.eu.jsonc` binds nothing, and
-`DEMO_PREPARATION_WORKFLOW` is optional in the environment contract and outside
-its boot contract in every region, so a missing binding is this tool's 503 and
-never a region-wide fault. `presenter_user_id` references `users(id)`,
-and regional user UUIDs differ for the same verified Google account — so a
-presenter must already have activated a workspace in a region before a demo can
-be registered there. Ace reaches the Global API over HTTPS with Global's own
-operator token; the regional relay is recorded as an exception in
-[`regionalization.md`](regionalization.md).
-
 ## Security and trust model
 
 Abandon retires a candidate through the walk in
@@ -711,6 +682,15 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-09-15 — Separate prepared prose from scripted execution
+
+The pack's creation action now explicitly chooses history or execution. History
+uses the common conversation materializer and verifies the stored turns; readiness
+can expect idle without a run receipt. The decision memo exercises this mode.
+Wrapping each prose string in a model-message helper did not share creation behavior,
+and pretending the assistant ran would make demo readiness depend on fabricated
+execution. Real scripted tool/elicitation runs remain unchanged.
 
 ### 2026-09-10 — A demo is cast from the company's directory, not invented
 
@@ -970,28 +950,6 @@ first demo; `TELEMETRY_OPERATORS_JSON` is never touched for this feature.
 
 ### 2026-09-08 — Review: what a demo may share, what a retry can reach, and where the driver is bound
 
-**What changed:** Only a Google connection is copied; any other provider's is
-skipped as `shared_grant` and reported beside `personal_scope`. A candidate is
-withheld while `ready_at` is null whatever its status, so an abandoned one
-never reappears; discovery's withheld read and the Demos list's phase read are
-chunked to D1's parameter ceiling. Abandon claims the row in one fenced
-statement before it fences `abandoned_at` and walks; the driver's publish
-writes `status = 'ready'` and `ready_at` together, fenced on `running`; retry
-asks for a driver before touching the row; start and abandon record the
-operator. `DEMO_PREPARATION_WORKFLOW` left the production boot contract and
-the EU Worker binds no Workflow. The wait's ceiling is arithmetic beside the
-limit's URL and date, with one step of headroom and no sleep on the last
-round. The register module keeps only the walk's write. The seed seam answers
-the streamed form only. The pack schema refuses a role token in Rally's own
-prose that names nobody in the cast, `resolveRoleNames` refuses an unbound
-role rather than throwing mid-seed, and the placeholder pack is parsed once,
-at first use, with its prose no longer inventing a figure the room never
-held. Readiness gaps name the viewer. Ace's Demos page reads a retried
-operation by its current attempt, keeps polling while offline, says why a
-template is too small to cast, shows an abandoned operation's outcome, points
-the presenter at the account menu and the flag it needs, and has no
-per-operation read.
-
 **Why:** A review swarm on the split PR. The copier shared a grant the
 presenter could revoke remotely for the template and every live demo. The
 filter tested `retired_at` as well as `ready_at`, so abandoning a candidate
@@ -1007,15 +965,6 @@ withholding entry, now part of the entry below, said discovery pays "none at
 all for a member in no demo", which was never true: the read is what answers
 the question, and it is made for every member in any workspace but the
 template.
-
-**Considered and rejected:** Deriving the shareable set from the adapter's
-`revoke` hook — Google has one and is the one provider that must not call it,
-so the property is the provider's, not the adapter's, and a named set with the
-reasoning beside it is what a future provider is judged against. Making a
-seeded run retryable by minting a fresh client message id on retry — that
-writes the turn twice, and the transcript is the demo. Keeping the EU binding
-inert — a binding that exists and must never be used is a trap for the next
-reader.
 
 **Consequences:** Adding a provider to `SHAREABLE_CONNECTOR_TYPES` is a
 decision about its revocation and refresh behavior. A seeded run that fails is
@@ -1037,12 +986,14 @@ they were decided:
 - *Withholding.* Regional discovery drops the template and an unpublished
   candidate from a member's workspace list, and activating an unpublished
   candidate answers `demo_workspace_preparing`.
+
 - *Retirement, and no demo mode.* `retireWorkspaceGraph` no longer consults
   the register; `isRetirableDemoWorkspace` and its refusal are gone (the walk
   itself is now [`workspace-retirement.md`](workspace-retirement.md)).
   `currentDemoWorkspace` became `liveDemoWorkspaces`, a list. Demo mode — the
   suppression of background connector activity in a demo — is dropped from the
   PRD before it was built.
+
 - *The seeder.* `DemoSeedSchema` in contracts, and an optional `seed` on the
   message the object admits, on `initialize`, and on the run's execution
   context. The object skips the addressing classifier for a seed action and
@@ -1052,6 +1003,7 @@ they were decided:
   `demo-seeder.ts` plays one action at a time and records
   `demo_seed_receipts`. A `demo_seed` auth principal lets the cast act without
   a session.
+
 - *Readiness.* `demo-readiness.ts`: `demoReadinessManifest` derives what each
   verified viewer should find from the pack's steps, its new `expect` section
   and the seeder's receipts, and `checkDemoReadiness` compares that with the
@@ -1060,39 +1012,16 @@ they were decided:
   gains `expect` and checks a viewer's listed rooms against the rooms the pack
   makes visible to them; `packRoomFacts` is the one statement of who ends up
   in a room.
+
 - *The operation.* `demo_operations` and `demo_operation_phases`;
   `demo-preparation.ts` with start, retry, abandon, status, the template's
   cast candidates, and the five phase functions; `DemoPreparationWorkflow`
-  bound as `DEMO_PREPARATION_WORKFLOW` in both regions; `/internal/demos` and
+  bound as `DEMO_PREPARATION_WORKFLOW` in configured deployments; `/internal/demos` and
   `/internal/workspaces/:id/retire` behind a new `demos` operator role;
   `RegionalOnboardingService.createWorkspaceForMember`, a session-less create
   that shares the rows, journal, checks and object initialization with
   `create`. The wait was first bounded by `DEMO_PROJECTION_WAIT_TIMEOUT_MS`,
   unset by default; the review below removed it.
-- *The review round.* `0099`, `0100` and `0101` folded into one file — `0099`
-  as written, `0100_demo_workspaces.sql` after `main` took `0099` on rebase —
-  that creates `demo_operations`, `demo_operation_phases` and
-  `demo_seed_receipts`; the register table is gone and `demo_operations`
-  carries `ready_at` and `retired_at`, with no foreign key on `workspace_id`.
-  The operation is fenced by attempt: a phase refuses a superseded driver,
-  every status write names its attempt, a Workflow step never retries, the
-  Workflow's `run` records whatever stops it outside a phase, a failed launch
-  marks the operation failed, and a `running` operation can be retried.
-  `DEMO_PROJECTION_WAIT_TIMEOUT_MS` is gone; the wait is bounded by a round
-  count derived from Cloudflare's published steps-per-instance limit and fails
-  as `demo_projection_wait_exhausted` with the last gaps kept. The presenter
-  must be a template member, checked at start and in the first phase, and a
-  cast cannot seat one person twice. The telemetry router refuses `demos`.
-  Retirement refuses an id the region's `workspaces` table does not hold;
-  abandon takes a confirmation and refuses a published demo by `ready_at` as
-  well as status. The readiness barrier refuses a viewer the workspace does not
-  seat instead of inventing a role. A seeded run skips admission-time memory
-  recall. `DEMO_PREPARATION_WORKFLOW` is optional, required in production
-  Global only, and the demo write routes refuse outside Global. Ace holds one
-  operator token per region, `RALLY_OPERATOR_TOKEN` and
-  `RALLY_EU_OPERATOR_TOKEN`. The placeholder pack's assistant turns cite only
-  what the people said, and `@{role}` in Rally's prose expands to the cast's
-  names.
 
 **Why:** The combined branch was eleven thousand lines with three different
 blast radii — a model-context change in every multi-person room, a gate on

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import {
   RALLY_UPDATE_URL,
@@ -61,7 +63,7 @@ test('nested components require the Rally Developer ID team', () => {
   );
 });
 
-test('embedded updater is pinned to the stable arm64 channel', () => {
+test('embedded updater is pinned to the audited arm64 feed base', () => {
   assert.doesNotThrow(() => assertEmbeddedUpdateConfig([
     'provider: generic',
     `url: ${RALLY_UPDATE_URL}`,
@@ -75,4 +77,44 @@ test('embedded updater is pinned to the stable arm64 channel', () => {
     () => assertEmbeddedUpdateConfig(`provider: generic\nprovider: generic\nurl: ${RALLY_UPDATE_URL}\n`),
     /exactly one generic/u,
   );
+});
+
+
+test('profile decoder reads the Developer ID boolean using macOS plutil', { skip: process.platform !== 'darwin' }, () => {
+  const source = readFileSync(new URL('./verify-macos-app.mjs', import.meta.url), 'utf8');
+  const decoder = source.slice(source.indexOf('const profileField ='), source.indexOf('\nfunction verifyNestedComponent'));
+  let decoded = 0;
+  for (const expected of [true, false]) {
+    const xml = `<?xml version="1.0"?><plist version="1.0"><dict>
+      <key>ProvisionsAllDevices</key><${expected}/>
+      <key>TeamIdentifier</key><array><string>7ZLT6A8W25</string></array>
+      <key>Entitlements</key><dict/>
+      <key>ExpirationDate</key><date>2099-01-01T00:00:00Z</date>
+    </dict></plist>`;
+    runInNewContext(decoder, {
+      spawnSync, profileResult: { stdout: xml }, appPath: '/fixture/Rally.app',
+      inspectEntitlements: () => ({}),
+      assertPushProvisioning: (profile) => {
+        assert.equal(profile.ProvisionsAllDevices, expected);
+        decoded++;
+      },
+    });
+  }
+  assert.equal(decoded, 2, 'Both profile values must reach the policy check');
+});
+
+test('push profile must match the app capabilities and remain valid', async () => {
+  const { assertPushProvisioning, NESTED_COMPONENT_ENTITLEMENTS } = await import('./mac-signature-policy.mjs');
+  const entitlements = {
+    ...Object.fromEntries(NESTED_COMPONENT_ENTITLEMENTS.map(key => [key, true])),
+    'com.apple.developer.aps-environment': 'production',
+    'com.apple.developer.associated-domains': ['applinks:rallywith.ai', 'applinks:www.rallywith.ai'],
+  };
+  const profile = { ProvisionsAllDevices: true, TeamIdentifier: ['7ZLT6A8W25'], ExpirationDate: '2099-01-01', Entitlements: { ...entitlements, 'com.apple.application-identifier': '7ZLT6A8W25.ai.rallywith.desktop' } };
+  assert.doesNotThrow(() => assertPushProvisioning(profile, entitlements));
+  assert.doesNotThrow(() => assertPushProvisioning({ ...profile, Entitlements: { ...profile.Entitlements, 'com.apple.developer.associated-domains': '*' } }, entitlements));
+  assert.throws(() => assertPushProvisioning({ ...profile, Entitlements: { ...profile.Entitlements, 'com.apple.developer.associated-domains': 'applinks:example.com' } }, entitlements), /associated domains/);
+  assert.throws(() => assertPushProvisioning({ ...profile, ProvisionsAllDevices: false }, entitlements), /Developer ID/);
+  assert.throws(() => assertPushProvisioning({ ...profile, ExpirationDate: '2020-01-01' }, entitlements), /expired/);
+  assert.throws(() => assertPushProvisioning(profile, { ...entitlements, 'com.apple.developer.aps-environment': 'sandbox' }), /production push/);
 });

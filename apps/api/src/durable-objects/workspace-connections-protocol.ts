@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { ConnectorOAuthProviders, IdSchema } from "@rally/contracts";
 import { z } from "zod";
 
@@ -23,7 +24,7 @@ import { z } from "zod";
  */
 
 const TimestampSchema = z.string().datetime({ offset: true });
-const RegionSchema = z.enum(["global", "eu"]);
+
 
 /**
  * The providers the attempt table's CHECK constraint admits.
@@ -178,6 +179,7 @@ export const WorkspaceWebhookReceiptClaimRequestSchema = z.strictObject({
   receiptId: IdSchema,
   connectionId: IdSchema,
   signatureHash: z.string().min(1),
+  eventIdentity: z.strictObject({ providerEventId: z.string().min(1), eventType: z.string().min(1) }).optional(),
   receivedAt: TimestampSchema,
   expiresAt: TimestampSchema,
 });
@@ -185,9 +187,10 @@ export const WorkspaceWebhookReceiptClaimRequestSchema = z.strictObject({
 export const WorkspaceWebhookReceiptClaimResultSchema = z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("claimed"),
+    firstObservedAt: TimestampSchema.optional(),
     receiptId: IdSchema,
   }),
-  z.strictObject({ outcome: z.literal("duplicate") }),
+  z.strictObject({ outcome: z.literal("duplicate"), firstObservedAt: TimestampSchema.optional() }),
 ]);
 
 export type WorkspaceConnectorOAuthAttempt = z.infer<typeof WorkspaceConnectorOAuthAttemptSchema>;

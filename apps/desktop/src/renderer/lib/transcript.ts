@@ -1,3 +1,4 @@
+import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
@@ -6,6 +7,8 @@ import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
   ElicitationSchema,
+  connectorConnectionCardInputFromToolEvent,
+  isConnectorConnectionCardWireName,
   type TranscriptActivity,
   type PendingTranscriptInput,
   type TranscriptPluginRun,
@@ -370,6 +373,7 @@ export function orderedTranscriptMessages(
         };
         if (block.type === 'text') {
           const structured = block.structuredContent ?? {};
+          const imported = ImportedMessageProvenanceSchema.safeParse(structured);
           const elicitation = ElicitationSchema.safeParse(
             'elicitation' in structured ? structured['elicitation'] : structured,
           );
@@ -418,6 +422,7 @@ export function orderedTranscriptMessages(
             ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
               ? { contextLabel: structured['label'] }
               : {}),
+            ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
             ...automationActivationFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
@@ -761,6 +766,29 @@ export function transcriptOverlayIdentityKey(identity: TranscriptOverlayIdentity
   }
 }
 
+/**
+ * The answered question an admitted elicitation answer carries, if it is one.
+ *
+ * An answer is not a queued message. It is the only thing that closes the
+ * question already on screen, and the canonical question turn carries the
+ * status frozen at `open` — only the answer's own turn ever replaces it. Until
+ * the loop promotes that turn the answer is a pending input, so a room that
+ * projected it as ordinary text put a blank row on the composer queue and
+ * showed the question still asking, which every fresh snapshot restored over
+ * the reader's own answer.
+ */
+function pendingInputElicitation(
+  block: PendingTranscriptInput['block'],
+): ElicitationData | undefined {
+  if (block.messageType !== 'elicitation' || !block.structuredContent) return undefined;
+  const parsed = ElicitationSchema.safeParse(
+    'elicitation' in block.structuredContent
+      ? block.structuredContent['elicitation']
+      : block.structuredContent,
+  );
+  return parsed.success ? normalizeElicitation(parsed.data) : undefined;
+}
+
 /** Project one server-owned, non-canonical loop input into presentation state. */
 export function pendingTranscriptInputOverlay(
   input: PendingTranscriptInput,
@@ -769,6 +797,7 @@ export function pendingTranscriptInputOverlay(
     source: 'socket_event' | 'socket_snapshot' | 'rest_snapshot';
   }>,
 ): TranscriptOverlay {
+  const elicitation = pendingInputElicitation(input.block);
   return {
     identity: input.clientMessageId
       ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
@@ -780,9 +809,9 @@ export function pendingTranscriptInputOverlay(
         ? provenance.eventSequence
         : input.inputSequence,
     },
-    queueSequence: input.inputSequence,
+    ...(elicitation ? {} : { queueSequence: input.inputSequence }),
     message: {
-      id: input.futureTurnId,
+      id: elicitation ? elicitationMessageId(elicitation.id) : input.futureTurnId,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       workstreamId,
       sequenceNumber: 0,
@@ -795,7 +824,10 @@ export function pendingTranscriptInputOverlay(
         },
       } : {}),
       ...(input.externalActor ? { externalActor: { ...input.externalActor } } : {}),
-      messageType: input.block.messageType === 'system' ? 'system' : 'text',
+      messageType: elicitation
+        ? 'elicitation'
+        : input.block.messageType === 'system' ? 'system' : 'text',
+      ...(elicitation ? { elicitation } : {}),
       text: input.block.text,
       mentions: input.block.mentions?.map((mention) => ({
         type: mention.type,
@@ -806,7 +838,9 @@ export function pendingTranscriptInputOverlay(
       })),
       attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
       createdAt: input.admittedAtUtc,
-      deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
+      ...(elicitation ? {} : {
+        deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
+      }),
     },
   };
 }
@@ -816,6 +850,13 @@ export function pendingTranscriptInputOverlay(
  * when the overlay is still an optimistic send with no server identity.
  */
 export function pendingOverlayInputId(overlay: TranscriptOverlay): string | undefined {
+  // An answer to a question is an admitted pending input as well, but it is
+  // not a row anyone can reorder: counting it as one would shift the sequences
+  // a reorder assigns onto the rows around it. The test is the message kind and
+  // nothing wider — a send the room has just accepted is a queued row with a
+  // server turn id and no queue sequence yet, and keying on the sequence took
+  // its reorder id away for the whole window before the next snapshot.
+  if (overlay.message.messageType === 'elicitation') return undefined;
   if (overlay.identity.type === 'loop_input') return overlay.identity.inputId;
   if (overlay.identity.type === 'client_message' && overlay.identity.turnId) {
     return overlay.identity.turnId;
@@ -940,16 +981,58 @@ export function removeTranscriptOverlay(
 }
 
 /**
+ * Answer an already-loaded question in place, and take the overlay out.
+ *
+ * A question and its answer are one row: the canonical projection gives them
+ * one message id and keeps the question's position. An answer still waiting to
+ * be promoted has no canonical turn for that projection to fold, and
+ * `transcriptOverlaysWithoutCanonicalMatch` does not drop it either — it
+ * matches on identity, and this overlay is keyed by its own client message
+ * while the canonical row is keyed by the question. Composed as it stood, both
+ * were emitted: the question drawn twice, once open and once answered, under
+ * one React key. Only the status and the answer move; everything positional
+ * stays the question's, because that is the row the reader is looking at.
+ */
+function answeredElicitationCanonical(
+  canonical: readonly Message[],
+  overlays: readonly TranscriptOverlay[],
+): { canonical: readonly Message[]; overlays: TranscriptOverlay[] } {
+  const answers = new Map<string, TranscriptOverlay>();
+  for (const overlay of overlays) {
+    const elicitation = overlay.message.elicitation;
+    if (overlay.message.messageType !== 'elicitation' || elicitation?.status !== 'answered') continue;
+    if (!canonical.some((message) => message.elicitation?.id === elicitation.id)) continue;
+    answers.set(elicitation.id, overlay);
+  }
+  if (answers.size === 0) return { canonical, overlays: [...overlays] };
+  const folded = new Set(answers.values());
+  return {
+    canonical: canonical.map((message) => {
+      const answer = message.elicitation ? answers.get(message.elicitation.id) : undefined;
+      return answer?.message.elicitation
+        ? { ...message, elicitation: answer.message.elicitation }
+        : message;
+    }),
+    overlays: overlays.filter((overlay) => !folded.has(overlay)),
+  };
+}
+
+/**
  * Compose already-ordered canonical rows with explicitly sourced, non-durable
  * overlays. Canonical projection is the expensive side and is memoized by the
  * screen; sorting it again on every reveal tick would put the whole loaded
  * transcript on the display-rate path.
  */
 export function composeTranscript(
-  canonical: readonly Message[],
+  canonicalRows: readonly Message[],
   overlays: readonly TranscriptOverlay[],
 ): Message[] {
-  const live = transcriptOverlaysWithoutCanonicalMatch(canonical, overlays);
+  const answered = answeredElicitationCanonical(
+    canonicalRows,
+    transcriptOverlaysWithoutCanonicalMatch(canonicalRows, overlays),
+  );
+  const canonical = answered.canonical;
+  const live = answered.overlays;
   const activeAssistantTurns = new Set(live.flatMap((overlay) =>
     overlay.identity.type === 'assistant_turn' ? [overlay.identity.turnId] : []));
   let previousCanonicalSequence = 0;
@@ -987,6 +1070,37 @@ export function composeTranscript(
   }
   composed.push(...visibleCanonical.slice(canonicalIndex));
   return composed.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
+}
+
+/**
+ * A repeated presentation call beside the card it just presented is one
+ * product control, not two transcript rows. Collapse only an uninterrupted run
+ * of the same validated connector and scope. Keep the first row's stable id so
+ * an existing message anchor still points at the surviving card.
+ * Any intervening conversation row or transcript seam starts a new occasion.
+ */
+export function dedupeAdjacentConnectorConnectionCards(messages: readonly Message[]): Message[] {
+  const rows: Message[] = [];
+  for (const message of messages) {
+    const card = connectorConnectionCardInputFromToolEvent(message.toolEvent);
+    const previous = rows.at(-1);
+    const previousCard = connectorConnectionCardInputFromToolEvent(previous?.toolEvent);
+    if (card && previous && previousCard
+      && message.precededByTranscriptGap !== true
+      && card.connectorId === previousCard.connectorId
+      && card.scope === previousCard.scope) {
+      rows[rows.length - 1] = {
+        ...message,
+        id: previous.id,
+        ...(previous.precededByTranscriptGap ? { precededByTranscriptGap: true } : {}),
+        attentionSequenceNumber: message.attentionSequenceNumber
+          ?? previous.attentionSequenceNumber,
+      };
+      continue;
+    }
+    rows.push(message);
+  }
+  return rows;
 }
 
 /**
@@ -1043,6 +1157,7 @@ function pluginGroupContribution(message: Message): {
  * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
+  if (isConnectorConnectionCardWireName(message.toolEvent?.name)) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';

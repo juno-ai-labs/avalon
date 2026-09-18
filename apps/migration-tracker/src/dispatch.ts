@@ -1,3 +1,5 @@
+import { configuredRegions, isConfiguredRegion, regionConfiguration } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 /**
  * Turning "force this class" into one queue message per Durable Object.
  *
@@ -36,23 +38,20 @@ const QUEUE_SEND_BATCH = 100;
  * The command queue for each region, or `undefined` where this Worker holds no
  * binding — the normal state in local development and in the workerd suite.
  *
- * Two bindings selected by region is the one branch on region this repository
- * allows in code. The usual rule, from `docs/choosing-queues-or-rpc.md`, is to
- * keep one binding name across both regional configs so region selection stays
- * deployment configuration; that rule is written for a Worker deployed once per
- * region. This one is deployed once for the account and addresses both, so the
- * selection has nowhere else to live.
+ * This account-wide Worker selects the configured deployment binding. Retired
+ * deployments have no queue and their objects are counted as unroutable.
  */
 export function migrationCommandQueue(
   env: Env,
-  region: "global" | "eu",
+  region: Region,
 ): Queue<DurableObjectMigrationCommand> | undefined {
-  return region === "eu" ? env.EU_MIGRATION_COMMAND_QUEUE : env.GLOBAL_MIGRATION_COMMAND_QUEUE;
+  if (!isConfiguredRegion(region)) return undefined;
+  return env[`${regionConfiguration(region).bindingPrefix}_MIGRATION_COMMAND_QUEUE`];
 }
 
 /** The regions this Worker can actually dispatch to right now. */
-export function dispatchableRegions(env: Env): ("global" | "eu")[] {
-  return (["global", "eu"] as const).filter((region) => migrationCommandQueue(env, region));
+export function dispatchableRegions(env: Env): (Region)[] {
+  return configuredRegions.filter((region) => migrationCommandQueue(env, region));
 }
 
 /**
@@ -91,7 +90,7 @@ export async function dispatchMigrationRun(
   const requestedAt = Date.now();
   const selection = await registry.migrationTargets(request);
 
-  const byRegion = new Map<"global" | "eu", MigrationTarget[]>();
+  const byRegion = new Map<Region, MigrationTarget[]>();
   let unroutable = selection.unroutable;
   for (const target of selection.targets) {
     if (!migrationCommandQueue(env, target.region)) {
@@ -107,7 +106,7 @@ export async function dispatchMigrationRun(
   const failures: string[] = [];
   // One try per region, not one around the whole walk. The two regions are
   // separate queues in separate accounts of the platform's attention, and a
-  // Global queue refusing says nothing about the EU one — failing both because
+  // Global queue refusing says nothing about the regional one — failing both because
   // the first was reached first would turn one region's outage into two. Within
   // a region the loop does stop at the first refusal: the batches after it are
   // going at the same queue that just said no.

@@ -1,4 +1,3 @@
-import { safeParseSocketEvent } from "@rally/contracts";
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -17,7 +16,8 @@ import {
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
   type WorkspaceWorkstreamPageEvent,
-} from '@rally/contracts';
+  safeParseSocketEvent,
+} from "@rally/contracts";
 import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
@@ -30,25 +30,31 @@ import {
   type PropsWithChildren,
 } from 'react';
 import { ApiError, mapAutomationSummary, mapWorkstreamSummary, type RallyApi } from './api';
-import { uuidV7 } from './telemetry';
+import { retainConversationParents } from './conversation-cache';
+import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
-import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
-import type { WorkstreamSummary } from './types';
 import {
-  applyVersionedWorkstreamState,
-  applyWorkspaceWorkstreamFields,
-  workstreamSummaryState,
-} from './workstream-state-store';
-import {
-  applyVersionedNotePage,
+  PROJECTS_QUERY_KEY,
+  INACTIVE_PROJECTS_QUERY_KEY,
+  SIDEBAR_LIST_QUERY_KEYS,
   applyVersionedProjectSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
-import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
-import { retainConversationParents } from './conversation-cache';
-import { useLocalCacheScope } from './local-cache-scope';
+import { uuidV7 } from './telemetry';
+import type { WorkstreamSummary } from './types';
+import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
+import {
+  applyVersionedWorkstreamState,
+  applyWorkspaceWorkstreamFields,
+  workstreamSummaryState,
+  WORKSTREAM_STATE_WATERLINES_KEY,
+  WORKSPACE_DIRECTORY_WATERLINES_KEY,
+} from './workstream-state-store';
+import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { retainQueryData } from './retain-query-data';
+import { isSocketTicketRequestTimeoutError } from './socket-ticket-request';
 
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
@@ -71,8 +77,6 @@ export interface WorkstreamPage {
 export interface SidebarConnect {
   generation: number;
   nextCursor: string | null;
-  /** The note list's own next page, tracked separately: two lists, two cursors. */
-  notesNextCursor: string | null;
 }
 
 /**
@@ -123,6 +127,7 @@ function invalidateTopic(
     invitation_directory: [['workspace-invitations']],
     connector_connections: [
       ['connections'],
+      ['connector-installation'],
       ['connector-catalog'],
       ['github-repository-access'],
       ['workspace-onboarding'],
@@ -134,10 +139,10 @@ function invalidateTopic(
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
       ['automation'], ['automation-draft'], ['sidekicks-library'],
-      // Both halves of a work stream's own **Sidekicks** section: what it owns
-      // and what its conversation loaded. A room's row never travels in the
+      // The workstream's owned and recommended Sidekicks, plus what its
+      // conversation loaded. A room's row never travels in the
       // pushed sidebar list, so this topic is what tells its rails to re-read.
-      ['attached-sidekicks'], ['workstream-sidekicks'],
+      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
     notes: [['note']],
     // Project state is carried by the connect snapshot and every later project
@@ -216,9 +221,16 @@ export function WorkspaceSocketProvider({
   );
 
   useEffect(() => {
+    const releaseData = retainQueryData(queryClient, [
+      WORKSTREAMS_QUERY_KEY,
+      SIDEBAR_LIST_QUERY_KEYS.automations,
+      PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY, CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
+    ]);
     let stopped = false;
     let permanentlyClosed = false;
     let socket: WebSocket | null = null;
+    let activeTicketAbort: AbortController | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -332,12 +344,6 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
-      applyVersionedNotePage(
-        queryClient,
-        sidebar.notes.waterline,
-        sidebar.notes.items,
-        sidebar.notes.nextCursor,
-      );
       if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
       directoryLive = true;
       // The directory is the bound on the conversation cache: a conversation
@@ -354,7 +360,6 @@ export function WorkspaceSocketProvider({
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
-        notesNextCursor: sidebar.notes.nextCursor ?? null,
       }));
       return unaccountedFor && !wholeDirectory;
     };
@@ -392,14 +397,15 @@ export function WorkspaceSocketProvider({
       connecting = true;
       clearReconnect();
       setState(attempt === 0 ? 'connecting' : 'reconnecting');
+      const ticketAbort = new AbortController();
+      activeTicketAbort = ticketAbort;
       try {
-        const ticket = await api.getWorkspaceSocketTicket();
+        const ticket = await api.getWorkspaceSocketTicket(ticketAbort.signal);
         if (stopped) return;
-        // Going offline while the ticket was in flight left the offline handler
-        // nothing to close, so this is where that transition is noticed at all.
-        // Dialling anyway would fail and be recorded as a transport error,
-        // which is the one reading this event exists to keep apart from
-        // "the desktop lost its network".
+        // The offline handler normally aborts an in-flight ticket. This closes
+        // the narrower race where the ticket settles just before that handler:
+        // never dial after the network transition, and keep it distinct from a
+        // transport failure.
         if (isOffline()) {
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           setState('unavailable');
@@ -550,13 +556,6 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
               void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
               void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
-            } else {
-              applyVersionedNotePage(
-                queryClient,
-                sidebarList.data.waterline,
-                sidebarList.data.items,
-                sidebarList.data.nextCursor,
-              );
             }
             return;
           }
@@ -620,16 +619,19 @@ export function WorkspaceSocketProvider({
           socketTelemetry.willClose('transport_error');
           next.close();
         });
-      } catch {
+      } catch (error) {
         if (!stopped) {
           socketTelemetry.disconnected({
             attempts: attempt,
             retrying: !isOffline(),
-            cause: 'ticket_failed',
+            cause: isOffline()
+              ? 'offline'
+              : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
         }
         scheduleReconnect();
       } finally {
+        if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
         connecting = false;
       }
     };
@@ -663,6 +665,8 @@ export function WorkspaceSocketProvider({
     const offline = (): void => {
       clearReconnect();
       clearHeartbeat();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       if (socket) socketTelemetry.willClose('offline');
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
@@ -686,6 +690,7 @@ export function WorkspaceSocketProvider({
     return () => {
       stopped = true;
       localCacheMirror?.stop();
+      releaseData();
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
         'The workspace is no longer connected.',
         409,
@@ -706,6 +711,8 @@ export function WorkspaceSocketProvider({
       subscribed = false;
       clearReconnect();
       clearHeartbeat();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       socket?.close();
     };
   }, [api, localCacheScope, onAccessRevoked, queryClient, workspaceId]);

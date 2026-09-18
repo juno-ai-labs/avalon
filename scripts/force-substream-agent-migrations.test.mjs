@@ -16,14 +16,14 @@ function response(result, resultInfo = undefined) {
 
 function fixtureFetch({
   globalObjects = [],
-  euObjects = [],
+  enterpriseObjects = [],
   metrics = new Map(),
   jurisdictionByObjectId = new Map(),
 } = {}) {
   const requests = [];
   const queues = [
     ['global', 'global-command', 'global-dead-letter'],
-    ['eu', 'eu-command', 'eu-dead-letter'],
+    ['enterprise', 'enterprise-command', 'enterprise-dead-letter'],
   ];
   const fetcher = async (input, init = {}) => {
     const url = new URL(input);
@@ -51,9 +51,9 @@ function fixtureFetch({
           : fallback,
       })) }), { status: 200, headers: { 'content-type': 'application/json' } });
     }
-    const namespace = /namespaces\/(global|eu)-namespace\/objects$/u.exec(url.pathname)?.[1];
+    const namespace = /namespaces\/(global|enterprise)-namespace\/objects$/u.exec(url.pathname)?.[1];
     if (namespace) {
-      const ids = namespace === 'global' ? globalObjects : euObjects;
+      const ids = namespace === 'global' ? globalObjects : enterpriseObjects;
       return response(ids.map((id, index) => ({ id, hasStoredData: index !== ids.length - 1 })));
     }
     const queueMetric = /queues\/([^/]+)\/metrics$/u.exec(url.pathname)?.[1];

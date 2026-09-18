@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { RegionalOnboardingService } from '../src/services/platform-onboarding-service';
 import { describe, expect, it } from 'vitest';
 import { asUserId } from '@rally/contracts';
@@ -30,9 +31,9 @@ describe('account onboarding authority', () => {
   });
 });
 
-it('projects identity appearance into EU without letting older revisions overwrite it', async () => {
+it('projects identity appearance into enterprise without letting older revisions overwrite it', async () => {
   const db = migratedSqliteDatabase();
-  const env = createTestEnv({ DB: sqliteD1(db), AVALON_REGION: 'eu' });
+  const env = createTestEnv({ DB: sqliteD1(db), AVALON_REGION: 'enterprise' });
   const service = new RegionalOnboardingService(env);
   const identity = { platformUserId: userId, googleSubject: 'global-person', email: 'person@example.com',
     name: 'Person', avatarUrl: null, timezone: 'Europe/Paris', createdAt: new Date().toISOString() };

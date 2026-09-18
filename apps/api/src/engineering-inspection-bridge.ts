@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   EngineeringSqlLookupSchema,
@@ -40,7 +41,7 @@ const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   placement_affinity: z.string(),
   authority_state: z.string().nullable(),
 });

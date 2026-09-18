@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
   collapseSettledWorkIntoAccordion,
+  dedupeAdjacentConnectorConnectionCards,
   foldSettledWorkIntoMessages,
   createElicitationMessage,
   adjacentTranscriptRange,
@@ -33,6 +34,7 @@ import {
   isComposerQueueOverlay,
   pendingOverlayInputId,
   pendingTranscriptInputOverlay,
+  type TranscriptOverlay,
 } from './transcript';
 
 const base = {
@@ -44,6 +46,72 @@ const base = {
 };
 
 describe('transcript messages', () => {
+  it('collapses only adjacent repeats of the same connector card', () => {
+    const first = createToolEventMessage({
+      ...base,
+      id: 'card-first',
+      toolEvent: {
+        id: 'card-first',
+        name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+        status: 'completed',
+        input: { connectorId: 'slack', scope: 'personal' },
+      },
+    });
+    const repeated = createToolEventMessage({
+      ...base,
+      id: 'card-repeated',
+      toolEvent: {
+        id: 'card-repeated',
+        name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+        status: 'completed',
+        summary: 'Presented the slack personal connection card',
+      },
+    });
+    const answer = createTextMessage({ ...base, id: 'answer', text: 'Try again later.' });
+    const later = createToolEventMessage({ ...repeated, id: 'card-later', toolEvent: {
+      ...repeated.toolEvent!, id: 'card-later',
+    } });
+
+    expect(dedupeAdjacentConnectorConnectionCards([first, repeated, answer, later])
+      .map((message) => message.id)).toEqual(['card-first', 'answer', 'card-later']);
+  });
+
+  it('keeps adjacent cards when their catalog id or scope differs', () => {
+    const card = (id: string, connectorId: 'google-mail-calendar' | 'google-drive-workspace', scope: 'personal' | 'workspace') =>
+      createToolEventMessage({
+        ...base,
+        id,
+        toolEvent: {
+          id,
+          name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+          status: 'completed',
+          input: { connectorId, scope },
+        },
+      });
+
+    expect(dedupeAdjacentConnectorConnectionCards([
+      card('mail', 'google-mail-calendar', 'personal'),
+      card('drive-personal', 'google-drive-workspace', 'personal'),
+      card('drive-workspace', 'google-drive-workspace', 'workspace'),
+    ]).map((message) => message.id)).toEqual(['mail', 'drive-personal', 'drive-workspace']);
+  });
+
+  it('keeps a connector connection card out of collapsed plugin machinery', () => {
+    const card = createToolEventMessage({
+      ...base,
+      toolEvent: {
+        id: 'connector-card',
+        name: CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+        status: 'completed',
+        pluginId: 'rally:core',
+        pluginName: 'Rally',
+        input: { connectorId: 'slack', scope: 'personal' },
+      },
+    });
+
+    expect(groupPluginToolMessages([card])).toEqual([card]);
+  });
+
   it.each([false, true])('keeps custom MCP identity through transcript projection (activity fallback=%s)', (fallback) => {
     const turn = {
       transcriptSequence: 1, turnId: 'turn-custom', entryKind: 'conversation' as const,
@@ -516,6 +584,23 @@ describe('canonical transcript and transient overlay composition', () => {
 });
 
 describe('ordered turn rendering', () => {
+  it('carries imported-by provenance from canonical text into the message identity', () => {
+    const provenance = { kind: 'imported_session', source: { provider: 'claude', url: null }, importedByUserId: '00000000-0000-4000-8000-000000000001', importedByName: 'Adam' };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'imported', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-09-15T00:00:00.000Z', unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{ purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{ transcriptSequence: 1, turnId: 'imported-answer', entryKind: 'conversation', actor: 'assistant',
+          authorUserId: null, authorSnapshot: null, attentionOrdinal: 1, createdAtUtc: '2026-09-15T00:00:00.000Z', revision: 1,
+          blocks: [{ type: 'text', blockId: 'imported-answer:text:0', blockIndex: 0, text: 'Original answer', streaming: false, structuredContent: provenance }], activityId: null }],
+        activities: [], pluginRuns: [],
+      }], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    };
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one', [])[0]).toMatchObject({
+      authorType: 'agent', text: 'Original answer', importProvenance: provenance,
+    });
+  });
+
   it('keeps an optimistic opening turn until its canonical ordered turn exists', () => {
     const routed = createTextMessage({
       ...base,
@@ -2121,7 +2206,7 @@ describe('orderedTranscriptMessages plugin runs', () => {
         blocks: [
           {
             type: 'tool', blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
-            pluginId: 'rally:core', toolName: 'core_current_time', callIndex: 0,
+            pluginId: 'rally:core', toolName: 'current_time', callIndex: 0,
             status: 'completed', participantSafeInput: null, participantSafeResult: null,
             error: null, activityId: null,
           },
@@ -3122,6 +3207,92 @@ describe('composer queue overlays', () => {
     expect(overlay.queueSequence).toBe(3);
     expect(pendingOverlayInputId(overlay)).toBe(pendingHuman.inputId);
     expect(isComposerQueueOverlay(overlay, { harnessRunning: false })).toBe(true);
+  });
+
+  it('answers the question a pending elicitation response closes instead of queueing a blank row', () => {
+    const questionId = '00000000-0000-7000-8000-0000000000f1';
+    const answered = {
+      id: questionId,
+      workstreamId: '00000000-0000-7000-8000-0000000000f2',
+      harnessRunId: '00000000-0000-7000-8000-0000000000f3',
+      prompt: 'Which ownership scope?',
+      responseType: 'multi_select' as const,
+      options: [{ value: 'workspace', label: 'Workspace', description: null }],
+      minimumSelections: 1,
+      maximumSelections: 1,
+      targetUserId: null,
+      status: 'answered' as const,
+      answer: ['workspace'],
+      answeredByUserId: '00000000-0000-7000-8000-0000000000f4',
+      createdAt: '2026-08-05T11:59:00.000Z',
+      answeredAt: '2026-08-05T12:00:00.000Z',
+    };
+    const overlay = pendingTranscriptInputOverlay({
+      ...pendingHuman,
+      inputId: '00000000-0000-7000-8000-000000000104',
+      futureTurnId: '00000000-0000-7000-8000-000000000104',
+      clientMessageId: `elicitation-response:${questionId}`,
+      block: {
+        ...pendingHuman.block,
+        blockId: 'block-4',
+        text: '',
+        messageType: 'elicitation' as const,
+        structuredContent: { kind: 'elicitation_response', elicitation: answered },
+      },
+    }, 'workstream-one', { source: 'socket_snapshot', snapshotId: 'snapshot-1' });
+
+    // Not a queued message: it is the answer, and it says so where the
+    // question is rather than as a row on the composer.
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: true })).toBe(false);
+    expect(overlay.message.deliveryState).toBeUndefined();
+    expect(overlay.message).toMatchObject({
+      messageType: 'elicitation',
+      elicitation: { id: questionId, status: 'answered' },
+    });
+    // The feed is composed, not upserted: the canonical question turn carries
+    // the status frozen at `open`, and both rows share one message id, so the
+    // answer has to replace that row rather than land beside it.
+    const open = {
+      ...createElicitationMessage({
+        ...base,
+        id: overlay.message.id,
+        authorType: 'agent',
+        elicitation: { ...overlay.message.elicitation!, status: 'open', answer: null },
+      }),
+      transcriptSequence: 4,
+      transcriptTurnId: 'question-turn',
+    };
+    const composed = composeTranscript([open], [overlay]);
+    expect(composed).toHaveLength(1);
+    expect(composed[0]).toMatchObject({
+      id: overlay.message.id,
+      transcriptSequence: 4,
+      elicitation: { status: 'answered', answer: ['workspace'] },
+    });
+  });
+
+  it('keeps the reorder id on a send the room has accepted but not yet snapshotted', () => {
+    // The shape `conversation-surface` writes when `createMessage` resolves: it
+    // keeps the optimistic overlay's identity, gains the server turn id, and
+    // becomes a queued row — but it carries no `queueSequence`, because only a
+    // reorder or the next snapshot ever assigns one. It is a draggable row for
+    // that whole window, and keying "is this a queue row?" on the sequence
+    // dropped it into the non-draggable `sending` bucket at the bottom.
+    const accepted: TranscriptOverlay = {
+      identity: { type: 'client_message', clientMessageId: 'client-accepted', turnId: 'turn-1' },
+      provenance: { source: 'client_command', phase: 'accepted' },
+      position: { afterTranscriptSequence: 4, eventSequence: 91 },
+      message: createTextMessage({
+        ...base,
+        id: 'turn-1',
+        clientMessageId: 'client-accepted',
+        authorType: 'human',
+        text: 'Just accepted',
+        deliveryState: 'queue_pending',
+      }),
+    };
+    expect(pendingOverlayInputId(accepted)).toBe('turn-1');
+    expect(isComposerQueueOverlay(accepted, { harnessRunning: true })).toBe(true);
   });
 
   it('sorts the composer queue by queueSequence and parks sending rows last', () => {

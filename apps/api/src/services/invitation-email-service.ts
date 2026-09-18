@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { addWorkspaceTarget } from "@rally/contracts";
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
@@ -13,9 +14,11 @@ export interface WorkspaceInvitationEmail {
   workspaceName: string;
   inviterName: string;
   role: "admin" | "member";
-  region: "global" | "eu";
+  region: Region;
   expiresAt: string;
   inviteUrl: string;
+  /** A Rally download link, repeatable until the invitation expires, when one was issued. */
+  downloadUrl?: string;
 }
 
 export interface WorkspaceInvitationResolutionEmail {
@@ -27,7 +30,7 @@ export interface WorkspaceInvitationResolutionEmail {
   inviteeEmail: string;
   inviteeName?: string;
   role: "admin" | "member";
-  region: "global" | "eu";
+  region: Region;
 }
 
 export type InvitationEmailDelivery = "sent" | "skipped";
@@ -38,7 +41,6 @@ export async function sendWorkspaceInvitationEmail(
   request: typeof fetch = fetch,
 ): Promise<InvitationEmailDelivery> {
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
   const expiration = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "long",
@@ -48,21 +50,20 @@ export async function sendWorkspaceInvitationEmail(
     timeZone: "UTC",
     timeZoneName: "short",
   }).format(new Date(invitation.expiresAt));
-  const subject = `${singleLine(invitation.inviterName)} invited you to ${singleLine(invitation.workspaceName)} on Avalon`;
+  const subject = `${singleLine(invitation.inviterName)} invited you to ${singleLine(invitation.workspaceName)} on Rally`;
   const text = [
     `${invitation.inviterName} invited you to join ${invitation.workspaceName} as ${roleLabel}.`,
     "",
     `Accept the invitation: ${invitation.inviteUrl}`,
+    ...(invitation.downloadUrl ? ["", `Don't have Rally yet? Download it for macOS: ${invitation.downloadUrl}`] : []),
     "",
     `This one-time invitation expires ${expiration}.`,
-    `Workspace data region: ${regionLabel}.`,
     "",
     "If you were not expecting this invitation, you can ignore this email.",
   ].join("\n");
   const html = invitationEmailHtml({
     ...invitation,
     roleLabel,
-    regionLabel,
     expiration,
   });
 
@@ -88,7 +89,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const workspaceName = singleLine(invitation.workspaceName);
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const regionLabel = invitation.region === "eu" ? "European Union" : "United States";
   const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
     region: invitation.region,
     workspaceId: invitation.workspaceId,
@@ -103,7 +103,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
     `${actorWithEmail} ${verb} your invitation to join ${workspaceName}.`,
     "",
     `They were invited as ${roleLabel}.`,
-    `Workspace data region: ${regionLabel}.`,
     "",
     `Open Rally: ${desktopUrl.toString()}`,
   ].join("\n");
@@ -111,7 +110,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
     ...invitation,
     actor,
     roleLabel,
-    regionLabel,
     verb,
     desktopUrl: desktopUrl.toString(),
   });
@@ -132,27 +130,34 @@ export async function sendWorkspaceInvitationResolutionEmail(
 
 function invitationEmailHtml(input: WorkspaceInvitationEmail & {
   roleLabel: string;
-  regionLabel: string;
   expiration: string;
 }): string {
   const workspaceName = escapeHtml(input.workspaceName);
   const inviterName = escapeHtml(input.inviterName);
   const inviteUrl = escapeHtml(input.inviteUrl);
   const roleLabel = escapeHtml(input.roleLabel);
-  const regionLabel = escapeHtml(input.regionLabel);
   const expiration = escapeHtml(input.expiration);
+  const downloadRow = input.downloadUrl
+    ? `<tr><td style="font-size:14px;line-height:1.6;color:#3d3d3d;padding-bottom:20px">Don't have Rally yet? <a href="${escapeHtml(input.downloadUrl)}" style="color:#141414;text-decoration:underline">Download it for macOS</a>.</td></tr>`
+    : "";
   return `<!doctype html>
 <html lang="en">
-  <body style="margin:0;background:#10130f;color:#f2f3ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+  </head>
+  <body style="margin:0;background:#ffffff;color:#141414;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;padding:40px 16px">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
-          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CEDC00">Avalon</td></tr>
-          <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#f2f3ec">Join ${workspaceName}</h1></td></tr>
-          <tr><td style="font-size:16px;line-height:1.6;color:#c9ccc4">${inviterName} invited you to join <strong style="color:#f2f3ec">${workspaceName}</strong> as ${roleLabel}.</td></tr>
-          <tr><td style="padding:28px 0"><a href="${inviteUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Accept invitation</a></td></tr>
-          <tr><td style="font-size:13px;line-height:1.6;color:#8f948b">This one-time invitation expires ${expiration}.<br>Workspace data region: ${regionLabel}.</td></tr>
-          <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#73786f;border-top:1px solid #2b2f29">If you were not expecting this invitation, you can ignore this email.</td></tr>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;table-layout:fixed;overflow-wrap:anywhere;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;padding:28px">
+          <tr><td><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:10px;vertical-align:middle"><img src="https://rallywith.ai/brand/rally-mark-email.png" width="32" height="32" alt="" style="display:block;border:0"></td><td style="font-size:18px;font-weight:700;color:#141414;vertical-align:middle">Rally</td></tr></table></td></tr>
+          <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#141414">Join ${workspaceName}</h1></td></tr>
+          <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${inviterName} invited you to join <strong style="color:#141414">${workspaceName}</strong> as ${roleLabel}.</td></tr>
+          <tr><td style="padding:28px 0"><a href="${inviteUrl}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Accept invitation</a></td></tr>
+          ${downloadRow}
+          <tr><td style="font-size:13px;line-height:1.6;color:#696969">This one-time invitation expires ${expiration}.</td></tr>
+          <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#696969;border-top:1px solid #e5e5e5">If you were not expecting this invitation, you can ignore this email.</td></tr>
         </table>
       </td></tr>
     </table>
@@ -163,7 +168,6 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
 function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail & {
   actor: string;
   roleLabel: string;
-  regionLabel: string;
   verb: "accepted" | "declined";
   desktopUrl: string;
 }): string {
@@ -171,24 +175,27 @@ function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail
   const inviteeEmail = escapeHtml(input.inviteeEmail);
   const workspaceName = escapeHtml(input.workspaceName);
   const roleLabel = escapeHtml(input.roleLabel);
-  const regionLabel = escapeHtml(input.regionLabel);
   const outcome = input.outcome === "accepted" ? "Invitation accepted" : "Invitation declined";
   const desktopUrl = escapeHtml(input.desktopUrl);
-  const accent = input.outcome === "accepted" ? "#CEDC00" : "#47C7FC";
   const actorDescription = input.actor.toLowerCase() === input.inviteeEmail.toLowerCase()
     ? actor
-    : `${actor} <span style="color:#8f948b">(${inviteeEmail})</span>`;
+    : `${actor} <span style="color:#696969">(${inviteeEmail})</span>`;
   return `<!doctype html>
 <html lang="en">
-  <body style="margin:0;background:#10130f;color:#f2f3ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+  </head>
+  <body style="margin:0;background:#ffffff;color:#141414;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;padding:40px 16px">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
-          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${accent}">Avalon</td></tr>
-          <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#f2f3ec">${outcome}</h1></td></tr>
-          <tr><td style="font-size:16px;line-height:1.6;color:#c9ccc4">${actorDescription} ${input.verb} your invitation to join <strong style="color:#f2f3ec">${workspaceName}</strong>.</td></tr>
-          <tr><td style="padding-top:24px;font-size:13px;line-height:1.6;color:#8f948b;border-top:1px solid #2b2f29">They were invited as ${roleLabel}.<br>Workspace data region: ${regionLabel}.</td></tr>
-          <tr><td style="padding-top:28px"><a href="${desktopUrl}" style="display:inline-block;background:${accent};color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open Avalon</a></td></tr>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;table-layout:fixed;overflow-wrap:anywhere;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;padding:28px">
+          <tr><td><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:10px;vertical-align:middle"><img src="https://rallywith.ai/brand/rally-mark-email.png" width="32" height="32" alt="" style="display:block;border:0"></td><td style="font-size:18px;font-weight:700;color:#141414;vertical-align:middle">Rally</td></tr></table></td></tr>
+          <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#141414">${outcome}</h1></td></tr>
+          <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${actorDescription} ${input.verb} your invitation to join <strong style="color:#141414">${workspaceName}</strong>.</td></tr>
+          <tr><td style="padding-top:24px;font-size:13px;line-height:1.6;color:#696969;border-top:1px solid #e5e5e5">They were invited as ${roleLabel}.</td></tr>
+          <tr><td style="padding-top:28px"><a href="${desktopUrl}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Open Rally</a></td></tr>
         </table>
       </td></tr>
     </table>

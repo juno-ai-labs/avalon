@@ -127,7 +127,7 @@ export async function deliverParentEffects(env: Env, parent: DurableObjectStub):
 
 export function parentStubFor(
   env: Env,
-  region: "global" | "eu",
+  region: string,
   parent: { workspaceId: string; parentKind: "workstream" | "automation"; parentId: string },
 ): DurableObjectStub {
   if (parent.parentKind === "automation") {
@@ -148,7 +148,7 @@ export function parentStubFor(
 export async function deliverEffectsToWorkspace(
   env: Env,
   child: DurableObjectStub,
-  region: "global" | "eu" = "global",
+  region: string = "global",
 ): Promise<{ child: ConversationEffectEnvelope[]; parent: ParentEffectEnvelope[] }> {
   const childEnvelopes = await deliverChildEffects(env, child);
   const parents = new Map<string, DurableObjectStub>();
@@ -206,7 +206,7 @@ export async function deliverParentEffectsInOrder(
 export async function deliverEffectsToWorkspaceInOrder(
   env: Env,
   child: DurableObjectStub,
-  region: "global" | "eu" = "global",
+  region: string = "global",
 ): Promise<{ child: ConversationEffectEnvelope[]; parent: ParentEffectEnvelope[] }> {
   const childEnvelopes = await deliverChildEffects(env, child);
   const parents = new Map<string, DurableObjectStub>();

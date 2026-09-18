@@ -1,416 +1,136 @@
-# Meeting notes and Control Tower
+# Meeting notes retirement
 
-A meeting note is a recording, its transcript, the attendee's own writing, and a
-model-written briefing that is rewritten while the meeting is still happening.
-The briefing is **Control Tower**: a complete replacement summary of the
-conversation so far, regenerated on a served cadence — once a minute by default —
-so someone who was multitasking, stepped away, or was just asked a question can
-re-enter the conversation in about thirty seconds of reading. When recording
-ends, a second, different pass replaces the live briefing with a durable
-whole-meeting summary.
+Rally's built-in meeting recording, Notes, and Control Tower are retired.
+Composer dictation, its microphone permissions and transcription transport remain.
+Granola and Fireflies integrations remain independent features.
 
-Read this before changing the recording cadence, either prompt, the transcript
-segment protocol, or the note resource that the rest of Rally reads. The
-realtime dictation transport that feeds it belongs to
-[`security.md`](security.md) and [`runbook.md`](runbook.md); this document starts
-at the transcript text the client already holds.
+## Removal and cleanup
 
-## Where the code lives
+The note API and generation services have been removed. WorkspaceDO migration 57
+clears note content and linked resources, retaining only IDs and object references
+in `retired_meeting_resources`. Inserts and updates cannot recreate built-in note
+resources. Existing migration definitions remain unchanged.
 
-| Path | Responsibility |
-| --- | --- |
-| `apps/desktop/src/renderer/screens/meeting-notes.tsx` | The recording screen and the only clock in the system. Reads the served cadence when it opens, commits each segment, requests each refresh, and drives finalization. `DEFAULT_MEETING_NOTES_INTERVAL_MS` is the fallback for a device that could not ask. |
-| `apps/desktop/src/renderer/lib/use-realtime-dictation.ts` | Audio capture and the provider socket. `commit()` closes a segment without ending the session; `stop()` ends it and returns the last buffered text. |
-| `apps/api/src/routes/notes.ts` | `POST /notes/:id/segments` appends a segment; `POST /notes/:id/generate` runs a `live` or `final` pass. |
-| `apps/api/src/services/note-service.ts` | The transcript windows handed to the model, generation orchestration and its final-pass retry, and materialization of the note resource. Reaches the note rows as typed WorkspaceDO methods; its one remaining facade write is the create batch that spans `notes` and `resources`. |
-| `apps/api/src/durable-objects/workspace-notes-protocol.ts` | The Zod request and result schemas for the note methods on WorkspaceDO, including the row contracts that used to be asserted in the service. |
-| `apps/api/src/durable-objects/workspace-notes-storage.ts` | The note SQL, against the object's own storage: segment sequencing, the archive classification, the briefing compare-and-set, the privacy-transition outbox write, and the sidebar read shared with the workspace socket. |
-| `apps/api/src/services/meeting-notes-service.ts` | Both system prompts, both example sets, and the harness configuration each pass runs under. `CONTROL_TOWER_SYSTEM_PROMPT` is the live briefing; `FINAL_MEETING_SUMMARY_SYSTEM_PROMPT` is the end-of-meeting one. |
-| `apps/api/src/services/control-tower-flags.ts` | The one resolver for the refresh cadence, read by both the client's `GET /feature-flags` answer and the live prompt. Clamps and logs what Flagship serves. |
-| `packages/contracts/src/index.ts` | `CONTROL_TOWER_REFRESH_SECONDS` — the cadence default and its bounds, defined once for every reader — plus `GenerateNoteNotesRequest`, `NoteDetail`, `NoteTranscriptSegment`, and the `recentTranscript` bound. |
+`retiredMeetingInventory`, `purgeMeetingSearchAuthorization`,
+`purgeMeetingNoteObjects`, and `finalizeMeetingRetirement` are internal RPCs, with no
+public route. All are permitted on retired workspaces so an inactive or closed
+workspace cannot escape the purge. One purge call deletes one resource's page of
+R2 objects; failures retain the address and another call resumes. Resource IDs
+remain until downstream attachments and archives have been checked.
 
-## How it works
+Search cleanup drains an already admitted KV publication, deletes the external
+key, then removes its SQLite decision and dependencies. A failure retains the
+key for retry. Registration validates the complete batch before allocating any
+generations, so a retired ID cannot leave unrelated resources partly registered.
+Registration and publication both reject retired resource IDs.
+The search index is independently inventoried by exact source ID before deleting
+its revision metadata; queued indexing revalidates canonical authority.
 
-### The refresh loop
+Some adopted schemas lack the obsolete `automation_resources` table. Migration
+57 had already shipped when this was discovered, so its hash stays unchanged.
+A transaction around migration 57 alone supplies an empty temporary relation
+for its DELETE and removes it before committing. Earlier and later migrations
+run outside that shim. The real workerd upgrade test covers
+this historical shape as well as a complete populated schema.
 
-While dictation is listening, the recording screen sets a single timer for the
-cadence it was served. When it fires it commits the audio buffer, appends the
-finalized text as a transcript segment, and only then asks for a `live` refresh.
-One timer rather than two: the commit is what makes the last minute of speech
-visible to the refresh that follows it, so a refresh scheduled independently of a
-commit would summarize a transcript that stops a full cadence short. The timer
-re-arms because the commit takes dictation out of `listening` and back.
+Conversation schema migration 58 removes identifiable note attachment snapshots
+and receipts while preserving conversation turns. Unknown copied prose is not
+classified by text matching. Terminal imports and model-history copies require
+separate provenance-based inventory before claiming complete deletion.
 
-A refresh raised while one is still running is **coalesced, not queued** — the
-caller gets the pass already in flight. The commit still happens, so no speech is
-lost, but a second inference for it is not: a live briefing replaces the last one
-rather than adding to it, so the next pass summarizes those segments anyway.
-Queueing them instead would let a pass slower than the cadence — always possible
-at 60 seconds, and the normal case at the 15-second floor — build a backlog that
-costs an inference per tick and has to drain before finalization can even start.
+## Rollout and verification
 
-### Where the cadence comes from
+Deploy retirement behavior before running cleanup. Enumerate every workspace and
+conversation object, including retired objects. Drain the R2 cleanup, remove
+attributable search documents and raw inference records, and delete analytical
+copies through the Iceberg catalog. Never delete shared Parquet objects directly.
+Workspace migration 58 drops the five empty feature tables after a guard verifies
+that R2 deletion is complete and attributable search authorization keys are gone.
+Initialization commits migration 57 separately and defers 58 while either guard
+condition is pending. This keeps older populated snapshots reachable for cleanup,
+including after eviction or interruption. Once external cleanup is verified, call
+`finalizeMeetingRetirement`; it applies the unchanged guarded migration and is
+safe to repeat. A later cold start also advances when the guard is clear.
+It also removes the note sidebar state and search revision rows. Content-free
+resource IDs remain as provenance and stale-writer fences; they contain no notes.
+Historical provider retention is tracked separately from current serving storage.
 
-The cadence is the `control-tower-refresh-seconds` flag, served from Flagship and
-resolved by `control-tower-flags.ts` ([`feature-flags.md`](feature-flags.md)).
-**One meeting keeps one cadence**, and the client is what keeps it:
+The inference consumer writes a content-free tombstone before deleting a queued
+meeting inference record. Replays acknowledge that tombstone instead of restoring
+the record to the analytical store.
 
-1. The meeting screen asks `GET /feature-flags` once when it opens, and the
-   answer is never replaced — a cadence arriving later would re-arm the segment
-   timer mid-recording and move a transcript boundary with it.
-2. Capture does not wait for that answer; the **segment timer** does, and only
-   for `MEETING_CADENCE_REQUEST_TIMEOUT_MS`. Recording starts as soon as the note
-   loads, and a request that has not answered by then settles the meeting on the
-   default. Arming on the default and re-arming on the served value would produce
-   exactly the moved boundary the snapshot exists to prevent.
-3. Every live generate request carries that snapshot, so the prompt's cadence is
-   the schedule being kept rather than whatever the flag says at the moment the
-   server reads it. The server resolves the flag itself only when a request does
-   not carry one, which is what an older client looks like.
+Desktop spool maintenance deletes retired event files and their deadline files
+without reporting them as corrupt or moving them into quarantine. Unrelated
+telemetry remains deliverable.
 
-The bounds in the request schema are what make a client-sent cadence safe to
-repeat back to the model: it can only name a cadence the flag itself could serve,
-and it phrases one sentence rather than authorizing anything. What a meeting
-spends is bounded by how often the client asks, which it already controls — see
-[Open questions](#should-generation-move-to-the-server).
+Local verification is separate from production completion. The workerd retirement
+test covers populated archived notes, resource preservation, historical R2 files,
+recreation refusal and repeat execution. Dictation must additionally be exercised
+in a real desktop window. Cloudflare point-in-time recovery and Iceberg historical
+snapshots must be reported separately from deletion of currently served records.
 
-Every reader agrees on the fallback because the default and its bounds are
-declared once as `CONTROL_TOWER_REFRESH_SECONDS` in `@rally/contracts`: the
-desktop's fallback, both request schemas, and the clamp the resolver applies. A
-device that cannot reach the service, an older service that does not know the
-field, and an unreachable Flagship all land on the same sixty seconds.
+## Production checkpoint — 2026-09-15 UTC
 
-Segments are sequenced by the server. `appendSegment` allocates
-`next_segment_sequence` with a single `UPDATE … RETURNING`, so two windows
-recording the same note cannot collide, and a retried append carrying the same
-`clientSegmentId` returns the row that already exists rather than duplicating it.
+The deployed API version `a7b1266b-1283-4343-bc58-725c0dc7fec7` completed
+workspace schema 58. All 16 stored workspace objects, including closed workspaces,
+were explicitly read back: zero feature tables, zero attributable resource
+references, and zero pending R2 deletions. The content-free manifest records 26
+retired resources. All 52 current and historical note files were removed; a full
+159,351-object workspace-prefix scan found no note files afterward.
 
-### What the model is given
+All 6,693 stored conversation objects were inspected after conversation migration
+58: no remaining note attachments, attributable terminal imports, or tool-input
+copies. All 28 production search namespaces had zero matching source IDs. The
+74 attributable authorization KV keys and their SQLite decisions were deleted.
+No attributable meeting inference records were found in the current catalog or
+among 348 raw records not yet cataloged. Unrelated conversations and external
+meeting integrations were preserved, and no content backup was created.
 
-A `live` pass receives four things, all as user-role content: the previous
-briefing as an explicitly labelled continuity hint, the attendee's own notes, the
-complete ordered transcript, and the most recent ten minutes of it again as a
-focus window. The complete transcript is the source of truth; the window is only
-where the emphasis goes. A `final` pass receives the complete transcript, the
-attendee's notes, and meeting metadata — and deliberately **not** the live
-briefing, so an error that survived several refreshes cannot launder itself into
-the durable summary.
+The current analytics catalog's two meeting lifecycle rows and D1's 13 accepted
+events plus 13 receipts were deleted. Thirteen PostHog lifecycle events remain:
+the available deletion mechanisms would also remove unrelated person/project
+data. Historical Iceberg snapshots retain earlier rows and snapshot expiration
+is disabled. Durable Object point-in-time recovery can retain pre-deletion data
+for 30 days. These retention copies are not a completed physical erasure. Offline
+desktop caches are cleared by the client cache upgrade when the updated app runs.
 
-Both passes run through the agent harness with no tools, no plugins, and no web
-search, capped at a single iteration. The live pass runs at low reasoning effort
-and the final pass at medium; the model is chosen by the
-`agent-model-meeting-notes` flag ([`feature-flags.md`](feature-flags.md)).
+macOS release 1.363.0 is published with verified public artifacts and update feed.
+The app and DMG passed signing, notarization, stapling, and a clean-profile launch.
+Ace version `c203de00-3e39-481d-a395-626eab8e1c69` removed the administrative
+meeting controls, and telemetry delivery version
+`a3bd4e0d-aed9-476c-a3d6-7d9d01b5e5b8` fences old events at the destination.
 
-### Why the live prompt reads the way it does
+Validation includes lint and typecheck, real workerd fresh/populated/adopted
+schema upgrades, interrupted and repeated cleanup, stale writers, and mutation
+proofs for deletion and fencing. The full workerd run passed 890 tests and found
+two obsolete table expectations; the corrected affected run passed all 88 tests.
+The final dictation/permission suite passed 44 tests, and Granola/Fireflies passed
+55 connector tests. A real Electron window switched between two local workspaces
+and transcribed synthetic speech through the live provider into the composer
+both before and after switching. Actual physical microphone hardware and fresh
+external-provider OAuth consent were not exercised. Temporary cleanup account
+tokens were revoked and the remote operator session was closed.
 
-`CONTROL_TOWER_SYSTEM_PROMPT` is written for latency as much as for content. It
-gives the model an explicit ten-second target, tells it to write in one pass
-without planning or revising, tells it to reuse still-true lines from the
-previous briefing nearly verbatim, and tells it that dropping a marginal bullet
-is the safer error. Those are instructions, not limits — nothing in the code
-enforces a deadline shorter than the harness wall clock, and the model is trusted
-to trade completeness for currency because a briefing that lands after the
-conversation moved on has no value to trade away.
-
-The cadence itself is *not* in the system prompt. It is served by a flag, so it
-goes in the request beside the transcript: run data stays out of the cached
-prefix, and prose naming a fixed interval would have gone quietly wrong the first
-time the flag moved.
-
-### Ending a meeting
-
-**End** stops capture, commits whatever the provider finalizes, runs the `final`
-pass, and marks the note complete — in that order, because a summary written
-before the last segment lands is a summary missing the end of the meeting. Then
-the window closes and the main window is taken to the note, raised, through the
-same deep-link channel every other navigation uses (`avalon://notes/<id>`, sent
-by the main process only to the main window). The meeting window exists for the
-recording; once there is no recording, the note is what the person wants to be
-looking at.
-
-Two paths do not end that way. If anything went wrong — the transcript could not
-be closed, the last segment could not be saved, the final summary failed, or the
-note could not be marked complete — the window stays open, because it is the only
-place any of those is reported and the note screen cannot ask for a summary
-again. `finalizeRecording` resolves to whether the meeting finished cleanly for
-exactly this decision; a failure that only sets a visible error, as the summary
-does, would otherwise be indistinguishable from success. And a **native window
-close** — the traffic-light button, Command-W, or app quit — finalizes and then
-closes regardless, since a window that refuses to shut also blocks quit; it does
-not navigate, because closing a window is not a request to be taken somewhere.
-
-The main process says **who asked**, and the window is allowed to stop and ask
-only for one of the two answers. A `user` close — that window's traffic light or
-Command-W — while a recording is still running raises a confirmation, because
-until finalization lands this window *is* the meeting: the transcript tail is
-still buffered in it, the final summary has not been written, and the note is not
-marked complete. **End and close** takes the native path from there; **Keep
-recording** leaves the window and the capture exactly as they were. A `quit`
-close is never asked, and this is the load-bearing half: a meeting window that
-stopped to confirm would veto the quit and leave Rally running with a dialog
-nobody went looking for. `before-quit` raises the flag and the last meeting
-window to close lowers it, so it says *a quit was requested and has not
-finished* rather than *a quit was requested just now* — the close it describes
-can arrive later than the cascade, and a window mid-fullscreen-transition on
-macOS is where it does. Anything the preload cannot read as `user` is treated as
-a quit.
-
-Before capture starts, the meeting renderer registers its active workspace with
-Electron main. Switching, creating, joining, or leaving a workspace is refused
-while any meeting window is recording against the workspace being left. The
-guard is released only after capture stops, and closing the meeting window
-removes it as a backstop. A recording's note, transcript, and socket authority
-therefore cannot move regions or workspaces underneath it.
-
-### Product telemetry
-
-A newly created recording note reports its opaque note UUID, private/public
-state, and proved entrypoint (`sidebar`, `menu_bar`, or `unknown`). Successful
-capture transitions report start, pause, resume, and complete with the same note
-UUID and the microphone/system-audio availability established at start. The
-audio-source class remains stable across the recording; pause and completion do
-not discard it. A separate start outcome records only a bounded permission/result
-class, and terminal settlement records duration, pause/segment buckets, summary
-result, and complete/partial/failure class. The API records live/final summary
-generation result and cadence after each authoritative attempt. Reopening a note
-records entrypoint plus bounded duration/segments and whether durable transcript
-or summary artifacts exist. Successful visibility and copy actions report only
-closed action or content classes and the note UUID. Transcript, briefing, title,
-manual notes, clipboard value, raw permission errors, and captured audio never
-enter telemetry. These product events are best-effort and cannot alter recording,
-summary generation, or persistence.
-
-### Landing a briefing
-
-`generateAttempt` reads `notes_through_sequence` before inference and writes the
-result with a compare-and-set on both that cursor and `generated_at`. If another
-pass landed while this one was running, the update matches no row and the stale
-result is discarded rather than overwriting newer notes. A `final` pass that
-loses this race re-reads the transcript and retries once, because a whole-meeting
-summary must not be lost to a live refresh that happened to finish later.
-
-Every write materializes the note resource: a human-readable `note.md` and a
-`note-model.md` whose transcript carries segment timestamps, both in R2, plus the
-`resources` row that agents and work streams read. That is the only view of a
-note anything outside this module has. Each key is fixed per note and every write
-overwrites it, so the objects are the current note rather than a history of
-briefings.
-
-The `notes`, `note_transcript_segments`, linked `resources`, privacy outbox and
-R2 lifecycle refs are authoritative in WorkspaceDO. R2 owns the two byte
-objects; D1 has no note/resource serving projection. Work-stream attachment
-links remain in the selected SubstreamAgent and resolve the current WorkspaceDO
-resource separately.
-
-## Invariants
-
-- **A refresh is preceded by a segment commit.** Decoupling them silently
-  produces briefings that are one cadence stale — the failure looks like a slow
-  model rather than a scheduling bug.
-- **The complete transcript is the source of truth, and the previous briefing is
-  a hint.** Both prompts say so. A change that promotes prior model output to
-  evidence makes one bad refresh permanent.
-- **The final summary never sees the live briefing.** `note-service.ts` passes an
-  empty `previousNotes` for `final`, and a test asserts the live prose does not
-  reach the request.
-- **A briefing only lands if the segment cursor and `generated_at` are unchanged.**
-  Anything that relaxes the compare-and-set reintroduces lost final summaries.
-- **Transcript, notes, and metadata are untrusted meeting content.** They travel
-  as user-role messages and both prompts refuse instructions found inside them.
-- **A `live` pass with no new segments does no inference.** It materializes and
-  returns, which is what keeps a silent minute from costing an inference.
-- **At most one live refresh is in flight per window.** Removing the coalescing
-  turns a slow pass into an unbounded queue of them, and the symptom is a bill
-  and a stuck **End**, not a visibly broken briefing.
-- **A meeting's cadence is decided once and never replaced.** Anything that
-  re-reads it mid-recording moves a segment boundary, and the transcript moves
-  with it — the damage is in the evidence, not just the schedule.
-- **The prompt's cadence is the client's, not the flag's.** A server that
-  re-resolves the flag per pass describes a schedule nobody is on for the rest
-  of any meeting the flag moved under.
-- **The meeting window closes only when the meeting finished cleanly.** Anything
-  that closes it on a failure discards the only report of that failure.
-- **Only a `user` close may stop to ask.** A quit that a window can answer with a
-  dialog is a quit that can be vetoed by one, and the veto is silent — Rally
-  stays up with no window in front of anyone. A close whose reason cannot be read
-  is a quit.
-- **Only the owner may record, append, or generate.** Every statement binds
-  `workspace_id` and `owner_user_id`; the screen is read-only for anyone else.
-- **Every archive path refuses the same notes.** A bulk archive is not a
-  shortcut past ownership or a live recording: the sidebar grouping's
-  **Archive all** selects only notes the viewer owns and is not recording, so
-  it can never take a note the single-row archive would have refused.
-
-## Boundary
-
-This module owns the recording screen, the transcript segment protocol, both
-prompts, and the note resource it materializes. It exposes notes to the rest of
-Rally only as that resource — nothing else reads `note_transcript_segments`.
-Its one outward gesture is the `avalon://notes/<id>` deep link it asks the main
-process to deliver when a meeting ends; the main window's router owns what
-happens next.
-
-It does not own audio capture, the realtime bridge, or the provider credentials
-behind it; it does not own model selection, which is a flag; and it does not own
-what happens when a note's scope changes, which is
-`note-privacy-notification-service.ts` publishing to affected work streams.
-
-## Failure modes and limits
-
-| Limit | Value | Where |
-| --- | --- | --- |
-| Segment commit and refresh cadence | 60s by default, 15–600s as served | `control-tower-refresh-seconds`, bounded by `CONTROL_TOWER_REFRESH_SECONDS` |
-| Cadence request before the timer arms on the default | 5s | `MEETING_CADENCE_REQUEST_TIMEOUT_MS` |
-| Recent focus window | 10 min | `RECENT_TRANSCRIPT_WINDOW_MS` |
-| Complete transcript context | 400,000 chars, middle elided | `MAX_TRANSCRIPT_CONTEXT_CHARACTERS` |
-| Recent window context | 100,000 chars | `MAX_RECENT_TRANSCRIPT_CHARACTERS` |
-| Previous briefing context | 50,000 chars | `MAX_NOTES_CONTEXT_CHARACTERS` |
-| Harness wall clock | 60s live, 120s final | `meeting-notes-service.ts` |
-| Cost ceiling | 100¢ live, 200¢ final | `meeting-notes-service.ts` |
-| Transport retries | 0 live; `HARNESS_TRANSPORT_RETRIES` (default 1) final | `meeting-notes-service.ts` |
-
-- **Inference fails or times out.** The screen shows "Rally could not update
-  Control Tower" and keeps the previous briefing. The live pass does not wait
-  and re-ask even when the harness would otherwise retry a provider fault: it
-  has a successor a minute away that reads the same transcript window, so a
-  briefing that lands late is worth less than the next one landing on time. The
-  final pass has no successor and takes the deployment's budget — shared with
-  its 120s wall clock, so the harness declines the retry outright when what
-  remains cannot hold another attempt, and the failure then reads as the
-  provider's rather than as a time limit.
-- **The cadence cannot be fetched, or Flagship is unreachable.** Recording starts
-  regardless; the segment timer waits out
-  `MEETING_CADENCE_REQUEST_TIMEOUT_MS` and the meeting settles on
-  `CONTROL_TOWER_REFRESH_SECONDS.default`, which is also what the request then
-  carries. A served cadence outside the bounds is clamped and logged rather than
-  passed on.
-- **A segment save fails during a refresh.** That minute's commit rejects and its
-  refresh is skipped, leaving the segment's audio unrepresented until the next
-  one; the next cadence tick starts a fresh segment from the boundary that failed.
-  On **finalization** the rule is the opposite and deliberate: a failed final
-  commit marks the transcript partial and the summary still runs over whatever
-  reached the server, because there is no next tick to recover in.
-- **The transcript outgrows the context bound.** Its middle is elided with a
-  visible marker and `transcriptStatus` becomes `partial`. Only the final pass is
-  told that — a live briefing is a working note that is replaced in seconds and
-  says nothing about coverage, while the durable summary carries the caveat.
-- **A refresh overruns its own cadence.** The tick that lands on top of it is
-  coalesced into the pass in flight, so the loop skips rather than accumulates;
-  refreshes are serialized on `generationTailRef`, and the compare-and-set
-  catches anything that still overlaps across windows.
-
-## Security and trust model
-
-Meeting audio never reaches this module — only text the client already holds.
-Everything a meeting produced is untrusted: transcript, attendee notes, meeting
-title, and the previous briefing all enter as user-role messages under headings
-that deny them authority, and neither system prompt is composed from note
-content. Notes are per-owner within a workspace, and a personal note becoming a
-workspace note is an explicit, notified transition rather than a silent widening.
-
-## Testing
-
-- `pnpm --filter @rally/api exec vitest run test/meeting-notes-service.test.ts`
-  — prompt selection, the shape of each request, and the safe error on failure.
-- `pnpm --filter @rally/api exec vitest run test/note-service.test.ts` — segment
-  sequencing, the recent-window slice, and the final-summary race retry, driven
-  through a real `WorkspaceDO` over its own schema via
-  `test/helpers/workspace-object-rpcs.ts`.
-- `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
-  test-workers/workspace-notes.test.ts` — what the object itself decides, on
-  workerd: concurrent segment appends, replay idempotency, the archive
-  classification, the sidebar grouping's bulk archive and its receipt, the
-  privacy-transition outbox, the briefing compare-and-set, and the per-viewer
-  read fences.
-- `pnpm --filter @rally/api exec vitest run test/client-feature-flags.test.ts` —
-  the served cadence, its clamp, and the fallback shared with every other reader.
-- `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/meeting-notes.test.tsx`
-  — that a served cadence actually drives the timer, elapsed-time accounting
-  across segment boundaries, and the finalization order (append, then generate,
-  then mark complete).
-
-Two traps in the desktop suite. The dictation hook is mocked, so the segment
-timer only arms when the mocked `state` transitions into `listening` — a test
-that renders with it already `listening` arms nothing, which is why the cadence
-test rerenders to make the transition happen. And the fallback is asserted
-against `CONTROL_TOWER_REFRESH_SECONDS` rather than a literal, so a default
-changed in the contract cannot leave the client on the old one.
-
-## Open questions
-
-### Should generation move to the server?
-
-Today the client is the whole schedule. The recording screen decides when a
-transcript segment is committed and when a briefing is requested, and the Worker
-only answers `POST /notes/:id/generate` when it is asked. That is the cheapest
-thing that works, and at a five-minute cadence it was defensible. At sixty
-seconds it is the design's weakest point, for three reasons:
-
-- **Cadence is *served* but not *enforced*.** The number now comes from a flag
-  the server owns, so the fleet's schedule is a console change rather than a
-  release — but the client is still what keeps it. Every `live` request carrying
-  a new segment is an inference, and the only brake is the
-  `notes_through_sequence` check, which a client can defeat simply by committing
-  a segment before each request. An old build, a modified build, or a bug in the
-  timer can refresh far faster than the served cadence, and nothing on the server
-  says no. Serving the number is the smaller half of this; the larger half is
-  below.
-- **The server cannot tell a finished meeting from a quiet client.** A note stays
-  `recording` until a client says otherwise, and no briefing is ever produced for
-  a meeting whose client crashed, slept, or lost the network mid-recording.
-- **The transcript is client-asserted.** Segment text, offsets, and boundaries
-  all arrive from the renderer, so the evidence the summary is built on is only
-  as trustworthy as the process that sent it.
-
-**The proposal, in three parts.** Each is useful alone, but the third is only
-sound once the first two exist.
-
-1. **Track the transcript on the server, from the transcription stream itself.**
-   The regional Worker already terminates the provider socket and relays every
-   provider frame to the desktop
-   (`realtime-transcription-service.ts`) — including the finalized transcript
-   items. It forwards them and persists nothing. Have the relay instead append
-   each finalized item to the note as a transcript segment, and the server holds
-   the authoritative transcript mid-meeting rather than a copy the client chose
-   to send. `POST /notes/:id/segments` stays for text that did not come through
-   the bridge, but stops being the primary path.
-
-2. **Give an active recording a server-side owner.** The relay cannot hold the
-   rolling transcript itself: a dictation connection is capped at five minutes,
-   and the request scope dies with it, while a meeting is not so bounded. A
-   Durable Object per active note — the same shape as WorkspaceDO's alarm half,
-   which already owns alarms and idempotent run creation — accumulates finalized items
-   across successive connections and owns one alarm at the cadence this document
-   names. It also gives the server an answer to "is this meeting still going":
-   an alarm that fires with no new audio for long enough finalizes the note
-   itself.
-
-3. **Make the refresh the server's decision.** The alarm generates only when new
-   segments landed since `notes_through_sequence` — the check that already
-   exists, moved to where it cannot be gamed — and a per-note inference budget
-   plus a minimum interval floor bound what one meeting can spend regardless of
-   what any client asks for. `POST /notes/:id/generate` with `mode: "live"` then
-   becomes a rate-limited *refresh now* for a person who pressed a button, not
-   the mechanism.
-
-**What this costs and what has to be true first.** The dictation bridge
-deliberately persists neither audio nor transcripts today
-([`architecture.md`](architecture.md), [`runbook.md`](runbook.md)), so part 1 is
-a change to what that boundary stores and where it comes to rest — it needs
-[`security.md`](security.md) and [`regionalization.md`](regionalization.md) read
-first, and it is the reason to do this deliberately rather than opportunistically.
-Part 2 adds a Durable Object class to the runtime, which is a migration and an
-[`architecture.md`](architecture.md) entry. Both parts have to land before part 3
-is anything but a second scheduler racing the client's.
-
-Until then, the client-*kept* cadence is a known and accepted gap, and the
-compare-and-set in `generateAttempt` is the only thing standing between two
-enthusiastic clients and a corrupted briefing. Note that part 3 is what turns the
-served cadence into an enforced one: the flag already exists and the server
-already reads it, so that step is a scheduler and a budget rather than a new
-knob.
+Deployment and current-storage deletion therefore have separate evidence from
+provider-retained copies. Do not describe this checkpoint as erasure from every
+historical storage layer.
 
 ## Changelog
+
+### 2026-09-14 — Retire built-in meeting notes, preserve dictation
+
+The product decision is to remove meeting notes and erase feature-owned data.
+Hiding its entry point was rejected because it leaves stored content and backend
+writers available. Cleanup retains content-free addresses so an interrupted R2
+operation can resume. Shared dictation and external meeting integrations remain;
+removing either would exceed the requested feature boundary. Empty legacy wire
+fields remain temporarily for already-installed clients, and final schema removal
+follows verified current-storage cleanup. Search authorization cleanup also fences
+delayed publications before removing cache metadata. Populated cold starts commit
+retirement before guarded finalization, keeping cleanup reachable; batching both
+migrations together was rejected because the final guard rolls retirement back.
+The adopted-schema shim brackets only migration 57 so it cannot change how later
+migrations execute.
 
 ### 2026-09-01 — The note list pages instead of stopping at 250
 

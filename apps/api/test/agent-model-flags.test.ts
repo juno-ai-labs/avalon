@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -169,8 +170,7 @@ describe("agent model flags", () => {
       fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"],
     });
     expect(defaultAgentModelRouting(baseEnv, "inline_child").model).toBe("x-ai/grok-4.3");
-    expect(defaultAgentModelRouting(baseEnv, "meeting_notes").model).toBe("x-ai/grok-4.3");
-    expect(defaultAgentModelRouting(baseEnv, "addressing_classifier").model).toBe("google/gemini-2.5-flash-lite");
+    expect(defaultAgentModelRouting(baseEnv, "workstream").model).toBe("x-ai/grok-4.3");
     expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
   });
 
@@ -289,7 +289,7 @@ describe("agent model flags", () => {
       workspaceId: "spoofed-workspace",
       workstreamId: "spoofed-workstream",
       userId: "spoofed-user",
-      region: "eu",
+      region: "enterprise",
       appEnv: "development",
       agent: "spoofed-agent",
     };
@@ -412,8 +412,8 @@ describe("agent model flags", () => {
       throw new Error("Binding FLAGS needs to be run remotely");
     });
 
-    await expect(resolveAgentModelRouting(env, "meeting_notes")).resolves.toEqual(
-      defaultAgentModelRouting(baseEnv, "meeting_notes"),
+    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual(
+      defaultAgentModelRouting(baseEnv, "workstream"),
     );
   });
 
@@ -421,7 +421,7 @@ describe("agent model flags", () => {
   // dry-run build substitutes an inherit placeholder and passes — so neither CI
   // gate catches the omission and the failure would land mid-release, after the
   // remote D1 migrations have already applied.
-  it.each(["wrangler.global.jsonc", "wrangler.eu.jsonc"])(
+  it.each(["wrangler.global.jsonc"])(
     "%s binds FLAGS to a Flagship app id",
     (fileName) => {
       const raw = readFileSync(new URL(`../${fileName}`, import.meta.url), "utf8");

@@ -1,10 +1,11 @@
+import "../../../tests/isolated-region";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
 
 const platformUserId = "00000000-0000-7000-8000-000000000001";
 const globalWorkspaceId = "00000000-0000-7000-8000-000000000002";
-const euWorkspaceId = "00000000-0000-7000-8000-000000000003";
+const enterpriseWorkspaceId = "00000000-0000-7000-8000-000000000003";
 const at = "2026-08-31T12:00:00.000Z";
 
 const databases: ReturnType<typeof migratedSqliteDatabase>[] = [];
@@ -20,7 +21,7 @@ afterEach(() => {
 });
 
 describe("multiple-workspace regional schema", () => {
-  it("stores independent Global and EU routes without rewriting placement", () => {
+  it("stores independent Global and enterprise routes without rewriting placement", () => {
     const db = database();
     const insert = db.prepare(
       `INSERT INTO platform_workspace_bindings
@@ -30,14 +31,14 @@ describe("multiple-workspace regional schema", () => {
     );
 
     insert.run(platformUserId, "global", globalWorkspaceId, "enam", "op-global", at, at);
-    insert.run(platformUserId, "eu", euWorkspaceId, "eeur", "op-eu", at, at);
+    insert.run(platformUserId, "enterprise", enterpriseWorkspaceId, "eeur", "op-enterprise", at, at);
 
     expect(db.prepare(
       `SELECT region, workspace_id, placement_affinity, status
        FROM platform_workspace_bindings
        WHERE platform_user_id = ? ORDER BY region`,
     ).all(platformUserId)).toEqual([
-      { region: "eu", workspace_id: euWorkspaceId, placement_affinity: "eeur", status: "active" },
+      { region: "enterprise", workspace_id: enterpriseWorkspaceId, placement_affinity: "eeur", status: "active" },
       { region: "global", workspace_id: globalWorkspaceId, placement_affinity: "enam", status: "active" },
     ]);
   });
@@ -52,7 +53,7 @@ describe("multiple-workspace regional schema", () => {
     );
 
     insert.run(platformUserId, "global", globalWorkspaceId, "wnam", "active", "op-active", null, at, at);
-    insert.run(platformUserId, "eu", euWorkspaceId, "weur", "pending", "op-pending", at, at, at);
+    insert.run(platformUserId, "enterprise", enterpriseWorkspaceId, "weur", "pending", "op-pending", at, at, at);
 
     expect(() => insert.run(
       platformUserId,

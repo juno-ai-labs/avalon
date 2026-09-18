@@ -1,3 +1,7 @@
+import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
+import { prepareSessionImport, resolveSessionImportFiles } from "../services/session-import-files";
+import { SessionImportPreviewSchema, SessionImportPreviewRequestSchema, SessionImportRequestSchema } from "@rally/contracts";
+import { previewSessionImport, sessionShareUrl } from "../services/session-import";
 import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
@@ -83,6 +87,17 @@ const SocketTicketSchema = z.object({
 });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
+workstreamRoutes.get("/:id/recommended-sidekicks", zValidator("param", idParam), async (c) =>
+  c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).recommendedSidekicks(c.req.valid("param").id))));
+workstreamRoutes.put("/:id/recommended-sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })), async (c) => {
+  const { id, sidekickId } = c.req.valid("param");
+  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).setSidekickRecommendation(id, sidekickId, true)));
+});
+workstreamRoutes.delete("/:id/recommended-sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })),
+  zValidator("query", z.object({ substreamId: z.union([z.literal("0"), IdSchema]).default("0") })), async (c) => {
+    const { id, sidekickId } = c.req.valid("param");
+    return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).setSidekickRecommendation(id, sidekickId, false, c.req.valid("query").substreamId)));
+  });
 workstreamRoutes.get("/:id/sidekicks", zValidator("param", idParam), async (c) =>
   c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id))));
 workstreamRoutes.delete("/:id/sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })), async (c) =>
@@ -145,8 +160,26 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
     query.limit, query.before, query.includeSystem === "true",
   )));
 });
+workstreamRoutes.post("/import/preview", zValidator("json", SessionImportPreviewRequestSchema), async (c) => {
+  return c.json(SessionImportPreviewSchema.parse(await resolveSessionImportFiles(c.env, await previewSessionImport(c.req.valid("json"), c.env))));
+});
+workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  if (body.source.url && sessionShareUrl(body.source.url).provider !== body.source.provider) {
+    throw new ApiError(422, "invalid_session_source", "The source does not match the provider");
+  }
+  const conversation = await prepareSessionImport(c.env, getAuth(c), body, body.clientMessageId);
+  const result = await new WorkstreamObjectCreationService(c.env, getAuth(c), requestDeferral(c)).createPrepared({
+    objective: body.title,
+    clientMessageId: body.clientMessageId,
+    participantUserIds: [],
+    scope: "personal",
+  }, conversation, { reason: "session_import", contentIdentityHash: workstreamImportHash(body) });
+  return c.json(CreatedWorkstreamSchema.parse(result), 201);
+});
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
+  const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
   const auth = getAuth(c);
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
@@ -169,7 +202,13 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
           descriptionSource: body.objective ? "authored" : "derived",
           // The one caller whose `participantUserIds` is people somebody picked
           // by hand, which is what makes telling them the right thing to do.
-        }, { span, notifyParticipants: true, authorityControl }));
+        }, {
+          span,
+          notifyParticipants: true,
+          authorityControl,
+          ...(operationId ? { telemetryOperationId: operationId } : {}),
+          telemetryRequestReceivedAt: requestReceivedAt,
+        }));
     const created = CreatedWorkstreamSchema.parse(result);
     span.setAttributes({
       "rally.workstream.id": created.workstream.id,

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import type { ScheduledAlarm } from "../src/durable-objects/scheduled-alarms";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -174,6 +175,29 @@ describe("a workspace alarm target the gate is holding", () => {
       attempt: 3,
       code: '<!channel> {"received": "user"} is not valid JSON',
     }));
+  });
+
+  it("names the field a handler's schema rejection rejected, and not the value", async () => {
+    // A stored definition parsed against a schema that has since moved throws
+    // a `ZodError` inside the handler, issues intact. Its message is a JSON
+    // blob the notice refuses, so the channel read `handler_error:ZodError` —
+    // the class and nothing else. The path is schema shape and crosses; the
+    // rejected value is member content and does not.
+    const posted = capturePosts();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const workspace = await bootWorkspace();
+    const rejection = z.strictObject({
+      triggers: z.array(z.strictObject({ connectorType: z.enum(["slack", "linear"]) })),
+    }).safeParse({ triggers: [{ connectorType: "fireflies <!channel>" }] });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    for (const attempt of [1, 2, 3]) workspace.failed(ALARM, rejection.error, attempt);
+    await workspace.settled();
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("• code: handler_error:ZodError:triggers.0.connectorType:invalid_value");
+    expect(posted[0]).not.toContain("fireflies");
+    expect(posted[0]).not.toContain("<!channel>");
   });
 
   it("notifies once for an episode that mixes throws and stalls", async () => {

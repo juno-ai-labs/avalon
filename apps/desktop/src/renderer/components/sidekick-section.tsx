@@ -1,4 +1,6 @@
 import type { SidekickAttachment, WorkstreamAppearance } from '@rally/contracts';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import { IconCarambola } from '@tabler/icons-react';
 import type { WorkstreamAutomationSummary } from '../lib/types';
 import { desktopBridge } from '../lib/platform';
 import { AutomationGlyph } from './workstream-glyph';
@@ -14,6 +16,7 @@ import { InlineError, Tip } from './primitives';
  * knows nothing about either.
  */
 export interface SidekickRow {
+  recommended?: boolean;
   id: string;
   name: string;
   description: string;
@@ -58,14 +61,15 @@ export function SidekickSection({ items, error }: {
   }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
     {error && <InlineError>{error}</InlineError>}
-    <ul className="sidekick-section-list">{items.map((item) => <li key={item.id}>
+    <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id}><li>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright
           when compact — is the whole reason the row carries one. The note
           rides along because compact hides the copy underneath, and a row
           nobody can read is the one place **Paused** is worth saying twice. */}
       <Tip label={item.note ? `${item.name} · ${item.note}` : item.name} side="right">
-        <button className="workstream-context-row" type="button" aria-label={item.name} onClick={() => void desktopBridge().openSidekicks(item.id)}>
+        <ContextMenu.Trigger asChild disabled={!item.onRemove}>
+        <button className="workstream-context-row" type="button" aria-label={item.name} aria-description={item.recommended ? 'Recommended Sidekick' : undefined} onClick={() => void desktopBridge().openSidekicks(item.id)}>
           {/* The library's own hexagon, at the rail's size: compact drops every
               title in this rail, and a Sidekick row without its mark collapses
               to an empty square there. */}
@@ -75,9 +79,19 @@ export function SidekickSection({ items, error }: {
           <span className="workstream-context-copy"><span>{item.name}</span>
             <small>{item.note ? `${item.note} · ${item.description}` : item.description}</small></span>
         </button>
+        </ContextMenu.Trigger>
       </Tip>
-      {item.onRemove && <button className="sidekick-section-remove" type="button" aria-label={`Remove ${item.name}`} onClick={item.onRemove}>Remove</button>}
-    </li>)}</ul>
+      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every substream in this workstream. Agents can load it when relevant; it isn’t automatically loaded." side="right">
+        <span className="sidekick-recommendation" role="img" aria-label="Recommended Sidekick" tabIndex={0}>
+          <IconCarambola size={14} stroke={1.5} aria-hidden="true" />
+        </span>
+      </Tip>}
+      {item.onRemove && <ContextMenu.Portal>
+        <ContextMenu.Content className="menu-content">
+          <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove</ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>}
+    </li></ContextMenu.Root>)}</ul>
   </section>;
 }
 
@@ -98,16 +112,18 @@ function ownedNote(status: WorkstreamAutomationSummary['status']): string | unde
  * chosen appearance and the live lifecycle, which an attachment does not — and
  * the attachment supplies the removal, which is the one thing only it can say.
  *
- * `undefined` until both answers are in, for the reason `SidekickSection`
+ * `undefined` until all three answers are in, for the reason `SidekickSection`
  * separates the two states: a half-answered union rendered as `[]` is a claim
  * that the room has no Sidekicks.
  */
-export function workstreamSidekickRows({ owned, attached, onRemoveAttachment }: {
+export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, onRemoveRecommendation }: {
   owned: WorkstreamAutomationSummary[] | undefined;
   attached: SidekickAttachment[] | undefined;
+  recommended: SidekickAttachment[] | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
+  onRemoveRecommendation?: ((id: string) => void) | undefined;
 }): SidekickRow[] | undefined {
-  if (!owned || !attached) return undefined;
+  if (!owned || !attached || !recommended) return undefined;
   const attachments = new Map(attached.map((attachment) => [attachment.id, attachment]));
   const rows: SidekickRow[] = owned.map((sidekick) => {
     const attachment = attachments.get(sidekick.id);
@@ -120,6 +136,7 @@ export function workstreamSidekickRows({ owned, attached, onRemoveAttachment }: 
     const note = ownedNote(sidekick.status) ?? (attachment && !attachment.available ? 'Unavailable' : undefined);
     return {
       id: sidekick.id,
+      recommended: true,
       name: sidekick.name,
       description: sidekick.description,
       ...(sidekick.appearance ? { appearance: sidekick.appearance } : {}),
@@ -138,6 +155,17 @@ export function workstreamSidekickRows({ owned, attached, onRemoveAttachment }: 
       description: attachment.description,
       ...(attachment.available ? {} : { note: 'Unavailable' }),
       ...(onRemoveAttachment ? { onRemove: () => onRemoveAttachment(attachment.id) } : {}),
+    });
+  }
+  for (const recommendation of recommended) {
+    const existing = rows.find((row) => row.id === recommendation.id);
+    if (existing) {
+      existing.recommended = true;
+      if (onRemoveRecommendation && !ownedIds.has(recommendation.id)) existing.onRemove = () => onRemoveRecommendation(recommendation.id);
+    }
+    else rows.push({ id: recommendation.id, name: recommendation.name, description: recommendation.description,
+      recommended: true, ...(recommendation.available ? {} : { note: 'Unavailable' }),
+      ...(onRemoveRecommendation ? { onRemove: () => onRemoveRecommendation(recommendation.id) } : {}),
     });
   }
   return rows;

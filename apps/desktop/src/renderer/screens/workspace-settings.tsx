@@ -1,3 +1,5 @@
+import { AshbyWorkspaceSetup, ConnectorInstallationDetails, FirefliesWorkspaceSetup, useWorkspaceInstallationRecovery } from '../components/connector-installation';
+import { CopyButton, CopyField } from '../components/copy-button';
 import { ServerCog } from 'lucide-react';
 import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -11,8 +13,6 @@ import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  Check,
-  Copy,
   GitBranch,
   Globe,
   LockKeyhole,
@@ -20,6 +20,7 @@ import {
   MailPlus,
   MonitorCog,
   Newspaper,
+  Bell,
   Plug,
   RefreshCcw,
   Search,
@@ -39,6 +40,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
+import { ConnectorInstallationProviders } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -46,6 +48,7 @@ import type {
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
+import { parseDesktopReleaseChannel, type DesktopReleaseChannel } from '../../common/release-channels';
 import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal, SegmentedControl } from '../components/primitives';
 import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
@@ -70,7 +73,22 @@ import type {
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 
+/**
+ * Whether Rally manages this provider's workspace event subscriptions.
+ *
+ * Read off the contract's own enum rather than written out here: five places on
+ * this screen asked the same question and each held its own copy of the list, so
+ * a connector added to the contract and missed in one of them produced a button
+ * that was silently wrong rather than a type error.
+ */
+const installationProviders = new Set<string>(ConnectorInstallationProviders);
+function hasInstallationFacet(connectorType: string): boolean {
+  return installationProviders.has(connectorType);
+}
+
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
+  'ashby',
+  'fireflies',
   'google',
   'github',
   'granola',
@@ -200,6 +218,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       // Directly under Account, because a digest is a personal preference like
       // the timezone it borrows — not a workspace-level setting.
       { id: 'digest', label: 'Digest', icon: Newspaper },
+      { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Workspace', icon: Users },
       // Under Workspace rather than beside it: the Terminal egress policy is a
       // workspace-wide setting, but it is a page of its own — a review-then-
@@ -224,7 +243,7 @@ function providerSetting(provider: { id: string; name: string; description: stri
     label: provider.name, description: provider.description,
     options: [
       ...(provider.scopes.includes('you') ? [PERSONAL_CONNECT_LABEL] : []),
-      ...(admin && provider.scopes.includes('workspace') ? ['Connect workspace'] : []),
+      ...(admin && provider.scopes.includes('workspace') ? ['Connect for workspace'] : []),
       'Setup', 'Authorization',
     ],
   });
@@ -235,7 +254,7 @@ function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
     label: connection.displayName, description: 'Manage this installed connection.',
     options: [
       ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
-        && !(connection.connectorType === 'granola' && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
+        && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
       ...(connection.scope === 'you' || admin ? ['Delete', 'Disconnect'] : []),
       ...(admin && connection.connectorType === 'generic_webhook' ? ['Refresh', 'Webhook signing secret'] : []),
     ],
@@ -333,7 +352,7 @@ function providerHasActivePersonalConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
-  return (provider.provider === 'x' || provider.provider === 'granola') && connections.some((connection) =>
+  return (provider.provider === 'x' || hasInstallationFacet(provider.provider)) && connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'you' &&
     connection.status !== 'disabled',
@@ -393,7 +412,6 @@ export function WorkspaceSettingsScreen({
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdDelivery, setCreatedDelivery] = useState<'sent' | 'skipped' | null>(null);
-  const [copied, setCopied] = useState(false);
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
@@ -409,6 +427,12 @@ export function WorkspaceSettingsScreen({
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
+  const [ashbySetupKey, setAshbySetupKey] = useState(() => crypto.randomUUID());
+  const [ashbyWorkspaceOpen, setAshbyWorkspaceOpen] = useState(false);
+  const [firefliesSetupKey, setFirefliesSetupKey] = useState(() => crypto.randomUUID());
+  const [firefliesWorkspaceOpen, setFirefliesWorkspaceOpen] = useState(false);
+  const [installationTarget, setInstallationTarget] = useState<string | null>(null);
+  const [granolaSetupKey, setGranolaSetupKey] = useState(() => crypto.randomUUID());
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
   const [webhookModalScope, setWebhookModalScope] = useState<'you' | 'workspace' | null>(null);
   const [webhookDisplayName, setWebhookDisplayName] = useState('Inbound webhook');
@@ -419,7 +443,6 @@ export function WorkspaceSettingsScreen({
     signingSecret: string;
     signatureFormat: string;
   } | null>(null);
-  const [webhookCopied, setWebhookCopied] = useState<'endpoint' | 'secret' | null>(null);
   const [webhookRotationTarget, setWebhookRotationTarget] = useState<WorkstreamConnection | null>(null);
   const [customMcpModalScope, setCustomMcpModalScope] = useState<'you' | 'workspace' | null>(null);
   const [customMcpName, setCustomMcpName] = useState('');
@@ -632,7 +655,7 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
@@ -654,13 +677,21 @@ export function WorkspaceSettingsScreen({
       });
     },
   });
+  const granolaRecovery = useWorkspaceInstallationRecovery(api, 'granola', (connectionId) => {
+    setGranolaWorkspaceApiKey('');
+    setGranolaSetupKey(crypto.randomUUID());
+    setGranolaWorkspaceModalOpen(false);
+    setInstallationTarget(connectionId);
+  });
   const createGranolaWorkspaceConnection = useMutation({
-    mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim()),
+    mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim(), granolaSetupKey),
     onSuccess: () => {
       setGranolaWorkspaceApiKey('');
+      setGranolaSetupKey(crypto.randomUUID());
       setGranolaWorkspaceModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
+    onError: () => granolaRecovery.mutate(),
   });
   const createWebhookConnection = useMutation({
     mutationFn: () => api!.createWebhookConnection(
@@ -753,7 +784,6 @@ export function WorkspaceSettingsScreen({
     onSuccess: (result) => {
       setCreatedUrl(result.inviteUrl);
       setCreatedDelivery(result.emailDelivery);
-      setCopied(false);
       setEmail('');
       void queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] });
     },
@@ -772,7 +802,7 @@ export function WorkspaceSettingsScreen({
   });
   const applyApplicationSettingsMutation = (
     settings: DesktopApplicationSettings,
-    _enabled: boolean,
+    _requested: unknown,
     liveGenerationAtStart: number | undefined,
   ): void => {
     if (liveGenerationAtStart !== applicationSettingsLiveGeneration.current) return;
@@ -789,6 +819,11 @@ export function WorkspaceSettingsScreen({
     onMutate: () => applicationSettingsLiveGeneration.current,
     onSuccess: applyApplicationSettingsMutation,
   });
+  const updatePushNotifications = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setPushNotificationsEnabled(enabled),
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
+  });
   const updateMenuBarEnabled = useMutation({
     mutationFn: (enabled: boolean) => bridge.setMenuBarEnabled(enabled),
     onMutate: () => applicationSettingsLiveGeneration.current,
@@ -801,6 +836,11 @@ export function WorkspaceSettingsScreen({
   });
   const updateProductAnalytics = useMutation({
     mutationFn: (enabled: boolean) => bridge.setProductAnalyticsEnabled(enabled),
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
+  });
+  const updateReleaseChannel = useMutation({
+    mutationFn: (channel: DesktopReleaseChannel) => bridge.setReleaseChannel(channel),
     onMutate: () => applicationSettingsLiveGeneration.current,
     onSuccess: applyApplicationSettingsMutation,
   });
@@ -848,10 +888,10 @@ export function WorkspaceSettingsScreen({
     // and returns `flag_disabled`), but there is no copy in this screen for a
     // paused state, and an absent section is still an honest answer to "is
     // this available to me."
-    return digestSettingsAvailable
-      ? withCustomMcp
-      : { ...withCustomMcp, items: withCustomMcp.items.filter((item) => item.id !== 'digest') };
-  }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable]);
+    return { ...withCustomMcp, items: withCustomMcp.items.filter((item) =>
+      (item.id !== 'digest' || digestSettingsAvailable)
+      && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
+  }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -862,7 +902,8 @@ export function WorkspaceSettingsScreen({
     developer: developerSettingsAvailable,
     menuBar: applicationSettings?.menuBarAvailable !== false,
     login: applicationSettings?.launchAtLoginAvailable !== false,
-  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable]);
+    releaseChannel: applicationSettings?.releaseChannelAvailable !== false,
+  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
     {
@@ -899,7 +940,13 @@ export function WorkspaceSettingsScreen({
         })),
     },
   ], settingsContext), [connections.data, githubSettingsConnections, customMcpSettingsConnections, isAdmin, settingsContext]);
-  const searchResults = useMemo(() => searchSettings(searchEntries, navigationQuery), [searchEntries, navigationQuery]);
+  const searchResults = useMemo(() => {
+    const action = navigationQuery.trim().toLowerCase();
+    const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for workspace'].some((label) => label.toLowerCase() === action);
+    return searchSettings(searchEntries, navigationQuery).filter((entry) =>
+      !exactConnectAction || !entry.key.startsWith('provider:')
+      || entry.definition.options?.some((option) => option.toLowerCase() === action));
+  }, [searchEntries, navigationQuery]);
   const selectSearchResult = (result: SettingSearchResult): void => {
     if (!searchEntries.some((entry) => entry.key === result.key)) return;
     if (result.definition.section === 'github' && result.instanceId) {
@@ -1027,12 +1074,6 @@ export function WorkspaceSettingsScreen({
     setCustomMcpHeaders([{ name: '', value: '' }]);
     setCustomMcpToolPolicy('all_tools');
     setCustomMcpModalScope(scope);
-  };
-
-  const copyInvitation = async (): Promise<void> => {
-    if (!createdUrl) return;
-    await desktopBridge().copyText(createdUrl);
-    setCopied(true);
   };
 
   const githubSettings = githubRepositorySettings.data;
@@ -1187,7 +1228,19 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
-            {activeSection === 'digest' && api && digestSettingsAvailable && (
+            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && (
+              <section className="settings-pane">
+                <div className="settings-pane-heading"><h2>On this Mac</h2></div>
+                <SettingToggle setting={settings.pushNotifications}
+                  checked={applicationSettings?.pushNotificationsEnabled ?? true}
+                  disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
+                  onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
+                {applicationSettings?.pushNotificationStatus === 'unavailable' && <p className="settings-section-copy">Notifications need an installed release build of Rally.</p>}
+                {applicationSettings?.pushNotificationStatus === 'denied' && <p className="settings-section-copy">Notifications are turned off in macOS. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
+                {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
+              </section>
+            )}
+            {activeSection === 'digest'  && api && digestSettingsAvailable && (
               <DigestSettings
                 api={api}
                 connections={connections.data ?? []}
@@ -1199,13 +1252,6 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Review workspace details and defaults shared by workspace automations.</p></div>
                 <div className="settings-list-card">
-                  <div className="settings-preference-row">
-                    <SettingCopy setting={settings.workspaceRegion} />
-                    <span className="settings-row-value">
-                      <strong>{workspace.region === 'eu' ? 'European Union' : 'United States'}</strong>
-                      <Badge>Locked</Badge>
-                    </span>
-                  </div>
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
                     <span className="settings-row-value"><strong>{workspace.name}</strong></span>
@@ -1277,10 +1323,7 @@ export function WorkspaceSettingsScreen({
                           <strong>{createdDelivery === 'sent' ? 'Invitation emailed' : 'Invite link ready'}</strong>
                           <small>{createdDelivery === 'sent' ? 'It expires in seven days. You can also copy the one-time link.' : 'Email delivery is disabled outside production. Copy the one-time link to test the flow.'}</small>
                         </div>
-                        <Button onClick={() => void copyInvitation()}>
-                          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                          {copied ? 'Copied' : 'Copy link'}
-                        </Button>
+                        <CopyButton label="Copy invite link" size={15} value={createdUrl} />
                       </div>
                     )}
                     {revokeInvitation.error && <InlineError>{revokeInvitation.error.message}</InlineError>}
@@ -1508,8 +1551,11 @@ export function WorkspaceSettingsScreen({
                                   : toolCountByConnection.get(connection.id)?.data ?? 'Loading…'}</td>
                                 <td>
                                   <span className="settings-connection-actions">
-                                    {isAdmin && reconnectableConnectorTypes.has(connection.connectorType)
-                                      && !(connection.connectorType === 'granola' && connection.scope === 'workspace') && (
+                                    {isAdmin && connection.scope === 'workspace' && hasInstallationFacet(connection.connectorType) && (
+                                      <Button aria-label={`Manage events for ${connection.displayName}`} onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
+                                    )}
+                                    {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
+                                      && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
                                       <ConnectionIconAction
                                         disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
                                         icon={<RefreshCcw aria-hidden="true" size={14} />}
@@ -1528,7 +1574,6 @@ export function WorkspaceSettingsScreen({
                                           setWebhookDisplayName(connection.displayName);
                                           setWebhookEventTypes('');
                                           setWebhookSecretResult(null);
-                                          setWebhookCopied(null);
                                           setWebhookRotationTarget(connection);
                                         }}
                                         tooltip="Refresh this webhook by replacing its signing secret."
@@ -1589,15 +1634,15 @@ export function WorkspaceSettingsScreen({
                         && providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
                         && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                      const personalConnectionStateUnavailable = provider.provider === 'granola' && (connections.isLoading || connections.isError);
+                      const personalConnectionStateUnavailable = hasInstallationFacet(provider.provider) && (connections.isLoading || connections.isError);
                       const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
-                        : provider.provider === 'granola' && connections.isLoading
+                        : personalConnectionStateUnavailable && connections.isLoading
                           ? 'Checking installed personal connections…'
-                          : provider.provider === 'granola' && connections.isError
+                          : personalConnectionStateUnavailable && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
                       const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
@@ -1621,6 +1666,10 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
+                          {provider.provider === 'ashby' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace events: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
+                          {provider.provider === 'ashby' && <p>Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/ashby/')}>Ashby setup guide ↗</Button></p>}
+                          {provider.provider === 'fireflies' && <p>Personal account: {hasActivePersonalConnection ? 'Connected' : 'Not connected'}. Workspace meetings: {hasActiveWorkspaceConnection ? 'Configured — manage delivery above' : 'Not configured'}.</p>}
+                          {provider.provider === 'fireflies' && <p>Connecting the workspace needs one step in Fireflies afterwards; Rally shows it once the key is accepted. <Button onClick={() => void desktopBridge().openExternal('https://rallywith.ai/support/connectors/fireflies/')}>Fireflies setup guide ↗</Button></p>}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -1642,7 +1691,6 @@ export function WorkspaceSettingsScreen({
                                       setWebhookEventTypes('');
                                       setWebhookIdempotencyKey(crypto.randomUUID());
                                       setWebhookSecretResult(null);
-                                      setWebhookCopied(null);
                                       setWebhookRotationTarget(null);
                                       return;
                                     }
@@ -1654,10 +1702,18 @@ export function WorkspaceSettingsScreen({
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <ConnectorButton
                                 disabled={workspaceConnectDisabled}
-                                label="Connect workspace"
+                                label={'Connect for workspace'}
                                 onClick={() => {
                                   if (provider.provider === 'custom_mcp') {
                                     openCustomMcpModal('workspace');
+                                    return;
+                                  }
+                                  if (provider.provider === 'ashby') {
+                                    setAshbyWorkspaceOpen(true);
+                                    return;
+                                  }
+                                  if (provider.provider === 'fireflies') {
+                                    setFirefliesWorkspaceOpen(true);
                                     return;
                                   }
                                   if (provider.provider === 'granola') {
@@ -1670,7 +1726,6 @@ export function WorkspaceSettingsScreen({
                                     setWebhookEventTypes('');
                                     setWebhookIdempotencyKey(crypto.randomUUID());
                                     setWebhookSecretResult(null);
-                                    setWebhookCopied(null);
                                     setWebhookRotationTarget(null);
                                     return;
                                   }
@@ -1678,7 +1733,7 @@ export function WorkspaceSettingsScreen({
                                 }}
                                 tooltip={`Everyone in this workspace can use this connection; it acts for the workspace.${workspaceConnectTitle ? ` ${workspaceConnectTitle}` : ''}`}
                               >
-                                Connect workspace
+                                {'Connect for workspace'}
                               </ConnectorButton>
                             )}
                           </div>
@@ -1894,7 +1949,7 @@ export function WorkspaceSettingsScreen({
                       </div>
                       <label className="settings-preference-row">
                         <SettingCopy setting={settings.mcpPolicy} instanceId={customMcpSettingsConnectionId ?? undefined} description={<> {customMcpSettings.data.toolPolicyEditable
-                              ? 'Read-only exposes just the tools this server marks as read-only. Every remaining tool still asks before it runs — the marking is the server’s own claim, not something Rally can verify.'
+                              ? 'Read-only exposes just the tools this server marks as read-only. The marking is the server’s own claim, which Rally cannot verify; it grants no additional access.'
                               : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'} </>} />
                         <select
                           aria-label="Tools Rally may use"
@@ -1942,7 +1997,7 @@ export function WorkspaceSettingsScreen({
                       ))}
                     </div>
                     <p className="settings-section-copy settings-custom-mcp-footnote">
-                      Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions, and every tool call still asks for confirmation before it runs.
+                      Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions. Tools run within the connection's granted access and your request, without per-tool confirmation prompts.
                     </p>
                   </>
                 ) : null}
@@ -2037,6 +2092,31 @@ export function WorkspaceSettingsScreen({
                   </>
                 )}
                 <ApplicationIconPicker />
+                {applicationSettings && isSettingAvailable(settings.releaseChannel, settingsContext) && (
+                  <>
+                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Updates</h2><p>Choose how quickly this Mac receives Rally releases.</p></div>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <SettingCopy setting={settings.releaseChannel} />
+                        <DropdownSelect
+                          ariaLabel="Update channel"
+                          disabled={updateReleaseChannel.isPending || updateLockdownMode.isPending}
+                          onValueChange={(value) => {
+                            const channel = parseDesktopReleaseChannel(value);
+                            if (channel) updateReleaseChannel.mutate(channel);
+                          }}
+                          options={[
+                            { value: 'stable', label: 'Stable', description: 'At most one release every 24 hours' },
+                            { value: 'faster', label: 'Faster', description: 'Every desktop release' },
+                          ]}
+                          value={applicationSettings.releaseChannel}
+                          variant="secondary"
+                        />
+                      </label>
+                    </div>
+                    {updateReleaseChannel.error && <InlineError>{updateReleaseChannel.error.message}</InlineError>}
+                  </>
+                )}
                 {isSettingAvailable(settings.login, settingsContext) && (
                   <>
                     <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Rally for you.</p></div>
@@ -2130,7 +2210,6 @@ export function WorkspaceSettingsScreen({
             setWebhookModalScope(null);
             setWebhookRotationTarget(null);
             setWebhookSecretResult(null);
-            setWebhookCopied(null);
           }}
           open={webhookModalScope !== null}
           title={webhookRotationTarget ? `Refresh ${webhookDisplayName}?` : 'Create inbound webhook'}
@@ -2138,28 +2217,19 @@ export function WorkspaceSettingsScreen({
           {webhookSecretResult ? (
             <div className="settings-list-card webhook-secret-result">
               <p>Copy the endpoint and secret now. Rally will not show this secret again.</p>
-              <label className="form-field">
-                <span><SettingLabel setting={settings.webhookEndpoint} /></span>
-                <input aria-label="Webhook endpoint" readOnly spellCheck={false} value={webhookSecretResult.endpoint} />
-              </label>
-              <Button onClick={() => {
-                void bridge.copyText(webhookSecretResult.endpoint);
-                setWebhookCopied('endpoint');
-              }}>
-                {webhookCopied === 'endpoint' ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                {webhookCopied === 'endpoint' ? 'Endpoint copied' : 'Copy endpoint'}
-              </Button>
-              <label className="form-field">
-                <span><SettingLabel setting={settings.webhookSecret} /></span>
-                <input aria-label="Webhook signing secret" readOnly spellCheck={false} type="password" value={webhookSecretResult.signingSecret} />
-              </label>
-              <Button onClick={() => {
-                void bridge.copyText(webhookSecretResult.signingSecret);
-                setWebhookCopied('secret');
-              }}>
-                {webhookCopied === 'secret' ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                {webhookCopied === 'secret' ? 'Secret copied' : 'Copy secret'}
-              </Button>
+              <CopyField
+                copyLabel="Copy endpoint"
+                inputLabel="Webhook endpoint"
+                label={<SettingLabel setting={settings.webhookEndpoint} />}
+                value={webhookSecretResult.endpoint}
+              />
+              <CopyField
+                copyLabel="Copy secret"
+                inputLabel="Webhook signing secret"
+                label={<SettingLabel setting={settings.webhookSecret} />}
+                secret
+                value={webhookSecretResult.signingSecret}
+              />
               <small>Sign the exact UTF-8 JSON bytes using: <code>{webhookSecretResult.signatureFormat}</code></small>
             </div>
           ) : webhookRotationTarget ? (
@@ -2337,6 +2407,9 @@ export function WorkspaceSettingsScreen({
           )}
           {connectCustomMcp.error && <InlineError>{connectCustomMcp.error.message}</InlineError>}
         </Modal>
+        {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
+        {api && firefliesWorkspaceOpen && <FirefliesWorkspaceSetup api={api} attemptId={firefliesSetupKey} onSuccess={() => setFirefliesSetupKey(crypto.randomUUID())} onClose={() => setFirefliesWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
+        {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} connectionEnabled={connections.data?.some((connection) => connection.id === installationTarget && connection.status !== 'disabled') ?? false} onClose={() => setInstallationTarget(null)} />}
         <Modal
           description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
           footer={(
@@ -2344,11 +2417,11 @@ export function WorkspaceSettingsScreen({
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
               <Button
                 className="button-primary"
-                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending}
+                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || granolaRecovery.isPending || granolaRecovery.isError}
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
-                Connect workspace
+                Connect for workspace
               </Button>
             </>
           )}
@@ -2393,6 +2466,8 @@ export function WorkspaceSettingsScreen({
             <small>Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook.</small>
           </label>
           {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
+          {granolaRecovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
+          {granolaRecovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={granolaRecovery.isPending} onClick={() => granolaRecovery.mutate()}>Find existing installation</Button></>}
         </Modal>
         <Modal
           description="You’ll be sent to the provider to authorize this connection again."

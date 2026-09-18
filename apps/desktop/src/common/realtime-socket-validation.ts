@@ -1,4 +1,7 @@
-import type { DesktopRealtimeSocketEvent } from './realtime-socket';
+import type {
+  DesktopRealtimeSocketEvent,
+  DesktopRealtimeSocketHandshakePhase,
+} from './realtime-socket';
 
 export const REALTIME_SOCKET_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -11,6 +14,16 @@ export const REALTIME_SOCKET_IPC_CHANNELS = {
 } as const;
 
 export const MAX_WEBSOCKET_CLOSE_REASON_BYTES = 123;
+
+const REALTIME_SOCKET_HANDSHAKE_PHASES = {
+  proxy_resolution: true,
+  dns: true,
+  tcp: true,
+  tls: true,
+  edge_upgrade: true,
+  proxy_connect_tls_edge: true,
+  route_failed: true,
+} satisfies Record<DesktopRealtimeSocketHandshakePhase, true>;
 
 /** The application-supplied close codes accepted by WHATWG WebSocket. */
 export function validWebSocketCloseCode(code: number): boolean {
@@ -32,6 +45,24 @@ export function parseRealtimeSocketEvent(rawEvent: unknown): DesktopRealtimeSock
     return Object.keys(event).every((key) => expected.has(key))
       && keys.every((key) => Object.hasOwn(event, key));
   };
+  const phase = event['phase'];
+  if (event['type'] === 'handshake_phase'
+    && hasOnlyKeys('type', 'socketId', 'phase', 'durationMs', 'routeIndex', 'proxied')
+    && typeof phase === 'string'
+    && Object.hasOwn(REALTIME_SOCKET_HANDSHAKE_PHASES, phase)
+    && typeof event['durationMs'] === 'number'
+    && Number.isFinite(event['durationMs'])
+    && event['durationMs'] >= 0
+    && typeof event['routeIndex'] === 'number'
+    && Number.isInteger(event['routeIndex'])
+    && event['routeIndex'] >= 0
+    && typeof event['proxied'] === 'boolean') {
+    return {
+      type: 'handshake_phase', socketId: event['socketId'],
+      phase: phase as DesktopRealtimeSocketHandshakePhase,
+      durationMs: event['durationMs'], routeIndex: event['routeIndex'], proxied: event['proxied'],
+    };
+  }
   if (event['type'] === 'open'
     && hasOnlyKeys('type', 'socketId', 'protocol', 'extensions')
     && typeof event['protocol'] === 'string'

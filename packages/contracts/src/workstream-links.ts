@@ -103,7 +103,7 @@ export function parseWorkstreamLinkPathTarget(pathname: string): ParsedWorkstrea
     const parent = parseWorkstreamLinkPathTarget(childPath[1]!);
     return parent && !parent.substreamId && isWorkstreamId(childPath[2]!) ? { ...parent, substreamId: childPath[2]! } : null;
   }
-  const current = /^\/app\/workspaces\/(global|eu)\/([^/]+)\/workstreams\/([^/]+)$/u.exec(normalized);
+  const current = /^\/app\/workspaces\/([a-z][a-z0-9-]*)\/([^/]+)\/workstreams\/([^/]+)$/u.exec(normalized);
   if (current) {
     const [, region, workspaceId, workstreamId] = current;
     if (!region || !workspaceId || !workstreamId) return null;

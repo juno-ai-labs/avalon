@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DesktopRealtimeSocketHandshakePhase } from '../../common/realtime-socket';
 import type { Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
@@ -44,6 +45,7 @@ import {
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
 } from './transcript';
+import { requestSocketTicket } from './socket-ticket-request';
 
 function overlayMessages(queryClient: QueryClient, workstreamId: string): Message[] {
   return (queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId)) ?? [])
@@ -113,6 +115,18 @@ class FakeWebSocket extends EventTarget {
 
   rawMessage(value: string): void {
     this.dispatchEvent(new MessageEvent('message', { data: value }));
+  }
+
+  handshakePhase(
+    phase: DesktopRealtimeSocketHandshakePhase,
+    durationMs: number,
+  ): void {
+    this.dispatchEvent(Object.assign(new Event('handshakephase'), {
+      phase,
+      durationMs,
+      routeIndex: 0,
+      proxied: false,
+    }));
   }
 }
 
@@ -381,6 +395,44 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('keeps the canonical feed resident without a screen while the socket owner is retained', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000731';
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`, ticket: 'feed-ticket',
+      protocols: socketTicketProtocols('feed-ticket'),
+    })) });
+    const owner = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => socket.rawMessage('pong'));
+    });
+    act(() => {
+      socket.open();
+      socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId, title: 'Retained feed' } }));
+    });
+    const keys = [
+      ['workstream', workstreamId], ['ordered-transcript', workstreamId],
+      substreamInitialContextQueryKey(workstreamId, '0'), transcriptOverlaysQueryKey(workstreamId),
+      workstreamFeedSourceQueryKey(workstreamId), workstreamSocketSnapshotGenerationQueryKey(workstreamId),
+    ];
+    const snapshot = keys.map((key) => queryClient.getQueryData(key));
+    expect(snapshot.every((value) => value !== undefined)).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(snapshot);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(owner.result.current.state).toBe('connected');
+    owner.unmount();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(keys.map(() => undefined));
+    queryClient.clear();
+  });
+
   it('keeps the connection object stable when none of its fields changed', () => {
     const api = socketApiWith({});
     const { result, rerender } = renderHook(
@@ -502,6 +554,13 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(firstSignal?.aborted).toBe(true);
     expect(result.current.state).toBe('reconnecting');
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'zero',
+    });
 
     await act(async () => {
       resolveFirstTicket?.(ticket);
@@ -512,6 +571,97 @@ describe('useWorkstreamSocket', () => {
     await act(async () => vi.advanceTimersByTimeAsync(750));
     expect(getSocketTicket).toHaveBeenCalledTimes(2);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('keeps the escalating cold-open budget authoritative for slow tickets', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000073b';
+    const ticket = {
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    };
+    const getSocketTicket = vi.fn((
+      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
+    ) => requestSocketTicket((signal) => new Promise<typeof ticket>((resolve, reject) => {
+      const timer = window.setTimeout(() => resolve(ticket), 15_000);
+      signal.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(signal.reason);
+      }, { once: true });
+    }), {
+      ownerSignal: args[5],
+      timeoutMs: args[6],
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, workstreamId, true),
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+
+    await act(async () => vi.advanceTimersByTimeAsync(WORKSTREAM_OPEN_TIMEOUT_BASE_MS));
+    expect(result.current.state).toBe('reconnecting');
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(getSocketTicket.mock.calls[1]?.[6]).toBe(WORKSTREAM_OPEN_TIMEOUT_BASE_MS * 2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(result.current.openingError).toBeUndefined();
+  });
+
+  it('times out a stranded reconnect ticket after the feed already opened', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000074a';
+    const ticket = {
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    };
+    let requestCount = 0;
+    const getSocketTicket = vi.fn(() => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        return requestSocketTicket(() => new Promise<typeof ticket>(() => undefined));
+      }
+      return Promise.resolve(ticket);
+    });
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, workstreamId, true),
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    act(() => {
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(snapshotFrame({
+        sequence: 1,
+        workstream: { id: workstreamId, title: 'Opened feed' },
+      }));
+    });
+    expect(result.current.state).toBe('connected');
+    act(() => FakeWebSocket.instances[0]!.close(1012));
+
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(WORKSTREAM_OPEN_TIMEOUT_BASE_MS));
+    expect(result.current.state).toBe('reconnecting');
+    expect(socketTelemetry()).toContainEqual({
+      kind: 'realtime_socket_state',
+      socket: 'substream_feed',
+      state: 'retrying',
+      cause: 'ticket_timeout',
+      attempts: 'one',
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('ignores future feed events and added fields before applying the next snapshot', async () => {
@@ -1088,6 +1238,195 @@ describe('useWorkstreamSocket', () => {
     await expect(admission).resolves.toEqual(acceptedTurn);
   });
 
+  it('sends each new command once on a healthy socket', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000605';
+    const queryClient = new QueryClient();
+    const roster = [{
+      id: '00000000-0000-7000-8000-000000000606',
+      name: 'Adam',
+      email: 'adam@example.com',
+      timezone: 'America/Los_Angeles',
+      status: 'active' as const,
+    }];
+    queryClient.setQueryData(['workspace-members'], roster);
+    const messageMentionPayload = vi.fn(async () => []);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      messageMentionPayload,
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const first = result.current.createMessage({
+      text: 'Ask @Adam first.',
+      clientId: 'client-message-healthy-1',
+    });
+    await flushPromises();
+    const second = result.current.createMessage({
+      text: 'Then continue.',
+      clientId: 'client-message-healthy-2',
+    });
+    await flushPromises();
+
+    const commands = sentFrames(socket).filter((frame): frame is Extract<ClientSocketEvent, {
+      type: 'create_message';
+    }> => frame.type === 'create_message');
+    expect(commands).toHaveLength(2);
+    expect(commands.map((command) => command.payload.clientMessageId)).toEqual([
+      'client-message-healthy-1',
+      'client-message-healthy-2',
+    ]);
+    expect(messageMentionPayload).toHaveBeenNthCalledWith(1, 'Ask @Adam first.', undefined, roster);
+
+    for (const command of commands) {
+      act(() => socket.message({
+        type: 'client_command_succeeded',
+        command: 'create_message',
+        operationId: command.operationId,
+        clientMessageId: command.payload.clientMessageId,
+        turn: {
+          turnId: `${command.payload.clientMessageId}-turn`,
+          clientMessageId: command.payload.clientMessageId,
+          createdAt: '2026-09-17T12:00:00.000Z',
+        },
+        deliveryState: 'canonical',
+      }));
+    }
+    await Promise.all([first, second]);
+  });
+
+  it('reconciles and replays an unresolved command on application foreground', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const workstreamId = '00000000-0000-7000-8000-000000000607';
+    const clientMessageId = 'client-message-foreground-recovery';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    try {
+      await flushPromises();
+      const socket = FakeWebSocket.instances[0]!;
+      act(() => socket.open());
+      const admission = result.current.createMessage({
+        text: 'Recover this message.',
+        clientId: clientMessageId,
+      });
+      await flushPromises();
+      const firstCommand = sentFrames(socket).find((frame): frame is Extract<ClientSocketEvent, {
+        type: 'create_message';
+      }> => frame.type === 'create_message');
+      expect(firstCommand).toBeDefined();
+      expect(sentFrames(socket).filter((frame) => frame.type === 'create_message')).toHaveLength(1);
+
+      act(() => window.dispatchEvent(new Event('focus')));
+
+      const foregroundFrames = sentFrames(socket);
+      expect(foregroundFrames.filter((frame) => frame.type === 'create_message')).toEqual([
+        firstCommand,
+        firstCommand,
+      ]);
+      expect(foregroundFrames.filter((frame) => frame.type === 'request_snapshot')).toHaveLength(1);
+      expect(socket.send).toHaveBeenCalledWith('ping');
+      expect(socket.send.mock.calls.filter(([frame]) => frame === 'ping')).toHaveLength(1);
+
+      // A second focus event cannot replace the older liveness deadline.
+      act(() => window.dispatchEvent(new Event('focus')));
+      expect(socket.send.mock.calls.filter(([frame]) => frame === 'ping')).toHaveLength(1);
+
+      act(() => socket.rawMessage('pong'));
+      act(() => socket.message({
+        type: 'client_command_succeeded',
+        command: 'create_message',
+        operationId: firstCommand!.operationId,
+        clientMessageId,
+        turn: {
+          turnId: '00000000-0000-7000-8000-000000000608',
+          clientMessageId,
+          createdAt: '2026-09-17T12:00:00.000Z',
+        },
+        deliveryState: 'canonical',
+      }));
+      await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
+
+      const settledCallCount = socket.send.mock.calls.length;
+      act(() => window.dispatchEvent(new Event('focus')));
+      expect(socket.send).toHaveBeenCalledTimes(settledCallCount);
+    } finally {
+      hasFocus.mockRestore();
+    }
+  });
+
+  it('reconnects immediately on application foreground when a command lost its socket', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000609';
+    const clientMessageId = 'client-message-foreground-reconnect';
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const firstSocket = FakeWebSocket.instances[0]!;
+    act(() => firstSocket.open());
+    const admission = result.current.createMessage({
+      text: 'Recover after close.',
+      clientId: clientMessageId,
+    });
+    await flushPromises();
+    const command = sentFrames(firstSocket).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'create_message';
+    }> => frame.type === 'create_message')!;
+    act(() => firstSocket.close(1006));
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    act(() => window.dispatchEvent(new Event('focus')));
+    await flushPromises();
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    const recoveredSocket = FakeWebSocket.instances[1]!;
+    act(() => recoveredSocket.open());
+    expect(sentFrames(recoveredSocket).filter((frame) => frame.type === 'create_message')).toEqual([command]);
+    act(() => recoveredSocket.message({
+      type: 'client_command_succeeded',
+      command: 'create_message',
+      operationId: command.operationId,
+      clientMessageId,
+      turn: {
+        turnId: '00000000-0000-7000-8000-000000000610',
+        clientMessageId,
+        createdAt: '2026-09-17T12:00:00.000Z',
+      },
+      deliveryState: 'canonical',
+    }));
+    await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
+  });
+
   it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000631';
@@ -1213,6 +1552,7 @@ describe('useWorkstreamSocket', () => {
       0,
       false,
       expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
     const first = FakeWebSocket.instances[0]!;
     act(() => first.open());
@@ -1646,6 +1986,7 @@ describe('useWorkstreamSocket', () => {
       0,
       false,
       expect.any(AbortSignal),
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
   });
 
@@ -3845,18 +4186,24 @@ describe('useWorkstreamSocket', () => {
 
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.handshakePhase('tls', 24.6));
     act(() => socket.open());
     act(() => socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId } })));
     await flushPromises();
 
     const line = debug.mock.calls
       .filter((call) => String(call[0]).startsWith('[perf]'))
-      .map((call) => call[1] as { phases: Record<string, number>; sinceEffectMs: number })
+      .map((call) => call[1] as {
+        phases: Record<string, number>;
+        sinceEffectMs: number;
+        tlsMs?: number;
+      })
       .at(-1)!;
     // `dial` closes on the line that constructs the WebSocket and `handshake`
     // on its open event. Collapsing them back into one number is what made a
     // blocked renderer indistinguishable from a slow connection.
     expect(Object.keys(line.phases)).toEqual(['socket_ticket', 'dial', 'handshake', 'first_frame']);
+    expect(line.tlsMs).toBe(24.6);
     // Dead time before the first request, which the trace cannot cover: it does
     // not exist until `connect` runs.
     expect(line.sinceEffectMs).toEqual(expect.any(Number));
@@ -4770,4 +5117,86 @@ describe('useWorkstreamSocket over the local cache', () => {
     const row = await conversationSlice.read(scope, conversationCacheKey(workstreamId, '0'));
     expect(row?.cachedAt).toBe('2026-09-01T00:00:00.000Z');
   });
+});
+
+it('keeps inference delays attempt-scoped and clears them on settlement and conversation changes', async () => {
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  const queryClient = new QueryClient();
+  const parentId = '00000000-0000-7000-8000-00000000062f';
+  const runId = '00000000-0000-7000-8000-000000000700';
+  const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+    url: `wss://api.rally.test/workstreams/${parentId}`, ticket: 'socket-ticket',
+    protocols: socketTicketProtocols('socket-ticket'),
+  })) });
+  const { result, rerender } = renderHook(({ substreamId }) => useWorkstreamSocket(api, parentId, true, false, "active_workstream", undefined, true, substreamId), {
+    initialProps: { substreamId: '0' }, wrapper: createWrapper(queryClient),
+  });
+  await flushPromises();
+  const socket = FakeWebSocket.instances[0]!;
+  const delay = {
+    harnessRunId: runId, executionId: runId,
+    attemptId: '00000000-0000-7000-8000-000000000701',
+    inferenceRequestId: '00000000-0000-7000-8000-000000000702', turnId: 'turn:1',
+  };
+  act(() => {
+    socket.open();
+    socket.message({ ...snapshotFrame({ sequence: 1, workstream: { id: parentId, harnessStatus: 'running', latestHarnessRunId: runId } }), activeInferenceDelays: [delay] });
+  });
+  expect(result.current.activeInferenceDelays).toEqual([delay]);
+  const other = { ...delay, inferenceRequestId: '00000000-0000-7000-8000-000000000703' };
+  act(() => socket.message({ type: 'inference_delay_changed', sequence: 2, occurredAt: '2026-09-14T20:00:00Z', ...other, active: true }));
+  expect(result.current.activeInferenceDelays).toEqual([delay, other]);
+  act(() => socket.message({ type: 'inference_delay_changed', sequence: 3, occurredAt: '2026-09-14T20:00:01Z', ...delay, active: false }));
+  expect(result.current.activeInferenceDelays.map((entry) => entry.inferenceRequestId)).toEqual([other.inferenceRequestId]);
+  act(() => socket.message({ type: 'harness_status_changed', sequence: 4, occurredAt: '2026-09-14T20:00:02Z', status: 'completed' }));
+  expect(result.current.activeInferenceDelays).toEqual([]);
+  act(() => socket.message({ ...snapshotFrame({ sequence: 5, workstream: { id: parentId, harnessStatus: 'running', latestHarnessRunId: runId } }), activeInferenceDelays: [delay] }));
+  expect(result.current.activeInferenceDelays).toHaveLength(1);
+  rerender({ substreamId: '00000000-0000-7000-8000-000000000704' });
+  expect(result.current.activeInferenceDelays).toEqual([]);
+});
+
+it('retains an active delay when a conversation remounts after its event sequence', async () => {
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+  const queryClient = new QueryClient();
+  const parentId = '00000000-0000-7000-8000-00000000062f';
+  const runId = '00000000-0000-7000-8000-000000000700';
+  const delay = {
+    harnessRunId: runId, executionId: runId,
+    attemptId: '00000000-0000-7000-8000-000000000701',
+    inferenceRequestId: '00000000-0000-7000-8000-000000000702', turnId: 'turn:1',
+  };
+  const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+    url: `wss://api.rally.test/workstreams/${parentId}`, ticket: 'socket-ticket',
+    protocols: socketTicketProtocols('socket-ticket'),
+  })) });
+  function Socket(): React.JSX.Element {
+    const connection = useWorkstreamSocket(api, parentId, true);
+    return <div data-testid="retained-delay">{connection.activeInferenceDelays.map((entry) => entry.inferenceRequestId).join(',')}</div>;
+  }
+  function Tree({ mounted }: { mounted: boolean }): React.JSX.Element {
+    return <QueryClientProvider client={queryClient}>
+      <WorkstreamSocketResumeProvider scope="delay-review">
+        {mounted ? <Socket /> : null}
+      </WorkstreamSocketResumeProvider>
+    </QueryClientProvider>;
+  }
+  const rendered = render(<Tree mounted />);
+  await flushPromises();
+  const socket = FakeWebSocket.instances[0]!;
+  act(() => {
+    socket.open();
+    socket.message(snapshotFrame({ sequence: 1, workstream: { id: parentId, harnessStatus: 'running', latestHarnessRunId: runId } }));
+    socket.message({ type: 'inference_delay_changed', sequence: 2, occurredAt: '2026-09-14T20:00:00Z', ...delay, active: true });
+  });
+  expect(rendered.getByTestId('retained-delay').textContent).toBe(delay.inferenceRequestId);
+  rendered.rerender(<Tree mounted={false} />);
+  rendered.rerender(<Tree mounted />);
+  await flushPromises();
+  const resumed = FakeWebSocket.instances.at(-1)!;
+  act(() => resumed.open());
+  expect(sentFrames(resumed)).toContainEqual(expect.objectContaining({ type: 'subscribe', afterSequence: 2 }));
+  expect(rendered.getByTestId('retained-delay').textContent).toBe(delay.inferenceRequestId);
+  act(() => resumed.message({ type: 'inference_delay_changed', sequence: 3, occurredAt: '2026-09-14T20:00:01Z', ...delay, active: false }));
+  expect(rendered.getByTestId('retained-delay').textContent).toBe('');
 });

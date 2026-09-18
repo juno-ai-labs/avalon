@@ -63,7 +63,7 @@
         <div class="trust-control-grid">
           <article class="trust-control-card">
             <header><span>01</span><h3>Regional architecture</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
-            <ul><li>Separate Global and EU API deployments use separate regional databases, object storage, Durable Object namespaces, queues, and encryption keys.</li><li>Authenticated requests carry a region claim; a mismatch with the serving region is rejected.</li><li>EU product telemetry has no Global PostHog fallback.</li></ul>
+            <ul><li>The Global deployment uses its own databases, object storage, Durable Object namespaces, queues, and encryption keys.</li><li>Authenticated requests carry a region claim; a mismatch with the serving region is rejected.</li></ul>
           </article>
           <article class="trust-control-card">
             <header><span>02</span><h3>Identity &amp; access</h3><span class="trust-status" role="img" aria-label="Implemented"></span></header>
@@ -117,7 +117,7 @@
           <article><span>AI routing</span><h3>OpenRouter</h3><p>Routes bounded model requests to the configured inference providers.</p></article>
           <article><span>Model inference</span><h3>xAI · Google · Anthropic</h3><p>Configured primary, structured, classification, and fallback inference paths.</p></article>
           <article><span>Transcription</span><h3>Microsoft Azure</h3><p>Optional Azure OpenAI real-time dictation and transcription when enabled.</p></article>
-          <article><span>Global telemetry</span><h3>PostHog</h3><p>Global product analytics and operational delivery; EU workspaces are not exported to this path.</p></article>
+          <article><span>Global telemetry</span><h3>PostHog</h3><p>Product analytics and operational delivery.</p></article>
           <article><span>Email</span><h3>Resend</h3><p>Transactional messages, invitations, notifications, and inbound-email routing.</p></article>
           <article><span>Public web</span><h3>Firecrawl</h3><p>User-requested public web search and retrieval when the capability is configured.</p></article>
         </div>
@@ -131,7 +131,7 @@
         <div class="trust-faq-list">
           <details><summary>Is this Trust Center gated?<span>＋</span></summary><p>No. Every resource linked here is public. Rally does not require an account, NDA, email submission, or access request to read this page.</p></details>
           <details><summary>Does Rally claim a security certification?<span>＋</span></summary><p>No certification is claimed on this page. We list controls that can be tied to the current implementation and will add independent assurance only when it is complete and current.</p></details>
-          <details><summary>What does “Global or EU” mean?<span>＋</span></summary><p>Rally operates separate Global and EU application architectures with separate regional storage and keys. Network delivery and customer-selected service providers can process data outside the selected architecture, as explained in the Privacy Policy and Sub-processor List.</p></details>
+          <details><summary>Where does Rally run?<span>＋</span></summary><p>Rally operates the Global deployment with deployment-specific storage and keys. Network delivery and customer-selected service providers can process data outside this deployment, as explained in the Privacy Policy and Sub-processor List.</p></details>
           <details><summary>How are desktop sessions stored?<span>＋</span></summary><p>The default desktop mode encrypts stored session material with an application-wide AES-GCM key. Optional Lockdown mode rewraps session material with Electron safeStorage and the operating-system keystore. We do not describe the default mode as device-bound storage.</p></details>
           <details><summary>How do I report a vulnerability?<span>＋</span></summary><p>Email help@rallywith.ai with the subject “Security report.” Include the affected surface, impact, reproducible steps, and a safe proof of concept, but do not send credentials or full customer content.</p></details>
         </div>

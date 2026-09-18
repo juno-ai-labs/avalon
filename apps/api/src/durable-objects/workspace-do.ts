@@ -1,18 +1,40 @@
-import { safeParseSocketEvent, isUnknownSocketEvent, WorkspaceSocketClientEventTypeSchema } from "@rally/contracts";
+import {
+  WorkspaceSocketClientEventTypeSchema,
+  isUnknownSocketEvent,
+  safeParseSocketEvent,
+} from "@rally/contracts";
+import {
+  InstallationCreateSchema,
+  InstallationReadSchema,
+  InstallationBatchReadSchema,
+  type InstallationBatchRead,
+  InstallationClaimSchema,
+  InstallationDeliverySchema,
+  InstallationSettleSchema,
+  InstallationChangeSchema,
+  type InstallationCreate,
+  type InstallationClaim,
+  type InstallationDelivery,
+  type InstallationSettle,
+  type InstallationChange,
+  InstallationCredentialReplaceSchema,
+  InstallationMaintenanceCancelSchema,
+  InstallationMaintenanceSchema,
+  InstallationRotationPrepareSchema,
+  type InstallationCredentialReplace,
+  type InstallationMaintenance,
+  type InstallationMaintenanceCancel,
+  type InstallationRotationPrepare,
+} from './connector-installation-protocol';
+import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
+import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import { AgentIdSchema, type AgentId } from "@rally/contracts";
+import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
+import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
+import {
+  readNotificationIntentForDelivery as readStoredPushIntent,
+} from "./workspace-notification-intent-storage";
 
-import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
-import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
-import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
-import { resolveWorkspaceEventResources } from "./workspace-event-resources";
-import { WorkstreamAppearanceSchema } from "@rally/contracts";
-import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
-  resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
-import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
-import { UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
-import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
-import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
-import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
-import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
 import {
   ExternalEventEvaluatorV1Schema,
   ExternalEventRegistrationProjectionV1Schema,
@@ -49,7 +71,6 @@ import {
   type AutomationSummary,
   type WorkstreamAutomationSummary,
   type WorkspaceSidebar,
-  type NoteSummary,
   type ProjectSnapshot,
   type Workstream,
   type WorkspaceSocketSyncEvent,
@@ -57,13 +78,29 @@ import {
   type WorkstreamBatchFilter,
   ProductFeatureFlagKeySchema,
   type ProductFeatureFlagKey,
+  UpdateOnboardingJourneySchema,
+  WorkstreamAppearanceSchema,
+  type OnboardingJourney,
+  type UpdateOnboardingJourney,
 } from "@rally/contracts";
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
+import { AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema } from '../services/authorization-policy';
+import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey } from '../services/search-authorization';
+import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
+import { AuthorizationStorage, AUTHORIZATION_STORAGE_MIGRATION, AUTHORIZATION_STORAGE_TABLES, AuthorizationLocationSchema } from './authorization-storage';
+import { ONBOARDING_JOURNEY_SQL, OnboardingJourneyStore } from './onboarding-journey';
+import { RESOURCE_SEARCH_MIGRATION_STATEMENTS, RESOURCE_SEARCH_CONTENT_UPDATE_MIGRATION, ResourceSearchProjectionSchema, ResourceSearchRevisionRequestSchema,
+  resourceSearchRevision, nextResourceSearchDueAt, publishResourceSearch, prepareResourceSearch } from './resource-search-projection';
+import { SEARCH_AUTHORIZATION_PUSH_MIGRATION, nextSearchAuthorizationPush, flushSearchAuthorizationPush } from './search-authorization-projection';
+import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
+import { resolveWorkspaceEventResources } from "./workspace-event-resources";
 
+import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
 import type { AuthContext, Env } from "../env";
-import { ApiError } from "../lib/api-error";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
+import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
   assertDurableObjectJurisdiction,
@@ -73,38 +110,18 @@ import {
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
+import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
-import {
-  acceptsNewWorkstreamWork,
-  readWorkstreamAuthorityControl,
-} from "../services/workstream-authority";
-import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-flags";
 import {
   revocationClosesSocket,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
+import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-flags";
+import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
-import { boundParameterChunks } from "./bound-parameters";
-import {
-  applyDurableObjectSqliteMigrations,
-  type DurableObjectSqliteMigration,
-} from "./sqlite-migrations";
-import {
-  SCHEDULED_ALARM_SCHEMA_STATEMENTS,
-  ScheduledDurableObject,
-  scheduledAlarmRetryDelay,
-  type ScheduledAlarm,
-  type ScheduledAlarmOutcome,
-} from "./scheduled-alarms";
-import {
-  observableWorkspaceScheduledAlarmKind,
-  WorkspaceAlarmInstrumentation,
-  type ObservableWorkspaceScheduledAlarmKind,
-  type WorkspaceScheduledAlarmPhase,
-} from "./workspace-alarm-instrumentation";
-import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
+import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   recordWorkspaceScheduleFailure,
   runWorkspaceScheduleTarget,
@@ -114,8 +131,12 @@ import {
   type WorkspaceScheduleContext,
   type WorkspaceScheduleTargetKind,
 } from "../services/workspace-schedule-execution";
-import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+} from "../services/workstream-authority";
+import { boundParameterChunks } from "./bound-parameters";
+import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import { automationDOName, workspaceDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
@@ -124,7 +145,161 @@ import {
   readObjectRetirement,
   retiredObjectResponse,
 } from "./object-retirement";
+import {
+  responseToRpcResult,
+  type DurableObjectRpcResult,
+} from "./rpc-result";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
+import {
+  SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+  ScheduledDurableObject,
+  scheduledAlarmRetryDelay,
+  type ScheduledAlarm,
+  type ScheduledAlarmOutcome,
+} from "./scheduled-alarms";
+import {
+  applyDurableObjectSqliteMigrations,
+  type DurableObjectSqliteMigration,
+} from "./sqlite-migrations";
+import {
+  WorkspaceActivityEventCursorRequestSchema,
+  WorkspaceActivityEventInputSchema,
+  WorkspaceActivityEventListRequestSchema,
+  WorkspaceActivityEventListResultSchema,
+  WorkspaceActivityEventSourceRequestSchema,
+  WorkspaceActivityEventSourceSchema,
+  type WorkspaceActivityEventCursorRequest,
+  type WorkspaceActivityEventInput,
+  type WorkspaceActivityEventListRequest,
+  type WorkspaceActivityEventListResult,
+  type WorkspaceActivityEventSourceRequest,
+} from "./workspace-activity-event-protocol";
+import {
+  observableWorkspaceScheduledAlarmKind,
+  WorkspaceAlarmInstrumentation,
+  type ObservableWorkspaceScheduledAlarmKind,
+  type WorkspaceScheduledAlarmPhase,
+} from "./workspace-alarm-instrumentation";
+import {
+  WorkspaceConnectorOAuthAttemptAbandonRequestSchema,
+  WorkspaceConnectorOAuthAttemptExtendRequestSchema,
+  WorkspaceConnectorOAuthAttemptFinishRequestSchema,
+  WorkspaceConnectorOAuthAttemptReadRequestSchema,
+  WorkspaceConnectorOAuthAttemptStartRequestSchema,
+  WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema,
+  WorkspaceWebhookReceiptClaimRequestSchema,
+  type WorkspaceConnectorOAuthAttemptAbandonRequest,
+  type WorkspaceConnectorOAuthAttemptExtendRequest,
+  type WorkspaceConnectorOAuthAttemptFinishRequest,
+  type WorkspaceConnectorOAuthAttemptFinishResult,
+  type WorkspaceConnectorOAuthAttemptReadRequest,
+  type WorkspaceConnectorOAuthAttemptReadResult,
+  type WorkspaceConnectorOAuthAttemptStartRequest,
+  type WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
+  type WorkspaceWebhookReceiptClaimRequest,
+  type WorkspaceWebhookReceiptClaimResult,
+} from "./workspace-connections-protocol";
+import {
+  abandonWorkspaceConnectorOAuthAttempt,
+  bindWorkspaceConnectorOAuthAttemptTelemetry,
+  claimWorkspaceWebhookReceipt,
+  extendWorkspaceConnectorOAuthAttempt,
+  finishWorkspaceConnectorOAuthAttempt,
+  readWorkspaceConnectorOAuthAttempt,
+  startWorkspaceConnectorOAuthAttempt,
+} from "./workspace-connections-storage";
+import {
+  LegacyWorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventClaimRpcRequestSchema,
+  WorkspaceConnectorEventClaimRequestSchema,
+  WorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventIngestRequestSchema,
+  WorkspaceConnectorEventIngestResultSchema,
+  WorkspaceConnectorEventRequestSchema,
+  WorkspaceConnectorEventSchema,
+  WorkspaceConnectorEventSettleRpcRequestSchema,
+  type WorkspaceConnectorEvent,
+  type WorkspaceConnectorEventClaimRequest,
+  type WorkspaceConnectorEventClaimRpcRequest,
+  type WorkspaceConnectorEventClaimRpcResult,
+  type WorkspaceConnectorEventIngestRequest,
+  type WorkspaceConnectorEventIngestResult,
+  type WorkspaceConnectorEventRequest,
+  type WorkspaceConnectorEventSettleRequest,
+  type WorkspaceConnectorEventSettleRpcRequest,
+} from "./workspace-connector-event-protocol";
+import {
+  WorkspaceDigestClaimRequestSchema,
+  WorkspaceDigestCursorRequestSchema,
+  WorkspaceDigestDefaultRequestSchema,
+  WorkspaceDigestDeliveryContextRequestSchema,
+  WorkspaceDigestDeliveryRunningRequestSchema,
+  WorkspaceDigestDeliveryTargetsRequestSchema,
+  WorkspaceDigestDeliveryWorkstreamRequestSchema,
+  WorkspaceDigestFireScheduleRequestSchema,
+  WorkspaceDigestReleaseClaimRequestSchema,
+  WorkspaceDigestReplaceRequestSchema,
+  WorkspaceDigestReplaceRowsRequestSchema,
+  WorkspaceDigestRowStateRequestSchema,
+  WorkspaceDigestSettingsRequestSchema,
+  WorkspaceDigestSettleRequestSchema,
+  WorkspaceDigestSummaryRequestSchema,
+  WorkspaceDigestTargetDeliveredRequestSchema,
+  WorkspaceDigestTargetFailedRequestSchema,
+  WorkspaceDigestTerminalContextRequestSchema,
+  type WorkspaceDigestClaimRequest,
+  type WorkspaceDigestClaimResult,
+  type WorkspaceDigestCursor,
+  type WorkspaceDigestCursorRequest,
+  type WorkspaceDigestDefaultRequest,
+  type WorkspaceDigestDefaultResult,
+  type WorkspaceDigestDeliveryContext,
+  type WorkspaceDigestDeliveryContextRequest,
+  type WorkspaceDigestDeliveryRunningRequest,
+  type WorkspaceDigestDeliveryTargets,
+  type WorkspaceDigestDeliveryTargetsRequest,
+  type WorkspaceDigestDeliveryWorkstreamRequest,
+  type WorkspaceDigestFireSchedule,
+  type WorkspaceDigestFireScheduleRequest,
+  type WorkspaceDigestReleaseClaimRequest,
+  type WorkspaceDigestReleaseClaimResult,
+  type WorkspaceDigestReplaceRequest,
+  type WorkspaceDigestReplaceResult,
+  type WorkspaceDigestReplaceRowsRequest,
+  type WorkspaceDigestRowState,
+  type WorkspaceDigestRowStateRequest,
+  type WorkspaceDigestRunningResult,
+  type WorkspaceDigestSettings,
+  type WorkspaceDigestSettingsRequest,
+  type WorkspaceDigestSettleRequest,
+  type WorkspaceDigestSettleResult,
+  type WorkspaceDigestSummaryRequest,
+  type WorkspaceDigestTargetDeliveredRequest,
+  type WorkspaceDigestTargetFailedRequest,
+  type WorkspaceDigestTargetOutcomeResult,
+  type WorkspaceDigestTerminalContext,
+  type WorkspaceDigestTerminalContextRequest,
+} from "./workspace-digests-protocol";
+import {
+  claimWorkspaceDigestDelivery,
+  ensureDefaultWorkspaceDigestSchedule,
+  latestWorkspaceDigestCursor,
+  markWorkspaceDigestDeliveryRunning,
+  markWorkspaceDigestTargetDelivered,
+  markWorkspaceDigestTargetFailed,
+  recordWorkspaceDigestDeliveryWorkstream,
+  recordWorkspaceDigestSummary,
+  releaseWorkspaceDigestDeliveryClaim,
+  replaceWorkspaceDigestSchedule,
+  replaceWorkspaceDigestScheduleRows,
+  settleWorkspaceDigestDelivery,
+  workspaceDigestDeliveryContext,
+  workspaceDigestDeliveryTargets,
+  workspaceDigestScheduleForFire,
+  workspaceDigestScheduleRowState,
+  workspaceDigestSettings,
+  workspaceDigestTerminalContext,
+} from "./workspace-digests-storage";
 import {
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceAttentionRequestSchema,
@@ -134,8 +309,6 @@ import {
   WorkspaceBatchDispatchAdvanceResultSchema,
   WorkspaceBatchDispatchBeginRequestSchema,
   WorkspaceBatchDispatchBeginResultSchema,
-  WorkspaceBatchNoteArchiveRequestSchema,
-  WorkspaceBatchNoteArchiveResultSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceAutomationDirectoryApplyRequestSchema,
   WorkspaceDirectoryDueRequestSchema,
@@ -168,8 +341,6 @@ import {
   type WorkspaceDirectoryBatchTargetsRequest,
   type WorkspaceBatchDispatchAdvanceRequest,
   type WorkspaceBatchDispatchBeginRequest,
-  type WorkspaceBatchNoteArchiveRequest,
-  type WorkspaceBatchNoteArchiveResult,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryListRequest,
@@ -196,59 +367,20 @@ import {
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import {
-  abandonWorkspaceConnectorOAuthAttempt,
-  bindWorkspaceConnectorOAuthAttemptTelemetry,
-  claimWorkspaceWebhookReceipt,
-  extendWorkspaceConnectorOAuthAttempt,
-  finishWorkspaceConnectorOAuthAttempt,
-  readWorkspaceConnectorOAuthAttempt,
-  startWorkspaceConnectorOAuthAttempt,
-} from "./workspace-connections-storage";
+  SLACK_REACTION_COLUMN_STATEMENTS,
+  WORKSPACE_DOMAIN_SCHEMA_STATEMENTS,
+  workspaceIdentityFencesFor,
+} from "./workspace-domain-schema";
 import {
-  WorkspaceConnectorOAuthAttemptAbandonRequestSchema,
-  WorkspaceConnectorOAuthAttemptExtendRequestSchema,
-  WorkspaceConnectorOAuthAttemptFinishRequestSchema,
-  WorkspaceConnectorOAuthAttemptReadRequestSchema,
-  WorkspaceConnectorOAuthAttemptStartRequestSchema,
-  WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema,
-  WorkspaceWebhookReceiptClaimRequestSchema,
-  type WorkspaceConnectorOAuthAttemptAbandonRequest,
-  type WorkspaceConnectorOAuthAttemptExtendRequest,
-  type WorkspaceConnectorOAuthAttemptFinishRequest,
-  type WorkspaceConnectorOAuthAttemptFinishResult,
-  type WorkspaceConnectorOAuthAttemptReadRequest,
-  type WorkspaceConnectorOAuthAttemptReadResult,
-  type WorkspaceConnectorOAuthAttemptStartRequest,
-  type WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
-  type WorkspaceWebhookReceiptClaimRequest,
-  type WorkspaceWebhookReceiptClaimResult,
-} from "./workspace-connections-protocol";
-import {
-  addWorkspaceMemoryItem,
-  canonicalWorkspaceMemoryItems,
-  claimWorkspaceMemoryIndexOutboxRow,
-  completeWorkspaceMemoryIndexOutboxRow,
-  createWorkspaceMemoryTable,
-  dueWorkspaceMemoryIndexOutbox,
-  ensureWorkspaceMemoryScope,
-  insertWorkspaceMemoryTableRows,
-  invalidateWorkspaceMemoryItem,
-  invalidateWorkspaceMemoryTableRows,
-  queryWorkspaceMemoryTableRows,
-  recordWorkspaceMemoryItemAccess,
-  recordWorkspaceMemoryTableOpenReceipt,
-  retryWorkspaceMemoryIndexOutboxRow,
-  searchWorkspaceMemoryItemsFts,
-  searchWorkspaceMemoryTables,
-  updateWorkspaceMemoryItem,
-  updateWorkspaceMemoryTableRows,
-  workspaceMemoryIndexProjectionSource,
-  workspaceMemoryItemForWrite,
-  workspaceMemoryMutationReceipt,
-  workspaceMemoryTableMutationReceipt,
-  workspaceMemoryTableRowsById,
-  workspaceMemoryTableWithColumns,
-} from "./workspace-memory-storage";
+  WorkspaceReleaseDraftAttachmentsRequestSchema,
+  WorkspaceReleaseDraftAttachmentsResultSchema,
+  WorkspaceReserveDraftAttachmentsRequestSchema,
+  WorkspaceReserveDraftAttachmentsResultSchema,
+  type WorkspaceReleaseDraftAttachmentsRequest,
+  type WorkspaceReleaseDraftAttachmentsResult,
+  type WorkspaceReserveDraftAttachmentsRequest,
+  type WorkspaceReserveDraftAttachmentsResult,
+} from "./workspace-draft-attachment-protocol";
 import {
   WorkspaceMemoryAccessRecordRequestSchema,
   WorkspaceMemoryAddRequestSchema,
@@ -315,56 +447,242 @@ import {
   type WorkspaceMemoryWriteResult,
 } from "./workspace-memory-protocol";
 import {
-  claimWorkspaceTerminalPolicyApplication,
-  commitWorkspaceTerminalPolicyApplication,
-  failWorkspaceTerminalPolicyApplication,
-  recordWorkspaceTerminalPolicyPreview,
-  workspaceTerminalNetworkMode,
-  workspaceTerminalNetworkSettings,
-} from "./workspace-terminal-network-storage";
+  addWorkspaceMemoryItem,
+  canonicalWorkspaceMemoryItems,
+  claimWorkspaceMemoryIndexOutboxRow,
+  completeWorkspaceMemoryIndexOutboxRow,
+  createWorkspaceMemoryTable,
+  dueWorkspaceMemoryIndexOutbox,
+  ensureWorkspaceMemoryScope,
+  insertWorkspaceMemoryTableRows,
+  invalidateWorkspaceMemoryItem,
+  invalidateWorkspaceMemoryTableRows,
+  queryWorkspaceMemoryTableRows,
+  recordWorkspaceMemoryItemAccess,
+  recordWorkspaceMemoryTableOpenReceipt,
+  retryWorkspaceMemoryIndexOutboxRow,
+  searchWorkspaceMemoryItemsFts,
+  searchWorkspaceMemoryTables,
+  updateWorkspaceMemoryItem,
+  updateWorkspaceMemoryTableRows,
+  workspaceMemoryIndexProjectionSource,
+  workspaceMemoryItemForWrite,
+  workspaceMemoryMutationReceipt,
+  workspaceMemoryTableMutationReceipt,
+  workspaceMemoryTableRowsById,
+  workspaceMemoryTableWithColumns,
+} from "./workspace-memory-storage";
 import {
-  WorkspaceTerminalNetworkSettingsRequestSchema,
-  WorkspaceTerminalPolicyClaimRequestSchema,
-  WorkspaceTerminalPolicyCommitRequestSchema,
-  WorkspaceTerminalPolicyFailRequestSchema,
-  WorkspaceTerminalPolicyPreviewRequestSchema,
-  type WorkspaceTerminalNetworkMode,
-  type WorkspaceTerminalNetworkSettings,
-  type WorkspaceTerminalNetworkSettingsRequest,
-  type WorkspaceTerminalPolicyClaimRequest,
-  type WorkspaceTerminalPolicyClaimResult,
-  type WorkspaceTerminalPolicyCommitRequest,
-  type WorkspaceTerminalPolicyFailRequest,
-  type WorkspaceTerminalPolicySettlementResult,
-  type WorkspaceTerminalPolicyPreviewRequest,
-} from "./workspace-terminal-network-protocol";
+  WorkspaceNotificationIntentClaimResultSchema,
+  WorkspaceNotificationIntentMaintenanceRequestSchema,
+  WorkspaceNotificationIntentMaintenanceTargetSchema,
+  WorkspaceNotificationIntentReapRequestSchema,
+  WorkspaceNotificationIntentReapResultSchema,
+  WorkspaceNotificationIntentRequestSchema,
+  WorkspaceNotificationIntentTransitionRequestSchema,
+  WorkspaceNotificationIntentTransitionResultSchema,
+  type WorkspaceNotificationIntentClaimResult,
+  type WorkspaceNotificationIntentMaintenanceRequest,
+  type WorkspaceNotificationIntentMaintenanceTarget,
+  type WorkspaceNotificationIntentReapRequest,
+  type WorkspaceNotificationIntentReapResult,
+  type WorkspaceNotificationIntentRequest,
+  type WorkspaceNotificationIntentTransitionRequest,
+  type WorkspaceNotificationIntentTransitionResult,
+} from "./workspace-notification-intent-protocol";
 import {
-  claimWorkspaceSlackIngressJob,
-  claimWorkspaceSlackThread,
-  clearWorkspaceSlackPendingPrompt,
-  completeWorkspaceSlackIngressJob,
-  enqueueWorkspaceSlackIngressJob,
-  failWorkspaceSlackIngressJob,
-  recoverableWorkspaceSlackIngressJobs,
-  releaseWorkspaceSlackThreadClaim,
-  rememberWorkspaceSlackPendingPrompt,
-  sweepWorkspaceSlackIngress,
-  workspaceSlackPendingPrompt,
-  workspaceSlackThreadRoutable,
-  assignWorkspaceSlackSessions,
-  createWorkspaceSlackSession,
-  recordWorkspaceSlackFeedback,
-  setWorkspaceSlackSessionDeliveryKey,
-  setWorkspaceSlackSessionStream,
-  anchorWorkspaceSlackSessionReaction,
-  settleWorkspaceSlackSessionReaction,
-  storeWorkspaceSlackContext,
-  workspaceSlackContext,
-  workspaceSlackSessionById,
-  workspaceSlackSessionByThread,
-  workspaceSlackSessionByWorkstream,
-  workspaceSlackSessionExists,
-} from "./workspace-slack-storage";
+  claimWorkspaceNotificationIntent as claimStoredWorkspaceNotificationIntent,
+  reapSettledWorkspaceNotificationIntents as reapStoredWorkspaceNotificationIntents,
+  transitionWorkspaceNotificationIntent as transitionStoredWorkspaceNotificationIntent,
+  workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
+} from "./workspace-notification-intent-storage";
+import {
+  WorkspaceOpportunityBatchEventsRequestSchema,
+  WorkspaceOpportunityClaimStartRequestSchema,
+  WorkspaceOpportunityCompleteStartRequestSchema,
+  WorkspaceOpportunityDismissResultSchema,
+  WorkspaceOpportunityDismissRequestSchema,
+  WorkspaceOpportunityEnqueueRequestSchema,
+  WorkspaceOpportunityEnqueueResultSchema,
+  WorkspaceOpportunityExistingRequestSchema,
+  WorkspaceOpportunityGetRequestSchema,
+  WorkspaceOpportunityImpressionsRequestSchema,
+  WorkspaceOpportunityListRequestSchema,
+  WorkspaceOpportunityListResultSchema,
+  WorkspaceOpportunityOriginEventsRequestSchema,
+  WorkspaceOpportunityOriginEventsResultSchema,
+  WorkspaceOpportunityPersistRequestSchema,
+  WorkspaceOpportunityPersistResultSchema,
+  WorkspaceOpportunityRankingCandidatesRequestSchema,
+  WorkspaceOpportunityRankingRoundRequestSchema,
+  WorkspaceOpportunityRankingSettleRequestSchema,
+  WorkspaceOpportunityRankingStateSchema,
+  WorkspaceOpportunityReleaseStartRequestSchema,
+  WorkspaceOpportunityStoreRankingRequestSchema,
+  WorkspaceOpportunityTelemetryContextSchema,
+  WorkspaceOpportunityTelemetryContextsSchema,
+  WorkspaceOpportunityWindowRequestSchema,
+  WorkspaceOpportunityWindowSchema,
+  WorkspaceOpportunityWindowSettleRequestSchema,
+  WorkspaceOpportunityWorkflowInputSchema,
+  type WorkspaceOpportunityBatchEventsRequest,
+  type WorkspaceOpportunityClaimStartRequest,
+  type WorkspaceOpportunityCompleteStartRequest,
+  type WorkspaceOpportunityDismissRequest,
+  type WorkspaceOpportunityEnqueueRequest,
+  type WorkspaceOpportunityExistingRequest,
+  type WorkspaceOpportunityGetRequest,
+  type WorkspaceOpportunityImpressionsRequest,
+  type WorkspaceOpportunityListRequest,
+  type WorkspaceOpportunityOriginEventsRequest,
+  type WorkspaceOpportunityPersistRequest,
+  type WorkspaceOpportunityRankingCandidatesRequest,
+  type WorkspaceOpportunityRankingRoundRequest,
+  type WorkspaceOpportunityRankingSettleRequest,
+  type WorkspaceOpportunityStoreRankingRequest,
+  type WorkspaceOpportunityWindowRequest,
+  type WorkspaceOpportunityWindowSettleRequest,
+} from "./workspace-opportunity-protocol";
+import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
+import { WorkspaceProductStorage } from "./workspace-product-storage";
+import { publishProjectDefaultResourceTargets } from "./workspace-project-default-publication";
+import {
+  WorkspaceProjectCreateRequestSchema,
+  WorkspaceProjectAudienceRequestSchema,
+  ProjectDefaultResourceQueueMessageSchema,
+  WorkspaceProjectDefaultResourceRequestSchema,
+  WorkspaceProjectDefaultResultSchema,
+  WorkspaceProjectDirectoryResultSchema,
+  WorkspaceProjectListRequestSchema,
+  WorkspaceProjectLifecycleRequestSchema,
+  WorkspaceProjectMembersRequestSchema,
+  WorkspaceProjectMembersResultSchema,
+  WorkspaceProjectMembershipPlanResultSchema,
+  WorkspaceProjectMembershipPrepareRequestSchema,
+  WorkspaceProjectMembershipSettleRequestSchema,
+  WorkspaceProjectMutationResultSchema,
+  WorkspaceProjectReorderRequestSchema,
+  WorkspaceProjectUpdateRequestSchema,
+  WorkspaceProjectWorkstreamConstraintRequestSchema,
+  WorkspaceProjectWorkstreamConstraintResultSchema,
+  type WorkspaceProjectCreateRequest,
+  type WorkspaceProjectAudienceRequest,
+  type ProjectDefaultResourceQueueMessage,
+  type WorkspaceProjectDefaultResourceRequest,
+  type WorkspaceProjectDefaultResult,
+  type WorkspaceProjectDirectoryResult,
+  type WorkspaceProjectListRequest,
+  type WorkspaceProjectLifecycleRequest,
+  type WorkspaceProjectMembersRequest,
+  type WorkspaceProjectMembersResult,
+  type WorkspaceProjectMembershipPlanResult,
+  type WorkspaceProjectMembershipPrepareRequest,
+  type WorkspaceProjectMembershipSettleRequest,
+  type WorkspaceProjectMutationResult,
+  type WorkspaceProjectReorderRequest,
+  type WorkspaceProjectUpdateRequest,
+  type WorkspaceProjectWorkstreamConstraintRequest,
+  type WorkspaceProjectWorkstreamConstraintResult,
+} from "./workspace-project-protocol";
+import { WorkspaceProjectStorage } from "./workspace-project-storage";
+import {
+  applyWorkstreamRegionalEnvelope,
+  insertWorkstreamEffectReceipt,
+} from "./workspace-regional-effect-storage";
+import {
+  WorkspaceConnectorResourceResolveRequestSchema,
+  WorkspaceDiscoveredResourcesRequestSchema,
+  WorkspaceExpiredDraftReapRequestSchema,
+  WorkspaceInboundEmailClaimRequestSchema,
+  WorkspaceInboundEmailFailureRequestSchema,
+  WorkspaceInboundEmailLeaseRequestSchema,
+  WorkspaceInboundEmailResourceRequestSchema,
+  WorkspaceInboundEmailSettleRequestSchema,
+  WorkspaceReapableResourceObjectListRequestSchema,
+  WorkspaceResourceDescriptorsRequestSchema,
+  WorkspaceResourceExistsRequestSchema,
+  WorkspaceResourceHydrationPublishRequestSchema,
+  WorkspaceResourceHydrationRefreshRequestSchema,
+  WorkspaceResourceObjectFailureRequestSchema,
+  WorkspaceResourceObjectRefRequestSchema,
+  WorkspaceResourceSlugBacklogRequestSchema,
+  WorkspaceResourceSlugClaimRequestSchema,
+  WorkspaceResourceVersionListRequestSchema,
+  WorkspaceResourceWatchDisableRequestSchema,
+  WorkspaceResourceWatchEnableRequestSchema,
+  WorkspaceUploadDraftCreateRequestSchema,
+  WorkspaceUploadDraftDeleteRequestSchema,
+  type WorkspaceConnectorResourceResolveRequest,
+  type WorkspaceConnectorResourceResolveResult,
+  type WorkspaceDiscoveredResourcesRequest,
+  type WorkspaceExpiredDraftReapRequest,
+  type WorkspaceExpiredDraftReapResult,
+  type WorkspaceInboundEmailClaimRequest,
+  type WorkspaceInboundEmailClaimResult,
+  type WorkspaceInboundEmailFailureRequest,
+  type WorkspaceInboundEmailLeaseRequest,
+  type WorkspaceInboundEmailLeaseResult,
+  type WorkspaceInboundEmailResourceRequest,
+  type WorkspaceInboundEmailResourceResult,
+  type WorkspaceInboundEmailSettleRequest,
+  type WorkspaceInboundEmailSettleResult,
+  type WorkspaceReapableResourceObjectList,
+  type WorkspaceReapableResourceObjectListRequest,
+  type WorkspaceResourceDescriptorList,
+  type WorkspaceResourceDescriptorsRequest,
+  type WorkspaceResourceExistsRequest,
+  type WorkspaceResourceExistsResult,
+  type WorkspaceResourceHydrationPublishRequest,
+  type WorkspaceResourceHydrationRefreshRequest,
+  type WorkspaceResourceHydrationResult,
+  type WorkspaceResourceObjectFailureRequest,
+  type WorkspaceResourceObjectRefRequest,
+  type WorkspaceResourceObjectRemovalResult,
+  type WorkspaceResourceObjectRetireResult,
+  type WorkspaceResourceSlugBacklog,
+  type WorkspaceResourceSlugBacklogRequest,
+  type WorkspaceResourceSlugClaimRequest,
+  type WorkspaceResourceSlugClaimResult,
+  type WorkspaceResourceVersionList,
+  type WorkspaceResourceVersionListRequest,
+  type WorkspaceResourceWatchDisableRequest,
+  type WorkspaceResourceWatchEnableRequest,
+  type WorkspaceUploadDraftCreateRequest,
+  type WorkspaceUploadDraftCreateResult,
+  type WorkspaceUploadDraftDeleteRequest,
+  type WorkspaceUploadDraftDeleteResult,
+} from "./workspace-resources-protocol";
+import {
+  claimWorkspaceInboundEmailReceipt,
+  claimWorkspaceResourceObjectRemoval,
+  claimWorkspaceResourceSlug,
+  createWorkspaceUploadDraft,
+  deleteWorkspaceUploadDraft,
+  disableWorkspaceResourceWatch,
+  enableWorkspaceResourceWatch,
+  listWorkspaceReapableResourceObjects,
+  listWorkspaceResourcesAwaitingSlug,
+  listWorkspaceResourceVersions,
+  publishWorkspaceResourceHydration,
+  reapWorkspaceExpiredDraftResources,
+  recordWorkspaceInboundEmailFailure,
+  recordWorkspaceResourceObjectCleanupFailure,
+  refreshWorkspaceResourceHydration,
+  renewWorkspaceInboundEmailLease,
+  resolveWorkspaceConnectorResource,
+  retireWorkspaceResourceObjectStaging,
+  settleWorkspaceInboundEmailProcessed,
+  upsertWorkspaceDiscoveredResources,
+  upsertWorkspaceInboundEmailResource,
+  workspaceResourceDescriptors,
+  workspaceResourceExists,
+} from "./workspace-resources-storage";
+import {
+  executeWorkspaceRuntimeSql,
+  WorkspaceRuntimeSqlRequestSchema,
+  type WorkspaceRuntimeSqlRequest,
+  type WorkspaceRuntimeSqlResult,
+} from "./workspace-runtime-sql";
 import {
   WorkspaceSlackIngressClaimRequestSchema,
   WorkspaceSlackIngressCompleteRequestSchema,
@@ -433,132 +751,56 @@ import {
   type WorkspaceSlackSessionStreamRequest,
 } from "./workspace-slack-protocol";
 import {
-  appendWorkspaceNoteSegment,
-  archiveWorkspaceNote,
-  archiveWorkspaceNotesForOperation,
-  commitWorkspaceNoteGeneration,
-  markWorkspaceNotePrivacyTransitionProcessed,
-  pendingWorkspaceNotePrivacyTransitions,
-  retireWorkspaceNoteResourceDeletion,
-  updateWorkspaceNote,
-  visibleWorkspaceNoteResourceIds,
-  workspaceNoteBatchTargets,
-  workspaceNoteResourceDeletionOutbox,
-  workspaceNoteSidebar,
-  workspaceNoteState,
-} from "./workspace-notes-storage";
+  claimWorkspaceSlackIngressJob,
+  claimWorkspaceSlackThread,
+  clearWorkspaceSlackPendingPrompt,
+  completeWorkspaceSlackIngressJob,
+  enqueueWorkspaceSlackIngressJob,
+  failWorkspaceSlackIngressJob,
+  recoverableWorkspaceSlackIngressJobs,
+  releaseWorkspaceSlackThreadClaim,
+  rememberWorkspaceSlackPendingPrompt,
+  sweepWorkspaceSlackIngress,
+  workspaceSlackPendingPrompt,
+  workspaceSlackThreadRoutable,
+  assignWorkspaceSlackSessions,
+  createWorkspaceSlackSession,
+  recordWorkspaceSlackFeedback,
+  setWorkspaceSlackSessionDeliveryKey,
+  setWorkspaceSlackSessionStream,
+  anchorWorkspaceSlackSessionReaction,
+  settleWorkspaceSlackSessionReaction,
+  storeWorkspaceSlackContext,
+  workspaceSlackContext,
+  workspaceSlackSessionById,
+  workspaceSlackSessionByThread,
+  workspaceSlackSessionByWorkstream,
+  workspaceSlackSessionExists,
+} from "./workspace-slack-storage";
 import {
-  WorkspaceNoteArchiveRequestSchema,
-  WorkspaceNoteDeletionOutboxRequestSchema,
-  WorkspaceNoteDeletionRetireRequestSchema,
-  WorkspaceNoteGenerationCommitRequestSchema,
-  WorkspaceNotePrivacyMarkRequestSchema,
-  WorkspaceNotePrivacyPendingRequestSchema,
-  WorkspaceNoteSegmentAppendRequestSchema,
-  WorkspaceNoteSidebarRequestSchema,
-  WorkspaceNoteStateRequestSchema,
-  WorkspaceNoteUpdateRequestSchema,
-  WorkspaceNoteVisibilityRequestSchema,
-  type WorkspaceNoteArchiveRequest,
-  type WorkspaceNoteArchiveResult,
-  type WorkspaceNoteDeletionOutbox,
-  type WorkspaceNoteDeletionOutboxRequest,
-  type WorkspaceNoteDeletionRetireRequest,
-  type WorkspaceNoteDeletionRetireResult,
-  type WorkspaceNoteGenerationCommitRequest,
-  type WorkspaceNoteGenerationCommitResult,
-  type WorkspaceNotePrivacyMarkRequest,
-  type WorkspaceNotePrivacyMarkResult,
-  type WorkspaceNotePrivacyPendingRequest,
-  type WorkspaceNotePrivacyPendingResult,
-  type WorkspaceNoteSegmentAppendRequest,
-  type WorkspaceNoteSegmentAppendResult,
-  type WorkspaceNoteSidebarList,
-  type WorkspaceNoteSidebarRequest,
-  type WorkspaceNoteState,
-  type WorkspaceNoteStateRequest,
-  type WorkspaceNoteUpdateRequest,
-  type WorkspaceNoteUpdateResult,
-  type WorkspaceNoteVisibilityRequest,
-  type WorkspaceNoteVisibilityResult,
-} from "./workspace-notes-protocol";
+  WorkspaceTerminalNetworkSettingsRequestSchema,
+  WorkspaceTerminalPolicyClaimRequestSchema,
+  WorkspaceTerminalPolicyCommitRequestSchema,
+  WorkspaceTerminalPolicyFailRequestSchema,
+  WorkspaceTerminalPolicyPreviewRequestSchema,
+  type WorkspaceTerminalNetworkMode,
+  type WorkspaceTerminalNetworkSettings,
+  type WorkspaceTerminalNetworkSettingsRequest,
+  type WorkspaceTerminalPolicyClaimRequest,
+  type WorkspaceTerminalPolicyClaimResult,
+  type WorkspaceTerminalPolicyCommitRequest,
+  type WorkspaceTerminalPolicyFailRequest,
+  type WorkspaceTerminalPolicySettlementResult,
+  type WorkspaceTerminalPolicyPreviewRequest,
+} from "./workspace-terminal-network-protocol";
 import {
-  claimWorkspaceDigestDelivery,
-  ensureDefaultWorkspaceDigestSchedule,
-  latestWorkspaceDigestCursor,
-  markWorkspaceDigestDeliveryRunning,
-  markWorkspaceDigestTargetDelivered,
-  markWorkspaceDigestTargetFailed,
-  recordWorkspaceDigestDeliveryWorkstream,
-  recordWorkspaceDigestSummary,
-  releaseWorkspaceDigestDeliveryClaim,
-  replaceWorkspaceDigestSchedule,
-  replaceWorkspaceDigestScheduleRows,
-  settleWorkspaceDigestDelivery,
-  workspaceDigestDeliveryContext,
-  workspaceDigestDeliveryTargets,
-  workspaceDigestScheduleForFire,
-  workspaceDigestScheduleRowState,
-  workspaceDigestSettings,
-  workspaceDigestTerminalContext,
-} from "./workspace-digests-storage";
-import {
-  WorkspaceDigestClaimRequestSchema,
-  WorkspaceDigestCursorRequestSchema,
-  WorkspaceDigestDefaultRequestSchema,
-  WorkspaceDigestDeliveryContextRequestSchema,
-  WorkspaceDigestDeliveryRunningRequestSchema,
-  WorkspaceDigestDeliveryTargetsRequestSchema,
-  WorkspaceDigestDeliveryWorkstreamRequestSchema,
-  WorkspaceDigestFireScheduleRequestSchema,
-  WorkspaceDigestReleaseClaimRequestSchema,
-  WorkspaceDigestReplaceRequestSchema,
-  WorkspaceDigestReplaceRowsRequestSchema,
-  WorkspaceDigestRowStateRequestSchema,
-  WorkspaceDigestSettingsRequestSchema,
-  WorkspaceDigestSettleRequestSchema,
-  WorkspaceDigestSummaryRequestSchema,
-  WorkspaceDigestTargetDeliveredRequestSchema,
-  WorkspaceDigestTargetFailedRequestSchema,
-  WorkspaceDigestTerminalContextRequestSchema,
-  type WorkspaceDigestClaimRequest,
-  type WorkspaceDigestClaimResult,
-  type WorkspaceDigestCursor,
-  type WorkspaceDigestCursorRequest,
-  type WorkspaceDigestDefaultRequest,
-  type WorkspaceDigestDefaultResult,
-  type WorkspaceDigestDeliveryContext,
-  type WorkspaceDigestDeliveryContextRequest,
-  type WorkspaceDigestDeliveryRunningRequest,
-  type WorkspaceDigestDeliveryTargets,
-  type WorkspaceDigestDeliveryTargetsRequest,
-  type WorkspaceDigestDeliveryWorkstreamRequest,
-  type WorkspaceDigestFireSchedule,
-  type WorkspaceDigestFireScheduleRequest,
-  type WorkspaceDigestReleaseClaimRequest,
-  type WorkspaceDigestReleaseClaimResult,
-  type WorkspaceDigestReplaceRequest,
-  type WorkspaceDigestReplaceResult,
-  type WorkspaceDigestReplaceRowsRequest,
-  type WorkspaceDigestRowState,
-  type WorkspaceDigestRowStateRequest,
-  type WorkspaceDigestRunningResult,
-  type WorkspaceDigestSettings,
-  type WorkspaceDigestSettingsRequest,
-  type WorkspaceDigestSettleRequest,
-  type WorkspaceDigestSettleResult,
-  type WorkspaceDigestSummaryRequest,
-  type WorkspaceDigestTargetDeliveredRequest,
-  type WorkspaceDigestTargetFailedRequest,
-  type WorkspaceDigestTargetOutcomeResult,
-  type WorkspaceDigestTerminalContext,
-  type WorkspaceDigestTerminalContextRequest,
-} from "./workspace-digests-protocol";
-import {
-  admitWorkspaceTranscriptionSession,
-  releaseWorkspaceTranscriptionSession,
-  renewWorkspaceTranscriptionSession,
-} from "./workspace-transcription-storage";
+  claimWorkspaceTerminalPolicyApplication,
+  commitWorkspaceTerminalPolicyApplication,
+  failWorkspaceTerminalPolicyApplication,
+  recordWorkspaceTerminalPolicyPreview,
+  workspaceTerminalNetworkMode,
+  workspaceTerminalNetworkSettings,
+} from "./workspace-terminal-network-storage";
 import {
   WorkspaceTranscriptionAdmitRequestSchema,
   WorkspaceTranscriptionRenewRequestSchema,
@@ -570,271 +812,13 @@ import {
   type WorkspaceTranscriptionSessionRequest,
 } from "./workspace-transcription-protocol";
 import {
-  claimWorkspaceInboundEmailReceipt,
-  claimWorkspaceResourceObjectRemoval,
-  claimWorkspaceResourceSlug,
-  createWorkspaceUploadDraft,
-  deleteWorkspaceUploadDraft,
-  disableWorkspaceResourceWatch,
-  enableWorkspaceResourceWatch,
-  listWorkspaceReapableResourceObjects,
-  listWorkspaceResourcesAwaitingSlug,
-  listWorkspaceResourceVersions,
-  publishWorkspaceResourceHydration,
-  reapWorkspaceExpiredDraftResources,
-  recordWorkspaceInboundEmailFailure,
-  recordWorkspaceResourceObjectCleanupFailure,
-  refreshWorkspaceResourceHydration,
-  renewWorkspaceInboundEmailLease,
-  resolveWorkspaceConnectorResource,
-  retireWorkspaceResourceObjectStaging,
-  settleWorkspaceInboundEmailProcessed,
-  upsertWorkspaceDiscoveredResources,
-  upsertWorkspaceInboundEmailResource,
-  workspaceResourceDescriptors,
-  workspaceResourceExists,
-} from "./workspace-resources-storage";
-import {
-  WorkspaceConnectorResourceResolveRequestSchema,
-  WorkspaceDiscoveredResourcesRequestSchema,
-  WorkspaceExpiredDraftReapRequestSchema,
-  WorkspaceInboundEmailClaimRequestSchema,
-  WorkspaceInboundEmailFailureRequestSchema,
-  WorkspaceInboundEmailLeaseRequestSchema,
-  WorkspaceInboundEmailResourceRequestSchema,
-  WorkspaceInboundEmailSettleRequestSchema,
-  WorkspaceReapableResourceObjectListRequestSchema,
-  WorkspaceResourceDescriptorsRequestSchema,
-  WorkspaceResourceExistsRequestSchema,
-  WorkspaceResourceHydrationPublishRequestSchema,
-  WorkspaceResourceHydrationRefreshRequestSchema,
-  WorkspaceResourceObjectFailureRequestSchema,
-  WorkspaceResourceObjectRefRequestSchema,
-  WorkspaceResourceSlugBacklogRequestSchema,
-  WorkspaceResourceSlugClaimRequestSchema,
-  WorkspaceResourceVersionListRequestSchema,
-  WorkspaceResourceWatchDisableRequestSchema,
-  WorkspaceResourceWatchEnableRequestSchema,
-  WorkspaceUploadDraftCreateRequestSchema,
-  WorkspaceUploadDraftDeleteRequestSchema,
-  type WorkspaceConnectorResourceResolveRequest,
-  type WorkspaceConnectorResourceResolveResult,
-  type WorkspaceDiscoveredResourcesRequest,
-  type WorkspaceExpiredDraftReapRequest,
-  type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailClaimRequest,
-  type WorkspaceInboundEmailClaimResult,
-  type WorkspaceInboundEmailFailureRequest,
-  type WorkspaceInboundEmailLeaseRequest,
-  type WorkspaceInboundEmailLeaseResult,
-  type WorkspaceInboundEmailResourceRequest,
-  type WorkspaceInboundEmailResourceResult,
-  type WorkspaceInboundEmailSettleRequest,
-  type WorkspaceInboundEmailSettleResult,
-  type WorkspaceReapableResourceObjectList,
-  type WorkspaceReapableResourceObjectListRequest,
-  type WorkspaceResourceDescriptorList,
-  type WorkspaceResourceDescriptorsRequest,
-  type WorkspaceResourceExistsRequest,
-  type WorkspaceResourceExistsResult,
-  type WorkspaceResourceHydrationPublishRequest,
-  type WorkspaceResourceHydrationRefreshRequest,
-  type WorkspaceResourceHydrationResult,
-  type WorkspaceResourceObjectFailureRequest,
-  type WorkspaceResourceObjectRefRequest,
-  type WorkspaceResourceObjectRemovalResult,
-  type WorkspaceResourceObjectRetireResult,
-  type WorkspaceResourceSlugBacklog,
-  type WorkspaceResourceSlugBacklogRequest,
-  type WorkspaceResourceSlugClaimRequest,
-  type WorkspaceResourceSlugClaimResult,
-  type WorkspaceResourceVersionList,
-  type WorkspaceResourceVersionListRequest,
-  type WorkspaceResourceWatchDisableRequest,
-  type WorkspaceResourceWatchEnableRequest,
-  type WorkspaceUploadDraftCreateRequest,
-  type WorkspaceUploadDraftCreateResult,
-  type WorkspaceUploadDraftDeleteRequest,
-  type WorkspaceUploadDraftDeleteResult,
-} from "./workspace-resources-protocol";
-import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
-import {
-  WorkspaceReleaseDraftAttachmentsRequestSchema,
-  WorkspaceReleaseDraftAttachmentsResultSchema,
-  WorkspaceReserveDraftAttachmentsRequestSchema,
-  WorkspaceReserveDraftAttachmentsResultSchema,
-  type WorkspaceReleaseDraftAttachmentsRequest,
-  type WorkspaceReleaseDraftAttachmentsResult,
-  type WorkspaceReserveDraftAttachmentsRequest,
-  type WorkspaceReserveDraftAttachmentsResult,
-} from "./workspace-draft-attachment-protocol";
-import {
-  LegacyWorkspaceConnectorEventClaimResultSchema,
-  WorkspaceConnectorEventClaimRpcRequestSchema,
-  WorkspaceConnectorEventClaimRequestSchema,
-  WorkspaceConnectorEventClaimResultSchema,
-  WorkspaceConnectorEventIngestRequestSchema,
-  WorkspaceConnectorEventIngestResultSchema,
-  WorkspaceConnectorEventRequestSchema,
-  WorkspaceConnectorEventSchema,
-  WorkspaceConnectorEventSettleRpcRequestSchema,
-  type WorkspaceConnectorEvent,
-  type WorkspaceConnectorEventClaimRequest,
-  type WorkspaceConnectorEventClaimRpcRequest,
-  type WorkspaceConnectorEventClaimRpcResult,
-  type WorkspaceConnectorEventIngestRequest,
-  type WorkspaceConnectorEventIngestResult,
-  type WorkspaceConnectorEventRequest,
-  type WorkspaceConnectorEventSettleRequest,
-  type WorkspaceConnectorEventSettleRpcRequest,
-} from "./workspace-connector-event-protocol";
-import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
-import {
-  SLACK_REACTION_COLUMN_STATEMENTS,
-  WORKSPACE_DOMAIN_SCHEMA_STATEMENTS,
-  workspaceIdentityFencesFor,
-} from "./workspace-domain-schema";
-import {
-  WorkspaceActivityEventCursorRequestSchema,
-  WorkspaceActivityEventInputSchema,
-  WorkspaceActivityEventListRequestSchema,
-  WorkspaceActivityEventListResultSchema,
-  WorkspaceActivityEventSourceRequestSchema,
-  WorkspaceActivityEventSourceSchema,
-  type WorkspaceActivityEventCursorRequest,
-  type WorkspaceActivityEventInput,
-  type WorkspaceActivityEventListRequest,
-  type WorkspaceActivityEventListResult,
-  type WorkspaceActivityEventSourceRequest,
-} from "./workspace-activity-event-protocol";
-import {
-  WorkspaceOpportunityBatchEventsRequestSchema,
-  WorkspaceOpportunityClaimStartRequestSchema,
-  WorkspaceOpportunityCompleteStartRequestSchema,
-  WorkspaceOpportunityDismissResultSchema,
-  WorkspaceOpportunityDismissRequestSchema,
-  WorkspaceOpportunityEnqueueRequestSchema,
-  WorkspaceOpportunityEnqueueResultSchema,
-  WorkspaceOpportunityExistingRequestSchema,
-  WorkspaceOpportunityGetRequestSchema,
-  WorkspaceOpportunityImpressionsRequestSchema,
-  WorkspaceOpportunityListRequestSchema,
-  WorkspaceOpportunityListResultSchema,
-  WorkspaceOpportunityOriginEventsRequestSchema,
-  WorkspaceOpportunityOriginEventsResultSchema,
-  WorkspaceOpportunityPersistRequestSchema,
-  WorkspaceOpportunityPersistResultSchema,
-  WorkspaceOpportunityRankingCandidatesRequestSchema,
-  WorkspaceOpportunityRankingRoundRequestSchema,
-  WorkspaceOpportunityRankingSettleRequestSchema,
-  WorkspaceOpportunityRankingStateSchema,
-  WorkspaceOpportunityReleaseStartRequestSchema,
-  WorkspaceOpportunityStoreRankingRequestSchema,
-  WorkspaceOpportunityTelemetryContextSchema,
-  WorkspaceOpportunityTelemetryContextsSchema,
-  WorkspaceOpportunityWindowRequestSchema,
-  WorkspaceOpportunityWindowSchema,
-  WorkspaceOpportunityWindowSettleRequestSchema,
-  WorkspaceOpportunityWorkflowInputSchema,
-  type WorkspaceOpportunityBatchEventsRequest,
-  type WorkspaceOpportunityClaimStartRequest,
-  type WorkspaceOpportunityCompleteStartRequest,
-  type WorkspaceOpportunityDismissRequest,
-  type WorkspaceOpportunityEnqueueRequest,
-  type WorkspaceOpportunityExistingRequest,
-  type WorkspaceOpportunityGetRequest,
-  type WorkspaceOpportunityImpressionsRequest,
-  type WorkspaceOpportunityListRequest,
-  type WorkspaceOpportunityOriginEventsRequest,
-  type WorkspaceOpportunityPersistRequest,
-  type WorkspaceOpportunityRankingCandidatesRequest,
-  type WorkspaceOpportunityRankingRoundRequest,
-  type WorkspaceOpportunityRankingSettleRequest,
-  type WorkspaceOpportunityStoreRankingRequest,
-  type WorkspaceOpportunityWindowRequest,
-  type WorkspaceOpportunityWindowSettleRequest,
-} from "./workspace-opportunity-protocol";
-import { WorkspaceProductStorage } from "./workspace-product-storage";
-import {
-  WorkspaceProjectCreateRequestSchema,
-  WorkspaceProjectAudienceRequestSchema,
-  ProjectDefaultResourceQueueMessageSchema,
-  WorkspaceProjectDefaultResourceRequestSchema,
-  WorkspaceProjectDefaultResultSchema,
-  WorkspaceProjectDirectoryResultSchema,
-  WorkspaceProjectListRequestSchema,
-  WorkspaceProjectLifecycleRequestSchema,
-  WorkspaceProjectMembersRequestSchema,
-  WorkspaceProjectMembersResultSchema,
-  WorkspaceProjectMembershipPlanResultSchema,
-  WorkspaceProjectMembershipPrepareRequestSchema,
-  WorkspaceProjectMembershipSettleRequestSchema,
-  WorkspaceProjectMutationResultSchema,
-  WorkspaceProjectReorderRequestSchema,
-  WorkspaceProjectUpdateRequestSchema,
-  WorkspaceProjectWorkstreamConstraintRequestSchema,
-  WorkspaceProjectWorkstreamConstraintResultSchema,
-  type WorkspaceProjectCreateRequest,
-  type WorkspaceProjectAudienceRequest,
-  type ProjectDefaultResourceQueueMessage,
-  type WorkspaceProjectDefaultResourceRequest,
-  type WorkspaceProjectDefaultResult,
-  type WorkspaceProjectDirectoryResult,
-  type WorkspaceProjectListRequest,
-  type WorkspaceProjectLifecycleRequest,
-  type WorkspaceProjectMembersRequest,
-  type WorkspaceProjectMembersResult,
-  type WorkspaceProjectMembershipPlanResult,
-  type WorkspaceProjectMembershipPrepareRequest,
-  type WorkspaceProjectMembershipSettleRequest,
-  type WorkspaceProjectMutationResult,
-  type WorkspaceProjectReorderRequest,
-  type WorkspaceProjectUpdateRequest,
-  type WorkspaceProjectWorkstreamConstraintRequest,
-  type WorkspaceProjectWorkstreamConstraintResult,
-} from "./workspace-project-protocol";
-import { WorkspaceProjectStorage } from "./workspace-project-storage";
-import { publishProjectDefaultResourceTargets } from "./workspace-project-default-publication";
-import {
-  applyWorkstreamRegionalEnvelope,
-  insertWorkstreamEffectReceipt,
-} from "./workspace-regional-effect-storage";
-import {
-  WorkspaceNotificationIntentClaimResultSchema,
-  WorkspaceNotificationIntentMaintenanceRequestSchema,
-  WorkspaceNotificationIntentMaintenanceTargetSchema,
-  WorkspaceNotificationIntentReapRequestSchema,
-  WorkspaceNotificationIntentReapResultSchema,
-  WorkspaceNotificationIntentRequestSchema,
-  WorkspaceNotificationIntentTransitionRequestSchema,
-  WorkspaceNotificationIntentTransitionResultSchema,
-  type WorkspaceNotificationIntentClaimResult,
-  type WorkspaceNotificationIntentMaintenanceRequest,
-  type WorkspaceNotificationIntentMaintenanceTarget,
-  type WorkspaceNotificationIntentReapRequest,
-  type WorkspaceNotificationIntentReapResult,
-  type WorkspaceNotificationIntentRequest,
-  type WorkspaceNotificationIntentTransitionRequest,
-  type WorkspaceNotificationIntentTransitionResult,
-} from "./workspace-notification-intent-protocol";
-import {
-  claimWorkspaceNotificationIntent as claimStoredWorkspaceNotificationIntent,
-  reapSettledWorkspaceNotificationIntents as reapStoredWorkspaceNotificationIntents,
-  transitionWorkspaceNotificationIntent as transitionStoredWorkspaceNotificationIntent,
-  workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
-} from "./workspace-notification-intent-storage";
-import {
-  responseToRpcResult,
-  type DurableObjectRpcResult,
-} from "./rpc-result";
-import {
-  executeWorkspaceRuntimeSql,
-  WorkspaceRuntimeSqlRequestSchema,
-  type WorkspaceRuntimeSqlRequest,
-  type WorkspaceRuntimeSqlResult,
-} from "./workspace-runtime-sql";
+  admitWorkspaceTranscriptionSession,
+  releaseWorkspaceTranscriptionSession,
+  renewWorkspaceTranscriptionSession,
+} from "./workspace-transcription-storage";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "connector_installations", "connector_installation_steps",
   ...AUTHORIZATION_STORAGE_TABLES,
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
@@ -900,10 +884,9 @@ const SIDEBAR_LIST_SOURCE_TABLES = new Map<string, SidebarList>([
   ["automation_subscriptions", "automations"],
   ["automation_templates", "automations"],
   ["automation_template_versions", "automations"],
-  ["notes", "notes"],
 ]);
 
-type SidebarList = "automations" | "notes";
+type SidebarList = "automations";
 
 function workspaceMutationTarget(sql: string): string | null {
   return /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
@@ -1112,7 +1095,7 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
 }
 
 /**
- * Every table whose rows a `DROP TABLE connector_connections` would take with
+ * Frozen inventory through v53 of tables a `DROP TABLE connector_connections` would take with
  * it — twelve that cascade and `connector_oauth_attempts`, whose connection
  * pointer would be nulled. Migration 31 copies each one out and back around
  * the parent's replacement.
@@ -1120,8 +1103,11 @@ function automationDirectoryWorkspaceIdentityGuards(): string[] {
  * A list rather than a query over `sqlite_schema`: a migration's statements are
  * hashed into every object's receipt, so what it does has to be decided in
  * source rather than by whatever an individual database happens to hold.
+ * Do not extend this historical list: v54 adds connector_installations with
+ * a non-cascading foreign key. A later parent rebuild must declare a new
+ * inventory including it, without changing v31/v53 statement fingerprints.
  */
-const CONNECTOR_CONNECTION_DEPENDENTS = [
+const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53 = [
   "connector_oauth_attempts",
   "slack_agent_contexts",
   "slack_agent_feedback",
@@ -1135,6 +1121,28 @@ const CONNECTOR_CONNECTION_DEPENDENTS = [
   "slack_unfurled_links",
   "slack_user_links",
   "webhook_receipts",
+] as const;
+
+/**
+ * The same inventory as of v55, which is the first parent rebuild after v54
+ * added `connector_installations`.
+ *
+ * Two things make it a separate constant rather than an edit to the list above.
+ * A migration's statements are hashed into every deployed object's receipt, so
+ * changing v31's or v53's text would invalidate receipts that already committed.
+ * And `connector_installations` behaves differently from the other thirteen:
+ * its foreign key carries no `ON DELETE` action, so the implicit `DELETE` inside
+ * `DROP TABLE connector_connections` does not empty it — it *aborts the drop*.
+ * Migration 55 therefore empties every dependent explicitly before replacing the
+ * parent, rather than letting the cascade do it, which is the one way the recipe
+ * differs from 53's.
+ *
+ * A table missing from this list loses its rows. The next parent rebuild
+ * declares its own inventory again, from the schema as of that version.
+ */
+export const CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55 = [
+  ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53,
+  "connector_installations",
 ] as const;
 
 /**
@@ -2497,7 +2505,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // real — and it means this migration never restates a child's schema,
     // which is the other way a rebuild loses something: a column added by a
     // later migration, an index, a trigger, quietly not carried across.
-    ...CONNECTOR_CONNECTION_DEPENDENTS.map((table) => (
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.map((table) => (
       `CREATE TABLE ${table}_v31_hold AS SELECT * FROM ${table}`
     )),
     `CREATE TABLE connector_connections_v31 (
@@ -2555,7 +2563,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // dependent empty: twelve cascade to nothing, while `connector_oauth_attempts`
     // nulls its pointer and keeps the row, which the hold would then duplicate.
     // Deleting makes the restore mean the same thing for both.
-    ...CONNECTOR_CONNECTION_DEPENDENTS.flatMap((table) => [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.flatMap((table) => [
       `DELETE FROM ${table}`,
       `INSERT INTO ${table} SELECT * FROM ${table}_v31_hold`,
       `DROP TABLE ${table}_v31_hold`,
@@ -3008,7 +3016,265 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
      ON CONFLICT(resource_id)
        DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`,
   ],
-}];
+}, {
+  version: 53,
+  description: "admit Ashby without losing connector dependents",
+  statements: [
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.map((table) => (
+      `CREATE TABLE ${table}_v53_hold AS SELECT * FROM ${table}`
+    )),
+    `CREATE TABLE connector_connections_v53 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('ashby', 'custom_mcp', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v53
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id
+       FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v53 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V53.flatMap((table) => [
+      `DELETE FROM ${table}`,
+      `INSERT INTO ${table} SELECT * FROM ${table}_v53_hold`,
+      `DROP TABLE ${table}_v53_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v53 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'custom_mcp', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v53
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v53 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
+}, { version: 54, description: "durable connector installation lifecycle", statements: [
+  `CREATE TABLE connector_installations (
+    connection_id TEXT PRIMARY KEY REFERENCES connector_connections(id),
+    workspace_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    document_json TEXT NOT NULL CHECK (json_valid(document_json)),
+    cleanup_ciphertext TEXT, cleanup_iv TEXT, cleanup_key_version INTEGER
+  ) STRICT`,
+  `CREATE TABLE connector_installation_steps (
+    step_id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, generation INTEGER NOT NULL,
+    state TEXT NOT NULL, intent_json TEXT NOT NULL CHECK (json_valid(intent_json)),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)), created_at TEXT NOT NULL
+  ) STRICT`,
+  `CREATE INDEX connector_installation_steps_connection ON connector_installation_steps(connection_id, generation)`,
+  `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+    WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+  `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+    WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+]
+}, {
+  version: 55,
+  description: "admit Fireflies without losing connector dependents",
+  statements: [
+    // Held before the parent is replaced, because dropping it would otherwise
+    // cascade through every one of them. `connector_installations` is the
+    // reason this list exists separately from v53's: its foreign key does not
+    // cascade, so the parent's implicit DELETE would *abort* rather than empty
+    // it — which is why every dependent is emptied here, before the drop,
+    // rather than relying on the cascade to do it.
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55.map((table) => (
+      `CREATE TABLE ${table}_v55_hold AS SELECT * FROM ${table}`
+    )),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55.map((table) => `DELETE FROM ${table}`),
+    `CREATE TABLE connector_connections_v55 (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL CHECK (connector_type IN ('ashby', 'custom_mcp', 'fireflies', 'google', 'generic_webhook', 'github', 'granola', 'linear', 'notion', 'slack', 'x')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      owner_user_id TEXT,
+      provider_account_id TEXT,
+      display_name TEXT NOT NULL,
+      encrypted_credentials TEXT,
+      credential_iv TEXT,
+      credential_key_version INTEGER,
+      credential_refresh_lease_id TEXT,
+      credential_refresh_lease_expires_at TEXT,
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(granted_scopes_json)),
+      status TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'needs_reconnect', 'error', 'disabled')),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+      last_sync_at TEXT,
+      next_poll_at TEXT,
+      error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      model_plugin_id TEXT NOT NULL,
+      CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR (scope = 'workspace' AND owner_user_id IS NULL))
+    ) STRICT`,
+    `INSERT INTO connector_connections_v55
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version,
+        credential_refresh_lease_id, credential_refresh_lease_expires_at,
+        granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+        error_json, created_at, updated_at, model_plugin_id)
+     SELECT id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version,
+            credential_refresh_lease_id, credential_refresh_lease_expires_at,
+            granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at,
+            error_json, created_at, updated_at, model_plugin_id
+       FROM connector_connections`,
+    `DROP TABLE connector_connections`,
+    `ALTER TABLE connector_connections_v55 RENAME TO connector_connections`,
+    `CREATE INDEX connector_connections_poll_idx
+      ON connector_connections(status, next_poll_at, id)`,
+    `CREATE INDEX connector_connections_provider_account_idx
+      ON connector_connections(connector_type, provider_account_id, status)`,
+    `CREATE UNIQUE INDEX connector_connections_active_model_plugin_id_uq
+      ON connector_connections(model_plugin_id) WHERE status != 'disabled'`,
+    // v54's cardinality indexes went with the table it just replaced. A rebuild
+    // restores every index the parent carried, not only the ones the migration
+    // that created the parent wrote.
+    `CREATE UNIQUE INDEX ashby_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX ashby_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'`,
+    // Fireflies' own cardinality, in Ashby's shape: one active workspace
+    // connection per workspace and one active personal connection per member,
+    // while a disabled row never blocks reconnecting.
+    `CREATE UNIQUE INDEX fireflies_workspace_connection_unique ON connector_connections(workspace_id)
+      WHERE connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'`,
+    `CREATE UNIQUE INDEX fireflies_personal_connection_unique ON connector_connections(workspace_id, owner_user_id)
+      WHERE connector_type = 'fireflies' AND scope = 'personal' AND status <> 'disabled'`,
+    ...workspaceIdentityFencesFor("connector_connections"),
+    ...CONNECTOR_CONNECTION_DEPENDENTS_THROUGH_V55.flatMap((table) => [
+      `INSERT INTO ${table} SELECT * FROM ${table}_v55_hold`,
+      `DROP TABLE ${table}_v55_hold`,
+    ]),
+    `CREATE TABLE connector_oauth_attempts_v55 (
+      id TEXT PRIMARY KEY,
+      region TEXT NOT NULL CHECK (region IN ('global', 'eu')),
+      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'custom_mcp', 'fireflies', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),
+      user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),
+      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,
+      error_code TEXT,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      telemetry_operation_id TEXT,
+      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
+      telemetry_scope TEXT,
+      telemetry_capability_count INTEGER,
+      telemetry_reconnect INTEGER NOT NULL DEFAULT 0
+    ) STRICT`,
+    `INSERT INTO connector_oauth_attempts_v55
+       (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+        expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+        telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect)
+     SELECT id, region, provider, user_id, workspace_id, status, connection_id, error_code,
+            expires_at, completed_at, created_at, updated_at, telemetry_operation_id,
+            telemetry_event_version, telemetry_scope, telemetry_capability_count, telemetry_reconnect
+       FROM connector_oauth_attempts`,
+    `DROP TABLE connector_oauth_attempts`,
+    `ALTER TABLE connector_oauth_attempts_v55 RENAME TO connector_oauth_attempts`,
+    `CREATE INDEX connector_oauth_attempts_expiry_idx
+      ON connector_oauth_attempts(status, expires_at, id)`,
+    `CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx
+      ON connector_oauth_attempts(telemetry_operation_id)
+      WHERE telemetry_operation_id IS NOT NULL`,
+    ...workspaceIdentityFencesFor("connector_oauth_attempts"),
+  ],
+}, { version: 56, description: "allow configured deployment identifiers", statements: [
+  "PRAGMA defer_foreign_keys = ON",
+  "CREATE TABLE \"_region_copy_workspace_identity\" AS SELECT * FROM \"workspace_identity\"",
+  "CREATE TABLE \"_region_copy_connector_oauth_attempts\" AS SELECT * FROM \"connector_oauth_attempts\"",
+  "DROP TRIGGER \"workspace_identity_placement_valid_insert\"",
+  "DROP TRIGGER \"workspace_identity_placement_valid_update\"",
+  "DROP TRIGGER \"workspace_identity_placement_immutable\"",
+  "DROP TRIGGER \"connector_oauth_attempts_workspace_identity_insert\"",
+  "DROP TRIGGER \"connector_oauth_attempts_workspace_identity_update\"",
+  "DELETE FROM \"connector_oauth_attempts\"",
+  "DELETE FROM \"workspace_identity\"",
+  "DROP TABLE \"workspace_identity\"",
+  "DROP TABLE \"connector_oauth_attempts\"",
+  "CREATE TABLE workspace_identity (\n      id INTEGER PRIMARY KEY CHECK (id = 1),\n      workspace_id TEXT NOT NULL UNIQUE,\n      region TEXT NOT NULL,\n      placement_affinity TEXT NOT NULL CHECK (placement_affinity IN ('wnam', 'enam', 'weur', 'eeur')),\n      created_at INTEGER NOT NULL,\n      updated_at INTEGER NOT NULL\n    ) STRICT",
+  "CREATE TABLE \"connector_oauth_attempts\" (\n      id TEXT PRIMARY KEY,\n      region TEXT NOT NULL,\n      provider TEXT NOT NULL CHECK (provider IN ('ashby', 'custom_mcp', 'fireflies', 'google', 'github', 'granola', 'linear', 'notion', 'slack')),\n      user_id TEXT NOT NULL,\n      workspace_id TEXT NOT NULL,\n      status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'denied', 'failed')),\n      connection_id TEXT REFERENCES connector_connections(id) ON DELETE SET NULL,\n      error_code TEXT,\n      expires_at TEXT NOT NULL,\n      completed_at TEXT,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL,\n      telemetry_operation_id TEXT,\n      telemetry_event_version INTEGER NOT NULL DEFAULT 1,\n      telemetry_scope TEXT,\n      telemetry_capability_count INTEGER,\n      telemetry_reconnect INTEGER NOT NULL DEFAULT 0\n    ) STRICT",
+  "INSERT INTO \"workspace_identity\" SELECT * FROM \"_region_copy_workspace_identity\"",
+  "INSERT INTO \"connector_oauth_attempts\" SELECT * FROM \"_region_copy_connector_oauth_attempts\"",
+  "DROP TABLE \"_region_copy_workspace_identity\"",
+  "DROP TABLE \"_region_copy_connector_oauth_attempts\"",
+  "CREATE INDEX connector_oauth_attempts_expiry_idx\n      ON connector_oauth_attempts(status, expires_at, id)",
+  "CREATE UNIQUE INDEX connector_oauth_attempts_telemetry_operation_idx\n      ON connector_oauth_attempts(telemetry_operation_id)\n      WHERE telemetry_operation_id IS NOT NULL",
+  "CREATE TRIGGER workspace_identity_placement_valid_insert\n      BEFORE INSERT ON workspace_identity\n      WHEN NEW.placement_affinity IS NULL\n      BEGIN\n        SELECT RAISE(ABORT, 'workspace_placement_affinity_invalid');\n      END",
+  "CREATE TRIGGER workspace_identity_placement_valid_update\n      BEFORE UPDATE OF placement_affinity ON workspace_identity\n      WHEN NEW.placement_affinity IS NULL\n      BEGIN\n        SELECT RAISE(ABORT, 'workspace_placement_affinity_invalid');\n      END",
+  "CREATE TRIGGER workspace_identity_placement_immutable\n      BEFORE UPDATE OF placement_affinity ON workspace_identity\n      WHEN OLD.placement_affinity IS NOT NULL\n        AND NEW.placement_affinity <> OLD.placement_affinity\n      BEGIN\n        SELECT RAISE(ABORT, 'workspace_placement_affinity_immutable');\n      END",
+  "CREATE TRIGGER connector_oauth_attempts_workspace_identity_insert\n      BEFORE INSERT ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
+  "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
+  "PRAGMA defer_foreign_keys = OFF"
+]
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -3453,7 +3719,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.initialized = this.initializeDurableObject(async () => {
-      await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
+      await this.applyMigrations(() => applyMeetingRetirementMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
@@ -3474,6 +3740,78 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   protected override migrationsReady(): Promise<void> {
     return this.initialized;
+  }
+
+  /** Internal host RPCs: callers resolve execution/resource authority before changing membership. */
+  async ensureAgentTeam(input: { workspaceId: string; originAgentId: AgentId }): Promise<{ teamId: string }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, originAgentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { teamId: new AgentTeamStorage(this.state.storage).ensureTeam(request.originAgentId) };
+  }
+
+  async joinAgentTeam(input: { workspaceId: string; teamId: string; agentId: AgentId }): Promise<{ joined: true }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, teamId: AgentIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    new AgentTeamStorage(this.state.storage).addMember(request.teamId, request.agentId);
+    return { joined: true };
+  }
+
+  async registerAgentDelegation(input: { workspaceId: string; teamId: string; ownerAgentId: AgentId; agentId: AgentId }): Promise<AgentTeamResult<{ registered: true }>> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, teamId: AgentIdSchema, ownerAgentId: AgentIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return agentTeamResult(() => {
+      new AgentTeamStorage(this.state.storage).recordDelegation(request.teamId, request.ownerAgentId, request.agentId);
+      return { registered: true as const };
+    });
+  }
+
+  async listAgentTeammates(input: { workspaceId: string; teamId: string; requesterAgentId: AgentId }): Promise<AgentTeamResult<{ agentIds: AgentId[] }>> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, teamId: AgentIdSchema, requesterAgentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return agentTeamResult(() => ({ agentIds: new AgentTeamStorage(this.state.storage).members(request.teamId, request.requesterAgentId) }));
+  }
+
+  async resolveAgentMessage(input: {
+    workspaceId: string; messageId: string; senderAgentId: AgentId;
+    recipientAgentId?: AgentId; replyToMessageId?: string; preferredTeamId?: string;
+  }): Promise<AgentTeamResult<AgentMessageRoute>> {
+    await this.initialized;
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema, messageId: IdSchema, senderAgentId: AgentIdSchema,
+      recipientAgentId: AgentIdSchema.optional(), replyToMessageId: IdSchema.optional(),
+      preferredTeamId: AgentIdSchema.optional(),
+    }).refine((value) => (value.recipientAgentId === undefined) !== (value.replyToMessageId === undefined),
+      "Specify a recipient or a received message, never both.").parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return agentTeamResult(() => {
+      const teams = new AgentTeamStorage(this.state.storage);
+      const route = request.replyToMessageId !== undefined
+        ? teams.replyRoute(request.replyToMessageId, request.senderAgentId)
+        : {
+            teamId: teams.sharedTeam(request.senderAgentId, AgentIdSchema.parse(request.recipientAgentId), request.preferredTeamId),
+            senderAgentId: request.senderAgentId,
+            recipientAgentId: AgentIdSchema.parse(request.recipientAgentId),
+          };
+      return teams.recordMessage({ messageId: request.messageId, ...route });
+    });
+  }
+
+  async agentOwner(input: { workspaceId: string; agentId: AgentId }): Promise<{ agentId: AgentId | null }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { agentId: new AgentTeamStorage(this.state.storage).owner(request.agentId) };
+  }
+
+  async ownedAgentDescendants(input: { workspaceId: string; agentId: AgentId }): Promise<{ agentIds: AgentId[] }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, agentId: AgentIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { agentIds: new AgentTeamStorage(this.state.storage).ownedDescendants(request.agentId) };
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -4525,7 +4863,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async applyAutomationDirectory(input: unknown): Promise<{ applied: boolean }> {
     await this.initialized;
-    const request = WorkspaceAutomationDirectoryApplyRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceAutomationDirectoryApplyRequestSchema, input, "apply_automation_directory");
     this.assertWorkspace(request.workspaceId);
     const envelope = request.envelope;
     const effect = envelope.effect;
@@ -4639,6 +4977,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this workspace's Sidekicks");
     }
+    return this.listSidekickDirectoryForAuthorizedMember(request);
+  }
+
+  /** Internal host RPC: Bind checked active membership for this command. Scope filtering remains local. */
+  async listSidekickDirectoryForAuthorizedMember(input: { workspaceId: string; userId: string }): Promise<{ items: AutomationSummary[] }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
+    this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & { author_user_id: string }>(
       `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
@@ -4769,7 +5115,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     effectiveAfterEventSequence: number;
   }> {
     await this.initialized;
-    const request = ExternalEventRegistrationProjectionV1Schema.parse(input);
+    const request = parseRpcInput(
+      ExternalEventRegistrationProjectionV1Schema,
+      input,
+      "external_event_registration_projection",
+    );
     this.assertWorkspace(request.workspaceId);
     return this.state.storage.transactionSync(() => {
       const destinationKind = request.destination.kind;
@@ -4869,7 +5219,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async matchExternalEventDestinations(input: unknown) {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).parse(input);
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }), input, "match_external_event_destinations");
     this.assertWorkspace(request.workspaceId);
     const event = this.state.storage.sql.exec<{
       event_id: string;
@@ -4920,6 +5270,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // a personal automation's evaluator probe content its author cannot see.
     const restrictedUserIds = restrictedActivityUserIds(event);
     const visibility = JSON.parse(event.visibility_json) as { kind?: unknown; scope?: unknown };
+    // The host wrote the occurrence key beside the provider's metadata at
+    // ingest; the destination gets it as its own field and dedupes on it.
+    const { occurrenceKey, ...eventMetadata } = metadata;
     const workspaceEvent = {
       id: event.event_id,
       eventSequence: event.event_sequence,
@@ -4927,7 +5280,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       title: event.title,
       summary: event.summary,
       textSnippet: event.text_snippet ?? "",
-      metadata,
+      metadata: eventMetadata,
+      ...(typeof occurrenceKey === "string" && occurrenceKey.length > 0 ? { occurrenceKey } : {}),
       occurredAt: event.occurred_at,
       audienceUserIds: JSON.parse(event.target_user_ids_json) as string[],
       audienceKind: visibility.kind === "workspace" || visibility.scope === "workspace"
@@ -5296,7 +5650,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceConnectorEventIngestRequest,
   ): Promise<WorkspaceConnectorEventIngestResult> {
     await this.initialized;
-    const request = WorkspaceConnectorEventIngestRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceConnectorEventIngestRequestSchema, input, "ingest_connector_event");
     if (!this.workspaceId()) {
       this.ensureIdentity(
         request.workspaceId,
@@ -5331,8 +5685,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const authorPersonIds = [...new Set(resolvedPeople
       .filter((person) => person.role === "author" || person.role === "actor")
       .map((person) => person.userId))];
+    // The occurrence key is the adapter's, never the provider payload's: a
+    // same-named key in the activity's metadata is dropped here — the generic
+    // webhook copies a caller's metadata whole — and the one the contract
+    // carries is written under the host's name for the matcher to lift.
+    const providerMetadata = Object.fromEntries(
+      Object.entries(activity.metadata).filter(([key]) => key !== "occurrenceKey"),
+    );
     const evaluatorMetadata = {
-      ...activity.metadata,
+      ...providerMetadata,
+      ...(activity.occurrenceKey ? { occurrenceKey: activity.occurrenceKey } : {}),
       ...(relatedResourceIds.length > 0 ? { resourceIds: relatedResourceIds } : {}),
       ...(participantPersonIds.length > 0 ? { participantPersonIds } : {}),
       ...(authorPersonIds.length > 0 ? { authorPersonIds } : {}),
@@ -5507,7 +5869,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceConnectorEventClaimRpcRequest,
   ): Promise<WorkspaceConnectorEventClaimRpcResult> {
     await this.initialized;
-    const rpcRequest = WorkspaceConnectorEventClaimRpcRequestSchema.parse(input);
+    const rpcRequest = parseRpcInput(WorkspaceConnectorEventClaimRpcRequestSchema, input, "claim_connector_event");
     const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
     const request: WorkspaceConnectorEventClaimRequest = legacyWorkflowContract
       ? {
@@ -5625,7 +5987,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async settleConnectorEvent(input: WorkspaceConnectorEventSettleRpcRequest): Promise<void> {
     await this.initialized;
-    const rpcRequest = WorkspaceConnectorEventSettleRpcRequestSchema.parse(input);
+    const rpcRequest = parseRpcInput(WorkspaceConnectorEventSettleRpcRequestSchema, input, "settle_connector_event");
     const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
     const request: WorkspaceConnectorEventSettleRequest = legacyWorkflowContract
       ? {
@@ -5665,6 +6027,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
         outcome: request.outcome,
         reason: "settlement_committed",
+        // `reason` says the write landed. What the settler was told went
+        // wrong is `error`, persisted above and written for a person; the
+        // code the settler derived from it is what the row indexes.
+        ...(request.outcome === "failed" && "errorCode" in request && request.errorCode
+          ? { error_code: request.errorCode }
+          : {}),
       });
       return;
     }
@@ -6574,6 +6942,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceRegionalEffectApplyResultSchema.parse(result);
   }
 
+  async readNotificationIntentForDelivery(input: WorkspaceNotificationIntentRequest): Promise<WorkspaceNotificationIntentDelivery | null> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return readStoredPushIntent(this.state.storage, request);
+  }
+
   /** Claim one notification intent without exposing SQL or physical write counters. */
   async claimWorkstreamNotificationIntent(
     input: WorkspaceNotificationIntentRequest,
@@ -6687,6 +7062,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waiting_for_you: number;
       waiting_priority: number;
       has_unread_activity: number;
+      unread_and_needs_input: number;
     }>(
       `SELECT
          COALESCE(SUM(CASE
@@ -6709,7 +7085,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
              )
              OR viewer.manual_unread_from_ordinal IS NOT NULL
              OR viewer.unseen = 1
-           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity
+           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity,
+         COALESCE(SUM(CASE
+           WHEN (
+             (directory.scope = 'workspace' OR viewer.is_participant = 1) AND (
+               directory.latest_attention_ordinal > COALESCE(
+                 viewer.seen_attention_ordinal,
+                 directory.unread_tracking_start_ordinal
+               )
+               OR viewer.manual_unread_from_ordinal IS NOT NULL
+               OR viewer.unseen = 1
+             )
+           ) OR (
+             viewer.is_participant = 1 AND directory.exact_state = 'needs_input'
+           ) THEN 1 ELSE 0 END), 0) AS unread_and_needs_input
        FROM workspace_workstream_directory directory
        LEFT JOIN workspace_workstream_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
@@ -6730,6 +7119,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waitingForYou: row.waiting_for_you,
       waitingReason,
       hasUnreadActivity: row.has_unread_activity === 1,
+      unreadAndNeedsInputCount: row.unread_and_needs_input,
     });
   }
 
@@ -6738,11 +7128,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the cross-work-stream index. The caller turns each returned work-stream id
    * into one Queue event; it never probes child objects to rediscover this
    * list.
-   *
-   * The notes the same filter selects come back beside them because they are
-   * in this database too. They are counted here and archived here — see
-   * `archiveNotesForBatch` — rather than fanned out, since a note has no object
-   * of its own for an event to reach.
    */
   async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
     await this.initialized;
@@ -6750,12 +7135,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     return WorkspaceDirectoryBatchTargetsResultSchema.parse({
       items: this.batchTargetIds(request.userId, request.filter),
-      noteIds: workspaceNoteBatchTargets(
-        this.state.storage,
-        request.workspaceId,
-        request.userId,
-        request.filter,
-      ),
+      noteIds: [],
     });
   }
 
@@ -6860,24 +7240,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           request.operationId,
           JSON.stringify(targetIds),
         );
-        // The note half is frozen in the same transaction, and for the same
-        // reason: selecting it again at archive time would let a note that
-        // entered the range in between be taken, which under an open-ended
-        // heading like "Last hour" is any note touched since the reader
-        // confirmed. The receipt alone only closes that for a *retry*.
-        if (request.update.kind === "archive") {
-          this.state.storage.sql.exec(
-            `INSERT INTO workspace_batch_dispatch_note_targets (operation_id, note_id)
-             SELECT ?, value FROM json_each(?)`,
-            request.operationId,
-            JSON.stringify(workspaceNoteBatchTargets(
-              this.state.storage,
-              request.workspaceId,
-              request.userId,
-              request.filter,
-            )),
-          );
-        }
         targetCount = targetIds.length;
       }
 
@@ -6931,72 +7293,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Archive the note half of one frozen batch, exactly once per operation.
-   *
-   * The work-stream half is frozen as rows because each id has to survive a
-   * partial Queue publication and be re-sent without re-selecting. Notes need
-   * no such list: they are archived in one statement in this database, so the
-   * only thing a retry can get wrong is *widening* — a note touched between the
-   * failed attempt and the retry entering an open-ended range like "Last hour".
-   * A single count on the dispatch row closes that, and a `NULL` there is the
-   * whole of "no note archive has run for this operation".
-   *
-   * Fenced on the same request hash and user as the dispatch it belongs to, so
-   * a second filter or a second person cannot reuse an operation id to archive
-   * somebody else's notes under a receipt that already exists.
-   */
-  async archiveNotesForBatch(
-    input: WorkspaceBatchNoteArchiveRequest,
-  ): Promise<WorkspaceBatchNoteArchiveResult> {
-    await this.initialized;
-    const request = WorkspaceBatchNoteArchiveRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.state.storage.transactionSync(() => {
-      const dispatch = this.state.storage.sql.exec<{
-        request_hash: string;
-        user_id: string;
-        archived_note_count: number | null;
-      }>(
-        `SELECT request_hash, user_id, archived_note_count
-           FROM workspace_batch_dispatches WHERE operation_id = ?`,
-        request.operationId,
-      ).toArray()[0];
-      if (!dispatch
-        || dispatch.request_hash !== request.requestHash
-        || dispatch.user_id !== request.userId) {
-        throw new Error("workstream_batch_dispatch_conflict");
-      }
-      if (dispatch.archived_note_count !== null) {
-        return WorkspaceBatchNoteArchiveResultSchema.parse({
-          archivedNoteCount: dispatch.archived_note_count,
-          replayed: true,
-        });
-      }
-      const archived = archiveWorkspaceNotesForOperation(this.state.storage, {
-        workspaceId: request.workspaceId,
-        userId: request.userId,
-        operationId: request.operationId,
-        at: request.at,
-      });
-      this.state.storage.sql.exec(
-        `UPDATE workspace_batch_dispatches SET archived_note_count = ?, updated_at = ?
-          WHERE operation_id = ?`,
-        archived.length,
-        Date.now(),
-        request.operationId,
-      );
-      return WorkspaceBatchNoteArchiveResultSchema.parse({
-        archivedNoteCount: archived.length,
-        replayed: false,
-      });
-    });
-    // After the commit, and only for the call that did the archiving: the push
-    // sends the list as it stands now, which a replay has already sent.
-    if (!result.replayed && result.archivedNoteCount > 0) this.publishSidebarList("notes");
-    return result;
-  }
-
-  /**
    * The title to show as a generated work stream's origin label.
    *
    * WorkstreamDO renders the summary and does not hold the automation's
@@ -7043,140 +7339,156 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  /** One note and its whole transcript, behind the requested access fence. */
-  async noteWithSegments(input: WorkspaceNoteStateRequest): Promise<WorkspaceNoteState> {
+  /** Operator-only RPC, including closed workspaces; no product route exposes it. */
+  async purgeMeetingNoteObjects(resourceId?: string) {
     await this.initialized;
-    const request = WorkspaceNoteStateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceNoteState(this.state.storage, request);
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_object_identity_missing");
+    return purgeRetiredMeetingObjects(this.state.storage, this.env.PAYLOADS, this.env.AVALON_REGION, workspaceId, resourceId === undefined ? undefined : IdSchema.parse(resourceId));
   }
 
-  /** The notes the sidebar opens with, from the statement the socket also serves. */
-  async listNoteSidebar(input: WorkspaceNoteSidebarRequest): Promise<WorkspaceNoteSidebarList> {
+  /** Delete only decisions whose canonical resource has verified meeting provenance. */
+  async purgeMeetingSearchAuthorization() {
     await this.initialized;
-    const request = WorkspaceNoteSidebarRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceNoteSidebar(
-      this.state.storage,
-      request.workspaceId,
-      request.userId,
-      Math.min(request.limit, SIDEBAR_LIST_LIMIT),
-      request.before,
-    );
+    const sql = this.state.storage.sql;
+    const keys = sql.exec<{ cache_key: string }>(`SELECT cache_key FROM search_authorization_keys
+      WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).toArray();
+    for (const { cache_key: key } of keys) {
+      // The retirement check rejects new registrations and publications. Drain an
+      // already admitted KV write before deleting its external copy.
+      await this.searchPublications.get(key)?.catch(() => {});
+      if (this.env.AUTHORIZATION_CACHE) await this.env.AUTHORIZATION_CACHE.delete(key);
+      this.state.storage.transactionSync(() => {
+        sql.exec('DELETE FROM search_authorization_dependencies WHERE cache_key = ?', key);
+        sql.exec('DELETE FROM authorization_snapshots WHERE cache_key = ?', key);
+        sql.exec('DELETE FROM search_authorization_keys WHERE cache_key = ?', key);
+      });
+    }
+    sql.exec(`DELETE FROM search_authorization_push WHERE kind = 'resource'
+      AND target_id IN (SELECT resource_id FROM retired_meeting_resources)`);
+    return { deletedKeys: keys.length };
   }
 
-  /**
-   * Apply an owner's edit, deciding `becamePrivate` from the row the write
-   * replaced — and recording the workspace-to-personal transition in the
-   * privacy outbox within the same transaction. The D1 trigger that used to
-   * write that row did not travel to this object at cutover, so the "now
-   * private" notices had silently stopped.
-   */
-  async updateNote(input: WorkspaceNoteUpdateRequest): Promise<WorkspaceNoteUpdateResult> {
+  /** Operator calls after verifying external cleanup; pending cleanup is an error. */
+  async finalizeMeetingRetirement() {
     await this.initialized;
-    const request = WorkspaceNoteUpdateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = updateWorkspaceNote(this.state.storage, request);
-    if (result.outcome === "updated") this.publishSidebarList("notes");
-    if (result.becamePrivate) this.refreshScheduleAfterWrite(request.workspaceId);
-    return result;
+    await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
+      storage: this.state.storage,
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      component: MIGRATION_COMPONENT,
+      workerVersionId: this.env.APP_VERSION ?? "unknown",
+    }));
+    return { schemaVersion: 58 };
   }
 
-  /**
-   * Archive, or say why not: a live recording refuses distinctly, because
-   * archiving under it would 404 the next segment save while capture kept
-   * running. As a write and a fallback read through the facade the two
-   * refusals were classified a round trip apart.
-   */
-  async archiveNote(input: WorkspaceNoteArchiveRequest): Promise<WorkspaceNoteArchiveResult> {
-    await this.initialized;
-    const request = WorkspaceNoteArchiveRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = archiveWorkspaceNote(this.state.storage, request);
-    if (result.outcome === "archived") this.publishSidebarList("notes");
-    return result;
+  private isRetiredMeetingResource(resource: z.infer<typeof AuthorizationResourceSchema>): boolean {
+    return resource.kind === 'resource' && this.state.storage.sql.exec(
+      'SELECT 1 FROM retired_meeting_resources WHERE resource_id = ?', resource.resourceId).toArray().length > 0;
   }
 
-  /**
-   * Store one transcript segment: fence, duplicate check, sequence allocation
-   * and both writes in one critical section, with a replayed save answered by
-   * the stored segment rather than a constraint error.
-   */
-  async appendNoteSegment(
-    input: WorkspaceNoteSegmentAppendRequest,
-  ): Promise<WorkspaceNoteSegmentAppendResult> {
+  async retiredMeetingInventory() {
     await this.initialized;
-    const request = WorkspaceNoteSegmentAppendRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = appendWorkspaceNoteSegment(this.state.storage, request);
-    if (result.outcome === "appended") this.publishSidebarList("notes");
-    return result;
+    const sql = this.state.storage.sql;
+    const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_schema WHERE type = 'table'").toArray();
+    const references: Array<{ table: string; count: number }> = [];
+    for (const { name } of tables) {
+      // Cloudflare's hidden KV tables are not accessible through SQL.
+      if (name === 'retired_meeting_resources' || /^(?:_+cf_|sqlite_)/.test(name)) continue;
+      const quoted = '"' + name.replaceAll('"', '""') + '"';
+      if (!sql.exec<{ name: string }>(`PRAGMA table_info(${quoted})`).toArray().some(column => column.name === 'resource_id')) continue;
+      const count = sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM ${quoted} WHERE resource_id IN (SELECT resource_id FROM retired_meeting_resources)`).one().count;
+      if (count) references.push({ table: name, count });
+    }
+    return {
+      workspaceId: this.workspaceId(),
+      schemaVersion: sql.exec<{ version: number }>('SELECT MAX(version) AS version FROM _sql_schema_migrations').one().version,
+      featureTables: tables.map(row => row.name).filter(name => ['notes', 'note_transcript_segments', 'note_privacy_change_outbox', 'note_resource_deletion_outbox', 'workspace_batch_dispatch_note_targets'].includes(name)),
+      references,
+      resources: sql.exec<{
+        resource_id: string; note_id: string | null; objects_deleted: number;
+      }>('SELECT resource_id, note_id, objects_deleted FROM retired_meeting_resources ORDER BY resource_id').toArray(),
+    };
   }
 
-  /** Land a generated briefing only if the cursor pair it was read against still holds. */
-  async commitNoteGeneration(
-    input: WorkspaceNoteGenerationCommitRequest,
-  ): Promise<WorkspaceNoteGenerationCommitResult> {
-    await this.initialized;
-    const request = WorkspaceNoteGenerationCommitRequestSchema.parse(input);
+  async createConnectorInstallation(input: InstallationCreate) {
+    await this.initialized; const request = InstallationCreateSchema.parse(input);
+    this.assertWorkspace(request.installation.workspaceId);
+    return createInstallation(this.state.storage, request);
+  }
+  async connectorInstallation(input: { workspaceId: string; connectionId: string }) {
+    await this.initialized; const request = InstallationReadSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const result = commitWorkspaceNoteGeneration(this.state.storage, request);
-    if (result.outcome === "committed") this.publishSidebarList("notes");
-    return result;
+    return readInstallation(this.state.storage, request.connectionId);
+  }
+  /** One hop for the connections list, which asks about every disabled row at once. */
+  async connectorInstallations(input: InstallationBatchRead) {
+    await this.initialized; const request = parseRpcInput(InstallationBatchReadSchema, input, "connector_installations_read");
+    this.assertWorkspace(request.workspaceId);
+    return readInstallations(this.state.storage, request.connectionIds);
+  }
+  async claimConnectorInstallationStep(input: InstallationClaim) {
+    await this.initialized; const request = InstallationClaimSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimInstallation(this.state.storage, request);
+  }
+  async settleConnectorInstallationStep(input: InstallationSettle) {
+    await this.initialized; const request = InstallationSettleSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return settleInstallation(this.state.storage, request);
+  }
+  async replaceConnectorInstallationCredentials(input: InstallationCredentialReplace) {
+    await this.initialized;
+    const request = InstallationCredentialReplaceSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return replaceInstallationCredentials(this.state.storage, request);
+  }
+  async prepareConnectorInstallationMaintenance(input: InstallationMaintenance) {
+    await this.initialized;
+    const request = InstallationMaintenanceSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return prepareInstallationMaintenance(this.state.storage, request);
+  }
+  async cancelConnectorInstallationMaintenance(input: InstallationMaintenanceCancel) {
+    await this.initialized;
+    const request = InstallationMaintenanceCancelSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return cancelInstallationMaintenance(this.state.storage, request);
+  }
+  async prepareConnectorInstallationRotation(input: InstallationRotationPrepare) {
+    await this.initialized;
+    const request = InstallationRotationPrepareSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return prepareInstallationRotation(this.state.storage, request);
   }
 
-  /** Which of these note resources the principal may currently see; reads only. */
-  async visibleNoteResourceIds(
-    input: WorkspaceNoteVisibilityRequest,
-  ): Promise<WorkspaceNoteVisibilityResult> {
+  async receiveConnectorInstallationEvent(input: InstallationDelivery) {
     await this.initialized;
-    const request = WorkspaceNoteVisibilityRequestSchema.parse(input);
+    const request = InstallationDeliverySchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return visibleWorkspaceNoteResourceIds(this.state.storage, request);
+    return recordInstallationDelivery(this.state.storage, request);
   }
 
-  /** The privacy transitions the notifier has not yet delivered. */
-  async pendingNotePrivacyTransitions(
-    input: WorkspaceNotePrivacyPendingRequest,
-  ): Promise<WorkspaceNotePrivacyPendingResult> {
-    await this.initialized;
-    const request = WorkspaceNotePrivacyPendingRequestSchema.parse(input);
+  async connectorInstallationCleanup(input: InstallationClaim) {
+    await this.initialized; const request = InstallationClaimSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return pendingWorkspaceNotePrivacyTransitions(this.state.storage, request);
+    const installation = readInstallation(this.state.storage, request.connectionId);
+    const registration = installation?.registrations.find((item) => item.stepId === request.stepId);
+    if (!installation || installation.generation !== request.generation || registration?.action !== "remove"
+      || registration.state !== "dispatched" || !registration.providerId || !registration.providerIdVerified) throw new Error("connector_cleanup_not_authorized");
+    const row = this.state.storage.sql.exec<{ cleanup_ciphertext: string | null; cleanup_iv: string | null; cleanup_key_version: number | null; granted_scopes_json: string; config_json: string }>(
+      `SELECT i.cleanup_ciphertext, i.cleanup_iv, i.cleanup_key_version, c.granted_scopes_json, c.config_json
+       FROM connector_installations i JOIN connector_connections c ON c.id = i.connection_id
+       WHERE i.connection_id = ? AND c.status = 'disabled'`, request.connectionId).toArray()[0];
+    if (!row?.cleanup_ciphertext || !row.cleanup_iv) throw new Error("connector_cleanup_credential_unavailable");
+    return { providerId: registration.providerId, encrypted_credentials: row.cleanup_ciphertext,
+      credential_iv: row.cleanup_iv, credential_key_version: row.cleanup_key_version,
+      grantedScopes: z.array(z.string()).parse(JSON.parse(row.granted_scopes_json)) };
   }
 
-  /** Settle one delivered privacy transition; a replay learns it was not pending. */
-  async markNotePrivacyTransitionProcessed(
-    input: WorkspaceNotePrivacyMarkRequest,
-  ): Promise<WorkspaceNotePrivacyMarkResult> {
-    await this.initialized;
-    const request = WorkspaceNotePrivacyMarkRequestSchema.parse(input);
+  async changeConnectorInstallation(input: InstallationChange) {
+    await this.initialized; const request = InstallationChangeSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const result = markWorkspaceNotePrivacyTransitionProcessed(this.state.storage, request);
-    if (result.outcome === "processed") this.refreshScheduleAfterWrite(request.workspaceId);
-    return result;
-  }
-
-  /** The note R2 objects still waiting for cleanup, one pass's worth. */
-  async noteResourceDeletionOutbox(
-    input: WorkspaceNoteDeletionOutboxRequest,
-  ): Promise<WorkspaceNoteDeletionOutbox> {
-    await this.initialized;
-    const request = WorkspaceNoteDeletionOutboxRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceNoteResourceDeletionOutbox(this.state.storage);
-  }
-
-  /** Retire one cleanup entry once its R2 objects are gone. */
-  async retireNoteResourceDeletion(
-    input: WorkspaceNoteDeletionRetireRequest,
-  ): Promise<WorkspaceNoteDeletionRetireResult> {
-    await this.initialized;
-    const request = WorkspaceNoteDeletionRetireRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = retireWorkspaceNoteResourceDeletion(this.state.storage, request);
-    if (result.outcome === "retired") this.refreshScheduleAfterWrite(request.workspaceId);
-    return result;
+    return changeInstallation(this.state.storage, request);
   }
 
   /** Record a started connector OAuth handoff, pending until settled. */
@@ -7993,7 +8305,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Create a memory scope if it is missing; answer with the stored row either way. */
   async ensureMemoryScope(input: WorkspaceMemoryScopeEnsureRequest): Promise<WorkspaceMemoryScope> {
     await this.initialized;
-    const request = WorkspaceMemoryScopeEnsureRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryScopeEnsureRequestSchema, input, "ensure_memory_scope");
     this.assertWorkspace(request.workspaceId);
     return ensureWorkspaceMemoryScope(this.state.storage, request);
   }
@@ -8178,7 +8490,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableRequest,
   ): Promise<WorkspaceMemoryTableResult> {
     await this.initialized;
-    const request = WorkspaceMemoryTableRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableRequestSchema, input, "memory_table_with_columns");
     this.assertWorkspace(request.workspaceId);
     return workspaceMemoryTableWithColumns(this.state.storage, request);
   }
@@ -8223,7 +8535,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryReceiptRequest,
   ): Promise<WorkspaceMemoryReceiptResult> {
     await this.initialized;
-    const request = WorkspaceMemoryReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryReceiptRequestSchema, input, "memory_table_mutation_receipt");
     this.assertWorkspace(request.workspaceId);
     return workspaceMemoryTableMutationReceipt(this.state.storage, request);
   }
@@ -8236,7 +8548,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableCreateRequest,
   ): Promise<WorkspaceMemoryTableCreateResult> {
     await this.initialized;
-    const request = WorkspaceMemoryTableCreateRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableCreateRequestSchema, input, "create_memory_table");
     this.assertWorkspace(request.workspaceId);
     return createWorkspaceMemoryTable(this.state.storage, request);
   }
@@ -8246,7 +8558,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     input: WorkspaceMemoryTableOpenReceiptRequest,
   ): Promise<void> {
     await this.initialized;
-    const request = WorkspaceMemoryTableOpenReceiptRequestSchema.parse(input);
+    const request = parseRpcInput(WorkspaceMemoryTableOpenReceiptRequestSchema, input, "record_memory_table_open_receipt");
     this.assertWorkspace(request.workspaceId);
     recordWorkspaceMemoryTableOpenReceipt(this.state.storage, request);
   }
@@ -8855,10 +9167,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ subject: AuthorizationSubjectSchema, resources: z.array(AuthorizationResourceSchema) }).parse(input);
     this.assertWorkspace(request.subject.workspaceId);
-    const generations: number[] = [];
+    // Resolve async keys first, then validate the whole batch before any writes.
+    const keys = await Promise.all(request.resources.map(resource => searchAuthorizationKey(request.subject, resource)));
     for (const resource of request.resources) {
       this.assertWorkspace(resource.workspaceId);
-      const key = await searchAuthorizationKey(request.subject, resource);
+      if (this.isRetiredMeetingResource(resource)) throw new Error('meeting_notes_retired');
+    }
+    const generations: number[] = [];
+    for (const [index, resource] of request.resources.entries()) {
+      const key = keys[index]!;
       // Allocate before owner reads. A later attempt supersedes an earlier one even in the same millisecond.
       const generation = this.state.storage.sql.exec<{ generation: number }>(`INSERT INTO search_authorization_keys
         (cache_key, generation, resource_id, parent_id, connection_id) VALUES (?, 1, ?, ?, ?)
@@ -8925,6 +9242,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const previous = this.searchPublications.get(key) ?? Promise.resolve();
       // Serialize only this key's network writes; unrelated WorkspaceDO events stay runnable.
       const publication = previous.catch(() => {}).then(async () => {
+        if (this.isRetiredMeetingResource(snapshot.resource)) { stats.superseded++; return; }
         const current = this.state.storage.sql.exec<{ generation: number }>(
           'SELECT generation FROM search_authorization_keys WHERE cache_key = ?', key).toArray()[0];
         if (current?.generation !== snapshot.generation) { stats.superseded++; return; }
@@ -9009,18 +9327,51 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT workstream_id AS parent_id, 'workstream' AS parent_kind FROM workspace_workstream_directory
          UNION SELECT automation_id AS parent_id, 'automation' AS parent_kind FROM automation_directory`,
       ).toArray();
+      const workspaceId = asWorkspaceId(input.workspaceId);
       for (const parent of parents) {
-        if (input.refresh === false && this.state.storage.sql.exec(
-          'SELECT 1 FROM authorization_backfill WHERE parent_id = ?', parent.parent_id,
-        ).toArray().length) continue;
-        this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
-          ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
-        this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
-          workspaceId: asWorkspaceId(input.workspaceId), parentId: IdSchema.parse(parent.parent_id) });
+        const parentId = IdSchema.parse(parent.parent_id);
+        if (input.refresh !== false) {
+          this.state.storage.sql.exec(`INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)
+            ON CONFLICT(parent_id) DO UPDATE SET completed = 0`, parent.parent_id, parent.parent_kind);
+          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            workspaceId, parentId });
+          continue;
+        }
+        // The unavailable-read path repairs only discovery that is missing, never work that finished
+        // or is already scheduled: a retryable 503 must not reset a workspace or amplify into writes.
+        const tracked = this.state.storage.sql.exec<{ completed: number }>(
+          'SELECT completed FROM authorization_backfill WHERE parent_id = ?', parent.parent_id).toArray()[0];
+        if (!tracked) {
+          this.state.storage.sql.exec('INSERT INTO authorization_backfill(parent_id, parent_kind) VALUES (?, ?)',
+            parent.parent_id, parent.parent_kind);
+        }
+        if (!tracked || !tracked.completed) {
+          if (!this.authorizationDeliveryScheduled(parent.parent_id, null)) {
+            this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+              workspaceId, parentId });
+          }
+          continue;
+        }
+        // A parent completes when its children are registered, so a child whose own discovery died
+        // leaves the parent complete. Re-queue that child directly: re-running the parent would
+        // reset its siblings' finished receipts and widen the very outage being repaired.
+        for (const child of this.state.storage.sql.exec<{ substream_id: string }>(
+          'SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ? AND completed = 0',
+          parent.parent_id).toArray()) {
+          if (this.authorizationDeliveryScheduled(parent.parent_id, child.substream_id)) continue;
+          this.enqueueAuthorizationDiscovery({ type: 'authorization_projection_v1', region: this.env.AVALON_REGION,
+            workspaceId, parentId, substreamId: SubstreamIdSchema.parse(child.substream_id) });
+        }
       }
     });
     await this.armNextAlarm();
     return this.authorizationBackfillStatus(input);
+  }
+
+  /** Work already queued (including one waiting out a delivery backoff) needs no second request. */
+  private authorizationDeliveryScheduled(parentId: string, substreamId: string | null): boolean {
+    return this.state.storage.sql.exec('SELECT 1 FROM authorization_delivery WHERE job_key = ?',
+      JSON.stringify([parentId, substreamId])).toArray().length > 0;
   }
 
   private enqueueAuthorizationDiscovery(job: AuthorizationProjectionJob): void {
@@ -9135,15 +9486,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
         'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
       ).toArray()[0] : null;
-      const note = row.provider === 'avalon_note' ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string; archived_at: string | null }>(
-        'SELECT scope, owner_user_id, archived_at FROM notes WHERE resource_id = ?', resourceId,
-      ).toArray()[0] : null;
+
       const owned = row.uploaded_by_user_id === request.userId;
       return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
-        noteAllowed: row.provider !== 'avalon_note' || Boolean(note && note.archived_at === null
-          && (note.scope === 'workspace' || note.owner_user_id === request.userId)),
+        noteAllowed: row.provider !== 'avalon_note',
         draftAllowed: row.provider !== 'avalon_upload' || row.attachment_status === 'attached' || owned,
         requiresAttachment: ((row.provider === 'avalon_upload' || row.provider === 'avalon_generated') && !owned)
           || (row.provider === 'resend' && row.resource_type === 'email'),
@@ -9558,13 +9906,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map(automationSummary);
   }
 
-  private listSidebarNotes(
-    workspaceId: string,
-    userId: string,
-  ): { items: NoteSummary[]; nextCursor: string | null } {
-    return workspaceNoteSidebar(this.state.storage, workspaceId, userId, SIDEBAR_LIST_LIMIT);
-  }
-
   private pinnedDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
@@ -9711,8 +10052,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
       },
       notes: {
-        waterline: this.sidebarListWaterline("notes"),
-        ...this.listSidebarNotes(attachment.workspaceId, attachment.userId),
+        waterline: 0, items: [], nextCursor: null,
       },
       projects: this.projectSnapshot(attachment.userId),
     });
@@ -9728,8 +10068,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Re-send one sidebar list to every subscribed socket, per viewer.
    *
-   * Read once per socket rather than once per workspace because both lists are
-   * scoped — a personal automation or note belongs to its owner, and sending
+   * Read once per socket rather than once per workspace because the list is
+   * scoped — a personal automation belongs to its owner, and sending
    * one reader's list to another would leak it. This mirrors
    * `publishWorkstreamState`, which re-reads its row per viewer for the same
    * reason.
@@ -9750,12 +10090,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      // The note push carries its cursor so a reader who has paged past the
-      // first screen can tell a complete list from its head and merge rather
-      // than truncate back to one page.
-      const page = list === "automations"
-        ? { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) }
-        : this.listSidebarNotes(attachment.workspaceId, attachment.userId);
+      const page = { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) };
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
           type: "workspace_sidebar_list",
@@ -10236,6 +10571,10 @@ applyRetirementGate(WorkspaceDO, {
     // report that it had reached them.
     // Only the entry points. A permit carries the whole call beneath it, so the
     // private helpers these reach need no entry of their own.
+    "purgeMeetingNoteObjects",
+    "purgeMeetingSearchAuthorization",
+    "finalizeMeetingRetirement",
+    "retiredMeetingInventory",
     "beginWorkspaceRetirement",
     "recordRetiredNode",
     "workspaceRetirementProgress",

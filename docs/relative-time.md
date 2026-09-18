@@ -143,8 +143,6 @@ whether or not the first frame was stale. `relative-time.node.test.ts` is the
 single-door guard and runs on node, so it is named `.node.test.ts` and typed by
 `tsconfig.node.json`.
 
-## Changelog
-
 ### 2026-09-10 — One byline, one clock, one relative label
 
 **What changed:** Three primitives replace nine hand-rolled timestamps. `useNow`

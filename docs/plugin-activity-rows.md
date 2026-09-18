@@ -25,7 +25,7 @@ them.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/plugin-groups.ts` | The only place that decides which row a plugin belongs to, what that row is called, and which glyph it draws. |
-| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, one `@thesvg/react` component per brand, and `connectorBrandMark` — the one table saying which mark a connector wears. |
+| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks — `@thesvg/react` one subpath at a time, plus a local file in `lib/brand-marks/` when the catalog has no slug — and `connectorBrandMark`, the one table saying which mark a connector wears. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, `groupThinkingMessages` collapses the thinking left in it, and `collapseSettledWorkIntoAccordion` folds each finished stretch of a run behind the answer that reported on it, carrying the total `foldSettledWorkIntoMessages` resolved where that stretch is the whole response. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
@@ -35,8 +35,6 @@ them.
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
 | `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
 | `apps/desktop/src/renderer/components/message-feed.tsx` | Holds which rows a reader has opened, above the virtual window, and hands it to every row as `RowDisclosure`. |
-
-## How it works
 
 ### What the transcript carries
 
@@ -149,7 +147,8 @@ keeps its glyph. A first-party plugin that is
 absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
-other plugin keeps its own row.
+other plugin keeps its own row. `avalon:agents` keeps its **Background agents**
+row and uses Tabler's **stack-backward** glyph.
 
 Custom MCP activity carries its host-authored `connectorType` independently
 of the configured label. It groups by canonical connection id and always draws
@@ -208,11 +207,12 @@ Two things about how a mark is drawn are load-bearing:
   light. It also means no appearance-specific artwork and no component that
   knows which appearance is on.
 
-Monochrome is asked for rather than imposed. Six of the eight brands ship a
+Monochrome is asked for rather than imposed. Eight of the ten brands ship a
 `mono` variant already drawn in `currentColor`, and `PLUGIN_BRAND_MARKS` records
 which ones — so a brand that gains or loses `mono` upstream fails that table
 rather than the render. Slack and Granola ship none, and `.connector-mark`
-recolours their palette in CSS instead.
+recolours their palette in CSS instead. Ashby and Fireflies are not in
+`@thesvg/react`; their local components only ship the monochrome art.
 
 ### Where a run ends
 
@@ -643,7 +643,43 @@ screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
-## Changelog
+### 2026-09-15 — Local official marks for brands the catalog does not ship
+
+**What changed:** Fireflies and Ashby no longer wear Lucide stand-ins. When
+`@thesvg/react` has no slug, a local component in `renderer/lib/brand-marks/`
+draws the company's own art through `ConnectorMark`, on the same `currentColor`
+path as a catalogued brand. Ashby's is the product icon — the serif A punched
+from the rounded square — not the stacked marketing lockup.
+
+**Why:** The Lucide briefcase and audio-lines glyphs identified the *kind of
+product*, not the company. Next to Slack's lattice they read as generic UI
+icons. The catalog has neither slug (Adobe Firefly and Firefly III are different
+companies). Waiting on a third-party pack, or keeping Lucide until it does,
+leaves two connected companies looking unfinished. The stacked lockup was tried
+first for Ashby and drew at half width in the square `.connector-mark` box —
+height-bound `preserveAspectRatio` — so it was replaced with the square product
+icon the company itself uses at favicon size.
+
+**Considered and rejected:** Lucide or Tabler as a fallback until thesvg adds
+the slugs. That is not a company mark and is not the fallback the pack's rule
+describes; the generic plug is only for a connector that has not been named in
+the table. Also rejected: keeping the stacked Ashby lockup and documenting the
+half-width as intentional — at 14–16px it reads as a smudge, and the company's
+own square answer for that slot is the serif A. Vendoring every mark was
+rejected when the catalog *could* supply them
+([#412](https://github.com/juno-ai-labs/avalon/pull/412)); that cost is now
+accepted only for brands it does not ship.
+
+**Consequences:** A brand missing from the catalog is still a company mark,
+drawn locally, not a Lucide stand-in. The local art has to fill a square
+14/15/16px box the way the catalogued marks do — product icon, not a tall
+lockup; wordmark dropped; `currentColor`; no element ids or `url(#…)`; looked
+at in a real window. If the catalog later adds `ashby` and `fireflies`, the
+table rows swap to `@thesvg/react/<slug>` and the local files go away.
+[`using-company-brand-icons.md`](using-company-brand-icons.md) is the note that
+owns how to add one.
+
+Shipped in #786.
 
 ### 2026-09-11 — Separate configured activity names from trusted plugin identity
 

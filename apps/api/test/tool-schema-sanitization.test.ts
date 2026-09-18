@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
+import { asUserId } from "@rally/contracts";
 
 import {
   droppedNullableBranches,
   nonObjectRootSchema,
   nonObjectRootUnionBranches,
+  runHarness,
   weakenedCompositionBranches,
 } from "@rally/agent-harness";
 import { __integrationTesting } from "../src/services/integrations";
@@ -46,6 +50,119 @@ import { everyAuthoredToolSchema } from "./helpers/authored-tool-schemas";
  * `pnpm test` rather than three days later in a payload log.
  */
 describe("tool schema sanitization", () => {
+  it.each(["OpenRouter", "Azure"])("preserves the complete Gmail argument contract through the actual %s request", async (provider) => {
+    const adapter = createTestConnectorRegistry().get("google");
+    const content = { to: ["recipient@example.com"], body: "Hello." };
+    const newMessage = { kind: "new", ...content, subject: "A new conversation" };
+    const reply = { kind: "reply", ...content, messageId: "18f0a2c4d5e6f702" };
+    const cases: Array<{ label: string; args: unknown; accepted: boolean }> = [
+      ...[newMessage, reply].flatMap((message) => [
+        { label: `${message.kind} without cc`, args: { message }, accepted: true },
+        ...[null, [], ["copied@example.com"]].map((cc) => ({
+          label: `${message.kind} with cc=${JSON.stringify(cc)}`, args: { message: { ...message, cc } }, accepted: true,
+        })),
+      ]),
+      { label: "no kind", args: { message: content }, accepted: false },
+      { label: "unknown kind", args: { message: { ...newMessage, kind: "forward" } }, accepted: false },
+      { label: "empty subject", args: { message: { ...newMessage, subject: "" } }, accepted: false },
+      { label: "long subject", args: { message: { ...newMessage, subject: "a".repeat(999) } }, accepted: false },
+      { label: "Unicode subject at character limit", args: { message: { ...newMessage, subject: "😀".repeat(998) } }, accepted: true },
+      { label: "Unicode subject over character limit", args: { message: { ...newMessage, subject: "😀".repeat(999) } }, accepted: false },
+      { label: "long body", args: { message: { ...newMessage, body: "a".repeat(500_001) } }, accepted: false },
+      { label: "no recipients", args: { message: { ...newMessage, to: [] } }, accepted: false },
+      { label: "invalid address", args: { message: { ...newMessage, to: ["recipient"] } }, accepted: false },
+      { label: "invalid cc", args: { message: { ...newMessage, cc: ["recipient"] } }, accepted: false },
+      { label: "new with messageId", args: { message: { ...newMessage, messageId: "." } }, accepted: false },
+      { label: "reply with subject", args: { message: { ...reply, subject: "Unrelated subject" } }, accepted: false },
+      { label: "reply with empty messageId", args: { message: { ...reply, messageId: "" } }, accepted: false },
+      { label: "reply without messageId", args: { message: { kind: "reply", ...content } }, accepted: false },
+      // The old production shape, with nonempty reply placeholders.
+      { label: "old flat arguments", args: { ...content, subject: "Hello", threadId: ".", inReplyTo: ".", references: [] }, accepted: false },
+    ];
+    for (const message of [newMessage, reply]) {
+      for (const cc of [undefined, null, [], ["copied@example.com"]]) {
+        const withCc = cc === undefined ? message : { ...message, cc };
+        for (const [field, value] of Object.entries({ preview: true, threadId: ".", inReplyTo: ".", references: [], arbitrary: "undeclared" })) {
+          const label = `${message.kind}, cc=${JSON.stringify(cc)}, undeclared ${field}`;
+          cases.push(
+            { label: `${label} at root`, args: { message: withCc, [field]: value }, accepted: false },
+            { label: `${label} in message`, args: { message: { ...withCc, [field]: value } }, accepted: false },
+          );
+        }
+      }
+    }
+    const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft"].includes(tool.name));
+    expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send"]);
+    const requests: Array<{ tools: Array<{ function: { name: string; parameters: Record<string, unknown>; strict?: boolean } }> }> = [];
+    const urls: string[] = [];
+    const usesAzure = provider === "Azure";
+    // Only the remote model is doubled. The real harness builds the plugin,
+    // runs Bind's sanitizer and root repair, then serializes the HTTP request.
+    const outcome = await runHarness({
+      config: {
+        apiKey: "test-key", primaryModel: usesAzure ? "openai/gpt-5.6-sol" : "test/schema-contract",
+        maxIterations: 1, maxToolCalls: 1,
+        ...(usesAzure ? { azure: { endpoint: "https://schema-probe.openai.azure.com", apiKey: "test-azure-key" } } : {}),
+        // Ambient budgets, not the subject of this test.
+        maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 1,
+        fetch: async (input, init) => {
+          urls.push(String(input));
+          requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+          return new Response('data: {"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\ndata: [DONE]\n\n', {
+            headers: { "content-type": "text/event-stream" },
+          });
+        },
+      },
+      resolveAzureModelPricing: async () => new Map([["openai/gpt-5.6-sol", {
+        inputUsdPerM: 5, cachedInputUsdPerM: 0.5, outputUsdPerM: 25,
+        overrides: [], sourceFingerprint: "schema-contract-test",
+      }]]),
+      workspaceId: `schema-contract-${provider}`, workstreamId: "schema-contract-workstream",
+      loopId: "schema-contract-run", harnessRunId: "schema-contract-run",
+      executionPrincipal: { type: "user", userId: asUserId("00000000-0000-4000-8000-000000000001") },
+      systemPrompt: "Describe the available tools without calling them.",
+      messages: [{ role: "user", content: "Describe the available tools." }],
+      corePlugins: [{
+        canonicalId: "rally:google", modelId: "rally_google", shortWireName: "google",
+        description: "Google Mail", preload: true, explicit: false,
+        tools: mailWrites.map((definition) => ({
+          definition,
+          execute: async () => { throw new Error("This schema probe must never execute a mail tool"); },
+        })),
+      }],
+      onAssistantTurnReserved: ({ modelTurnIndex }) => ({ transcriptSequence: modelTurnIndex }),
+      onStepSettled: () => ({ transitions: [], stop: false }),
+      onEvent: () => {},
+    });
+    expect(outcome.status, JSON.stringify(outcome)).toBe("completed");
+    expect(urls).toEqual([usesAzure
+      ? "https://schema-probe.openai.azure.com/openai/v1/chat/completions"
+      : "https://openrouter.ai/api/v1/chat/completions"]);
+    expect(requests).toHaveLength(1);
+    // Zod's fromJSONSchema ignores maxProperties. A JSON Schema validator must
+    // judge the actual payload, or a closure regression can pass unnoticed.
+    const ajv = new Ajv2020({ strict: true, allErrors: true });
+    addFormats(ajv);
+    for (const tool of mailWrites) {
+      const authoredSchema = ajv.compile(tool.inputSchema);
+      const wireTool = requests[0]!.tools.find((candidate) => candidate.function.name === `google_${tool.name.replaceAll(".", "_")}`)!.function;
+      // These are ordinary Chat Completions tools, not strict structured output.
+      expect(wireTool.strict).toBeUndefined();
+      const wireSchema = ajv.compile(wireTool.parameters);
+      for (const { label, args, accepted } of cases) {
+        expect(adapter.validateToolInput?.(tool.name, args) === null, `${tool.name}: ${label}, executor`).toBe(accepted);
+        expect(authoredSchema(args), `${tool.name}: ${label}, authored`).toBe(accepted);
+        expect(wireSchema(args), `${tool.name}: ${label}, ${provider} HTTP payload`).toBe(accepted);
+      }
+      const messageSchema = wireTool.parameters.properties as { message: { description: string; oneOf: Array<{ description: string }> } };
+      expect(messageSchema.message.description).toContain("Do not supply threadId, inReplyTo, or references");
+      expect(messageSchema.message.oneOf.map((branch) => branch.description)).toEqual([
+        "Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field.",
+        "Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field.",
+      ]);
+    }
+  });
+
   it("walks every authored surface, including the conditional and hand-assembled ones", () => {
     // `everyAuthoredToolSchema` throws when the walk stops reaching a surface,
     // so every check below carries the completeness guarantee too; this names
@@ -79,13 +196,15 @@ describe("tool schema sanitization", () => {
     // authored check below is what closes that, and it is the failure mode this
     // suite exists to catch rather than a hypothetical one.
     //
-    // The sanitizer half stays because the two spellings are not equivalent:
-    // it collapses `type: ["string", "null"]` to `type: "string"` and moves the
-    // nullability into the description — a schema forbidding the value beside
-    // prose permitting it, which is the conflict the fix exists to end. Written
-    // as an assertion because two automated reviews read the two spellings as
-    // equivalent, which is what a reviewer's head is bad at and a test is good
-    // at.
+    // The sanitizer half stays even though `@juno-ai/bind` 14 delivers both
+    // spellings. Under bind 13 it collapsed `type: ["string", "null"]` to
+    // `type: "string"` and moved the nullability into the description, a
+    // schema forbidding the value beside prose permitting it, which is the
+    // conflict the fix exists to end, and a bind release that went back to
+    // that would put the conflict on the wire again with nothing else changed
+    // here. Written as an assertion because two automated reviews read the two
+    // spellings as equivalent, which is what a reviewer's head is bad at and a
+    // test is good at.
     //
     // Every connector, not Google's four: a cursor is a cursor whichever
     // adapter serves it, and the assertion this widened from could pass while
@@ -108,18 +227,49 @@ describe("tool schema sanitization", () => {
     expect(cursors.flatMap(({ connector, tool, cursor }) => {
       const where = `${connector}.${tool.name}.${cursor}`;
       if (!authorsNullBranch(tool, cursor)) return [`${where}: authors no null branch`];
-      // Filtered to the cursor itself. `droppedNullableBranches` reports every
-      // collapsed property on the schema, and a tool that takes a cursor
-      // usually also takes flat-nullable ids and filters that are still
-      // collapsed — Slack's `search_messages` alone carries four. Those are the
-      // backlog the Google entry in `connectors.md` counts, and converting them
-      // is a change per parameter with its own reasoning about what absence
-      // means there. Asserting over them here would fail for work this guard is
-      // not about.
+      // Filtered to the cursor itself, because this assertion is the cursor
+      // contract and names a cursor when it fails. Every other property on
+      // every tool is the registry-wide assertion below.
       return droppedNullableBranches(tool.inputSchema as Record<string, unknown>)
         .filter((finding) => finding.startsWith(`${cursor}: `))
         .map((finding) => `${where.slice(0, where.lastIndexOf("."))}.${finding}`);
     })).toEqual([]);
+  });
+
+  it("delivers every authored null branch, on every tool, in either spelling", () => {
+    // Every declaration of every authored tool, not only the cursors. Until
+    // `@juno-ai/bind` 14 this could not hold: the sanitizer collapsed the flat
+    // `type: ["string", "null"]` to `type: "string"`, 28 parameters across four
+    // connectors were declared that way, and the guard above was filtered to
+    // cursors so it would not fail for them. What that cost is on record:
+    // `send_message.thread_ts` was one of the 28, and a scheduled Sidekick
+    // invented values for it for thousands of refused calls or replied to its
+    // own previous post (the 2026-09-11 entry in `docs/agent-tools.md`, and
+    // the Sidekick delivery PRD's `research.md`). Bind 14 rewrites that
+    // declaration to `anyOf` with a null branch,
+    // so the whole registry is now asserted, nested declarations included
+    // (`droppedNullableBranches` walks `items`, `$defs` and composition
+    // branches and names each finding by its dotted path), and a bind release
+    // that collapsed again fails here naming the tool and the parameter rather
+    // than in a channel.
+    //
+    // The residue is asserted exactly rather than as zero. Bind 14 rewrites a
+    // nullable SINGLE type; a genuine multi-type union with `null` still
+    // collapses, because no union of scalar branches has been measured
+    // accepted by every provider. Three authored declarations are that shape
+    // and are listed by name: a Sheets cell is a string, number, boolean or
+    // null, and an artifact query parameter is a string, number or null. A
+    // new entry here is a new parameter the model cannot say "none" to, and
+    // it needs a spelling of its own or a measured union shape; an entry that
+    // disappears is one Bind started delivering, and the list shrinks with it.
+    const dropped = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
+      droppedNullableBranches(schema).map((finding) => `${name}: ${finding}`));
+
+    expect(dropped).toEqual([
+      "workstream.artifacts.query:query_artifact_data: params.items: authored-null-branch-not-delivered",
+      "google.sheets.update_values: values.items.items: authored-null-branch-not-delivered",
+      "google.sheets.append_values: values.items.items: authored-null-branch-not-delivered",
+    ]);
   });
 
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {

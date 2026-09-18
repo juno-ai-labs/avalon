@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { Hono } from "hono";
 import type { DatabaseSync } from "node:sqlite";
@@ -282,6 +283,19 @@ describe("leaving a workspace", () => {
       "2099-01-01T00:00:00.000Z",
       NOW,
     );
+    // A live download grant tied to that invitation must not survive the
+    // workspace it was issued for.
+    database.prepare(
+      `INSERT INTO download_grants (id, token_hash, source, source_id, created_by, created_at, expires_at)
+       VALUES (?, ?, 'workspace_invitation', ?, ?, ?, ?)`,
+    ).run(
+      "00000000-0000-7000-8000-000000000098",
+      "grant-token-hash",
+      "00000000-0000-7000-8000-000000000099",
+      OWNER,
+      NOW,
+      "2099-01-01T00:00:00.000Z",
+    );
     const { env, sent } = environment(database);
 
     await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace("abandoned"))
@@ -295,6 +309,9 @@ describe("leaving a workspace", () => {
     expect(database.prepare(
       "SELECT revoked_at FROM workspace_invitations WHERE workspace_id = ?",
     ).get(WORKSPACE)).toEqual({ revoked_at: expect.any(String) });
+    expect(database.prepare(
+      "SELECT revoked_at FROM download_grants WHERE id = ?",
+    ).get("00000000-0000-7000-8000-000000000098")).toEqual({ revoked_at: expect.any(String) });
     expect(sent.map((message) => AccessRevocationMessageSchema.parse(message.body))).toEqual([
       expect.objectContaining({ userId: OWNER, workspaceId: WORKSPACE, sessionId: null }),
     ]);
@@ -822,7 +839,7 @@ describe("recognizing this protocol's queue", () => {
   it("accepts each region's queue and refuses the ones beside it", () => {
     expect([
       "avalon-global-access-revocations",
-      "avalon-eu-access-revocations",
+      "avalon-enterprise-access-revocations",
       "avalon-do-runtime-test-access-revocations",
     ].every(isAccessRevocationQueue)).toBe(true);
 
@@ -832,7 +849,7 @@ describe("recognizing this protocol's queue", () => {
     // queue the same Worker handler serves.
     expect([
       "avalon-global-access-revocations-dead-letter",
-      "avalon-eu-access-revocations-dead-letter",
+      "avalon-enterprise-access-revocations-dead-letter",
       "avalon-global-activities",
       "avalon-migration-reports",
     ].some(isAccessRevocationQueue)).toBe(false);

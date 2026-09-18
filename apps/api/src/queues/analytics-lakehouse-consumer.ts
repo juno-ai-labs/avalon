@@ -20,7 +20,7 @@ export async function consumeAnalyticsLakehouseQueue(
       message.ack();
       return;
     }
-    if (env.AVALON_REGION !== "global") {
+    if (env.AVALON_REGION !== parsed.data.region) {
       logStructuredEvent(env, "error", "analytics_lakehouse_pointer_misrouted", {
         queue: batch.queue,
         event_id: parsed.data.eventId,

@@ -1,3 +1,10 @@
+import {
+  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+  CONNECTOR_CONNECTION_STATE_WIRE_NAME,
+  LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+  LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME,
+} from "@rally/contracts";
+
 /**
  * Transcript rows name what a tool did, not which wire symbol was called. Every
  * chat surface renders the same row component, so every surface has to get its
@@ -5,6 +12,200 @@
  */
 
 export type ToolActivityStatus = "started" | "completed" | "failed";
+
+type ToolProse = { started: string; settled: string; failed: string };
+
+// Shared by a tool's current wire name and the prefixed one it used to carry.
+const CURRENT_TIME_PROSE: ToolProse = {
+  started: "Checking the current time",
+  settled: "Checked the current time",
+  failed: "Could not check the current time",
+};
+const REQUEST_ELICITATION_PROSE: ToolProse = {
+  started: "Asking for a decision",
+  settled: "Asked for a decision",
+  failed: "Could not ask for a decision",
+};
+const CONNECTOR_CONNECTION_STATE_PROSE: ToolProse = {
+  started: "Checking a connector's connection",
+  settled: "Checked a connector's connection",
+  failed: "Could not check a connector's connection",
+};
+const CONNECTOR_CONNECTION_CARD_PROSE: ToolProse = {
+  started: "Preparing a connector",
+  settled: "Prepared a connector",
+  failed: "Could not prepare a connector",
+};
+
+const SIDEKICK_POST_RESULT_PROSE: ToolProse = {
+  started: "Posting the result to the work stream",
+  settled: "Posted the result to the work stream",
+  failed: "Could not post the result to the work stream",
+};
+
+const AGENT_PROSE: Record<string, ToolProse> = {
+  sidekicks_list: {
+    started: "Looking for Sidekicks",
+    settled: "Looked for Sidekicks",
+    failed: "Could not look for Sidekicks",
+  },
+  create_sidekick: {
+    started: "Creating a Sidekick",
+    settled: "Created a Sidekick",
+    failed: "Could not create a Sidekick",
+  },
+  start_agent: {
+    started: "Delegating to a background agent",
+    settled: "Delegated to a background agent",
+    failed: "Could not delegate to a background agent",
+  },
+  list_agents: {
+    started: "Looking for teammates",
+    settled: "Looked for teammates",
+    failed: "Could not look for teammates",
+  },
+  // These name the addressee, because the bare tool names do not: a row reading
+  // "Sent a message" beside a Slack icon would be the wrong account.
+  send_message: {
+    started: "Messaging a teammate",
+    settled: "Messaged a teammate",
+    failed: "Could not message a teammate",
+  },
+  reply_to_message: {
+    started: "Replying to a teammate",
+    settled: "Replied to a teammate",
+    failed: "Could not reply to a teammate",
+  },
+  stop_agent: {
+    started: "Stopping a background agent",
+    settled: "Stopped a background agent",
+    failed: "Could not stop a background agent",
+  },
+};
+
+const WORKSTREAM_PROSE: Record<string, ToolProse> = {
+  read_resource: {
+    started: "Reading an attached resource",
+    settled: "Read an attached resource",
+    failed: "Could not read an attached resource",
+  },
+  list_resources: {
+    started: "Listing attached resources",
+    settled: "Listed attached resources",
+    failed: "Could not list attached resources",
+  },
+  describe_artifact_data: {
+    started: "Looking at what the site has collected",
+    settled: "Looked at what the site has collected",
+    failed: "Could not read what the site has collected",
+  },
+  query_artifact_data: {
+    started: "Reading the site's data",
+    settled: "Read the site's data",
+    failed: "Could not read the site's data",
+  },
+  search_resource: {
+    started: "Searching an attached resource",
+    settled: "Searched an attached resource",
+    failed: "Could not search an attached resource",
+  },
+  view_resource: {
+    started: "Viewing attached images",
+    settled: "Viewed attached images",
+    failed: "Could not view attached images",
+  },
+  summarize_resource: {
+    started: "Summarizing an attached resource",
+    settled: "Summarized an attached resource",
+    failed: "Could not summarize an attached resource",
+  },
+  schedule_wakeup: {
+    started: "Scheduling a wake-up",
+    settled: "Scheduled a wake-up",
+    failed: "Could not schedule a wake-up",
+  },
+  list_wakeups: {
+    started: "Checking scheduled wake-ups",
+    settled: "Checked scheduled wake-ups",
+    failed: "Could not check scheduled wake-ups",
+  },
+  cancel_wakeup: {
+    started: "Cancelling a wake-up",
+    settled: "Cancelled a wake-up",
+    failed: "Could not cancel a wake-up",
+  },
+  run_subagent: {
+    started: "Running a focused sub-agent",
+    settled: "Ran a focused sub-agent",
+    failed: "Could not run a focused sub-agent",
+  },
+};
+
+const MULTIMODAL_GENERATION_PROSE: Record<string, ToolProse> = {
+  generate_image: {
+    started: "Generating an image",
+    settled: "Generated an image",
+    failed: "Could not generate an image",
+  },
+  edit_image: {
+    started: "Editing an image",
+    settled: "Edited an image",
+    failed: "Could not edit an image",
+  },
+  generate_audio: {
+    started: "Generating a voice recording",
+    settled: "Generated a voice recording",
+    failed: "Could not generate a voice recording",
+  },
+};
+
+const TERMINAL_PROSE: Record<string, ToolProse> = {
+  read_file: {
+    started: "Reading a file",
+    settled: "Read a file",
+    failed: "Could not read a file",
+  },
+  edit_file: {
+    started: "Editing a file",
+    settled: "Edited a file",
+    failed: "Could not edit a file",
+  },
+  write_file: {
+    started: "Writing a file",
+    settled: "Wrote a file",
+    failed: "Could not write a file",
+  },
+  apply_patch: {
+    started: "Applying a patch",
+    settled: "Applied a patch",
+    failed: "Could not apply a patch",
+  },
+  run_command: {
+    started: "Running a command",
+    settled: "Ran a command",
+    failed: "Could not run a command",
+  },
+  checkout_repository: {
+    started: "Checking out a repository",
+    settled: "Checked out a repository",
+    failed: "Could not check out a repository",
+  },
+  import_resource: {
+    started: "Copying an attachment into the sandbox",
+    settled: "Copied an attachment into the sandbox",
+    failed: "Could not copy an attachment into the sandbox",
+  },
+  publish_resource: {
+    started: "Publishing an artifact",
+    settled: "Published an artifact",
+    failed: "Could not publish an artifact",
+  },
+  publish_branch_and_pr: {
+    started: "Opening a pull request",
+    settled: "Opened a pull request",
+    failed: "Could not open a pull request",
+  },
+};
 
 /**
  * Wire names Avalon owns. Connector tools are deliberately absent: there are as
@@ -16,7 +217,7 @@ export type ToolActivityStatus = "started" | "completed" | "failed";
  * success-tense prose next to a failure icon would be the only thing most
  * readers see.
  */
-const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; failed: string }> = {
+const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   web_search: {
     started: "Searching the public web",
     settled: "Searched the public web",
@@ -27,51 +228,10 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Read a public web page",
     failed: "Could not read a public web page",
   },
-  core_current_time: {
-    started: "Checking the current time",
-    settled: "Checked the current time",
-    failed: "Could not check the current time",
-  },
-  core_request_elicitation: {
-    started: "Asking for a decision",
-    settled: "Asked for a decision",
-    failed: "Could not ask for a decision",
-  },
-  workstream_read_resource: {
-    started: "Reading an attached resource",
-    settled: "Read an attached resource",
-    failed: "Could not read an attached resource",
-  },
-  workstream_list_resources: {
-    started: "Listing attached resources",
-    settled: "Listed attached resources",
-    failed: "Could not list attached resources",
-  },
-  workstream_describe_artifact_data: {
-    started: "Looking at what the site has collected",
-    settled: "Looked at what the site has collected",
-    failed: "Could not read what the site has collected",
-  },
-  workstream_query_artifact_data: {
-    started: "Reading the site's data",
-    settled: "Read the site's data",
-    failed: "Could not read the site's data",
-  },
-  workstream_search_resource: {
-    started: "Searching an attached resource",
-    settled: "Searched an attached resource",
-    failed: "Could not search an attached resource",
-  },
-  workstream_view_resource: {
-    started: "Viewing attached images",
-    settled: "Viewed attached images",
-    failed: "Could not view attached images",
-  },
-  workstream_summarize_resource: {
-    started: "Summarizing an attached resource",
-    settled: "Summarized an attached resource",
-    failed: "Could not summarize an attached resource",
-  },
+  current_time: CURRENT_TIME_PROSE,
+  request_elicitation: REQUEST_ELICITATION_PROSE,
+  [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
+  [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
   memory_search: {
     started: "Searching memory",
     settled: "Searched memory",
@@ -127,26 +287,6 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Cleared durable table rows",
     failed: "Could not clear durable table rows",
   },
-  workstream_schedule_wakeup: {
-    started: "Scheduling a wake-up",
-    settled: "Scheduled a wake-up",
-    failed: "Could not schedule a wake-up",
-  },
-  workstream_list_wakeups: {
-    started: "Checking scheduled wake-ups",
-    settled: "Checked scheduled wake-ups",
-    failed: "Could not check scheduled wake-ups",
-  },
-  workstream_cancel_wakeup: {
-    started: "Cancelling a wake-up",
-    settled: "Cancelled a wake-up",
-    failed: "Could not cancel a wake-up",
-  },
-  workstream_run_subagent: {
-    started: "Running a focused sub-agent",
-    settled: "Ran a focused sub-agent",
-    failed: "Could not run a focused sub-agent",
-  },
   list_plugins: {
     started: "Checking available plugins",
     settled: "Checked available plugins",
@@ -173,6 +313,48 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Created an artifact",
     failed: "Could not create an artifact",
   },
+
+  // Retired wire names, for the same reason. `rally:core` advertised its tools
+  // under a `core_` prefix until the always-active plugins stopped carrying
+  // one; the tools are unchanged, so these read identically to their current
+  // names above and are removed only when the rows that hold them are.
+  core_current_time: CURRENT_TIME_PROSE,
+  core_request_elicitation: REQUEST_ELICITATION_PROSE,
+  [LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
+  [LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
+
+  // `rally:terminal` under both spellings, for the same reason it dropped its
+  // own `terminal_` prefix. These had no entry at all and were rendering as
+  // the humanized wire name — "Terminal run command" — which is the raw-symbol
+  // fallback this module exists to prevent; without the retired spellings the
+  // prefix would simply disappear from every row already written, leaving old
+  // and new rows for one action reading differently in the same feed.
+  ...TERMINAL_PROSE,
+  ...Object.fromEntries(Object.entries(TERMINAL_PROSE)
+    .map(([toolName, prose]) => [`terminal_${toolName}`, prose])),
+
+  // `rally:multimodal-generation`, on the same terms: no entry before, and the
+  // retired spelling kept so rows already written keep their wording.
+  ...MULTIMODAL_GENERATION_PROSE,
+  ...Object.fromEntries(Object.entries(MULTIMODAL_GENERATION_PROSE)
+    .map(([toolName, prose]) => [`multimodal_generation_${toolName}`, prose])),
+
+  // `rally:workstream` had prose already; it dropped its `workstream_` prefix,
+  // so the same wording is registered under both spellings.
+  ...WORKSTREAM_PROSE,
+  ...Object.fromEntries(Object.entries(WORKSTREAM_PROSE)
+    .map(([toolName, prose]) => [`workstream_${toolName}`, prose])),
+
+  // `rally:sidekick-result` and `avalon:agents`, which also dropped their
+  // prefixes. Both spellings, for the rows each already wrote.
+  ...AGENT_PROSE,
+  ...Object.fromEntries(Object.entries(AGENT_PROSE)
+    .map(([toolName, prose]) => [`agents_${toolName}`, prose])),
+  // `reply_to_message` was called `reply`, so the rows it wrote say
+  // `agents_reply` — not the `agents_reply_to_message` the line above derives.
+  agents_reply: AGENT_PROSE.reply_to_message!,
+  post_result: SIDEKICK_POST_RESULT_PROSE,
+  sidekick_post_result: SIDEKICK_POST_RESULT_PROSE,
 };
 
 /**

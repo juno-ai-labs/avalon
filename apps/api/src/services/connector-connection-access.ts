@@ -1,3 +1,9 @@
+import { workspaceDOName } from "../durable-objects/names";
+import { asWorkspaceId } from "@rally/contracts";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { decryptVersionedCredentialValue } from "./connector-credential-envelope";
+import type { InstallationClaim } from "../durable-objects/connector-installation-protocol";
+import type { ConnectorInstallationManagement } from "@rally/connectors";
 import {
   ConnectorError,
   authorizedConnection,
@@ -34,6 +40,35 @@ type ConnectionAccessEnv = Pick<Env,
  *
  * `ensureFreshConnectorCredentials` persists the tokens it rotates itself, so
  * a refresh here is durable even when the operation later fails.
+ */
+/**
+ * Read-only validation of a credential no connection holds yet.
+ *
+ * The door above exists because a stored credential can be stale, and only a
+ * refresh against its row can say otherwise. Neither applies to a key an
+ * administrator pasted a moment ago: there is no row to refresh from, nothing
+ * to persist, and nothing that could have expired in between.
+ *
+ * It takes the facet and makes the call itself rather than handing the brand to
+ * a callback. An earlier version did hand it over, with a comment saying the
+ * operation had to be `validate` — which made the promise the seam exists to
+ * enforce into a thing a caller had to remember, inside the one module the
+ * lint rule exempts. Here there is nothing to misuse: the only call this can
+ * make is the read the provider's own facet declares, so a failed setup leaves
+ * nothing behind at the provider either.
+ */
+export async function validateUnstoredConnectorCredential(
+  management: Pick<ConnectorInstallationManagement, "support" | "validate">,
+  connection: ConnectorConnectionContext,
+  signal: AbortSignal,
+): Promise<void> {
+  if (management.support.create !== "manual") throw new Error("unstored_validation_not_applicable");
+  await management.validate(authorizedConnection(connection), signal);
+}
+
+/**
+ * The one door through which a *stored* connector credential reaches an
+ * adapter: see the contract above.
  */
 export async function withAuthorizedConnection<T>(
   env: ConnectionAccessEnv,
@@ -170,4 +205,22 @@ export async function markConnectorNeedsReconnect(
     connection.id,
     connection.workspaceId,
   ).run();
+}
+
+/** Separate deletion-only purpose: no ordinary callback, refresh, or credential writes. */
+export async function removeAuthorizedConnectorRegistration(
+  env: Env, request: InstallationClaim, management: ConnectorInstallationManagement, signal: AbortSignal,
+  onDispatch: () => void,
+): Promise<void> {
+  const workspaceId = asWorkspaceId(request.workspaceId);
+  const object = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
+  const snapshot = await object.connectorInstallationCleanup(request);
+  const credentials = JSON.parse(await decryptVersionedCredentialValue(env, snapshot, request.connectionId)) as Record<string, unknown>;
+  // Recheck after decryption, which yields; this also enforces retirement.
+  const current = await object.connectorInstallationCleanup(request);
+  if (current.providerId !== snapshot.providerId || current.encrypted_credentials !== snapshot.encrypted_credentials) throw new Error("connector_cleanup_superseded");
+  signal.throwIfAborted();
+  onDispatch();
+  await management.remove(authorizedConnection({ id: request.connectionId, workspaceId: request.workspaceId,
+    scope: "workspace", ownerUserId: null, credentials, config: {}, cursor: {}, grantedScopes: snapshot.grantedScopes }), snapshot.providerId, signal);
 }

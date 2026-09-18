@@ -67,9 +67,7 @@
   "oauth_config": {
     "redirect_urls": [
       "https://api.rallywith.ai/connections/slack/callback",
-      "https://eu.api.rallywith.ai/connections/slack/callback",
-      "https://api.with-avalon.com/connections/slack/callback",
-      "https://eu.api.with-avalon.com/connections/slack/callback"
+      "https://api.with-avalon.com/connections/slack/callback"
     ],
     "scopes": {
       "bot": [

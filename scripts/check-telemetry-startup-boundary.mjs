@@ -12,10 +12,9 @@ const MODULE_MARKERS = [
 ];
 
 /** Proves the regional startup exclusion against Wrangler's exact emitted artifacts. */
-export function assertTelemetryStartupBoundary({ globalBundle, euBundle }) {
+export function assertTelemetryStartupBoundary({ globalBundle }) {
   for (const [label, bundle] of [
     ['Global API', globalBundle],
-    ['EU API', euBundle],
   ]) {
     for (const marker of MODULE_MARKERS) {
       if (marker.pattern.test(bundle)) {
@@ -26,11 +25,8 @@ export function assertTelemetryStartupBoundary({ globalBundle, euBundle }) {
 }
 
 async function run() {
-  const [globalBundle, euBundle] = await Promise.all([
-    readFile(join(repositoryDirectory, 'apps/api/dist/worker.bundle'), 'utf8'),
-    readFile(join(repositoryDirectory, 'apps/api/dist-eu/worker.bundle'), 'utf8'),
-  ]);
-  assertTelemetryStartupBoundary({ globalBundle, euBundle });
+  const globalBundle = await readFile(join(repositoryDirectory, 'apps/api/dist/worker.bundle'), 'utf8');
+  assertTelemetryStartupBoundary({ globalBundle });
   process.stdout.write('Telemetry destination startup boundary verified\n');
 }
 

@@ -11,7 +11,6 @@ import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { z } from 'zod';
 
 const PACIFIC_TIMEZONE = 'America/Los_Angeles';
-const EU_TIMEZONE = 'Europe/London';
 
 // Persisted authentication is a compatibility boundary, not an API response.
 // Keep this schema explicit so unrelated additive wire-contract changes do not
@@ -66,7 +65,7 @@ export function normalizeLegacyStoredSession(value: unknown): unknown {
           ...workspace,
           timezone: typeof workspace.timezone === 'string'
             ? workspace.timezone
-            : workspace.region === 'eu' ? EU_TIMEZONE : PACIFIC_TIMEZONE,
+            : PACIFIC_TIMEZONE,
         }
       : workspace,
   };

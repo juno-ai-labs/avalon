@@ -1,11 +1,13 @@
+import "../../../tests/isolated-region";
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { TELEMETRY_BATCH_MAX_BYTES } from '@rally/contracts/telemetry';
 import type { HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from '../src/routes/telemetry';
 import { requireIdentityAuth } from '../src/middleware/auth';
-import { coarseTelemetryRoute } from '../src/telemetry/bootstrap';
+import { coarseTelemetryRoute, TelemetryBootstrapService } from '../src/telemetry/bootstrap';
 import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -34,23 +36,7 @@ describe('telemetry HTTP bounds', () => {
   afterEach(() => vi.useRealTimers());
 
   it('exposes the same content-free Cloudflare route decision without creating a journey', async () => {
-    expect(coarseTelemetryRoute('DE')).toEqual({ route: 'eu', routingBasis: 'ip_geolocation' });
-    expect(coarseTelemetryRoute('US')).toEqual({ route: 'global', routingBasis: 'ip_geolocation' });
-    expect(coarseTelemetryRoute('US', '1')).toEqual({
-      route: 'eu', routingBasis: 'ip_geolocation',
-    });
-    expect(coarseTelemetryRoute('US', true)).toEqual({
-      route: 'eu', routingBasis: 'ip_geolocation',
-    });
-    expect(coarseTelemetryRoute('DE', '0')).toEqual({
-      route: 'eu', routingBasis: 'ip_geolocation',
-    });
-    expect(coarseTelemetryRoute('US', false)).toEqual({
-      route: 'global', routingBasis: 'ip_geolocation',
-    });
-    expect(coarseTelemetryRoute(undefined)).toEqual({
-      route: 'global', routingBasis: 'geolocation_fallback',
-    });
+    expect(coarseTelemetryRoute()).toEqual({ route: 'global', routingBasis: 'geolocation_fallback' });
     const prepare = vi.fn();
     const response = await publicApp().request('/telemetry/route', {}, createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
@@ -64,7 +50,7 @@ describe('telemetry HTTP bounds', () => {
     expect(prepare).not.toHaveBeenCalled();
 
     const regional = await publicApp().request('/telemetry/route', {}, createTestEnv({
-      AVALON_REGION: 'eu', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
+      AVALON_REGION: 'enterprise', LOG_LEVEL: 'error', DB: createTestD1Database({ prepare }),
     }));
     expect(regional.status).toBe(404);
 
@@ -78,11 +64,11 @@ describe('telemetry HTTP bounds', () => {
     }));
     expect(cloudflareEu.status).toBe(200);
     await expect(cloudflareEu.json()).resolves.toMatchObject({
-      route: 'eu', routingBasis: 'ip_geolocation',
+      route: 'global', routingBasis: 'geolocation_fallback',
     });
   });
 
-  it('uses Cloudflare affirmative EU classification for a tokenless bootstrap', async () => {
+  it('uses Cloudflare affirmative enterprise classification for a tokenless bootstrap', async () => {
     const database = migratedSqliteDatabase();
     const environment = createTestEnv({
       AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
@@ -103,7 +89,7 @@ describe('telemetry HTTP bounds', () => {
 
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({
-      route: 'eu', routingBasis: 'ip_geolocation',
+      route: 'global', routingBasis: 'geolocation_fallback',
     });
     database.close();
   });
@@ -131,7 +117,7 @@ describe('telemetry HTTP bounds', () => {
 
     expect(bootstrapResponse.status, JSON.stringify(bootstrapBody)).toBe(201);
     expect(bootstrapBody).toMatchObject({
-      route: 'global', routingBasis: 'ip_geolocation',
+      route: 'global', routingBasis: 'geolocation_fallback',
     });
     expect(database.prepare(
       'SELECT route FROM telemetry_onboarding_journeys WHERE anonymous_epoch_id = ?',
@@ -197,12 +183,43 @@ describe('telemetry HTTP bounds', () => {
     expect(malformed.status).toBe(400);
     await expect(malformed.json()).resolves.toMatchObject({ error: { code: 'invalid_request' } });
 
-    const eu = await publicApp().request('/telemetry/bootstrap', {
+    const enterprise = await publicApp().request('/telemetry/bootstrap', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ anonymousEpochId: epochId }),
-    }, createTestEnv({ AVALON_REGION: 'eu', LOG_LEVEL: 'error' }));
-    expect(eu.status).toBe(404);
+    }, createTestEnv({ AVALON_REGION: 'enterprise', LOG_LEVEL: 'error' }));
+    expect(enterprise.status).toBe(404);
     database.close();
+  });
+
+  it('logs the field a bootstrap that failed its own contract rejected, and still answers internal_error', async () => {
+    // The route mapped every unknown error to `ApiError(500, 'internal_error')`,
+    // so a `ZodError` from the service reached the log as that code and the
+    // class name `ApiError`, and nothing said which field. Rethrown as itself,
+    // the error handler answers the same 500 and logs the route and the paths.
+    const rejection = z.strictObject({ routingBasis: z.enum(['geolocation_fallback']) }).safeParse({ routingBasis: 'guess' });
+    if (rejection.success) throw new Error('expected a rejection');
+    vi.spyOn(TelemetryBootstrapService.prototype, 'bootstrap').mockRejectedValueOnce(rejection.error);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const database = migratedSqliteDatabase();
+
+    const response = await publicApp().request('/telemetry/bootstrap', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
+      body: JSON.stringify({ anonymousEpochId: epochId }),
+    }, createTestEnv({
+      AVALON_REGION: 'global', LOG_LEVEL: 'error', DB: sqliteD1(database),
+      TELEMETRY_CAPABILITY_SIGNING_KEY: 'independent-global-capability-key',
+    }));
+    database.close();
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'internal_error' } });
+    expect(logged).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'request_failed',
+      code: 'internal_error',
+      route: '/telemetry/bootstrap',
+      validation_issues: [{ path: 'routingBasis', code: 'invalid_value' }],
+    }));
+    logged.mockRestore();
   });
 
   it('maps a tampered anonymous capability to a stable public rejection', async () => {

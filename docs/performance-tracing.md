@@ -1,7 +1,8 @@
 # Performance tracing
 
-Three things in Rally are slow enough that a person notices: starting a work
-stream, opening one that already exists, and sending a message to one. Each
+Five things in Rally are slow enough that a person notices: starting a work
+stream, preparing a substream, confirming that substream, opening an existing
+conversation, and sending a message. Each
 spans the Electron renderer, a regional Worker, and two or three Durable
 Objects, and until this existed the only measurement of any of them was the
 `http_request` log row's total duration — a single number that says a create
@@ -30,9 +31,9 @@ necessarily keeps apart.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
-| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability.traces`, which is what makes any of this reach a trace. Custom spans require it; see [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). |
-| `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `POST /:id/messages`, and both socket-ticket routes. |
+| `apps/api/src/routes/workstreams.ts`, `routes/conversations.ts` | Root spans for work-stream creation/open/message flows and substream preparation/confirmation. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
+| `apps/api/src/services/substream-creation-service.ts` | Named steps for parent authorization, preparation receipts, source capture, context transformation, child provisioning, context installation, opening admission, publication, and seating. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |
@@ -52,7 +53,6 @@ another page. They must not count as completed first-result samples. The optiona
 debounce, request, paint, scope resolution, retrieval, hydration, and server work.
 Queries and result contents are never event properties. `text-search.md` owns the
 pagination contract and p50/p90 acceptance targets.
-
 
 ### A custom span is a callback
 
@@ -128,6 +128,29 @@ Cloudflare bills a span and a log event identically, out of one allowance, so
 the row costs the same as adding a thirteenth span. One row per flow is the
 budget it is worth.
 
+### Inference-start SLO boundary
+
+The user-facing target is measured from the regional Worker receiving the
+request to the harness issuing the first provider request: p50 500 ms and p90
+2 seconds. It is deliberately separate from provider time to first token.
+
+For `workstream_create`, `substream_create`, and `message_send`, the server
+captures `telemetryRequestReceivedAt` in the first Worker middleware (or at
+socket invocation entry) and carries a stable journey name in the durable
+execution receipt. Immediately before the first provider dispatch of the first
+durable attempt, the inference logger emits `agent_inference_started` with
+`request_to_inference_start_ms` and archives the same boundary in that request
+row's `metadata` JSON. Later model calls and recovered attempts retain their
+ordinary request archives but omit this SLO field, so percentile queries filter
+for its presence rather than deduplicating a whole agentic run. A negative
+cross-isolate wall-clock delta is marked `request_clock_skewed` and omitted from
+the duration distribution instead of being clamped to zero. The terminal
+attempt's existing `ttft_ms` measures provider request to first token. Join the
+two rows on `inference_request_id`; use `operation_id` in the regional log or
+`metadata.operationId` in the lakehouse to join the result back to the product
+journey. Do not add these two durations together when reporting which side of
+the boundary missed its target.
+
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
 same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
@@ -171,7 +194,7 @@ under `avalon.`, so it can never collide with a convention added later:
 
 | Attribute | Meaning |
 | --- | --- |
-| `rally.flow` | `workstream_create`, `workstream_open`, or `workstream_message_send`. |
+| `rally.flow` | `workstream_create`, `substream_prepare`, `substream_create`, `workstream_open`, or `workstream_message_send`. |
 | `rally.component` | Which participant emitted it: `api`, `api_socket`, `substream_do`, `workspace_do`. |
 | `rally.workspace.id`, `rally.workstream.id`, `rally.substream.id` | The identifiers a slow trace has to be attributable to. |
 | `rally.request.id` | The desktop's `x-request-id`. |
@@ -276,16 +299,17 @@ would never meet.
 | The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
 | Renderer → admitted SubstreamAgent socket | `rally.message.client_id`, which the renderer, the command, and the private command result all carry. |
 
-### The three flows
+### The five flows
 
 **`workstream_create`** — `POST /workstreams` opens `workstream.create` and the
 creation service adds a span per awaited call:
 `workstream.create.authority.read_recheck` (named for the second read it is —
 the route already resolved the same row), `…receipt.reserve`, `…receipt.read`,
-`…email_address.reserve`, `…d1_rows.write`, `…object.initialize`,
-`…substream.flush_effects`, `…workstream.flush_directory`,
-`…workspace.directory_probe`, `…route.activate`, `…email_route.activate`,
-`…receipt.complete`. Inside `object.initialize` the room adds
+`…email_address.reserve`, `…d1_rows.write`, `…parent.reserve`,
+`…child.initialize`, `…directory.flush`, `…route.activate`, and
+`…receipt.complete`. The child initialization and provisional directory flush
+are distinct sibling steps that run concurrently, so either latency source can
+be assigned without serializing them. Inside `child.initialize` the room adds
 `workstream.room.initialize` and its children. A replayed create is labelled
 `rally.create.path = replayed_receipt` so it does not sit in the same
 distribution as a first one.
@@ -343,9 +367,11 @@ binding call on the current desktop path. `POST /:id/messages` traces the same
 flow for the HTTP path, distinguished by `rally.transport`; the old
 `workstream.message.send` WorkspaceDO trace now identifies a released desktop
 using the rollout-compatibility handler.
-The renderer's `resolve_mentions` phase performs a workspace-roster request only
-when the outgoing text contains `@` or `person://`; ordinary text proceeds
-directly to the socket command round trip.
+The renderer's `resolve_mentions` phase reads the already-owned
+`['workspace-members']` roster when the outgoing text contains `@` or
+`person://`, falling back to a workspace-roster request when that cache is
+absent or cannot resolve any typed person. Ordinary text proceeds directly to
+the socket command round trip.
 
 ### What `room_upgrade` contains
 
@@ -387,29 +413,6 @@ Both go through `logDebug`, which is `console.debug`: filtered out of DevTools
 and of a terminal until a reader opens the Verbose level. That is what lets it
 stay on in every build rather than behind a preference nobody had enabled when
 the slow open happened.
-
-Each click-scoped completed flow also emits `renderer_perf_flow` through the typed renderer
-intent, validated main-process IPC, and regional telemetry spool. This is a
-closed diagnostic projection, not console forwarding: it carries exact total,
-phase, blocked, and effect-to-first-request milliseconds; a closed
-flow/outcome vocabulary; bounded structural counts; and the work-stream,
-ticket, client-message, and operation identifiers needed to join the backend
-work. Speculative hover and retained background socket attempts still print a
-local flow but are not uploaded as opening samples. Direct Electron routes add
-PAC, DNS, TCP, TLS, and edge-upgrade milliseconds; proxied routes add one
-CONNECT/TLS/edge aggregate plus failed-route count because the inner tunnel
-phases are not observable truthfully. The main broker supplies its phase
-callback before client construction and retains any synchronous construction
-phase only until socket ownership is registered, then relays later phases live.
-This removes a fragile main-process registration order; it does not prove that
-historical missing fields came from that gap. Check the packaged-client version
-and native phase emission before attributing an absence. Message sends keep the UUIDv4 client-message identifier separate from the
-UUIDv7 operation identifier required by the telemetry envelope. Raw console
-fields such as cursors and close codes are omitted, as are URLs, errors,
-messages, attachment names, and arbitrary annotations. Product analytics
-opt-out suppresses the event, Global follows the existing PostHog/lakehouse
-route, and EU remains on the regional internal route. The HTTP perf line remains
-local because its request duration is already present in backend request traces.
 
 Creation flows use that same projection but finish at the existing two-frame
 painted send-ready boundary. An ordinary `workstream_create` carries its
@@ -540,6 +543,11 @@ workspace search and the work-stream flows described here.
   two durations reads as a number rather than as a mystery.
 - **The session lookup is one uncached, blocking D1 round trip per
   authenticated request**, and there is no read replication on the `DB` binding.
+  Root-mounted identity and workspace middleware share that request-local result,
+  removing one lookup from a protected request's critical path. Before that
+  reuse, the second call overwrote `rally.auth.duration_ms`; the metric now
+  represents the single identity pass and must not be compared as a sum of both
+  old calls.
   Whether that is a problem is now measurable rather than arguable: read
   `rally.auth.duration_ms`, and the platform's own `d1_first` span for the same
   query carries `cloudflare.d1.response.sql_duration_ms` beside it, which
@@ -555,9 +563,9 @@ workspace search and the work-stream flows described here.
   re-send canonical state (`request_snapshot`, see
   [`architecture.md`](architecture.md)) runs the same snapshot assembly a
   subscribe does, but under `noFlowSpan` — it is a background repair, not one of
-  the three flows a person waits on, and `PerfFlow` is deliberately limited to
+  the five flows a person waits on, and `PerfFlow` is deliberately limited to
   those. The consequence is that a slow reconciliation is invisible here; it
-  appears only as room time nobody attributed. Adding a fourth flow is the lever
+  appears only as room time nobody attributed. Adding another flow is the lever
   if that becomes the question, and it costs a `perf_flow` row per repair.
 - **A `workstream_open` trace is not always a completed open.** The renderer
   closes the trace on the first valid server frame and records which one it was
@@ -587,7 +595,7 @@ workspace search and the work-stream flows described here.
 | `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence, the exact governed projection and rejection of arbitrary console fields, and that `newRequestId` produces something `requestContext` will accept rather than replace. |
 | `apps/desktop/src/main/native-performance-log.test.ts`, desktop release tests | The exact public structured record, observational failure behavior, development/packaged addon paths, and that the native bridge is packaged, signed, and release-verified. |
 | `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, explicit per-request socket IDs remain unchanged, and a work-stream detail retry carries its longer-lived opening attempt separately as `x-rally-operation-id`. |
-| `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in both regions and is exposed on the response. |
+| `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in configured deployments and is exposed on the response. |
 
 Three traps:
 
@@ -662,11 +670,6 @@ Worth adding to the saved views in [`runbook.md`](runbook.md#log-shape) once
 there are enough production rows to pick thresholds that are not guesses; they
 are deliberately not guessed here.
 
-**This is now pointed at a third-party destination.** As of 2026-08-20 the
-Global Worker exports both its logs and its traces to the US PostHog project,
-via the `posthog-logs` and `posthog-traces` destinations named in
-`wrangler.global.jsonc`. The EU Worker does not, and its config says why.
-
 The two things below had to be decided rather than inherited before that
 happened. They are kept here in full because they are what a future reader needs
 in order to understand what was accepted, and because the first of them is not
@@ -714,13 +717,38 @@ destination is account configuration; the **attachment is per Worker**, through
 `observability.<signal>.destinations`. Creating a destination exports nothing —
 a Worker exports when its own config names one.
 
-Global does; EU does not, and `telemetry.md` records that changing that requires
-a new recorded decision. But what enforces it is the absence of a line in
-`wrangler.eu.jsonc`, which is why
-`apps/api/test/telemetry-export-destinations.test.ts` asserts that absence in
-both signals rather than trusting the comment there to survive.
+### 2026-09-17 — Name substream stages and split inference-start from provider TTFT
 
-## Changelog
+Substream preparation and confirmation now have their own flow roots and named
+steps instead of appearing as opaque request totals. User-started executions
+carry the Worker receipt time to the provider boundary, where a structured log
+and lakehouse request record measure admission-to-dispatch independently from
+the attempt row's TTFT. This split was chosen because a slow provider and a slow
+Rally activation path have different owners; one combined number made the
+largest latency source impossible to assign.
+
+### 2026-09-17 — Mention resolution reuses the workspace roster
+
+**What changed:** The socket send path passes React Query's existing
+`['workspace-members']` value into `messageMentionPayload`. Mention-bearing text
+uses that roster without another HTTP request and retains the API fetch as a
+fallback when the shared roster has not loaded or cannot resolve a typed person.
+
+**Why:** The application root already owns a stable workspace-member roster for
+the composer and conversation surfaces. Fetching the same authority again at
+send time put independent network latency in front of an otherwise ready room
+socket.
+
+**Considered and rejected:** Adding another mention-specific cache would create
+a second invalidation contract for the same roster. Resolving from selected
+chips alone would still miss typed names and pasted durable mention Markdown.
+
+**Consequences:** `resolve_mentions` is local on the normal loaded-workspace
+path. A cold, isolated, or observably stale caller remains correct through one
+refresh from the existing roster endpoint, and plain text still performs
+neither lookup nor fetch.
+
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
 
 ### 2026-09-09 — Keep socket timing attribution explicit
 
@@ -785,7 +813,6 @@ would report a fast success before a result existed. Search now keeps the trace
 open through continuation and user wait time until results or a terminal response.
 The latency target remains about useful results rather than candidate-page speed.
 
-
 ### 2026-09-07 — Measure search from typing through painted results
 
 **What changed:** The existing `renderer_perf_flow` contract accepts
@@ -801,7 +828,6 @@ logs alone cannot measure. Reusing the governed flow avoids a separate exporter.
 failed and superseded searches remain separately visible. Backend timing fields
 are optional and do not change legacy search responses. See `text-search.md` for
 the retrieval and pagination contracts.
-
 
 ### 2026-09-05 — Keep preview timings out of creation percentiles
 
@@ -828,6 +854,57 @@ failure semantics, while non-route callers still need their own check.
 Keep P50 below one second and P90 below two seconds as unverified acceptance
 targets until a representative trace set exists. Do not merge replay or failure
 cohorts into those percentiles.
+
+### 2026-09-02 — Preload admits native handshake phases
+
+**What changed:** The dependency-free preload validator now accepts the complete
+closed `handshake_phase` shape emitted by the main-process socket broker. It
+admits only the seven declared phase names, a finite nonnegative duration, a
+nonnegative integer route index, the generated socket ID, and the proxy flag.
+The IPC regression carries a real phase through main's sender and the same parser
+preload uses.
+
+**Why:** The first packaged 1.249 cohort contained 39 click-scoped
+`workstream_open` records and none carried proxy-resolution, DNS, TCP, TLS,
+edge-upgrade, proxy-connect, or failed-route timing, even though the main-process
+broker emitted that vocabulary. The Zod schema declared `handshake_phase`, but
+preload deliberately carries a dependency-free closed parser and that parser had
+branches only for open, message, error, and close. It therefore discarded every
+valid timing before the renderer could annotate the flow. The validator test
+claimed to cover every broker event shape while omitting the same variant.
+
+The same cohort joined by trace ID to Worker `http_request` and `api_socket`
+records put the first application-observable Worker millisecond at the start of
+`api_socket` for all 39 requests. The mean 607 ms residual therefore precedes
+request-scoped authentication and Worker-to-object forwarding. Ten independent
+upgrades from the same Mac completed DNS, TCP, and TLS in 37–61 ms while first
+response arrived in 465–917 ms. A temporary 0.41 KiB Worker on a unique route
+under the same API hostname returned upgrades in 88–176 ms while fall-through
+requests to the 7.4 MiB API Worker took 541–562 ms. That indicates roughly
+350–450 ms of potential ingress savings, but does not verify the net reduction
+of a permanent ingress Worker that must also authorize and forward the upgrade.
+
+**Considered and rejected:** Treating the missing properties as a query or
+regional-upload defect was contradicted by the same omission in macOS Unified
+Logging. Adding another Worker header or timing system would duplicate the
+existing native boundaries without recovering the dropped events. Renderer
+buffering was also rejected: construction and listener attachment remain one
+uninterrupted renderer turn, and it would not repair a phase preload already
+discarded. Moving Durable Object classes is unnecessary; a future ingress Worker
+can cross-script bind the existing namespaces. Copying the ticket-signing secret
+and adding regional route promotion are nevertheless a separate security and
+deployment change, not something to hide inside this parser correction.
+
+**Consequences:** Historical native phase absence does not mean DNS, TLS, or
+proxy resolution took zero time. A packaged build containing this change will
+provide the first usable phase cohort. A dedicated regional socket-ingress Worker
+may save roughly 350–450 ms, but its permanent implementation remains unmeasured
+and requires explicit ticket-secret provisioning and service-first rollout work.
+Cloudflare's pinned synchronous clock can still report zero inside Worker startup,
+so client-native phases and the trace-ID join remain complementary rather than
+interchangeable. Per-phase duration annotations are last-write-wins across route
+attempts; read `failedRouteCount` beside them rather than treating them as an
+attributed history of every failed route.
 
 ### 2026-09-02 — Prepared admission separates hidden work from upgrade fallback
 
@@ -1004,18 +1081,6 @@ to the fleet tracker would turn a timing question into cross-region queue
 traffic and defeat its deploy/heartbeat dedupe; structured Worker logs provide
 the per-wake record without changing tracker semantics.
 
-**Consequences:** Diagnostic events obey the Product analytics preference;
-Global can reach PostHog and the lakehouse while EU remains internal-region
-only. The 90-day event omits cursor positions, close codes, raw server event
-names, errors, URLs, and content. Adding a renderer phase now requires an
-explicit contract change or it remains local, and raw console lines are still
-ephemeral. Local renderer records survive app restarts and remain on the device
-regardless of Product analytics, while governed uploads still obey the account
-preference and regional route. Migration and initialization failures remain
-behaviorally identical. Workerd's pinned clock can report `0 ms` for
-synchronous work, and the residual outside `initialize` is inferred platform
-wake plus binding transport rather than a separately timed phase.
-
 ### 2026-08-25 — The socket snapshot is the cold-open clock
 
 **What changed:** A selected work stream starts its feed subscription before
@@ -1059,7 +1124,7 @@ individual calls and their shared click must remain visible.
 the product attempt denominator. Keeping the repeated request ID and documenting
 the fan-out would preserve ambiguity in Workers traces. The existing operation
 header already expresses a lifecycle longer than one request and is CORS-safe in
-both regions.
+configured deployments.
 
 **Consequences:** Join on `rally.operation.id` to collect every detail retry for
 one click, then use `rally.request.id` to inspect one call. Authentication replay
@@ -1260,30 +1325,6 @@ surrogates are random UUIDv7s whose mapping to `users.id` exists only in
 regional D1. Answering "this trace was slow, what was that person doing, and who
 do I email" meant a manual join through the database. Carrying both identities on
 the span removes the step.
-
-**Considered and rejected:** *Workers KV, with an in-memory cache in front.* This
-was the proposal, and it loses on four counts, the last of them decisive. It buys
-no round trip, because the D1 read happens regardless — `workspaces` was already
-joined and `users` is a primary key away, so the columns are free where a KV read
-is a fresh I/O hop that can miss the colo cache and fall back through the regional
-and central tiers. It is eventually consistent, so a freshly minted surrogate is
-invisible for up to a minute — on exactly the first-session traces most worth
-having. It becomes a second source of truth needing a write path and an
-invalidation story for data whose authority is a D1 column. And **a KV namespace
-is global**: jurisdictional restriction for KV is in private beta, so putting EU
-member identity in one would move it out of the region that
-[`regionalization.md`](regionalization.md) and [`telemetry.md`](telemetry.md)
-keep it in, to save a query that is not being made. *An isolate-local cache on
-its own* has the same first objection — there is nothing to cache — and would
-add a bounded map that can never be authoritative, for no saving. *Putting the
-surrogates in the access token or the socket ticket.* The session read happens
-anyway, so it saves nothing, and it would bake a lazily minted value into a
-credential issued before it exists. *The inverse: sending the raw `users.id` to
-PostHog as a person property, and joining there.* One `$set` per person rather
-than two attributes per span, and cheaper — but it reverses the decision
-`telemetry.md` records, which is that raw product ids do not go to PostHog. Given
-the choice of which side carries the linkage, traces already carry raw ids and
-internal detail, and PostHog deliberately does not.
 
 **Also measured here:** authentication now records `rally.auth.duration_ms`.
 The session lookup is uncached and blocks every authenticated request, and it

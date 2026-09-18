@@ -178,8 +178,6 @@ post one reviewed child conclusion to Main and verify only that intentionally
 shared content appears. Check connector scope copy against actual grants. No
 privacy success state may be inferred merely from the presence of a lock icon.
 
-## Recommended complete journey
-
 ### Entry and choosing a task
 
 After the explanation, complete workspace discovery. For creators show

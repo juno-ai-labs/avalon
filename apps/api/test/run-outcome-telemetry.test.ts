@@ -21,6 +21,20 @@ const operationId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d5';
 const automationId = asAutomationId('018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903');
 const automationRunId = '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7904';
 
+function workDeferral() {
+  const pending: Promise<unknown>[] = [];
+  return {
+    defer(promise: Promise<unknown>) {
+      pending.push(promise);
+    },
+    async settle() {
+      for (let index = 0; index < pending.length; index += 1) {
+        await pending[index];
+      }
+    },
+  };
+}
+
 describe('authoritative run outcome telemetry', () => {
   it('writes one idempotent outcome keyed by the run while retaining the operation as correlation', async () => {
     vi.useFakeTimers();
@@ -153,8 +167,10 @@ describe('authoritative run outcome telemetry', () => {
       telemetryOperationId: operationId,
       telemetrySubjectUserId: userId,
     } as const;
-    await emitCorrelatedRunOutcome(routedEnv, input);
-    await emitCorrelatedRunOutcome(routedEnv, input);
+    const lifecycle = workDeferral();
+    emitCorrelatedRunOutcome(routedEnv, input, lifecycle.defer);
+    emitCorrelatedRunOutcome(routedEnv, input, lifecycle.defer);
+    await lifecycle.settle();
 
     const rows = database.prepare(
       `SELECT event_id, envelope_json FROM telemetry_accepted_events WHERE event_id = ?`,

@@ -115,7 +115,7 @@ describe("Granola connector", () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         url: "https://api.example.test/ingest/granola/connection-id",
         scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        events: ["note.access_granted", "note.edited", "note.generated"],
       });
       return jsonResponse({
         id: "whe_1234567890abcd",
@@ -165,6 +165,172 @@ describe("Granola connector", () => {
       webhookSignature: `v1,${signature}`,
       now: timestamp * 1_000,
     })).rejects.toThrow(/signature is invalid/u);
+  });
+
+  it("verifies a delivery whose event it does not model and refuses it by name in normalize", async () => {
+    // As a schema enum, an unknown name was a `ZodError` the ingress did not
+    // catch: a 500, which Standard Webhooks retries for four days before
+    // Granola disables the endpoint. The signature check stays a signature
+    // check; `normalize` answers `null`, which the host turns into a 400
+    // naming the event.
+    const event = {
+      event_id: "22222222-2222-4222-8222-222222222222",
+      event_type: "note.regenerated",
+      note_id: "not_1234567890abcd",
+      occurred_at: "2026-08-07T20:00:00.000Z",
+    } as const;
+    const rawBody = JSON.stringify(event);
+    const timestamp = 1_775_763_600;
+    const secretBytes = new Uint8Array(32).fill(9);
+    const signature = await hmacBase64(secretBytes, `${event.event_id}.${timestamp}.${rawBody}`);
+    const verified = await verifyGranolaWebhook({
+      signingSecret: `whsec_${base64(secretBytes)}`,
+      rawBody: new TextEncoder().encode(rawBody),
+      webhookId: event.event_id,
+      webhookTimestamp: String(timestamp),
+      webhookSignature: `v1,${signature}`,
+      now: timestamp * 1_000,
+    });
+    expect(verified).toMatchObject(event);
+    const adapter = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+    });
+    const envelope = {
+      deliveryId: event.event_id,
+      eventType: event.event_type,
+      providerAccountId: null,
+      bodyHash: "body-hash",
+      receiptKey: verified.signatureHash,
+      event: verified,
+    };
+    expect(adapter.webhookActivity!.normalize(workspaceConnection(), envelope, null)).toBeNull();
+    expect(adapter.webhookActivity!.normalize(
+      workspaceConnection(),
+      { ...envelope, eventType: "note.edited", event: { ...verified, event_type: "note.edited" } },
+      null,
+    )).toMatchObject({ eventType: "note.edited", title: "Granola note edited" });
+  });
+
+  it("reports a note shared into the workspace after it was generated as the transcript Granola never announced", async () => {
+    // Granola sends `note.generated` only while the endpoint can read the
+    // note. A note generated privately and shared into the workspace later
+    // arrives as `note.access_granted` and nothing else, so `derive` asks
+    // the note whether its summary exists and, when it does, stores the
+    // `note.generated` beside the share, keyed on the note so a second
+    // delivery for it is one run and not two. Every answer that stores
+    // nothing says why in its own word.
+    const requested: URL[] = [];
+    const adapter = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+      fetch: async (input, init) => {
+        const url = requestUrl(input);
+        requested.push(url);
+        expect(init?.method ?? "GET").toBe("GET");
+        expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${workspaceApiKey}`);
+        if (url.pathname === "/v1/notes/not_generated000aa") {
+          return jsonResponse({ id: "not_generated000aa", summary_markdown: "## Recap", summary_text: "Recap" });
+        }
+        if (url.pathname === "/v1/notes/not_pendinggen00aa") {
+          return jsonResponse({ id: "not_pendinggen00aa", summary_markdown: null, summary_text: "" });
+        }
+        if (url.pathname === "/v1/notes/not_hidden000000aa") return jsonResponse({ error: "not found" }, 404);
+        if (url.pathname === "/v1/notes/not_rejected0000aa") return jsonResponse({ error: "invalid api key" }, 401);
+        if (url.pathname === "/v1/notes/not_reshaped0000aa") return jsonResponse({ note: { id: "not_reshaped0000aa", summary_markdown: "## Recap" } });
+        return jsonResponse({ error: "upstream" }, 503);
+      },
+    });
+    const source = adapter.webhookActivity!;
+    const shared = (noteId: string, eventId: string) => {
+      const verified = {
+        event_id: eventId,
+        event_type: "note.access_granted",
+        note_id: noteId,
+        occurred_at: "2026-09-16T12:51:00.000Z",
+        signatureHash: "sig",
+      };
+      const envelope = {
+        deliveryId: eventId,
+        eventType: "note.access_granted",
+        providerAccountId: null,
+        bodyHash: "body-hash",
+        receiptKey: "sig",
+        event: verified,
+      };
+      return { envelope, activity: source.normalize(workspaceConnection(), envelope, "payload-ref")! };
+    };
+    const derive = (share: ReturnType<typeof shared>, connection = workspaceConnection()) =>
+      source.derive!(connection, share.activity, share.envelope, neverAborts());
+
+    const generated = shared("not_generated000aa", "11111111-1111-4111-8111-111111111111");
+    const derived = await derive(generated);
+    expect(derived).toEqual({
+      outcome: "derived",
+      activities: [{
+        ...generated.activity,
+        eventType: "note.generated",
+        title: "Granola note generated",
+        dedupeKey: "11111111-1111-4111-8111-111111111111:generated",
+        occurrenceKey: `granola:${generated.activity.connectionId}:note:not_generated000aa:transcript`,
+        metadata: { noteId: "not_generated000aa", changedFields: [], derivedFrom: "note.access_granted" },
+      }],
+    });
+    // The share itself is not the transcript and names no occurrence; the
+    // `note.generated` Granola sends for a note it could read admits under
+    // the same key as the derived one, and the key is the activity's own
+    // field, never its metadata.
+    expect(generated.activity.occurrenceKey).toBeUndefined();
+    expect(generated.activity.metadata).toEqual({ noteId: "not_generated000aa", changedFields: [] });
+    const announced = source.normalize(workspaceConnection(), {
+      ...generated.envelope,
+      eventType: "note.generated",
+      event: { ...generated.envelope.event, event_type: "note.generated" },
+    }, "payload-ref")!;
+    expect(announced.occurrenceKey).toBe(derived.activities[0]!.occurrenceKey);
+    expect(announced.metadata).toEqual({ noteId: "not_generated000aa", changedFields: [] });
+
+    // Shared before its summary exists: Granola sends `note.generated` itself
+    // once the summary is written, so nothing is derived now.
+    expect(await derive(shared("not_pendinggen00aa", "22222222-2222-4222-8222-222222222222")))
+      .toEqual({ activities: [], outcome: "pending_summary" });
+    // A note the workspace key cannot read, or a key Granola rejects: no run
+    // could read it either, and the log gets the status.
+    expect(await derive(shared("not_hidden000000aa", "33333333-3333-4333-8333-333333333333")))
+      .toEqual({ activities: [], outcome: "unreadable", failure: { code: "provider_error", status: 404 } });
+    expect(await derive(shared("not_rejected0000aa", "55555555-5555-4555-8555-555555555555")))
+      .toEqual({ activities: [], outcome: "unreadable", failure: { code: "unauthorized", status: 401 } });
+    // Granola not answering: the transcript is reported anyway and marked,
+    // but under its own delivery's identity — never the note's key, which
+    // would make the `note.generated` Granola may still send a replay.
+    const unanswered = await derive(shared("not_unanswered00aa", "44444444-4444-4444-8444-444444444444"));
+    expect(unanswered).toMatchObject({ outcome: "derived_unverified", failure: { code: "provider_error", status: 503 } });
+    expect(unanswered.activities).toHaveLength(1);
+    expect(unanswered.activities[0]).toMatchObject({ eventType: "note.generated", metadata: { derivedFrom: "note.access_granted", summaryVerified: false } });
+    expect(unanswered.activities[0]!.occurrenceKey).toBeUndefined();
+    // A note shape this connector does not know is named as such, not folded
+    // into "no summary yet".
+    const reshaped = await derive(shared("not_reshaped0000aa", "66666666-6666-4666-8666-666666666666"));
+    expect(reshaped).toMatchObject({ outcome: "derived_unverified", failure: { code: "unexpected_shape" } });
+    expect(reshaped.activities[0]!.occurrenceKey).toBeUndefined();
+    // A connection without a usable key never asks, and stores nothing.
+    const keyless = { ...workspaceConnection(), credentials: {} };
+    expect(await derive(shared("not_generated000aa", "77777777-7777-4777-8777-777777777777"), keyless))
+      .toEqual({ activities: [], outcome: "credential_unavailable", failure: { code: "unauthorized" } });
+    // Only a share asks Granola anything.
+    const edited = {
+      ...generated.envelope,
+      eventType: "note.edited",
+      event: { ...generated.envelope.event, event_type: "note.edited" },
+    };
+    expect(await source.derive!(workspaceConnection(), source.normalize(workspaceConnection(), edited, null)!, edited, neverAborts()))
+      .toEqual({ activities: [], outcome: "not_applicable" });
+    expect(requested.map((url) => url.pathname)).toEqual([
+      "/v1/notes/not_generated000aa",
+      "/v1/notes/not_pendinggen00aa",
+      "/v1/notes/not_hidden000000aa",
+      "/v1/notes/not_rejected0000aa",
+      "/v1/notes/not_unanswered00aa",
+      "/v1/notes/not_reshaped0000aa",
+    ]);
   });
 
   it("accepts ISO offsets and rejects replayed, missing, or header-mismatched webhook identities", async () => {
@@ -409,7 +575,8 @@ describe("Granola connector", () => {
     });
     await expect(schemaFailure.handleAuthorizationCallback!(callback)).rejects.toMatchObject({
       code: "provider_error",
-      details: { oauthStage: "token_exchange", responseInvalid: true },
+      // Which field: the token came back as a number. The value does not travel.
+      details: { oauthStage: "token_exchange", responseInvalid: true, responseIssues: "access_token:invalid_type" },
     });
 
     const mcpFailure = createGranolaConnector({

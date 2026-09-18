@@ -1,3 +1,6 @@
+import { regions, regionConfiguration } from "./regions";
+import type { Region } from "@rally/contracts/regions";
+import { RegionSchema } from "@rally/contracts/regions";
 /**
  * Live web artifacts: the shapes both sides of the artifact boundary agree on.
  *
@@ -183,7 +186,7 @@ export function artifactIsolateId(artifactId: string, version: number): string {
   return `artifact:${artifactId}:v${version}`;
 }
 
-const ARTIFACT_HOST_SUFFIX = { global: "-g", eu: "-eu" } as const;
+
 
 /**
  * The public, non-authoritative label one artifact origin carries.
@@ -201,7 +204,7 @@ export const ArtifactHostnameRouteSchema = z.strictObject({
   version: z.literal(1),
   hostnameStub: ArtifactHostnameStubSchema,
   artifactId: ArtifactIdSchema,
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
 });
 export type ArtifactHostnameRoute = z.infer<typeof ArtifactHostnameRouteSchema>;
 
@@ -220,17 +223,17 @@ export type ArtifactHostnameRoute = z.infer<typeof ArtifactHostnameRouteSchema>;
  * remains the supervisor object's identity. Legacy UUID labels keep parsing so
  * existing bookmarks remain valid while newly opened artifacts use the stub.
  */
-export function artifactHostLabel(hostnameStub: ArtifactHostnameStub, region: "global" | "eu"): string {
-  return `${hostnameStub}${ARTIFACT_HOST_SUFFIX[region]}`;
+export function artifactHostLabel(hostnameStub: ArtifactHostnameStub, region: Region): string {
+  return `${hostnameStub}-${regionConfiguration(region).artifactSuffix}`;
 }
 
-export function artifactOrigin(hostnameStub: ArtifactHostnameStub, region: "global" | "eu", domain: string): string {
+export function artifactOrigin(hostnameStub: ArtifactHostnameStub, region: Region, domain: string): string {
   return `https://${artifactHostLabel(hostnameStub, region)}.${domain}`;
 }
 
-const STUB_HOST_LABEL_PATTERN = /^([a-z]+-[a-z]+-[a-z]+-[a-z]+)-(g|eu)$/u;
+const STUB_HOST_LABEL_PATTERN = /^([a-z]+-[a-z]+-[a-z]+-[a-z]+)$/u;
 const LEGACY_HOST_LABEL_PATTERN
-  = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(g|eu)$/u;
+  = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u;
 
 /**
  * Recover the artifact and region a request's `Host` names, or `null`.
@@ -245,26 +248,30 @@ export function parseArtifactHost(
 ): {
   hostnameStub: ArtifactHostnameStub | null;
   legacyArtifactId: string | null;
-  region: "global" | "eu";
+  region: Region;
 } | null {
   const label = host.trim().toLowerCase().split(":")[0]?.split(".")[0] ?? "";
-  const stub = STUB_HOST_LABEL_PATTERN.exec(label);
-  if (stub?.[1] && stub[2]) {
+  const suffix = Object.entries(regions).find(([, config]) => label.endsWith(`-${config.artifactSuffix}`));
+  if (!suffix) return null;
+  const region = suffix[0];
+  const stubLabel = label.slice(0, -(suffix[1].artifactSuffix.length + 1));
+  const stub = STUB_HOST_LABEL_PATTERN.exec(stubLabel);
+  if (stub?.[1]) {
     const hostnameStub = ArtifactHostnameStubSchema.safeParse(stub[1]);
     if (!hostnameStub.success) return null;
     return {
       hostnameStub: hostnameStub.data,
       legacyArtifactId: null,
-      region: stub[2] === "eu" ? "eu" : "global",
+      region,
     };
   }
-  const legacy = LEGACY_HOST_LABEL_PATTERN.exec(label);
-  if (!legacy?.[1] || !legacy[2]) return null;
+  const legacy = LEGACY_HOST_LABEL_PATTERN.exec(stubLabel);
+  if (!legacy?.[1]) return null;
   const artifactId = ArtifactIdSchema.safeParse(legacy[1]);
   if (!artifactId.success) return null;
   return {
     hostnameStub: null,
     legacyArtifactId: artifactId.data,
-    region: legacy[2] === "eu" ? "eu" : "global",
+    region,
   };
 }

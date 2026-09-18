@@ -1,3 +1,6 @@
+import type { Region } from "@rally/contracts/regions";
+import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
+import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
 import { SearchAuthorizationPushJobSchema, pushSearchAuthorization } from '../services/search-authorization';
 import { SearchDocumentJobSchema, publishSearchIndexingJobs, SearchEmbeddingBatchSchema, type SearchSourceReference } from '../services/search-indexing-jobs';
 import { embedSearchDocuments } from '../services/search-embedding';
@@ -60,7 +63,7 @@ import { WorkstreamService } from "../services/workstream-service";
 interface ActivityRow {
   id: string;
   workspace_id: string;
-  workspace_region: "global" | "eu";
+  workspace_region: Region;
   connection_id: string;
   connector_type: string;
   connection_scope: "personal" | "workspace";
@@ -175,7 +178,7 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
   ).bind(staleBefore, env.AVALON_REGION, Math.max(1, Math.min(limit, 100))).all<{
     id: string;
     workspace_id: string;
-    region: "global" | "eu";
+    region: Region;
     processing_status: "pending" | "failed";
     connector_event_attempt: number;
   }>();
@@ -599,6 +602,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
           processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
+          errorCode,
         });
         const attempts = Math.max(1, message.attempts);
         const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
@@ -672,6 +676,20 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
 
+  const maintenance = ConnectorMaintenanceQueueSchema.safeParse(message.body);
+  if (maintenance.success) {
+    if (maintenance.data.region !== env.AVALON_REGION) throw new Error('connector_maintenance_region_mismatch');
+    await runConnectorMaintenance(env, maintenance.data.operationId, new AbortController().signal);
+    message.ack(); return;
+  }
+  const installation = ConnectorInstallationQueueSchema.safeParse(message.body);
+  if (installation.success) {
+    if (installation.data.region !== env.AVALON_REGION) throw new Error("connector_installation_region_mismatch");
+    try {
+      await runConnectorInstallation(env, installation.data.workspaceId, installation.data.connectionId, new AbortController().signal);
+    } catch (error) { if (!isRetirementRefusal(error)) throw error; }
+    message.ack(); return;
+  }
   const connectorIngress = WorkspaceConnectorEventQueueMessageSchema.safeParse(message.body);
   if (connectorIngress.success) {
     const input = connectorIngress.data;

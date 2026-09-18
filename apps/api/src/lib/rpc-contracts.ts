@@ -11,7 +11,7 @@ import { ApiError } from "./api-error";
  * a TypeScript interface only. Those interfaces are erased at build time, so an
  * argument arriving over the binding was whatever the caller happened to send.
  *
- * That matters most on the Global/EU pair. `regionalization.md` treats the
+ * That matters most on the deployment pair. `regionalization.md` treats the
  * boundary as the line a workspace's data must not cross, and the value that
  * decides which side a record lands on — `region`, `workspaceId` — was reaching
  * the data plane unchecked. Same account is not the same thing as same
@@ -154,7 +154,7 @@ export const AutomationEmailAddressClaimSchema = AutomationEmailRouteInputSchema
  * This is the bound `WorkstreamEmailRoutingService.assertBulkSize` already
  * enforces, and it is defined here so there is one number rather than two. A
  * second, tighter bound on the same path would mean a batch that succeeds on
- * Global comes back from a regional caller as a 400 — a Global/EU behavioural
+ * Global comes back from a regional caller as a 400 — a deployment behavioural
  * divergence introduced by the guard meant to prevent one.
  */
 export const RPC_BATCH_LIMIT = 512;

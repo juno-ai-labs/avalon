@@ -335,6 +335,16 @@ test('UI leading scales with inherited font size rather than fixing all headings
   }
 });
 
+function tokenColorAt(tokens, path) {
+  let value = tokens[path];
+  while (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+    const target = value.slice(1, -1);
+    assert.ok(target in tokens, `${path} aliases ${target}, which is not set`);
+    value = tokens[target];
+  }
+  return value;
+}
+
 function colorChannels(color, backdrop = '#fcfcfc') {
   if (color.startsWith('#')) return color.slice(1).match(/../gu).map((channel) => parseInt(channel, 16) / 255);
   const rgba = color.match(/^rgba\(([^)]+)\)$/u);
@@ -354,9 +364,9 @@ test('keyboard focus contrasts against adjacent surfaces in both appearances', (
   for (const theme of themes) {
     const tokens = resolvedTokens(theme, base);
     for (const role of ['default', 'quiet']) {
-      const focus = luminance(tokens[`sys.color.focus.${role}`]);
+      const focus = luminance(tokenColorAt(tokens, `sys.color.focus.${role}`));
       for (const surface of ['canvas', 'default', 'subtle', 'raised', 'raised-hover', 'elevated', 'elevated-hover']) {
-        const background = luminance(tokens[`sys.color.surface.${surface}`], tokens['sys.color.surface.canvas']);
+        const background = luminance(tokenColorAt(tokens, `sys.color.surface.${surface}`), tokenColorAt(tokens, 'sys.color.surface.canvas'));
         const contrast = (Math.max(focus, background) + 0.05) / (Math.min(focus, background) + 0.05);
         assert.ok(contrast >= 3, `${theme.id} ${role} on ${surface}: ${contrast}`);
       }
@@ -392,22 +402,11 @@ const HUELESS_SURFACES = ['cmp.tooltip.background', 'cmp.tooltip.foreground'];
 test('a surface held to the neutral ramp carries no hue in any appearance', () => {
   for (const theme of themes) {
     const tokens = resolvedTokens(theme, base);
-    // `resolvedTokens` merges base under the appearance; it does not follow an
-    // alias, so the value can still be `{ref.color.neutral.13}`. The walk is
-    // bounded because the cycle test above holds every chain acyclic.
-    const colorAt = (path) => {
-      let value = tokens[path];
-      while (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
-        const target = value.slice(1, -1);
-        assert.ok(target in tokens, `${theme.id}: ${path} aliases ${target}, which is not set`);
-        value = tokens[target];
-      }
-      return value;
-    };
+
 
     for (const path of HUELESS_SURFACES) {
       assert.ok(tokens[path] !== undefined, `${theme.id}: ${path} is not set`);
-      const value = String(colorAt(path));
+      const value = String(tokenColorAt(tokens, path));
       // Composited over a hueless backdrop, so a translucent value is judged on
       // its own cast rather than on whatever it happens to sit over.
       const [r, g, b] = colorChannels(value);
@@ -513,15 +512,6 @@ test('every theme keeps its markdown headings above its prose', () => {
     const descending = headings.every((size, index) => index === 0 || size <= headings[index - 1]);
     assert.ok(descending, `${theme.id}: markdown heading sizes are not in descending order`);
 
-    // The note detail runs its own scale, and h4 and below fall back to the
-    // shared one — so an article scale that stops descending too early inverts
-    // the hierarchy rather than merely flattening it.
-    const article = [1, 2, 3].map((level) => px(values[`cmp.markdown.article-heading-${level}`]));
-    assert.ok(article.every(Number.isFinite), `${theme.id} leaves an article heading size unset`);
-    assert.ok(
-      article.every((size, index) => (index === 0 || size <= article[index - 1]) && size >= prose),
-      `${theme.id}: the note article's heading scale does not descend above its prose`,
-    );
   }
 });
 

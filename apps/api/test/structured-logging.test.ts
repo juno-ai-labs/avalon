@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   diagnosticErrorCode,
   logError,
@@ -38,6 +39,44 @@ describe("structured logging", () => {
       new Error("Provider included customer@example.com in its response"),
       "connector_event_failed",
     )).toBe("connector_event_failed");
+  });
+
+  it("names the field a schema rejection rejected, behind the caller's own code", () => {
+    // The consumer delivering an external event to a Sidekick reduced a
+    // rejection to the constant `external_event_delivery_failed` and retried
+    // until the Queue gave up; the failing path is the whole diagnosis, and
+    // the rejected value is member content that stays behind.
+    const rejection = z.strictObject({ event: z.strictObject({ eventSequence: z.number() }) })
+      .safeParse({ event: { eventSequence: "customer@example.com" } });
+    if (rejection.success) throw new Error("expected a rejection");
+    const code = diagnosticErrorCode(rejection.error, "external_event_delivery_failed");
+    expect(code).toBe("external_event_delivery_failed:event.eventSequence:invalid_type");
+    expect(code).not.toContain("customer");
+  });
+
+  it("carries a code a Durable Object named across the RPC hop, separators included", () => {
+    // `parseRpcInput` composes `<method>_invalid:<path>:<issue>`. The earlier
+    // character class refused the `:` and `.` and answered the fallback — one
+    // hop after the field had been named.
+    expect(diagnosticErrorCode(
+      new Error("admit_external_event_invalid:event.eventSequence:invalid_type"),
+      "external_event_delivery_failed",
+    )).toBe("admit_external_event_invalid:event.eventSequence:invalid_type");
+  });
+
+  it("still refuses a message with an identifier interpolated after a colon", () => {
+    // Code-shaped is not the same as trusted. The tree throws a member's
+    // column name, an R2 key and a migration version after a colon, and each
+    // of those in an indexed field is a value or a distinct grouping key.
+    for (const message of [
+      "memory_table_value_type:Customer_Email:string",
+      "inference_lakehouse_payload_object_missing:2026/09/15/run.json",
+      "workstream_do_schema_hash_mismatch:27",
+      "unknown_workspace_maintenance_task:00000000-0000-7000-8000-000000000001",
+    ]) {
+      expect(diagnosticErrorCode(new Error(message), "target_failed")).toBe("target_failed");
+    }
+    expect(diagnosticErrorCode(new Error("sidekick_missing"), "target_failed")).toBe("sidekick_missing");
   });
 
   it("keeps the request context authoritative over caller-supplied correlation", () => {

@@ -1,3 +1,4 @@
+import { regionConfiguration } from "@rally/contracts/regions";
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 import type { Filter, RankBy } from "@turbopuffer/turbopuffer";
 import { z } from "zod";
@@ -43,7 +44,7 @@ const CANDIDATE_ATTRIBUTES = ["source", "source_id", "scope_id", "revision", "ch
 const DISPLAY_ATTRIBUTES = ["substream_id", "connection_id", "text", "title", "source_label", "archived", "url", "mime_type",
   "occurred_at", "transcript_sequence"] as const;
 
-/** Separate deployments and embedding spaces; EU never falls back to Global. */
+/** Separate deployments and embedding spaces; regional never falls back to Global. */
 export async function workspaceSearchIndex(env: Env, workspaceId: string): Promise<TextSearchIndex> {
   const apiKey = env.APP_ENV === "production"
     ? env.TURBO_PUFFER_PROD_API_KEY : env.TURBO_PUFFER_DEV_API_KEY;
@@ -60,7 +61,7 @@ export async function workspaceSearchIndex(env: Env, workspaceId: string): Promi
   return new TextSearchIndex({
     apiKey,
     // https://turbopuffer.com/docs/regions, verified 2026-09-04.
-    region: env.AVALON_REGION === "eu" ? "gcp-europe-west1" : "gcp-us-west1",
+    region: regionConfiguration(env.AVALON_REGION).searchRegion,
     namespace: `rally-search-v3-${space}`,
     semanticNamespace: `rally-search-v3-semantic-${semanticSpace}`,
   });

@@ -1,9 +1,11 @@
 import { WorkstreamSchema } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
-import type { ApiError } from './api';
+import "../../../../../tests/isolated-region";
 import type { DesktopSession } from '../../common/desktop';
+import type { ApiError } from './api';
+import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
+import { SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 
 const reportJavascriptError = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
@@ -23,7 +25,6 @@ const resourceId = '00000000-0000-7000-8000-000000000006';
 const automationId = '00000000-0000-7000-8000-000000000008';
 const runId = '00000000-0000-7000-8000-000000000009';
 const taskId = '00000000-0000-7000-8000-000000000013';
-const noteId = '00000000-0000-7000-8000-000000000014';
 
 const user = {
   id: userId,
@@ -188,12 +189,40 @@ function json(value: unknown, init: ResponseInit = {}): Response {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   reportJavascriptError.mockReset();
   reportTelemetryProductIntent.mockReset();
 });
 
 describe('Rally API wire adapter', () => {
+  it('coalesces in-flight favicon requests without extending a missing response lifetime', async () => {
+    let releaseIcon: ((response: Response) => void) | undefined;
+    const iconResponse = new Promise<Response>((resolve) => { releaseIcon = resolve; });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => iconResponse)
+      .mockImplementationOnce(async () => new Response(null, { status: 404 }))
+      .mockImplementationOnce(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    const first = api.getFavicon('Docs.Example.com');
+    const second = api.getFavicon('docs.example.com');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    releaseIcon?.(new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      headers: { 'Content-Type': 'image/png' },
+    }));
+    const [firstIcon, secondIcon] = await Promise.all([first, second]);
+    expect(firstIcon).toBe(secondIcon);
+
+    const firstMissing = api.getFavicon('missing.example.com');
+    const secondMissing = api.getFavicon('MISSING.example.com');
+    await expect(Promise.all([firstMissing, secondMissing])).resolves.toEqual([null, null]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(api.getFavicon('missing.example.com')).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('cancels transcription ticket acquisition even when the transport does not settle', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => new Promise<Response>(() => {}));
     vi.stubGlobal('fetch', fetchMock);
@@ -446,7 +475,7 @@ describe('Rally API wire adapter', () => {
       error: {
         code: 'region_mismatch',
         message: 'Use the selected regional service.',
-        details: { expected: 'eu' },
+        details: { expected: 'enterprise' },
       },
     }, { status: 409 })));
     const api = new RallyApi('https://api.rally.test', session);
@@ -455,7 +484,7 @@ describe('Rally API wire adapter', () => {
       status: 409,
       code: 'region_mismatch',
       message: 'Use the selected regional service.',
-      details: { expected: 'eu' },
+      details: { expected: 'enterprise' },
     };
     await expect(api.getWorkspace()).rejects.toMatchObject(expected);
   });
@@ -473,18 +502,6 @@ describe('Rally API wire adapter', () => {
     const api = new RallyApi('https://api.rally.test', session);
     await expect(api[method](workstreamId, runId, userId)).resolves.toBeUndefined();
     await expect(api[method](workstreamId, runId, userId)).rejects.toThrow();
-  });
-
-  it('accepts successful 204 responses for note archive endpoints', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.archiveNote(noteId)).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      `https://api.rally.test/notes/${noteId}/archive`,
-      expect.objectContaining({ method: 'POST' }),
-    );
   });
 
   it('uses the regional organization invitation contracts end to end', async () => {
@@ -591,6 +608,47 @@ describe('Rally API wire adapter', () => {
     const secondHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
     expect(firstHeaders.get('Idempotency-Key')).toMatch(/^[0-9a-f-]{36}$/u);
     expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
+  });
+
+  it('archives a Sidekick through the archive endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveAutomation(automationId)).resolves.toBeUndefined();
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://api.rally.test/sidekicks/${automationId}/archive`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('falls back to the legacy delete route only when the archive route is missing', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ error: { code: 'not_found', message: 'The requested API route does not exist' } }, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveAutomation(automationId)).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls.map((call) => [String(call[0]), call[1]?.method])).toEqual([
+      [`https://api.rally.test/sidekicks/${automationId}/archive`, 'POST'],
+      [`https://api.rally.test/sidekicks/${automationId}`, 'DELETE'],
+    ]);
+  });
+
+  it('does not retry a domain-level missing Sidekick response through delete', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      error: { code: 'sidekick_not_found', message: 'This Sidekick was archived' },
+    }, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveAutomation(automationId)).rejects.toMatchObject({
+      code: 'sidekick_not_found',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('renames a work stream through the typed update endpoint', async () => {
@@ -929,6 +987,35 @@ describe('message mention resolution', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
   });
 
+  it('reuses a supplied workspace roster instead of fetching it again', async () => {
+    const fetchMock = stubRoster();
+    const api = new RallyApi('https://api.rally.test', session);
+    const roster = [{
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      timezone: user.timezone,
+      role: 'owner',
+      status: 'active' as const,
+    }];
+
+    await expect(api.messageMentionPayload('Ask @Adam', [], roster)).resolves.toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a supplied roster once when it cannot resolve a typed person', async () => {
+    const fetchMock = stubRoster();
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.messageMentionPayload('Ask @Adam', [], [])).resolves.toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
+  });
+
   it('resolves a typed member name and leaves a typed connection name alone', async () => {
     stubRoster();
     const api = new RallyApi('https://api.rally.test', session);
@@ -984,6 +1071,52 @@ describe('message mention resolution', () => {
 });
 
 describe('socket ticket transport', () => {
+  it('bounds every persistent-socket ticket even when fetch ignores cancellation', async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>(() => undefined);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+    const tickets = [
+      api.getWorkspaceSocketTicket(),
+      api.getWorkstreamControlSocketTicket(workstreamId),
+      api.getSocketTicket(workstreamId),
+    ];
+    const rejections = tickets.map((ticket) => expect(ticket).rejects.toMatchObject({
+      code: 'socket_ticket_timeout',
+      name: 'SocketTicketRequestTimeoutError',
+    }));
+
+    await vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS);
+
+    await Promise.all(rejections);
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(signals.every((signal) => signal.reason instanceof DOMException
+      && signal.reason.name === 'AbortError')).toBe(true);
+  });
+
+  it('does not report a bounded ticket cancellation as a network failure', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      })
+    )));
+    const api = new RallyApi('https://api.rally.test', session);
+    const ticket = api.getWorkspaceSocketTicket();
+    const rejection = expect(ticket).rejects.toMatchObject({
+      code: 'socket_ticket_timeout',
+    });
+
+    await vi.advanceTimersByTimeAsync(SOCKET_TICKET_REQUEST_TIMEOUT_MS);
+
+    await rejection;
+    expect(reportJavascriptError).not.toHaveBeenCalled();
+  });
+
   it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
     // The server keeps `?ticket=` in the URL for desktop builds released before
     // the subprotocol scheme. Nothing here may open a socket with it, because

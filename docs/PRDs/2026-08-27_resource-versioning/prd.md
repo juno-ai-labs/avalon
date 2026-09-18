@@ -183,8 +183,6 @@ explicitly watched resource" is the clause the notification path already
 lives under, now made concrete; nothing changes who participates, what
 the agent may do, or what a participant may see. No clause moves.
 
-## Decision log
-
 ### 2026-08-28 — Goal 5 ships its participant-asked half; agent-decided re-fetch is cut
 
 **Decided:** A watch-routed change notification names the resources it matched

@@ -202,6 +202,10 @@ export class AutomationService {
   }
 
   async delete(automationId: string): Promise<void> {
+    await this.archive(automationId);
+  }
+
+  async archive(automationId: string): Promise<void> {
     const automation = await this.automation(automationId);
     await automation.remove(await this.actorRequest(automationId));
   }

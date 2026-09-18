@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import type { Region } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
@@ -154,10 +155,10 @@ describe("shared Notion connection routing", () => {
 
   it("gives both regions the one redirect URI the connection was registered with", () => {
     const shared = "https://notion.with-avalon.com/connections/notion/callback";
-    for (const region of ["global", "eu"] as const) {
+    for (const region of ["global", "enterprise"] as const) {
       const env = createTestEnv({
         AVALON_REGION: region,
-        PUBLIC_API_BASE_URL: region === "eu" ? "https://eu.api.with-avalon.com" : "https://api.with-avalon.com",
+        PUBLIC_API_BASE_URL: region === "enterprise" ? "https://enterprise.api.with-avalon.com" : "https://api.with-avalon.com",
         NOTION_INGRESS_BASE_URL: "https://notion.with-avalon.com",
         NOTION_OAUTH_CLIENT_ID: "client",
         NOTION_OAUTH_CLIENT_SECRET: "secret",
@@ -189,12 +190,12 @@ describe("shared Notion connection routing", () => {
       },
     });
 
-    await expect(service.completeNotion("code-eu", createRegionRoutedState("eu", ENTROPY)))
-      .resolves.toBe("avalon://auth/complete?region=eu");
+    await expect(service.completeNotion("code-enterprise", createRegionRoutedState("enterprise", ENTROPY)))
+      .resolves.toBe("avalon://auth/complete?region=enterprise");
     await expect(service.completeNotion("code-global", createRegionRoutedState("global", ENTROPY)))
       .resolves.toBe("avalon://auth/complete?region=global");
     expect(completed).toEqual([
-      { region: "eu", code: "code-eu" },
+      { region: "enterprise", code: "code-enterprise" },
       { region: "global", code: "code-global" },
     ]);
   });
@@ -219,7 +220,7 @@ describe("shared Notion connection routing", () => {
       },
     });
     await service.registerConnection(route("global", "workspace-global", "connection-global"));
-    await service.registerConnection(route("eu", "workspace-eu", "connection-eu"));
+    await service.registerConnection(route("enterprise", "workspace-enterprise", "connection-enterprise"));
 
     const delivery = await signedDelivery();
     await expect(service.ingestNotion(delivery.bytes, delivery.headers)).resolves.toEqual({
@@ -227,7 +228,7 @@ describe("shared Notion connection routing", () => {
       duplicate: false,
       activityCount: 2,
     });
-    expect(dispatches.map((entry) => entry.region)).toEqual(["eu", "global"]);
+    expect(dispatches.map((entry) => entry.region)).toEqual(["enterprise", "global"]);
     expect(dispatches.every((entry) => bytesEqual(entry.bytes, delivery.bytes))).toBe(true);
   });
 
@@ -242,8 +243,8 @@ describe("shared Notion connection routing", () => {
         return { accepted: true, duplicate: false, activityCount: 1 };
       },
     });
-    await service.registerConnection(route("eu", "workspace-eu", "connection-eu"));
-    await service.setConnectionStatus({ ...route("eu", "workspace-eu", "connection-eu"), status: "disabled" });
+    await service.registerConnection(route("enterprise", "workspace-enterprise", "connection-enterprise"));
+    await service.setConnectionStatus({ ...route("enterprise", "workspace-enterprise", "connection-enterprise"), status: "disabled" });
 
     // Disabling an Avalon connection does not uninstall the integration at
     // Notion, so this workspace keeps delivering. A retired route is answered,
@@ -309,15 +310,15 @@ describe("shared Notion connection routing", () => {
       activityCount: 0,
     });
     expect(captured).toEqual(["setup-token"]);
-    expect(replicated).toEqual([{ region: "eu", token: SECRET, setupGeneration: 17 }]);
+    expect(replicated).toEqual([{ region: "enterprise", token: SECRET, setupGeneration: 17 }]);
   });
 
   it("keeps the ingress in the Global control plane", async () => {
     const service = new NotionRoutingService(
-      createTestEnv({ ...environment(new FakeDatabase()), AVALON_REGION: "eu" }),
+      createTestEnv({ ...environment(new FakeDatabase()), AVALON_REGION: "enterprise" }),
       { now: () => NOW },
     );
-    await expect(service.completeNotion("code", createRegionRoutedState("eu", ENTROPY)))
+    await expect(service.completeNotion("code", createRegionRoutedState("enterprise", ENTROPY)))
       .rejects.toMatchObject({ status: 503, code: "notion_ingress_misconfigured" });
   });
 
@@ -379,10 +380,10 @@ describe("shared Notion connection routing", () => {
   });
 
   it("round-trips a region-routed state and rejects a forged prefix", () => {
-    expect(createRegionRoutedState("eu", ENTROPY)).toBe(`eu.${ENTROPY}`);
+    expect(createRegionRoutedState("enterprise", ENTROPY)).toBe(`enterprise.${ENTROPY}`);
     expect(regionFromRoutedState(`global.${ENTROPY}`, "Notion authorization")).toBe("global");
-    expect(() => regionFromRoutedState(`eu.short`, "Notion authorization")).toThrow(/state/iu);
-    expect(() => createRegionRoutedState("eu", "too-short")).toThrow(/entropy/iu);
+    expect(() => regionFromRoutedState(`enterprise.short`, "Notion authorization")).toThrow(/state/iu);
+    expect(() => createRegionRoutedState("enterprise", "too-short")).toThrow(/entropy/iu);
   });
 });
 

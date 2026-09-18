@@ -1,12 +1,5 @@
 # Private access
 
-Rally's initial private-access implementation captures requests, acknowledges
-receipt, lists them in Ace, and issues single-use or timed bearer downloads. Launch hardening adds server-verified bot proof, pre-database admission, a coordinated mail budget, bounded parsing, and operator recovery/revocation. Production acquisition fails closed until the configuration and finite limits are set. The
-[product plan](PRDs/2026-09-09_private-access/prd.md) also covers operator invitation
-emails, workspace invitation downloads and closing the old public release paths;
-those follow-up stages are not implemented yet. The landing page replacement is
-ready for a coordinated deployment, not deployed by this change.
-
 ## Where the code lives
 
 | Path | Responsibility |
@@ -21,6 +14,8 @@ ready for a coordinated deployment, not deployed by this change.
 | `packages/db/migrations/0101_private_access.sql` | Access requests, download grants, optional expiry and frozen acknowledgement sender. |
 | `apps/ace/src/private-access.ts`, `client/private-access.tsx` | Access-protected request list and ad hoc grant generator. |
 | `apps/site/download/index.html`, `src/download.ts` | Fragment-based grant handoff and deliberate Download button. |
+| `apps/api/src/services/workspace-service.ts` | Issues a `workspace_invitation` grant alongside each Global workspace invitation. |
+| `apps/api/src/services/invitation-email-service.ts` | Renders the optional download link into the invitation email. |
 
 ## How it works
 
@@ -34,11 +29,13 @@ response without sending another message. The widget runs invisibly: Cloudflare
 shows its checkbox only to a visitor it decides has to interact, so most visitors
 never see a challenge.
 
-Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
+Ace reads Global requests from its existing D1 binding, searches server-side, and keyset-pages 50 rows at a time. It shows acknowledgement state, first-attempt time and request ID for provider reconciliation. Grant history is separately paginated and contains recipient attribution and lifecycle timestamps, never raw tokens; `listDownloadGrants` resolves that email by joining `source_id` against whichever table the grant's `source` names — `access_requests` for `manual`/`access_invitation`, `workspace_invitations` for `workspace_invitation` — so a workspace-invitation grant is findable by the invitee's email rather than always rendering as an unattributed standalone link. Revocation is a same-origin Access-protected write. An operator can generate a standalone download or
 associate one with a request. This creates a `manual` grant and returns its URL
 once; it does not send mail or mark the person invited. The same exported
 `issueDownloadGrant` accepts `access_invitation` and `workspace_invitation` sources
-for the planned email producers. Source fields are attribution, not authority.
+for email producers; the workspace invitation caller is described below, and
+`access_invitation`'s bulk Ace sender remains planned. Source fields are
+attribution, not authority.
 There is one generator, independent of the UI or any particular email template.
 Its optional `expiresAt` accepts a future ISO timestamp with an explicit offset,
 normalizes it to UTC, and makes the grant repeatable until that instant. Omission
@@ -62,6 +59,19 @@ There is no redirect to a storage URL, cache,
 or installer-sized buffer. The canonical key is `stable/darwin/arm64/Rally.dmg`,
 the same stable alias the release publisher promotes.
 
+The shared `revokeDownloadGrantsForInvitation(db, invitationId)` primitive
+invalidates any still-live grant tied to one invitation, keyed on the
+`download_grants_source` index over `(source, source_id)`. Every place a
+workspace invitation can end calls it: `revokeInvitation`'s explicit admin
+revoke, `declineInvitationForUser`'s invitee decline, the duplicate-invitation
+path in `createInvitation` that supersedes an existing pending invitation to
+the same email (via `RETURNING id` on that `UPDATE`, since the superseded row's
+id is otherwise not known to the caller), and `leaveWorkspace("abandoned")`'s
+bulk revoke of every pending invitation in a closing workspace (a fourth batch
+statement matching `source_id` against that workspace's invitations). A grant
+issued for an invitation later invalidated through any of these paths does not
+outlive it.
+
 ## Invariants
 
 - D1 persistence precedes provider I/O; otherwise a mail failure loses the lead.
@@ -82,8 +92,9 @@ the same stable alias the release publisher promotes.
   afterwards; the server does not interrupt active transfers.
 - Email scanners and page previews must not consume grants; therefore consumption
   stays behind an explicit POST, with no auto-submit in the browser.
-- Installing does not grant workspace membership. The future workspace-email
-  caller must keep the existing authenticated invitation acceptance checks.
+- Installing does not grant workspace membership. The workspace-invitation
+  caller keeps the existing authenticated invitation acceptance checks; a grant
+  never bypasses them.
 - The `Rally early access` widget stays in Managed mode in the Cloudflare
   dashboard; otherwise the landing page's `interaction-only` appearance never
   reveals a checkbox and a flagged visitor cannot pass.
@@ -111,17 +122,6 @@ link after activation, if implemented, must govern that link only rather than
 introduce a new permission to use Rally.
 
 ## Failure modes and limits
-
-Malformed emails fail before persistence. A disallowed/missing Origin fails intake before any write. Download admission
-uses the bearer token, including native no-referrer POSTs with `Origin: null`. EU intake returns 404; there is no acquisition-data fallback from EU.
-A provider error leaves the request as failed, and the page says it was saved but
-asks the visitor to retry confirmation. There is no background delivery queue. A quota-deferred request stays pending in Ace, without starting a provider uncertainty window. Operators can retry pending/failed acknowledgements from Ace when capacity returns.
-A process interruption between provider acceptance and status persistence has an
-uncertain outcome. An explicit retry reuses Resend's idempotency key and frozen
-body within the provider's 24-hour window, anchored to the first attempt. Outside
-that window it becomes `review_required` without another send. One conditional
-claim owns `sending`; concurrent duplicates do not call Resend. A process crash
-can leave `sending` for operator reconciliation. Exactly-once delivery is not claimed.
 
 Invalid, expired, used single-use or revoked links return a branded 410 page.
 A missing installer returns a branded 503 page with an explicit retry form that
@@ -202,20 +202,6 @@ reviewed/tested without silently exposing an unbounded production intake.
 
 ## Testing
 
-`apps/api/test/private-access.test.ts` uses the checked-in regional migrations and
-real SQLite, replacing only Resend's external HTTP response. It covers normalized
-deduplication, persist-before-send failure/retry, regional/origin admission,
-development suppression, distinct hashed grants, default non-expiry and shared
-issuer expiry validation.
-`apps/api/test-workers/private-downloads.test.ts` applies migration 0101 to real
-D1 and streams real R2 objects through Hono on workerd. It covers concurrent
-redemption, repeat timed downloads, exact expiry, expiry during R2 lookup,
-missing installers, scanner GET/HEAD and revoked/invalid tokens.
-`apps/api/test/ace-private-access.test.ts` covers Ace admission and issuance
-through the actual Access middleware and shared issuer, including UTC normalization
-and rejection of past, current or ambiguous expiries; site tests retain
-legacy release-renderer coverage separately from the new form template.
-
 Mutation checks prove the write, token admission, forced concurrent claim,
 origin, expiry, rate/body guards and sender/idempotency paths fail when their
 production behavior is broken. The focused tests pass again after restoration.
@@ -223,15 +209,6 @@ production behavior is broken. The focused tests pass again after restoration.
 The test fixture installer is text bytes, never executable software. Browser
 verification uses the actual Vite pages and explicitly synthetic Ace records; no
 production requests, emails or grants are created.
-
-## Regional impact
-
-Requests are pre-workspace Global data, disclosed in the privacy policy. Migration
-0101 creates empty schema in both regional databases because they share the
-migration chain. The issuer is database-parameterized so future workspace grants
-can use the invitation's existing region. The first browser redemption endpoint
-is Global only; EU workspace grants must not be issued until regional redemption
-and regional links are wired together.
 
 ## Launch copy and outreach
 
@@ -359,12 +336,42 @@ when its associated purpose ends. Delete expired/used/revoked grants after their
 related delivery/support investigation is complete. No automatic age-based sweep
 or numerical retention period is configured.
 
-Future invitation sending must implement the PRD's durable suppression,
-cancellation and sender/erasure race handling before it is enabled. This manual
-procedure is not a substitute for those controls. Future EU workspace-grant
-privacy operations stay in the owning region; the current slice creates none.
+### 2026-09-12 — Wire the shared issuer into Global workspace invitations
 
-## Changelog
+**What changed:** `WorkspaceService.createInvitation` now issues a
+`workspace_invitation` grant, timed to the invitation's own 7-day expiry, for a
+Global workspace and passes its URL to `sendWorkspaceInvitationEmail`, which
+renders it as a second link/button alongside "Accept invitation". Issuance runs
+inside the same `try` that sends the email, so a grant-issuance failure or an
+email-send failure both revoke the grant (if one was issued) and the invitation
+row through the one existing rollback path. Per the PRD's own invariant that
+revocation or supersession must invalidate a linked grant, the other three
+places a workspace invitation can end — an administrator's explicit
+`revokeInvitation`, a duplicate invitation to the same email superseding a
+pending one, an invitee's `declineInvitationForUser`, and a workspace closing
+via `leaveWorkspace("abandoned")` — now revoke any grant tied to that
+invitation too, via a shared `revokeDownloadGrantsForInvitation` primitive
+keyed on the existing `(source, source_id)` index. `listDownloadGrants` also
+joins `workspace_invitations` on `source_id` so these grants are attributed and
+searchable by the invitee's email in Ace, the same as request-sourced grants
+already were — the fallback of an operator revoking one by hand doesn't work on
+a row Ace can't find.
+
+**Why:** The invitation email's only link opens `/invite/`, whose "Open Rally"
+button is a `rallywithai://` deep link that does nothing when the app is not
+already installed, and that page's copy ("install it first") pointed nowhere. An
+invited teammate with no existing install had no way to get Rally from the
+invitation email at all — reported as a real lockout, not a hypothetical gap.
+The `workspace_invitation` source and the database-parameterized issuer already
+existed for exactly this caller; nothing about the grant primitive needed to
+change. The revocation cascade and the Ace attribution join were not part of
+the first cut of this change; independent review found both — the cascade gap
+against the PRD's own stated invariant, the attribution gap by four of six
+reviewers in one pass — cheaply enough (an existing index makes each cascade
+site a one-statement addition) that fixing them outright was worth it over
+documenting four more places where a stale grant can outlive its invitation.
+
+Shipped in [#728](https://github.com/juno-ai-labs/avalon/pull/728).
 
 ### 2026-09-10 — Send the acknowledgement as plain text
 
@@ -396,7 +403,6 @@ followed by the bare URL. A caller that omits
 `text` stays required, since Resend rejects a message with neither part.
 
 Shipped in [#659](https://github.com/juno-ai-labs/avalon/pull/659).
-
 
 ### 2026-09-10 — Hide the landing-page challenge unless a visitor must interact
 

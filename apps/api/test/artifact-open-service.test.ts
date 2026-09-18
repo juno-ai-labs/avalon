@@ -34,6 +34,7 @@ interface Fixture {
  * `WorkstreamDO` in the workers suite.
  */
 function fixture(input: Fixture = {}) {
+  const readProfile = vi.fn();
   const openForViewer = vi.fn(async () => ({ code: "c".repeat(64) }));
   const canReadWorkstream = vi.fn(async () => input.canRead ?? true);
   const other = vi.fn(async (): Promise<unknown> => null);
@@ -53,6 +54,7 @@ function fixture(input: Fixture = {}) {
               : input.registryRow;
           }
           if (sql.includes("FROM users")) {
+            readProfile();
             return { name: input.displayName === undefined ? "Ada" : input.displayName };
           }
           return other();
@@ -95,7 +97,7 @@ function fixture(input: Fixture = {}) {
     role: "member",
     analyticsWorkspaceId: null,
   };
-  return { service: new ArtifactOpenService(env, auth), openForViewer, canReadWorkstream };
+  return { service: new ArtifactOpenService(env, auth), openForViewer, canReadWorkstream, readProfile };
 }
 
 async function refusal(run: () => Promise<unknown>): Promise<ApiError> {
@@ -234,5 +236,17 @@ describe("the CSV an export hands somebody", () => {
     } });
     expect(await service.describeData(RESOURCE)).toEqual({ tables: [] });
     expect(await service.pageData(RESOURCE, "rsvps", 0)).toEqual({ rows: [], csv: "" });
+  });
+});
+
+describe("artifact inspection does not create browser sessions", () => {
+  it("authorizes every inspection without minting unused navigation grants", async () => {
+    const { service, openForViewer, canReadWorkstream, readProfile } = fixture();
+    await service.describeData(RESOURCE);
+    await service.pageData(RESOURCE, "votes", 0);
+    await service.errors(RESOURCE);
+    expect(canReadWorkstream).toHaveBeenCalledTimes(3);
+    expect(openForViewer).not.toHaveBeenCalled();
+    expect(readProfile).not.toHaveBeenCalled();
   });
 });

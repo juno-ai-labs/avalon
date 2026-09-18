@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 
@@ -36,6 +37,13 @@ async function probe(overrides: Record<string, unknown> = {}): Promise<Response>
 }
 
 describe("the health probe's environment-contract check", () => {
+  it('does not exempt an unconfigured region from the login readiness check', async () => {
+    vi.mocked(assertEnvContract).mockImplementation(() => undefined);
+    const response = await probe({ AVALON_REGION: 'missing-region', GOOGLE_OAUTH_CLIENT_ID: '', GOOGLE_OAUTH_CLIENT_SECRET: '' });
+    const body = await response.json() as { checks: { googleLoginOAuth: { ok: boolean; message: string } } };
+    expect(body.checks.googleLoginOAuth).toEqual({ ok: false, message: 'not configured' });
+  });
+
   it("reports the contract as satisfied when the assertion passes", async () => {
     vi.mocked(assertEnvContract).mockImplementation(() => undefined);
 
@@ -45,39 +53,7 @@ describe("the health probe's environment-contract check", () => {
     expect(body.checks.envContract).toEqual({ ok: true, message: "satisfied" });
   });
 
-  it("reports EU inference analytics as intentionally disabled", async () => {
-    vi.mocked(assertEnvContract).mockImplementation(() => undefined);
 
-    const response = await probe({
-      AVALON_REGION: "eu",
-      INFERENCE_LAKEHOUSE_QUEUE: undefined,
-      INFERENCE_LAKEHOUSE: undefined,
-    });
-
-    const body = await response.json() as {
-      checks: { inferenceLakehouse: { ok: boolean; message: string } };
-    };
-    expect(body.checks.inferenceLakehouse).toEqual({
-      ok: true,
-      message: "EU inference analytics export intentionally disabled",
-    });
-  });
-
-  it("reports the EU analytics-events lakehouse as intentionally disabled", async () => {
-    vi.mocked(assertEnvContract).mockImplementation(() => undefined);
-    const response = await probe({
-      AVALON_REGION: "eu",
-      ANALYTICS_LAKEHOUSE_QUEUE: undefined,
-      ANALYTICS_LAKEHOUSE: undefined,
-    });
-    const body = await response.json() as {
-      checks: { analyticsLakehouse: { ok: boolean; message: string } };
-    };
-    expect(body.checks.analyticsLakehouse).toEqual({
-      ok: true,
-      message: "EU analytics lakehouse export intentionally disabled",
-    });
-  });
 
   it("reports an environment contract failure as a check", async () => {
     vi.mocked(assertEnvContract).mockImplementation(() => {

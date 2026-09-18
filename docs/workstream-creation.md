@@ -30,8 +30,6 @@ attempt at the opposite that the changelog records.
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 | `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
 
-## How it works
-
 ### The launcher and the work stream are one screen
 
 `NewWorkstreamScreen` holds a `launching: LaunchingWorkstream | null` state. It is
@@ -59,6 +57,13 @@ navigation that follows changes only the data. The composer is no longer one of
 those things: it is the same message capsule at the same width on both sides of
 the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
+
+The launcher starts with focus in the opening-message text input, including
+when opened from a project. The composer is keyed by its draft identity so
+switching between project launchers also restores initial focus; that key stays
+stable throughout the launch hand-off. The sidebar lists existing work streams without a
+placeholder row for the unsent draft. Recipient selection remains available
+when the person chooses the recipient field.
 
 ### What moves
 
@@ -379,17 +384,26 @@ see
   transition. **A change to the animation or to either state's geometry still has
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
-## Regional impact
-
-The email route reservation crosses to the Global registry from every non-Global
-region, and activation crosses a second time, so an EU create pays two hops that
-a Global one does not. Both are on the create path. Moving activation off it was
-tried and reverted — see the changelog — because the create's own cache
-invalidation makes `list` backfill the route immediately, paying the same hop a
-moment later against extra reads. Anything that wants that hop back has to deal
-with the backfill first. See [`regionalization.md`](regionalization.md).
-
 ## Changelog
+
+### 2026-09-14 — New work streams start with the opening message
+
+**What changed:** Both workspace and project launchers focus the message composer.
+The recipient picker starts closed, and the sidebar no longer lists an unsent
+draft as “New work stream.” The existing creation controls remain available.
+
+**Why:** The recipient-first focus made immediate typing search people instead
+of composing the opening message. The requested starting point is writing the
+message, without a placeholder suggesting a work stream already exists.
+Keeping the picker initially open and closing it from the composer's focus
+handler would make the starting state depend on a second control's mount event;
+it now starts closed directly.
+
+**Consequences:** Recipient selection opens when the person reaches the recipient
+field. Changing launcher draft identity remounts the composer to restore focus,
+while the same draft keeps its composer across the launch hand-off. Future launcher changes must preserve initial composer focus and keep
+unsent drafts out of the work-stream list. The earlier recipient-first launcher
+and sidebar-label changelog entries describe the behavior before this change.
 
 ### 2026-09-10 — Project-owned creation uses the message capsule too
 
@@ -923,17 +937,6 @@ change between them animates. On the server, `POST /workstreams` no longer waits
 for the Cloudflare Workflows round trip that starts the harness, nor for the
 email route activation; both are deferred to `waitUntil`. The two pre-flight
 checks now run together.
-
-**Why:** `create` made eight sequential round trips before returning 201, and the
-client did not navigate until it did. Nothing on screen changed in that window
-except a spinner in the send button the message had already left, so the whole
-cost of creating a work stream was paid in front of a screen that looked idle.
-The two deferred steps were picked because nothing in the response depends on
-them: the harness run row and its id are written before the workflow start, and
-the address is settled by the reservation, leaving only its routing status. For
-an EU workspace the activation is a second hop to the Global registry, which made
-it the largest thing that could leave the path without changing what the caller
-gets.
 
 **Considered and rejected:** *A client-generated work-stream id*, sent in the
 create request so the client could navigate straight to the final URL. It is the

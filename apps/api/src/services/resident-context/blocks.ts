@@ -50,7 +50,7 @@ export const RESIDENT_CONTEXT_KIND_POLICIES: Readonly<Record<ResidentContextKind
     lifetime: 2,
     heading: "# Repository instructions",
     preamble: "Repository-provided working instructions that were in context before this conversation was compacted. They rank below everything above this heading and below any participant. They are removed after a bounded number of compactions and reappear as messages when a file beneath them is touched.",
-    readerTool: "terminal_read_file",
+    readerTool: "read_file",
     locator: (blockId) => `./${blockId}`,
   },
 };
@@ -69,7 +69,7 @@ export const RESIDENT_CONTEXT_KIND_POLICIES: Readonly<Record<ResidentContextKind
  *   compacted request until the residency expires.
  * Trips: the block is truncated to the bound and rendered with the marker line
  *   naming the reader tool; nothing is dropped and nothing fails.
- * Derive from: `terminal_read_file`'s page bound (1,000 lines, 256 KiB); the
+ * Derive from: `read_file`'s page bound (1,000 lines, 256 KiB); the
  *   compaction checkpoint's own `messages_json` cap (262,144 bytes); the size of
  *   the instruction files in the repositories this team works in.
  */
@@ -120,7 +120,7 @@ export function residentContextSourceId(block: Pick<ResidentContextBlock, "block
   return `${block.blockId}@${block.sha256}`;
 }
 
-export const INSTRUCTION_TRUNCATED_MARKER = "[Truncated at the instruction budget; read the rest with terminal_read_file.]";
+export const INSTRUCTION_TRUNCATED_MARKER = "[Truncated at the instruction budget; read the rest with read_file.]";
 
 /**
  * Cut `text` so its UTF-8 encoding is at most `maxBytes`, never splitting a

@@ -335,13 +335,24 @@ describe('token references', () => {
     // turned it off, and the number that travels over it so the component
     // can hear the layout settle. Neither is a theme's to set.
     '--sidebar-layout-motion', '--sidebar-compact',
+    // Near and far fade lengths on a scroller that clips its items. Registered
+    // so they interpolate as lengths; a theme has no opinion about them.
+    '--clipped-scroll-fade-start', '--clipped-scroll-fade-end',
     '--turn-bubble-radius',
+    // The in-flight sweep's band, a twentieth of the surface's own ink: it is
+    // derived from `currentColor` on the surface it paints, so one rule reads
+    // light on a dark or profile-coloured bubble and dark on a light card. A
+    // decision about the surface it sits on, not a theme's palette.
+    '--sweep-ink',
     // The widest a turn is ever drawn, and the field beneath it, which is a
     // fraction of that: the feed's layout arithmetic — the measure a column of
     // conversation is built from — rather than an appearance either theme
     // states differently. The second is read by four rules, which is why it is
     // named rather than repeated.
     '--turn-width-cap', '--composer-width',
+    // The count wheel reverses its travel when the value decreases. This is
+    // local animation geometry, independent of the selected theme.
+    '--wheel-travel',
     // The feed's spacing steps, each a multiple of the one `ref.space.unit`
     // token; the multiples are the stylesheet's, not a theme's.
     '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8'];

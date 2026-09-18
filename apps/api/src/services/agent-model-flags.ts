@@ -22,15 +22,16 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
  * carrying the OpenRouter model it runs on and the OpenRouter models it may
  * route onward to, so a model swap is a flag change rather than a deploy.
  *
- * The first four names match `AgentInferenceSource` in
+ * The first two names match `AgentInferenceSource` in
  * `agent-inference-logging.ts`, so a lakehouse record and a flag key describe
  * the same agent. The rest are the standalone structured-output agents, which
  * call OpenRouter directly rather than through the harness.
  *
- * Durable-memory embeddings are the deliberate exception: their fixed model
- * defines the Vectorize coordinate space, so they cannot be retargeted or
- * given fallbacks without a corpus rebuild. Other new model-using services
- * belong in this catalog and the default resolver below.
+ * Durable-memory embeddings and message addressing are deliberate exceptions.
+ * Their fixed models protect a semantic-space contract and a measured
+ * two-provider cascade respectively, so neither can be retargeted through
+ * Flagship. Other new model-using services belong in this catalog and the
+ * default resolver below.
  */
 export { AGENT_MODEL_FLAG_KEYS, AGENT_MODEL_ROLES };
 export type { AgentModelRole, AgentModelRouting };
@@ -66,9 +67,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
   switch (role) {
     case "workstream":
     case "inline_child":
-    case "meeting_notes":
       return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
-    case "addressing_classifier":
     case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
     case "work_opportunity_admission":

@@ -16,20 +16,25 @@
     "AVALON_REGION": "global",
     "RALLY_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
-    "EU_PUBLIC_API_BASE_URL": "https://eu.api.rallywith.ai",
     "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
     "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
+    "ASHBY_INGRESS_BASE_URL": "https://ashby.rallywith.ai",
     "NOTION_INGRESS_BASE_URL": "https://notion.rallywith.ai",
     "SLACK_INGRESS_BASE_URL": "https://slack.rallywith.ai",
     "POSTHOG_HOST": "https://us.i.posthog.com",
     "DAYTONA_API_URL": "https://app.daytona.io/api",
     "DAYTONA_TARGET": "us",
-    "DAYTONA_TERMINAL_SNAPSHOT": "rally-terminal-1",
+    "DAYTONA_TERMINAL_SNAPSHOT": "rally-terminal-20260914-0610",
     "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
+    // The Fireflies connector's rollout gate for this region. Not a secret and
+    // not a credential: both of Fireflies' credentials are the customer's, so
+    // there is nothing whose absence could gate it. Anything but "true" leaves
+    // the type out of the connector catalog and refuses creation here.
+    "FIREFLIES_CONNECTOR_ENABLED": "true",
     "ALLOWED_ORIGINS": "app://rallywithai,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "x-ai/grok-4.3",
@@ -48,7 +53,7 @@
     "HARNESS_CHILD_MAX_CHAIN_RUNS": "4",
     "HARNESS_CHILD_MAX_DEPTH": "1",
     "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS": "20000",
-    "HARNESS_TTFT_TIMEOUT_MS": "45000",
+    "HARNESS_TTFT_TIMEOUT_MS": "180000",
     "HARNESS_STREAM_IDLE_TIMEOUT_MS": "30000",
     "HARNESS_TRANSPORT_RETRIES": "1",
     "TOOL_DEFAULT_TIMEOUT_MS": "30000",
@@ -121,41 +126,6 @@
     {
       "binding": "TELEMETRY_DELIVERY",
       "service": "avalon-api-telemetry-delivery-global"
-    },
-    {
-      "binding": "EU_IDENTITY_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "RegionalIdentityBridge"
-    },
-    {
-      "binding": "EU_GITHUB_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "GitHubRegionalBridge"
-    },
-    {
-      "binding": "EU_INBOUND_EMAIL_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "InboundEmailRegionalBridge"
-    },
-    {
-      "binding": "EU_LINEAR_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "LinearRegionalBridge"
-    },
-    {
-      "binding": "EU_NOTION_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "NotionRegionalBridge"
-    },
-    {
-      "binding": "EU_SLACK_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "SlackRegionalBridge"
-    },
-    {
-      "binding": "EU_TELEMETRY_BRIDGE",
-      "service": "avalon-api-eu",
-      "entrypoint": "TelemetryRegionalBridge"
     }
   ],
   // These are one-time hosted resources: Wrangler deploy validates the binding
@@ -167,6 +137,8 @@
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
   ],
   "kv_namespaces": [
+    // One platform-wide copy of each public-site mark, replaced after 30 days.
+    { "binding": "FAVICON_CACHE" },
     // Wrangler provisions this dedicated namespace on first deployment.
     // Authorization evidence is never stored in the public pricing namespace.
     { "binding": "AUTHORIZATION_CACHE" },
@@ -264,6 +236,7 @@
       // per region because the payload names a workspace and only that
       // region's objects hold its sockets. See docs/access-revocation.md.
       { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-global-access-revocations" },
+      { "binding": "PUSH_DELIVERY_QUEUE", "queue": "avalon-global-push-deliveries" },
       // Durable Object migration reports. A queue rather than a service
       // binding to the tracker: the whole fleet converges on one registry
       // object, nothing waits on the outcome, and a queue is a resource both
@@ -317,6 +290,16 @@
         "dead_letter_queue": "avalon-global-access-revocations-dead-letter"
       },
       {
+        "queue": "avalon-global-push-deliveries",
+        // Reuse the existing regional queue policy: ten-message batches,
+        // one-second batching, five retries, then the operational dead-letter
+        // queue. Push needs no separate retry scheduler.
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-push-deliveries-dead-letter"
+      },
+      {
         "queue": "avalon-global-product-feature-flags",
         "max_batch_size": 100,
         "max_batch_timeout": 1,
@@ -355,8 +338,7 @@
   //
   // `destinations` names an account-level OTLP destination configured outside
   // this repository; the credential for it lives there, never here. Only the
-  // opt-in is repository configuration, and that is what keeps this Global-only
-  // — the EU Worker's config deliberately names no destination. See
+  // opt-in is repository configuration. See
   // docs/telemetry.md and docs/performance-tracing.md.
   //
   // `persist` is left at its default so the Cloudflare copy stays: an export is

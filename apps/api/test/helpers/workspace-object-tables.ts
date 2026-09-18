@@ -85,7 +85,7 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
     .filter((statement) => /^\s*CREATE TABLE workspace_identity\b/u.test(statement));
   // The capture triggers sit beside the identity fences, which read this
   // singleton on every insert; without it no resource row can be written.
-  for (const statement of identity) database.exec(statement);
+  database.exec(identity.at(-1)!);
   database.prepare(
     `INSERT INTO workspace_identity
        (id, workspace_id, region, placement_affinity, created_at, updated_at)

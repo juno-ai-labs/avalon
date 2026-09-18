@@ -154,7 +154,7 @@ Include these when they apply, between **Testing** and **Changelog**:
 - **Data model** — The tables and columns the module owns and how rows are
   keyed. The migrations and [`data-model.md`](data-model.md) stay authoritative;
   this is the module's view of them.
-- **Regional impact** — What differs between Global and the European Union, what
+- **Regional impact** — What differs between configured deployments, what
   crosses the boundary, and where data comes to rest. **Required in spirit** for
   anything touching identity, the Global registry, cross-region bridges, provider
   ingress routing, or residency; read [`regionalization.md`](regionalization.md)

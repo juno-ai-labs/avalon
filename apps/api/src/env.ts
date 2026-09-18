@@ -1,3 +1,7 @@
+import { configuredRegions } from "@rally/contracts/regions";
+import { RegionSchema } from "@rally/contracts/regions";
+import { isConfiguredRegion } from "@rally/contracts/regions";
+import type { GlobalAshbyRouterRpcBinding } from "./services/ashby-routing-service";
 import {
   AzureInferenceEndpointSchema,
   DesktopDeepLinkUrlSchema,
@@ -44,9 +48,11 @@ export interface Env {
   /** Global-only installer stream for private download grants. */
   DESKTOP_RELEASES?: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
-  /** One globally replicated cache shared by the Global and EU Workers. */
+  /** One globally replicated cache shared by the configured Workers. */
   INFERENCE_PRICING_CACHE: KVNamespace;
-  /** Global authorization acceleration only; EU evidence remains jurisdiction-bound. */
+  /** Public-site marks shared platform-wide; values expire and are replaced. */
+  FAVICON_CACHE: KVNamespace;
+  /** Global authorization acceleration only; regional evidence remains jurisdiction-bound. */
   AUTHORIZATION_CACHE?: KVNamespace;
   IMAGES: ImagesBinding;
   AI: Ai;
@@ -58,7 +64,7 @@ export interface Env {
   TERMINAL_ANALYTICS: AnalyticsEngineDataset;
   DOCUMENT_PROCESSOR: DocumentProcessingRpcBinding;
   TERMINAL_PROVIDER: TerminalProviderRpcBinding;
-  /** Global-only private destination adapter; EU has neither this binding nor PostHog credentials. */
+  /** Private destination adapter for the configured deployment. */
   TELEMETRY_DELIVERY?: TelemetryDeliveryRpcBinding;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
@@ -88,21 +94,25 @@ export interface Env {
   ANALYTICS_LAKEHOUSE_QUEUE?: Queue;
   /** The one path from a D1 access retraction to an open socket. */
   ACCESS_REVOCATION_QUEUE: Queue;
+  PUSH_DELIVERY_QUEUE?: Queue;
+  APNS_AUTH_KEY?: string;
+  APNS_KEY_ID?: string;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;
   /** Global-only: the demo preparation driver. Absent, the demo write routes
    * answer 503 (`demo_preparation_unavailable`) and nothing else changes — it
    * is not in the boot contract on purpose, because a demo tool's binding must
-   * never take a region offline. EU binds nothing; its demo routes refuse. */
+   * never take a region offline. regional binds nothing; its demo routes refuse. */
   DEMO_PREPARATION_WORKFLOW?: Workflow;
-  EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
-  EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
-  EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
-  EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
-  EU_NOTION_BRIDGE?: NotionRegionalBridgeRpcBinding;
-  EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
-  EU_TELEMETRY_BRIDGE?: RegionalTelemetryBridgeRpcBinding;
+  [binding: `REGION_${string}_IDENTITY_BRIDGE`]: RegionalIdentityBridgeRpcBinding | undefined;
+  [binding: `REGION_${string}_GITHUB_BRIDGE`]: GitHubRegionalBridgeRpcBinding | undefined;
+  [binding: `REGION_${string}_INBOUND_EMAIL_BRIDGE`]: InboundEmailRegionalRpcBinding | undefined;
+  [binding: `REGION_${string}_LINEAR_BRIDGE`]: LinearRegionalBridgeRpcBinding | undefined;
+  GLOBAL_ASHBY_ROUTER?: GlobalAshbyRouterRpcBinding;
+  [binding: `REGION_${string}_NOTION_BRIDGE`]: NotionRegionalBridgeRpcBinding | undefined;
+  [binding: `REGION_${string}_SLACK_BRIDGE`]: SlackRegionalBridgeRpcBinding | undefined;
+  [binding: `REGION_${string}_TELEMETRY_BRIDGE`]: RegionalTelemetryBridgeRpcBinding | undefined;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
@@ -128,7 +138,7 @@ export interface Env {
   AVALON_REGION: Region;
   RALLY_DEV_AUTH?: string;
   PUBLIC_API_BASE_URL: string;
-  EU_PUBLIC_API_BASE_URL?: string;
+
   PUBLIC_WEB_BASE_URL: string;
   /**
    * The registrable domain live artifacts are served from.
@@ -147,17 +157,21 @@ export interface Env {
   DESKTOP_DEEP_LINK_URI: string;
   GITHUB_INGRESS_BASE_URL?: string;
   LINEAR_INGRESS_BASE_URL?: string;
+  ASHBY_INGRESS_BASE_URL?: string;
   NOTION_INGRESS_BASE_URL?: string;
   SLACK_INGRESS_BASE_URL?: string;
   POSTHOG_HOST?: string;
   TERMINAL_REGION_CAPABILITY?: "supported" | "unsupported";
   TERMINAL_EMERGENCY_DISABLED?: "true" | "false";
   DAYTONA_API_KEY?: string;
+  DAYTONA_ORGANIZATION_ID?: string;
+  DAYTONA_WEBHOOK_SECRET?: string;
   DAYTONA_API_URL?: string;
   DAYTONA_TARGET?: string;
   DAYTONA_TERMINAL_SNAPSHOT?: string;
 
   OPENROUTER_API_KEY: string;
+  TYPESAFE_API_KEY?: string;
   OPENROUTER_PRIMARY_MODEL: string;
   OPENROUTER_FALLBACK_MODELS: string;
   OPENROUTER_CLASSIFIER_MODEL: string;
@@ -181,7 +195,7 @@ export interface Env {
   WORKSTREAM_EMAIL_ADDRESS_KEY?: string;
   WORKSTREAM_EMAIL_DOMAIN?: string;
 
-  /** Global only. `productionOnlySecrets` enforces them there; EU never carries them. */
+  /** Global only. `productionOnlySecrets` enforces them there; regional never carries them. */
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_ID?: string;
@@ -204,8 +218,19 @@ export interface Env {
   SLACK_CLIENT_SECRET?: string;
   SLACK_SIGNING_SECRET?: string;
   TWITTER_API_IO_API_KEY?: string;
+  /**
+   * The Fireflies connector's rollout gate, region by region.
+   *
+   * Both of its credentials are the customer's — an admin-pasted API key and a
+   * member's own OAuth grant — so there is no Rally-side secret whose absence
+   * could stand in for "not launched here" the way `TWITTER_API_IO_API_KEY`
+   * does for X. Deliberately absent from `assertEnvContract`: unset is the off
+   * state, not a misconfiguration, and a region that has never heard of
+   * Fireflies must still start.
+   */
+  FIREFLIES_CONNECTOR_ENABLED?: string;
   POSTHOG_PROJECT_TOKEN?: string;
-  /** Global-only signer for onboarding telemetry capabilities. EU validates
+  /** Global-only signer for onboarding telemetry capabilities. regional validates
    * them through the narrow Global telemetry-control RPC. */
   TELEMETRY_CAPABILITY_SIGNING_KEY?: string;
   /** Per-region operator credentials for the restricted telemetry operations
@@ -300,6 +325,8 @@ export interface AuthContext extends IdentityAuthContext {
 
 export interface AppVariables {
   requestId: string;
+  /** Worker-entry wall clock, captured before auth, parsing, or validation. */
+  requestReceivedAt: number;
   auth: IdentityAuthContext | undefined;
   operator: TelemetryOperatorPrincipal | undefined;
   /**
@@ -352,6 +379,7 @@ const EnvContractSchema = z.object({
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
   INFERENCE_PRICING_CACHE: binding<KVNamespace>(),
+  FAVICON_CACHE: binding<KVNamespace>(),
   AUTHORIZATION_CACHE: binding<KVNamespace>().optional(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
@@ -381,7 +409,7 @@ const EnvContractSchema = z.object({
   DEMO_PREPARATION_WORKFLOW: binding<Workflow>().optional(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
-  AVALON_REGION: z.enum(["global", "eu"]),
+  AVALON_REGION: RegionSchema.refine(isConfiguredRegion),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]),
   PUBLIC_API_BASE_URL: HttpUrlSchema,
   PUBLIC_WEB_BASE_URL: HttpUrlSchema,
@@ -437,9 +465,10 @@ const EnvContractSchema = z.object({
   INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
   INBOUND_EMAIL_PROCESSING_LEASE_SECONDS: numericString.optional(),
 
-  EU_PUBLIC_API_BASE_URL: HttpUrlSchema.optional(),
+
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   LINEAR_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  ASHBY_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   NOTION_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
   POSTHOG_HOST: HttpUrlSchema.optional(),
@@ -456,16 +485,16 @@ const EnvContractSchema = z.object({
  * the Global endpoint (`regionalization.md`), `AuthService.beginIdentity` refuses
  * a non-Global region before it reads either key, and `sync-dev-env.mjs` lists
  * both under `globalOnlyKeys`. Requiring them in every region made the deployed
- * EU Worker fail its own contract on every request, every queue batch, and every
+ * regional Worker fail its own contract on every request, every queue batch, and every
  * cron tick — while `/health`, exempt so that it can report the fault, went on
  * answering `ok`. A contract that demands what the architecture forbids does not
  * catch a misconfiguration; it manufactures one, silently.
  *
- * `OPENROUTER_API_KEY` is required in both regions, and belongs here for a second
+ * The TypeSafe and OpenRouter keys are required in both regions. They belong here for a second
  * reason: `scripts/seed-sandbox-env.mjs` leaves it empty whenever no real key is
  * available, which is every sandbox session, and outside production the app
  * models its absence as a supported state rather than a fault — `/health`
- * reports `openRouter: not configured` and still answers. Requiring it
+ * reports the provider as not configured and still answers. Requiring either
  * unconditionally at the entrypoint turned that into a 503 on every route of
  * both regions, `/health` included, so the one endpoint whose job is to report
  * which key is missing was the one endpoint that could not answer.
@@ -487,17 +516,18 @@ const EnvContractSchema = z.object({
 const productionOnlySecrets = [
   { key: "GOOGLE_OAUTH_CLIENT_ID", regions: ["global"] },
   { key: "GOOGLE_OAUTH_CLIENT_SECRET", regions: ["global"] },
-  { key: "OPENROUTER_API_KEY", regions: ["global", "eu"] },
+  { key: "OPENROUTER_API_KEY", regions: configuredRegions },
+  { key: "TYPESAFE_API_KEY", regions: configuredRegions },
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 const productionOnlyBindings = [
-  { key: "DOCUMENT_PROCESSOR", regions: ["global", "eu"] },
-  { key: "TERMINAL_PROVIDER", regions: ["global", "eu"] },
-  { key: "TELEMETRY_DELIVERY", regions: ["global"] },
-  { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: ["global"] },
-  { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
-  { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },
-  { key: "ANALYTICS_LAKEHOUSE", regions: ["global"] },
+  { key: "DOCUMENT_PROCESSOR", regions: configuredRegions },
+  { key: "TERMINAL_PROVIDER", regions: configuredRegions },
+  { key: "TELEMETRY_DELIVERY", regions: configuredRegions },
+  { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: configuredRegions },
+  { key: "INFERENCE_LAKEHOUSE", regions: configuredRegions },
+  { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: configuredRegions },
+  { key: "ANALYTICS_LAKEHOUSE", regions: configuredRegions },
   // `DEMO_PREPARATION_WORKFLOW` is deliberately absent: it drives an operator
   // tool, and a missing binding is that tool's 503, not a region-wide fault.
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
@@ -656,7 +686,7 @@ export function countEnv(
 }
 
 export function assertRegion(value: string): Region {
-  if (value !== "global" && value !== "eu") {
+  if (!isConfiguredRegion(value)) {
     throw new Error(`Unsupported Avalon region: ${value}`);
   }
   return value;

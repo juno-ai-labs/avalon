@@ -1,4 +1,6 @@
+import "../../../tests/isolated-region";
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { ConnectorConnectionCardCatalog, ConnectorConnectionCardIds } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
@@ -27,6 +29,8 @@ const supportConnectorPages = [
   { provider: 'generic_webhook', slug: 'inbound-webhook', title: 'Inbound webhook' },
   { provider: 'x', slug: 'x', title: 'Public X' },
   { provider: 'custom_mcp', slug: 'custom-mcp', title: 'Custom MCP server' },
+  { provider: 'ashby', slug: 'ashby', title: 'Ashby' },
+  { provider: 'fireflies', slug: 'fireflies', title: 'Fireflies' },
 ] as const;
 
 const supportPagePaths = [
@@ -396,19 +400,19 @@ describe('public Rally site', () => {
     expect(script).toContain('window.history.replaceState');
     expect(script).not.toContain('window.location.search');
     const token = 'a'.repeat(43);
-    expect(parseSlackLinkFragment(`#token=${token}&region=eu&workspace=00000000-0000-7000-8000-000000000009`))
+    expect(parseSlackLinkFragment(`#token=${token}&region=enterprise&workspace=00000000-0000-7000-8000-000000000009`))
       .toEqual({
         token,
-        workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
+        workspaceTarget: { region: 'enterprise', workspaceId: '00000000-0000-7000-8000-000000000009' },
       });
     expect(slackDesktopTarget({
       token,
-      workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
+      workspaceTarget: { region: 'enterprise', workspaceId: '00000000-0000-7000-8000-000000000009' },
     })).toBe(
-      `rallywithai://workspace/eu/00000000-0000-7000-8000-000000000009/slack/link?token=${token}`,
+      `rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000009/slack/link?token=${token}`,
     );
     expect(parseSlackLinkFragment(`#token=${token}`)).toEqual({ token, workspaceTarget: null });
-    expect(parseSlackLinkFragment(`#token=${token}&region=eu`)).toBeNull();
+    expect(parseSlackLinkFragment(`#token=${token}&region=enterprise`)).toBeNull();
   });
 
   it('ships working Marketplace landing, privacy, support, and exact desktop handoff surfaces', () => {
@@ -450,10 +454,21 @@ describe('public Rally site', () => {
       /(?:export )?const connectorProviders = \[(?<catalog>[\s\S]*?)\] as const;/u,
     )?.groups?.catalog;
     if (!desktopCatalog) throw new Error('Desktop connector catalog was not found');
-    const desktopProviders = new Set(
+    const literalDesktopProviders = new Set(
       [...desktopCatalog.matchAll(/^\s+provider: '([^']+)' as const,/gmu)]
         .map((match) => match[1]),
     );
+    for (const connectorId of ConnectorConnectionCardIds) {
+      const access = connectorId.includes('-')
+        ? `ConnectorConnectionCardCatalog['${connectorId}']`
+        : `ConnectorConnectionCardCatalog.${connectorId}`;
+      expect(desktopCatalog).toContain(`provider: ${access}.providerType`);
+      expect(desktopCatalog).toContain(`mark: ${access}.iconName`);
+    }
+    const desktopProviders = new Set([
+      ...literalDesktopProviders,
+      ...Object.values(ConnectorConnectionCardCatalog).map(({ providerType }) => providerType),
+    ]);
     expect(desktopProviders).toEqual(
       new Set(supportConnectorPages.map(({ provider }) => provider)),
     );
@@ -533,7 +548,7 @@ describe('public Rally site', () => {
     expect(readProjectFile('trust/dpa/index.html')).toContain('Annex B · Technical and organizational measures');
     expect(readProjectFile('trust/subprocessors/index.html')).toContain('Cloudflare, Inc.');
     expect(readProjectFile('trust/cookies/index.html')).toContain('uses bounded first-party product analytics');
-    expect(readProjectFile('trust/cookies/index.html')).toContain('uses no persistent browser analytics identifier');
+    expect(readProjectFile('trust/cookies/index.html')).toContain('first-party anonymous identifier in local storage');
     expect(readProjectFile('trust/cookies/index.html')).toContain("does not load PostHog's browser SDK");
     expect(readProjectFile('trust/security/index.html')).toContain('context isolation');
     expect(readProjectFile('trust/security/index.html')).not.toContain('Request access');
@@ -617,8 +632,8 @@ describe('public Rally site', () => {
     expect(telemetry).toContain('/telemetry/route');
     expect(telemetry).toContain('/telemetry/bootstrap');
     expect(telemetry).toContain('/telemetry/anonymous');
-    expect(telemetry).not.toContain('https://eu.api.rallywith.ai');
-    expect(telemetry).toContain("route.route === 'global' ? globalAnonymousEpochId() : transientAnonymousEpochId");
+    expect(telemetry).not.toContain('https://enterprise.api.rallywith.ai');
+    expect(telemetry).toContain("const epochId = globalAnonymousEpochId()");
     expect(telemetry).toContain('routeToken: route.routeToken');
     expect(telemetry).not.toContain('sessionStorage');
     expect(telemetry).toContain("report('site_page_viewed'");
@@ -626,19 +641,19 @@ describe('public Rally site', () => {
     expect(headers).toMatch(/^\/\*\n {2}Content-Security-Policy:/u);
     expect(headers).toContain("connect-src https://api.rallywith.ai https://api.with-avalon.com");
     expect(headers).not.toContain("connect-src 'none'");
-    expect(headers).not.toContain('https://eu.api.rallywith.ai');
+    expect(headers).not.toContain('https://enterprise.api.rallywith.ai');
   });
 
   it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {
     expect(normalizedTelemetryPathname(
-      '/app/workspaces/eu/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
+      '/app/workspaces/enterprise/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
       .toBe('/app/workstreams/:id');
     expect(normalizedTelemetryPathname(
-      '/app/workspaces/eu/private-workspace/workstreams/private-workstream/extra',
+      '/app/workspaces/enterprise/private-workspace/workstreams/private-workstream/extra',
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
-    expect(normalizedTelemetryPathname('/app/workspaces/eu/private-workspace'))
+    expect(normalizedTelemetryPathname('/app/workspaces/enterprise/private-workspace'))
       .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');
     expect(sitePageForPath('/trust')).toBe('legal');
@@ -669,9 +684,9 @@ describe('public Rally site', () => {
     const attempt = 'a'.repeat(43);
     const successTarget = `avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
-    const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}&provider=linear`;
-    const targetedConnectorSuccess = `avalon://workspace/eu/00000000-0000-7000-8000-000000000009/auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&attempt=${attempt}&provider=linear`;
-    const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`;
+    const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&attempt=${attempt}&provider=linear`;
+    const targetedConnectorSuccess = `avalon://workspace/enterprise/00000000-0000-7000-8000-000000000009/auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&attempt=${attempt}&provider=linear`;
+    const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=enterprise&attempt=${attempt}&status=denied&error=oauth_denied`;
     const granolaSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000005&status=connected&region=global&attempt=${attempt}&provider=granola`;
     const granolaErrorTarget = `avalon://auth/complete?provider=granola&region=global&attempt=${attempt}&status=failed&error=connector_oauth_failed`;
     const asFragment = (target: string): string => `#${new URLSearchParams({ target }).toString()}`;
@@ -691,12 +706,12 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=us&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=short`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}&extra=value`))).toBeNull();
-    expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&provider=linear')))
-      .toBe('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&provider=linear');
-    expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=eu&provider=linear')))
+    expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&provider=linear')))
+      .toBe('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&provider=linear');
+    expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=enterprise&provider=linear')))
       .toBeNull();
-    expect(parseDesktopTarget(asFragment(`avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}`))).toBeNull();
-    expect(parseDesktopTarget(asFragment(`avalon://auth/complete?provider=unknown&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`))).toBeNull();
+    expect(parseDesktopTarget(asFragment(`avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&attempt=${attempt}`))).toBeNull();
+    expect(parseDesktopTarget(asFragment(`avalon://auth/complete?provider=unknown&region=enterprise&attempt=${attempt}&status=denied&error=oauth_denied`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`https://with-avalon.com/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
 

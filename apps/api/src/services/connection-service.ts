@@ -1,3 +1,10 @@
+import type { Region } from "@rally/contracts/regions";
+import { ashbyIngressUrl } from "../lib/ashby-ingress";
+import { registerAshbyRoute } from "./ashby-routing-service";
+import { ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
+import { AshbyEventSelectionSchema } from "@rally/connectors";
+import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
 import { withDeadline } from "../lib/deadline";
 import { dynamicConnectorCapability, stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
@@ -5,22 +12,26 @@ import {
   CUSTOM_MCP_CONNECTOR_TYPE,
   ConnectorError,
   CustomMcpCapabilities,
+  FirefliesCapabilities,
   GoogleCapabilityScopes,
   GranolaCapabilities,
   LinearCapabilityScopes,
   SlackCapabilityScopes,
   SlackWorkspaceCapabilities,
+  FIREFLIES_TEST_EVENT,
   assertGitHubCapabilitiesGranted,
+  isFirefliesEventType,
   connectorCapabilitySupportsScope,
-  createGranolaWebhookEndpoint,
   createWebhookSecret,
-  deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
   githubRepositoryAccessPolicy,
   listCustomMcpToolInventory,
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
+  type ConnectorDerivedActivities,
+  type ConnectorVerifiedActivityWebhook,
+  type ConnectorWebhookActivitySource,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
   type ResolvedConnectorAdapter,
@@ -42,7 +53,7 @@ import type {
 import { CustomMcpConnectionConfigSchema, asUserId, asWorkspaceId } from "@rally/contracts";
 import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { newId, nowIso } from "@rally/db";
-import type { z } from "zod";
+import { z } from "zod";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
@@ -63,9 +74,9 @@ import {
 } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
-import { withAuthorizedConnection } from "./connector-connection-access";
+import { validateUnstoredConnectorCredential, withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
 import { NotionRoutingService } from "./notion-routing-service";
@@ -162,7 +173,7 @@ interface ConnectorIngressRouteSource {
 
 function connectorIngressRouteValues(
   connection: ConnectorIngressRouteSource,
-  region: "global" | "eu",
+  region: Region,
 ) {
   const config = parseJson<Record<string, unknown>>(connection.config_json, {});
   const providerUserId = typeof config.providerUserId === "string"
@@ -232,16 +243,17 @@ function connectorFailureMessage(error: unknown): string {
   return message.replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim().slice(0, 500);
 }
 
-const TELEMETRY_CONNECTOR_TYPES = new Set([
-  "custom_mcp", "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
-]);
-
-type TelemetryConnectorType =
-  "custom_mcp" | "generic_webhook" | "github" | "google" | "granola" | "linear" | "notion" | "slack" | "x";
+/**
+ * Derived from the contract rather than restated. A second literal list drifts
+ * the first time a connector is added: every telemetry schema keys on the
+ * contract's enum, so a type this file admitted but that one did not would be
+ * rejected at the telemetry boundary rather than here.
+ */
+const TELEMETRY_CONNECTOR_TYPE_SET: ReadonlySet<string> = new Set(TELEMETRY_CONNECTOR_TYPES);
 
 function telemetryConnector(value: unknown): TelemetryConnectorType | null {
   const connector = String(value);
-  return TELEMETRY_CONNECTOR_TYPES.has(connector) ? connector as TelemetryConnectorType : null;
+  return TELEMETRY_CONNECTOR_TYPE_SET.has(connector) ? connector as TelemetryConnectorType : null;
 }
 
 function telemetryConnectionHealth(value: unknown): "healthy" | "needs_reconnect" | "error" | "disabled" | "unknown" {
@@ -255,12 +267,41 @@ export interface GitHubSetupResult {
   workspaceId: string;
 }
 
+type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallationProviderSchema>;
+
+/**
+ * What Settings calls a workspace installation's connection.
+ *
+ * A provider whose credential names an account gets the compound
+ * `Provider · account` shape, so an administrator reading the row knows *whose*
+ * meetings or records it can see — which for a key-scoped connector is the
+ * whole question. A provider whose validation reports no account keeps the
+ * plain events label the first two shipped with.
+ */
+function workspaceInstallationDisplayName(providerName: string, credentials: Record<string, unknown>): string {
+  const account = stringField(credentials, "providerAccountName");
+  // Bounded and flattened like every other provider-derived label: the account
+  // half is whatever the provider returned, the reservation refuses anything
+  // over 180 characters, and this string is rendered into the model's plugin
+  // catalogue a line at a time.
+  return (account ? `${providerName} · ${account}` : `${providerName} workspace events`)
+    .replace(/\s+/gu, " ").trim().slice(0, 180);
+}
+
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
   // A configured server publishes its own scopes through protected-resource
   // metadata, and Rally asks for exactly those. There is no Rally-authored
   // scope vocabulary to map a capability onto here.
+  ashby: { "ashby.personal.mcp": [] },
   custom_mcp: {
     [CustomMcpCapabilities.tools]: [],
+  },
+  // Fireflies' authorization server advertises exactly `profile` and `email`
+  // and nothing capability-shaped, so neither grant maps onto an extra scope:
+  // the pass-through asks for what discovery publishes and no more.
+  fireflies: {
+    [FirefliesCapabilities.personalRead]: [],
+    [FirefliesCapabilities.workspaceRead]: [],
   },
   granola: {
     [GranolaCapabilities.personalRead]: ["mcp", "offline_access"],
@@ -292,10 +333,27 @@ async function attemptConnectorRepair(
   connection: AuthorizedConnectorConnection,
   identity: { connectionId: string; connectorType: string },
 ): Promise<string | null> {
-  if (!adapter.repair) return null;
+  const repair = adapter.repair;
+  if (!repair) return null;
+  return reportConnectorRepair(env, identity, (signal) => repair(connection, signal));
+}
+
+/**
+ * The reporting half of `attemptConnectorRepair`, for a repair that does not
+ * take the credential door's connection: a managed installation's repair runs
+ * the lifecycle runner, which authorizes itself.
+ */
+async function reportConnectorRepair(
+  env: Env,
+  identity: { connectionId: string; connectorType: string },
+  repair: (signal: AbortSignal) => Promise<{ repaired: boolean; message?: string }>,
+): Promise<string | null> {
   try {
-    const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
-    return repair.repaired ? repair.message ?? "Repaired the connection" : null;
+    const outcome = await repair(AbortSignal.timeout(10_000));
+    // Not repaired is still an outcome. The managed lifecycle's repair says
+    // why it could not — "needs attention; inspect installation details" —
+    // and dropping that left Test showing only the health check's sentence.
+    return outcome.repaired ? outcome.message ?? "Repaired the connection" : outcome.message ?? null;
   } catch (error) {
     logWarn(env, "connector_repair_failed", {
       connection_id: identity.connectionId,
@@ -307,6 +365,23 @@ async function attemptConnectorRepair(
       : "A repair was attempted and failed";
   }
 }
+
+/**
+ * How long a webhook delivery may spend on the provider read behind
+ * `webhookActivity.derive`.
+ *
+ * Open, per docs/adding-security-defensive-and-other-limits.md: the number is
+ * the team's, and until they set one no timer is created. What goes wrong
+ * without it: a provider read that never answers holds the delivery until the
+ * platform ends the invocation, while the provider retries the delivery it
+ * gave up on — Granola allows fifteen seconds for the whole delivery and
+ * retries with exponential backoff for four days (https://docs.granola.ai/webhooks,
+ * read 2026-09-17). Who can cause it: the provider. Why nothing already stops
+ * it: the read has no deadline of its own, and the delivery's incoming request
+ * has none either. What the trip looks like: the named activity is stored, the
+ * derived one is reported unverified and marked, and the log says `timeout`.
+ */
+const WEBHOOK_DERIVE_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
 export class ConnectionService {
   private env: Env;
@@ -327,7 +402,7 @@ export class ConnectionService {
     const connector = telemetryConnector(connection.connector_type);
     const auth = this.requireAuth();
     if (!connector) return;
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: auth.workspaceId,
       userId: auth.userId,
       name: "connector_action_completed",
@@ -344,7 +419,7 @@ export class ConnectionService {
       eventId: newId(),
     });
     if (previousHealth !== appliedHealth) {
-      await emitProductUsageTelemetry(this.env, {
+      emitProductUsageTelemetry(this.env, {
         workspaceId: auth.workspaceId,
         userId: auth.userId,
         name: "connector_health_changed",
@@ -371,7 +446,7 @@ export class ConnectionService {
     const connector = telemetryConnector(connection.connector_type);
     const auth = this.requireAuth();
     if (!connector) return;
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: auth.workspaceId,
       userId: auth.userId,
       name: "connector_setup_completed_v2",
@@ -401,7 +476,7 @@ export class ConnectionService {
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
        ORDER BY c.display_name COLLATE NOCASE`,
     ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
-    const rows = result.results ?? [];
+    const rows = await this.listedConnectionRows(auth.workspaceId, result.results ?? []);
     const ownerIds = [...new Set(rows.flatMap((row) =>
       typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
     const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
@@ -419,6 +494,53 @@ export class ConnectionService {
         ? ownerNames.get(row.owner_user_id) ?? null
         : null,
     }, userDelivery.get(String(row.id)) ?? null));
+  }
+
+  /**
+   * The rows the connections list shows: every enabled one, and a disabled one
+   * only while its installation is not settled.
+   *
+   * `disable` marks a row rather than deleting it, and the list returned every
+   * row, so a connection an administrator had just removed stayed in the table
+   * for good — badge reading "disabled", tools reading "—", and a second press
+   * of the trash icon changing nothing. What a disconnected row is still for is
+   * the installation behind it: a provider webhook Rally is about to remove, a
+   * registration whose create outcome was never learned and may be live under
+   * an identity Rally does not hold, or a disconnect that never reached the
+   * object. Manage events is reachable only from the row, so the row stays
+   * until the installation is `disconnected` or the administrator forgets its
+   * cleanup — the one explicit way to say "I have dealt with this". A disabled
+   * row with no installation, or a settled one, leaves.
+   *
+   * One hop, whatever the history: every disconnect leaves a row behind for
+   * ever, so a per-row read would grow with every reconnect. A read that fails
+   * keeps every candidate — an unsettled installation with no row cannot be
+   * recovered from Settings, while a settled one listed once more is a badge.
+   */
+  private async listedConnectionRows(workspaceId: string, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+    const candidates = rows.filter((row) => row.status === "disabled" && row.scope === "workspace"
+      && (ConnectorInstallationProviders as readonly string[]).includes(String(row.connector_type)));
+    let retained: ReadonlySet<string>;
+    if (candidates.length === 0) retained = new Set();
+    else {
+      try {
+        const object = await this.workspaceObject(workspaceId);
+        const connectionIds = candidates.map((row) => String(row.id));
+        const installations: ConnectorInstallation[] = [];
+        for (let start = 0; start < connectionIds.length; start += 200) {
+          installations.push(...await object.connectorInstallations({ workspaceId, connectionIds: connectionIds.slice(start, start + 200) }));
+        }
+        retained = new Set(installations.filter(awaitingCleanup).map((installation) => installation.connectionId));
+      } catch (error) {
+        logWarn(this.env, "connector_list_installation_read_failed", {
+          workspace_id: workspaceId,
+          candidate_count: candidates.length,
+          code: diagnosticErrorCode(error, "installation_read_failed"),
+        });
+        retained = new Set(candidates.map((row) => String(row.id)));
+      }
+    }
+    return rows.filter((row) => row.status !== "disabled" || retained.has(String(row.id)));
   }
 
   async getToolCount(id: string, signal: AbortSignal): Promise<{ count: number }> {
@@ -1163,6 +1285,10 @@ export class ConnectionService {
         throw new ApiError(409, "connector_account_mismatch", `Reconnect the same ${adapter.manifest.displayName} account`);
       }
       existingCredentials = (await this.context(existing)).credentials;
+    } else if (provider === "ashby") {
+      existing = await this.env.DB.prepare("SELECT * FROM connector_connections WHERE workspace_id = ? AND owner_user_id = ? AND connector_type = 'ashby' AND scope = 'personal' AND status <> 'disabled'")
+        .bind(row.workspace_id, row.user_id).first<StoredConnection>();
+      if (existing) { connectionId = existing.id; existingCredentials = (await this.context(existing)).credentials; }
     } else if (provider === "linear") {
       // Starting "Connect" twice for the same Linear identity should repair the
       // existing authorization rather than create two competing webhook/tool
@@ -1297,6 +1423,9 @@ export class ConnectionService {
           at,
         ), attemptId, connectionId);
       } catch (error) {
+        if (provider === "ashby" && isUniqueConstraintError(error)) {
+          throw new ApiError(409, "ashby_connection_exists", "Your Ashby account is already connected. Reopen its connection in Settings.");
+        }
         if (provider === "linear" && isUniqueConstraintError(error)) {
           throw new ApiError(
             409,
@@ -1595,6 +1724,8 @@ export class ConnectionService {
       connection.connector_type === "linear"
       || connection.connector_type === "notion"
       || connection.connector_type === "slack"
+      || (connection.connector_type === "ashby" && connection.scope === "personal")
+      || (connection.connector_type === "fireflies" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
     ) {
       return this.beginProvider(connection.connector_type, {
@@ -1617,12 +1748,47 @@ export class ConnectionService {
 
   async test(id: string) {
     const connection = await this.loadAuthorized(id);
+    await this.adoptGranolaInstallation(connection);
+    const managed = connection.scope === "workspace" && this.registry().get(connection.connector_type).installationManagement ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
     const previousHealth = telemetryConnectionHealth(connection.status);
-    const context = await this.context(connection);
     const adapter = this.registry().get(connection.connector_type);
+    const identity = { connectionId: String(connection.id), connectorType: String(connection.connector_type) };
+    let context = await this.context(connection);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
     let repairOutcome: string | null = null;
     try {
+      // Testing a connection is the one moment somebody has asked Avalon to
+      // put it right, so this is where a provider-side repair belongs — not
+      // in the health check, which reauthorization runs on every plugin
+      // activation. A repair that fails must not fail the test: the check
+      // below is still the answer being asked for.
+      //
+      // A managed installation's repair runs the lifecycle runner, and a
+      // retried create settles what the provider returned — for Granola, the
+      // endpoint id and signing secret — into the stored envelope through the
+      // generation-fenced path, not the credential door. So it runs before the
+      // door, and the context the health check reads is loaded after it.
+      // Checked against the envelope read beforehand, the check reported the
+      // endpoint missing beside a repair that had just registered it.
+      if (managed) {
+        repairOutcome = await reportConnectorRepair(this.env, identity, async (signal) => {
+          const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
+          await this.recordInstallationAudit(repaired, "connector.installation.repair");
+          const installation = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
+          // An installation still in flight — `setting_up`, `updating` — is not
+          // one that needs attention, and a Test whose health check passed must
+          // not say so. Only a stopped one has a sentence to surface; an
+          // uncertain provider write is a registration state, and the receipt
+          // carries it.
+          const state = installation?.state;
+          return state === "current"
+            ? { repaired: true, message: "Approved webhook configuration is verified" }
+            : state === "failed" || state === "action_required"
+              ? { repaired: false, message: "Webhook repair needs attention; inspect installation details" }
+              : { repaired: false };
+        });
+        context = await this.context(await this.loadAuthorized(id));
+      }
       result = await withAuthorizedConnection(
         this.env,
         {
@@ -1631,15 +1797,7 @@ export class ConnectionService {
           signal: AbortSignal.timeout(10_000),
         },
         async (authorized) => {
-          // Testing a connection is the one moment somebody has asked Avalon to
-          // put it right, so this is where a provider-side repair belongs — not
-          // in the health check, which reauthorization runs on every plugin
-          // activation. A repair that fails must not fail the test: the check
-          // below is still the answer being asked for.
-          repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, {
-            connectionId: String(connection.id),
-            connectorType: String(connection.connector_type),
-          });
+          if (!managed) repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, identity);
           return adapter.healthCheck(authorized, AbortSignal.timeout(10_000));
         },
       );
@@ -1745,7 +1903,7 @@ export class ConnectionService {
     }
     if (repairOutcome) result = { ...result, message: `${result.message}. ${repairOutcome}` };
     await this.env.DB.prepare(
-      `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ? AND status <> 'disabled'`,
     ).bind(
       result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error",
       result.ok ? null : JSON.stringify({ message: result.message, reconnectRequired: result.reconnectRequired ?? false }),
@@ -1769,9 +1927,18 @@ export class ConnectionService {
     // Google OAuth revocation is project-wide for the token grant. A regional
     // database cannot prove that no sibling connection exists in another
     // region, so disabling one Google connection must remain a local action.
-    const mayRevokeRemotely = connection.connector_type !== "google";
     let remoteRevocation: "skipped" | "succeeded" | "failed" = "skipped";
     try {
+      await this.adoptGranolaInstallation(connection);
+      const managedInstallation = connection.scope === "workspace" && adapter.installationManagement
+        ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
+      if (managedInstallation) {
+        const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
+        await this.recordInstallationAudit(installation, "connector.installation.disconnect");
+        await enqueueConnectorInstallation(this.env, installation);
+        await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+      }
+      const mayRevokeRemotely = connection.connector_type !== "google" && !managedInstallation;
       if (mayRevokeRemotely && adapter.revoke) {
         const signal = AbortSignal.timeout(15_000);
         await withAuthorizedConnection(
@@ -2110,94 +2277,196 @@ export class ConnectionService {
     return { connection };
   }
 
-  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[] }) {
+  async createWorkspaceInstallation(input: { provider: ConnectorInstallationProvider; apiKey: string; idempotencyKey: string; events?: string[] | undefined; signal?: AbortSignal }) {
     const telemetryStartedAt = Date.now();
-    const auth = this.requireAuth();
-    this.assertScopeAllowed("workspace");
-    const capabilities = [...new Set(input.capabilities)];
-    if (capabilities.length !== 1 || capabilities[0] !== GranolaCapabilities.workspaceRead) {
-      throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace read capability");
+    const auth = this.requireAuth(); this.assertScopeAllowed("workspace");
+    const adapter = this.registry().get(input.provider);
+    const management = adapter.installationManagement;
+    if (!management) throw new ApiError(422, "installation_unavailable", "Workspace installation is unavailable");
+    const events = input.provider === "ashby" ? AshbyEventSelectionSchema.parse(input.events ?? [...management.events]).sort() : [...management.events];
+    const id = newId(); const at = nowIso(); const apiKey = input.apiKey.trim();
+    if (!apiKey) throw new ApiError(422, "api_key_required", "Enter a provider API key");
+    const destination = input.provider === "ashby" ? ashbyIngressUrl(this.env, id) : new URL(`/ingest/${input.provider}/${id}`, this.env.PUBLIC_API_BASE_URL).toString();
+    const credentials: Record<string, unknown> = { apiKey };
+    const groups = management.grouping === "single_event" ? events.map((event) => [event]) : [events];
+    const registrations = groups.map((selected) => {
+      const key = selected.join("+"); const secretRef = `webhook_secret:${key}`;
+      if (management.signingSecretSource === "host") credentials[secretRef] = randomToken(32);
+      return { key, providerId: null, events: selected, destination, enabled: null,
+        state: "pending", action: "create", stepId: crypto.randomUUID(), verifiedAt: null, error: null,
+        rotation: "stable", rotationGeneration: 0, activeSecretRef: secretRef, pendingSecretRef: null };
+    });
+    // A provider whose create is automatic has its key validated by the runner,
+    // immediately before the create it would otherwise attempt with it. A
+    // manual create never reaches that call, so without this a rejected key
+    // reserves a connection, sends the administrator off to the provider's
+    // dashboard, and only reports itself when somebody presses Test. Read-only,
+    // and before anything is written: a refused key leaves no row and no
+    // registration behind.
+    if (management.support.create === "manual") {
+      // `any`, not `??`: the route always supplies the request's signal, so the
+      // fallback alone was a timeout that could never fire and a hung provider
+      // read that was never bounded.
+      const signals = [AbortSignal.timeout(20_000), ...(input.signal ? [input.signal] : [])];
+      await validateUnstoredConnectorCredential(management, {
+        id, workspaceId: auth.workspaceId, scope: "workspace", ownerUserId: null, credentials,
+        grantedScopes: [management.capability], config: { region: this.env.AVALON_REGION }, cursor: {},
+      }, AbortSignal.any(signals))
+        .catch((error: unknown) => {
+          if (error instanceof ConnectorError && (error.code === "unauthorized" || error.code === "invalid_configuration")) {
+            throw new ApiError(422, "connector_credential_rejected", `${adapter.manifest.displayName} rejected this key. Check that you copied the whole key from the provider, then try again.`);
+          }
+          if (error instanceof ConnectorError) {
+            throw new ApiError(502, "connector_unreachable", `${adapter.manifest.displayName} could not be reached to check this key. Try again in a moment.`);
+          }
+          throw error;
+        });
     }
-    const existing = await this.env.DB.prepare(
-      `SELECT id FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'granola' AND scope = 'workspace'
-         AND status <> 'disabled' LIMIT 1`,
-    ).bind(auth.workspaceId).first<{ id: string }>();
-    if (existing) throw new ApiError(409, "granola_workspace_connection_exists", "A Granola workspace connection already exists");
-
-    const id = newId();
-    const apiKey = input.apiKey.trim();
-    const webhookUrl = new URL(`/ingest/granola/${id}`, this.env.PUBLIC_API_BASE_URL).toString();
-    const webhook = await createGranolaWebhookEndpoint(
-      apiKey,
-      webhookUrl,
-      AbortSignal.timeout(15_000),
-    );
+    const proposed = ConnectorInstallationSchema.parse({ connectionId: id, workspaceId: auth.workspaceId, provider: input.provider,
+      attemptId: input.idempotencyKey, generation: 1, desiredVersion: management.version, appliedVersion: null,
+      state: "setting_up", selectedEvents: events, registrations, createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
+    const encrypted = await encryptString(JSON.stringify(credentials), this.env.CONNECTOR_CREDENTIALS_KEY, id);
+    // Keyed hash prevents a stored fingerprint becoming an offline API-key oracle.
+    const fingerprintKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(this.env.CONNECTOR_CREDENTIALS_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const fingerprint = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", fingerprintKey,
+      new TextEncoder().encode(JSON.stringify([auth.workspaceId, auth.userId, input.provider, "workspace", events, apiKey])))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    let installation: ConnectorInstallation;
     try {
-      const credentials = {
-        apiKey,
-        webhookEndpointId: webhook.id,
-        webhookSigningSecret: webhook.signingSecret,
-      };
-      const encrypted = await encryptString(
-        JSON.stringify(credentials),
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        id,
-      );
-      const providerAccountId = `workspace:${(await sha256(apiKey)).slice(0, 32)}`;
-      const at = nowIso();
-      const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "granola");
-      await this.env.DB.prepare(
-          `INSERT INTO connector_connections
-           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-            display_name, encrypted_credentials, credential_iv, credential_key_version,
-            granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
-            created_at, updated_at)
-           VALUES (?, ?, 'granola', 'workspace', NULL, ?, 'Granola workspace', ?, ?, ?, ?, ?,
-                   'healthy', '{}', '{}', ?, ?)`,
-        ).bind(
-          id,
-          auth.workspaceId,
-          providerAccountId,
-          encrypted.ciphertext,
-          encrypted.iv,
-          Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-          JSON.stringify(capabilities),
-          modelPluginId,
-          at,
-          at,
-        ).run();
-      await this.env.DB.prepare(
-          `INSERT INTO audit_events
-           (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
-           VALUES (?, ?, 'user', ?, 'connector.authorized', 'connector_connection', ?, ?, ?)`,
-        ).bind(
-          newId(),
-          auth.workspaceId,
-          auth.userId,
-          id,
-          JSON.stringify({ provider: "granola", scope: "workspace", capabilities }),
-          at,
-        ).run();
-      await this.syncConnectorIngressRoute(id);
+      installation = await (await this.workspaceObject(auth.workspaceId)).createConnectorInstallation({ installation: proposed,
+        userId: auth.userId, inputHash: fingerprint, capability: management.capability,
+        displayName: workspaceInstallationDisplayName(adapter.manifest.displayName, credentials),
+        credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
     } catch (error) {
-      try {
-        await deleteGranolaWebhookEndpoint(apiKey, webhook.id, AbortSignal.timeout(10_000));
-      } catch {
-        // The original persistence error is authoritative. Granola admins can
-        // remove a rare orphaned endpoint from connector settings.
-      }
+      if (error instanceof Error && /idempotency_conflict|installation_exists/u.test(error.message)) throw new ApiError(409, "connector_setup_conflict", "This setup key has different inputs, or workspace events are already configured. Reopen the existing installation.");
       throw error;
     }
-    const connection = (await this.list()).find((item) => item.id === id);
-    if (!connection) throw new ApiError(500, "connection_write_failed", "The Granola connection could not be loaded");
-    await this.emitConnectorSetupCompleted(
-      await this.loadAuthorized(id),
-      "api_key",
-      Date.now() - telemetryStartedAt,
-      false,
-    ).catch(() => undefined);
-    return { connection };
+    await this.recordInstallationAudit(installation, "connector.authorized", "setup");
+    if (installation.connectionId === id) {
+      await this.emitConnectorSetupCompleted(await this.loadAuthorized(id), "api_key", Date.now() - telemetryStartedAt, false).catch(() => undefined);
+    }
+    await this.syncConnectorIngressRoute(installation.connectionId);
+    await enqueueConnectorInstallation(this.env, installation);
+    await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
+    const connection = (await this.list()).find((item) => item.id === installation.connectionId);
+    if (!connection) throw new ApiError(409, "connector_setup_superseded", "The connection changed during setup. Reload Settings.");
+    // The one moment the signing secret is allowed to leave the region in
+    // plaintext, and only for a provider whose registration nobody but the
+    // administrator can perform. A replayed setup returns the existing
+    // installation and no secret: the material below belongs to the attempt
+    // that generated it, and a lost one is replaced by reconnecting.
+    const manualRegistration = installation.connectionId === id
+      && management.support.create === "manual"
+      && management.signingSecretSource === "host"
+      ? registrations.flatMap((registration) => {
+        const secret = registration.activeSecretRef ? credentials[registration.activeSecretRef] : null;
+        return typeof secret === "string"
+          ? [{ destination: registration.destination, signingSecret: secret }]
+          : [];
+      })[0] ?? null
+      : null;
+    return { installation, connection, manualRegistration };
+  }
+
+  async installation(id: string) {
+    const connection = await this.loadAuthorized(id);
+    return { installation: await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) };
+  }
+
+  async changeInstallation(id: string, input: { action: "repair" | "disconnect" | "forget_cleanup" | "reconcile" | "rotate"; key?: string | undefined; providerId?: string | undefined }) {
+    const connection = await this.loadAuthorized(id); this.assertScopeAllowed("workspace");
+    if (input.action === "disconnect") {
+      if (!(await this.installation(id)).installation) {
+        throw new ApiError(404, "connector_installation_not_found", "This connection has no workspace event installation");
+      }
+      await this.disable(id);
+      return this.installation(id);
+    }
+    // Adopting an existing webhook by its provider id only means anything where
+    // the provider can be asked about it afterwards. A facet that declares no
+    // reconciliation would store a claim nothing can ever check, and the stored
+    // id then reads as "Rally created this webhook" everywhere downstream —
+    // including the cleanup advice, which would start offering to delete a
+    // webhook through an API the provider does not have.
+    if (input.action === "reconcile"
+      && this.registry().get(connection.connector_type).installationManagement?.support.reconcileCreate === "unsupported") {
+      throw new ApiError(422, "connector_reconciliation_unsupported",
+        "This provider cannot confirm a webhook Rally did not create. Remove this connection and connect workspace events again.");
+    }
+    let installation: ConnectorInstallation;
+    try {
+      installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, ...input });
+    } catch (error) { throw installationActionError(error); }
+    await this.recordInstallationAudit(installation, `connector.installation.${input.action}`);
+    await this.syncConnectorIngressRoute(id);
+    await enqueueConnectorInstallation(this.env, installation);
+    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+    return { installation };
+  }
+
+  async replaceInstallationApiKey(id: string, apiKey: string, signal: AbortSignal) {
+    const connection = await this.loadAuthorized(id); this.assertScopeAllowed("workspace");
+    if (connection.scope !== "workspace" || connection.status === "disabled") throw new ApiError(409, "connector_disabled", "Only an enabled workspace event connection can replace its API key");
+    const adapter = this.registry().get(connection.connector_type);
+    if (!adapter.installationManagement) throw new ApiError(422, "installation_unavailable", "This connector does not manage workspace event credentials");
+    await this.adoptGranolaInstallation(connection);
+    const object = await this.workspaceObject(connection.workspace_id);
+    const installation = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id });
+    if (!installation) throw new ApiError(409, "installation_unavailable", "Adopt the existing connection with Test first");
+    // Pair the envelope read with the generation observed before it. Credential
+    // settlement advances that generation, so validation cannot overwrite a
+    // newly returned webhook secret or rotation result with this snapshot.
+    const freshConnection = await this.loadAuthorized(id);
+    const context = await this.context(freshConnection);
+    let replacement: Record<string, unknown> | null = null;
+    await withAuthorizedConnection(this.env, { connection: context, adapter, signal }, async (authorized) => {
+      const credentials = { ...authorized.credentials, apiKey: apiKey.trim() };
+      await adapter.installationManagement!.validate({ ...authorized, credentials }, signal);
+      replacement = credentials;
+    });
+    if (!replacement) throw new ApiError(409, "credential_replacement_unavailable", "The replacement credential could not be validated");
+    const encrypted = await encryptString(JSON.stringify(replacement), this.env.CONNECTOR_CREDENTIALS_KEY, id);
+    let updated: ConnectorInstallation;
+    try {
+      updated = await object.replaceConnectorInstallationCredentials({ workspaceId: connection.workspace_id, connectionId: id,
+        generation: installation.generation, credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
+    } catch (error) {
+      throw installationActionError(error);
+    }
+    await this.recordInstallationAudit(updated, "connector.credentials.replaced");
+    await enqueueConnectorInstallation(this.env, updated);
+    await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
+    return { installation: updated };
+  }
+
+  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[]; idempotencyKey?: string | undefined }) {
+    if (input.capabilities.length !== 1 || input.capabilities[0] !== GranolaCapabilities.workspaceRead) throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace capability");
+    // No event list: the facet's `installationManagement.events` is what the
+    // runner registers and inspection compares against, and setup reads it
+    // from there. A second copy here is how the request once carried a name
+    // Granola's API does not define.
+    return this.createWorkspaceInstallation({ provider: "granola", apiKey: input.apiKey, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID() });
+  }
+
+  private async adoptGranolaInstallation(connection: StoredConnection) {
+    if (connection.connector_type !== "granola" || connection.scope !== "workspace" || connection.status === "disabled") return null;
+    const object = await this.workspaceObject(connection.workspace_id);
+    const current = await object.connectorInstallation({ workspaceId: connection.workspace_id, connectionId: connection.id });
+    if (current) return current;
+    const context = await this.context(connection);
+    const at = nowIso(); const events = [...this.registry().get("granola").installationManagement!.events];
+    const providerId = stringField(context.credentials, "webhookEndpointId");
+    const installation = ConnectorInstallationSchema.parse({ connectionId: connection.id, workspaceId: connection.workspace_id, provider: "granola",
+      attemptId: crypto.randomUUID(), generation: 1, desiredVersion: 1, appliedVersion: null, state: "setting_up", selectedEvents: events,
+      registrations: [{ key: events.join("+"), providerId, events, adoptingExistingDestination: true,
+        destination: new URL(`/ingest/granola/${connection.id}`, this.env.PUBLIC_API_BASE_URL).toString(), enabled: null,
+        state: providerId ? "pending" : "action_required", action: "inspect", stepId: crypto.randomUUID(), verifiedAt: null,
+        error: providerId ? null : "The existing webhook ID is missing. Inspect Granola before reconciling.",
+        rotation: "stable", rotationGeneration: 0, activeSecretRef: "webhookSigningSecret", pendingSecretRef: null }],
+      createdAt: at, updatedAt: at, lastReceivedAt: null, error: null });
+    return object.createConnectorInstallation({ installation, userId: this.requireAuth().userId, inputHash: "granola-existing-connection",
+      displayName: String(connection.display_name),
+      credentials: { ciphertext: String(connection.encrypted_credentials), iv: String(connection.credential_iv), keyVersion: Number(connection.credential_key_version || 1) },
+      capability: GranolaCapabilities.workspaceRead, adopt: true }).catch((error: unknown) => { throw installationActionError(error); });
   }
 
   /**
@@ -2507,6 +2776,228 @@ export class ConnectionService {
     if (!health.ok) throw new ConnectorError("unsupported_capability", health.message);
   }
 
+  async ingestAshbyWebhook(connectionId: string, rawBody: Uint8Array, headers: Headers) {
+    const maxBytes = numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000);
+    if (rawBody.byteLength > maxBytes) throw new ApiError(413, "webhook_too_large", "Ashby webhook exceeds the configured limit");
+    await this.routeIngressConnection(connectionId, "ashby");
+    const connection = await this.env.DB.prepare("SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'ashby' AND scope = 'workspace' AND status <> 'disabled'").bind(connectionId).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Ashby workspace event connection not found");
+    const context = await this.context(connection); context.config.region = this.env.AVALON_REGION;
+    const installation = await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId });
+    if (!installation) throw new ApiError(401, "installation_unavailable", "Ashby installation is unavailable");
+    const ashbyAdapter = this.registry().get("ashby");
+    const source = ashbyAdapter.webhookActivity!;
+    const ashbyManagement = ashbyAdapter.installationManagement!;
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(rawBody); }
+    catch { throw new ApiError(400, "invalid_webhook_encoding", "Ashby webhook must be valid UTF-8"); }
+    const receivedAt = nowIso();
+    let envelope: Awaited<ReturnType<typeof source.verify>> | null = null;
+    for (const registration of installation.registrations) {
+      if (registration.state === "removed") continue;
+      const references = [registration.activeSecretRef, ...(registration.verificationPolicy === "active_and_pending" ? [registration.pendingSecretRef] : [])];
+      for (const reference of references) {
+        const secret = reference ? context.credentials[reference] : null;
+        if (typeof secret !== "string") continue;
+        try { envelope = await source.verify({ rawBody: text, rawBodyBytes: rawBody, headers, receivedAt, now: Date.now(), maxBytes, verificationSecret: secret }); }
+        catch (error) { if (!(error instanceof ConnectorError) || error.code !== "invalid_signature") throw error; }
+        if (envelope) break;
+      }
+      if (envelope) {
+        if (envelope.eventType !== "ping" && !registration.events.includes(envelope.eventType)) throw new ApiError(401, "event_not_authorized", "This signing key does not authorize this event");
+        break;
+      }
+    }
+    if (!envelope) throw new ApiError(401, "invalid_signature", "Ashby webhook signature is invalid");
+    if (envelope.eventType === "ping") return { ping: true };
+    if (!installation.selectedEvents.includes(envelope.eventType)) throw new ApiError(401, "event_not_authorized", "This Ashby event was not selected");
+    const receipt = await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({ workspaceId: connection.workspace_id,
+      receiptId: newId(), connectionId, signatureHash: envelope.receiptKey!, receivedAt,
+      expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1_000).toISOString(),
+      eventIdentity: { providerEventId: envelope.deliveryId, eventType: envelope.eventType } });
+    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/ashby/${connectionId}/${await sha256(envelope.receiptKey!)}/${envelope.bodyHash}.json`;
+    await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
+    const event = z.record(z.string(), z.unknown()).parse(envelope.event);
+    const normalized = source.normalize(context, { ...envelope, event: { ...event, observedAt: receipt.firstObservedAt ?? receivedAt } }, payloadKey);
+    if (!normalized) throw new ApiError(400, "invalid_event", "Ashby event could not be normalized");
+    const derived = await this.deriveWebhookActivities({ provider: "ashby", connection, context, adapter: ashbyAdapter, source, normalized, envelope });
+    const accepted = await persistNormalizedActivity(this.env, normalized, "ashby");
+    for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "ashby");
+    await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
+      workspaceId: connection.workspace_id, connectionId, receivedAt,
+      registrationSupport: { create: ashbyManagement.support.create, inspect: ashbyManagement.support.inspect },
+    });
+    return { duplicate: receipt.outcome === "duplicate", activityId: accepted.activityId };
+  }
+
+  /**
+   * A Fireflies delivery: a signed change signal naming one meeting.
+   *
+   * Verification happens against the exact bytes, before anything is parsed and
+   * before any row exists — a post that fails it leaves nothing behind, because
+   * a receipt written for an unauthenticated caller would be a per-connection
+   * write anyone who knows the URL could perform. What passes is acknowledged
+   * only once the queue send is durable: Fireflies wants a 2xx inside ten
+   * seconds and documents no retry, so the read of the meeting itself waits for
+   * the consumer rather than sitting inside that window.
+   */
+  async ingestFirefliesWebhook(connectionId: string, rawBody: Uint8Array, headers: Headers) {
+    const maxBytes = numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000);
+    if (rawBody.byteLength > maxBytes) throw new ApiError(413, "webhook_too_large", "Fireflies webhook exceeds the configured limit");
+    await this.routeIngressConnection(connectionId, "fireflies");
+    const connection = await this.env.DB.prepare(
+      "SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'fireflies' AND scope = 'workspace' AND status <> 'disabled'",
+    ).bind(connectionId).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Fireflies workspace connection not found");
+    const context = await this.context(connection); context.config.region = this.env.AVALON_REGION;
+    const installation = await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId });
+    if (!installation) throw new ApiError(401, "installation_unavailable", "Fireflies installation is unavailable");
+    const adapter = this.registry().get("fireflies");
+    const source = adapter.webhookActivity;
+    const management = adapter.installationManagement;
+    if (!source || !management) throw new ApiError(500, "webhook_source_unavailable", "Fireflies webhook ingestion is unavailable");
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(rawBody); }
+    catch { throw new ApiError(400, "invalid_webhook_encoding", "Fireflies webhook must be valid UTF-8"); }
+    const receivedAt = nowIso();
+    // The registration's own secret, and any pending one its verification
+    // policy still accepts. One grouped registration is what Fireflies' single
+    // dashboard URL can express, but reading the list keeps the loop the same
+    // as every other host-signed provider's.
+    let envelope: Awaited<ReturnType<typeof source.verify>> | null = null;
+    let authorizedEvents: readonly string[] | null = null;
+    let verifyingRegistrationKey: string | null = null;
+    for (const registration of installation.registrations) {
+      if (registration.state === "removed") continue;
+      const references = [registration.activeSecretRef, ...(registration.verificationPolicy === "active_and_pending" ? [registration.pendingSecretRef] : [])];
+      for (const reference of references) {
+        const secret = reference ? context.credentials[reference] : null;
+        if (typeof secret !== "string") continue;
+        try {
+          envelope = await source.verify({
+            rawBody: text, rawBodyBytes: rawBody, headers, receivedAt, now: Date.now(), maxBytes,
+            verificationSecret: secret,
+            replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
+          });
+        } catch (error) {
+          if (!(error instanceof ConnectorError) || error.code !== "invalid_signature") throw error;
+          // A body that verified against this secret but is simply too old is
+          // not a wrong key: trying the remaining secrets would burn HMAC work
+          // and then blame the administrator's signing secret for what is a
+          // clock or a replay. Stop here and say which it was.
+          if (error.details !== null && typeof error.details === "object" && "reason" in error.details && error.details.reason === "stale_timestamp") {
+            throw new ApiError(401, "webhook_timestamp_outside_window",
+              "This Fireflies delivery is signed correctly but its timestamp is outside the accepted window");
+          }
+        }
+        if (envelope) break;
+      }
+      if (envelope) { authorizedEvents = registration.events; verifyingRegistrationKey = registration.key; break; }
+    }
+    if (!envelope || !authorizedEvents || !verifyingRegistrationKey) throw new ApiError(401, "invalid_signature", "Fireflies webhook signature is invalid");
+    // The dashboard's test event is the one delivery an administrator can
+    // produce on demand, and it proves exactly what a meeting would: the URL
+    // reaches this connection and the signing secret matches. It is recorded
+    // as the verifying delivery and nothing else — no receipt, since replaying
+    // it changes nothing, no payload, no activity — and answered 2xx so
+    // Fireflies' page reports the setup working rather than failed.
+    if (envelope.eventType === FIREFLIES_TEST_EVENT) {
+      await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
+        workspaceId: connection.workspace_id, connectionId, receivedAt,
+        registrationKey: verifyingRegistrationKey,
+        registrationSupport: { create: management.support.create, inspect: management.support.inspect },
+      });
+      return { ping: true as const };
+    }
+    // Both refusals land before the receipt, so neither writes anything and
+    // neither can stand in as the installation's verifying delivery. They are
+    // different conditions: an event this connector does not handle at all —
+    // `meeting.bot_joined`, or whatever Fireflies adds next — is the customer
+    // having subscribed something Rally never asked for, while a handled event
+    // outside this registration's grant is an authorization question.
+    if (!isFirefliesEventType(envelope.eventType)) {
+      throw unsupportedWebhookEvent(this.env, {
+        provider: "fireflies", connectionId, eventType: envelope.eventType,
+      });
+    }
+    if (!authorizedEvents.includes(envelope.eventType) || !installation.selectedEvents.includes(envelope.eventType)) {
+      throw new ApiError(401, "event_not_authorized", "This signing key does not authorize this event");
+    }
+    const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
+      await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
+        workspaceId: connection.workspace_id, receiptId: newId(), connectionId,
+        // Fireflies sends no delivery id, so the receipt is the hash of the
+        // bytes it signed. A replay is byte-identical; a real second delivery
+        // never is, because its timestamp moves.
+        signatureHash: envelope.receiptKey ?? envelope.bodyHash, receivedAt,
+        expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60 * 1_000).toISOString(),
+        // No `eventIdentity`: that exists to recover a first-observed time for
+        // a provider whose retries carry no stable timestamp. Fireflies signs
+        // the moment the event fired into the body, so a replay carries the
+        // original time by construction and there is nothing to recover.
+      }),
+    );
+    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/fireflies/${connectionId}/${envelope.bodyHash}.json`;
+    await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
+    const normalized = source.normalize(context, envelope, payloadKey);
+    if (!normalized) throw unsupportedWebhookEvent(this.env, {
+      provider: "fireflies", connectionId, eventType: envelope.eventType,
+    });
+    const derived = await this.deriveWebhookActivities({ provider: "fireflies", connection, context, adapter, source, normalized, envelope });
+    const accepted = await persistNormalizedActivity(this.env, normalized, "fireflies");
+    for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "fireflies");
+    // The delivery is the verification: Fireflies exposes nothing to inspect,
+    // so this is what moves the installation from Action required to Current.
+    await (await this.workspaceObject(connection.workspace_id)).receiveConnectorInstallationEvent({
+      workspaceId: connection.workspace_id, connectionId, receivedAt,
+      registrationKey: verifyingRegistrationKey,
+      registrationSupport: { create: management.support.create, inspect: management.support.inspect },
+    });
+    return { duplicate: receipt.outcome === "duplicate" || accepted.duplicate, activityId: accepted.activityId };
+  }
+
+  /**
+   * What a verified delivery implies beyond the activity it named, decided by
+   * the adapter with a provider read before any activity row exists. Every
+   * webhook ingress that persists through the workspace object calls this, so
+   * an adapter's `derive` is honoured wherever its deliveries arrive; an
+   * adapter without one costs nothing here. A failure the adapter reports is
+   * logged with its code and status, under one name when the activity was
+   * stored anyway and another when nothing was.
+   */
+  private async deriveWebhookActivities(input: {
+    provider: string;
+    connection: Pick<StoredConnection, "id" | "workspace_id">;
+    context: ConnectorConnectionContext;
+    adapter: ResolvedConnectorAdapter;
+    source: ConnectorWebhookActivitySource;
+    normalized: NonNullable<ReturnType<ConnectorWebhookActivitySource["normalize"]>>;
+    envelope: ConnectorVerifiedActivityWebhook;
+  }): Promise<ConnectorDerivedActivities> {
+    if (!input.source.derive) return { activities: [], outcome: "not_supported" };
+    const signal = Number.isFinite(WEBHOOK_DERIVE_TIMEOUT_MS)
+      ? AbortSignal.timeout(WEBHOOK_DERIVE_TIMEOUT_MS)
+      : new AbortController().signal;
+    const derived = await withAuthorizedConnection(
+      this.env,
+      { connection: input.context, adapter: input.adapter, signal },
+      (authorized) => input.source.derive!(authorized, input.normalized, input.envelope, signal),
+    );
+    if (derived.failure) {
+      logWarn(this.env, derived.activities.length > 0 ? "connector_webhook_derive_unverified" : "connector_webhook_derive_refused", {
+        provider: input.provider,
+        workspace_id: input.connection.workspace_id,
+        connection_id: input.connection.id,
+        delivery_id: input.envelope.deliveryId,
+        event_type: input.envelope.eventType,
+        outcome: derived.outcome,
+        code: derived.failure.code,
+        ...(derived.failure.status !== undefined ? { status: derived.failure.status } : {}),
+      });
+    }
+    return derived;
+  }
+
   async ingestGranolaWebhook(
     connectionId: string,
     rawBody: Uint8Array,
@@ -2554,7 +3045,21 @@ export class ConnectionService {
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/granola-${verified.event_id}.json`;
     await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
     const normalized = source.normalize(context, envelope, payloadKey);
-    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Granola webhook event is not supported");
+    if (!normalized) throw unsupportedWebhookEvent(this.env, {
+      provider: "granola", connectionId: connection.id, eventType: envelope.eventType,
+    });
+    // What the delivery implies but could not say: a note shared into the
+    // workspace after it was generated is the transcript Granola will never
+    // announce as `note.generated`. Decided before any activity row exists, so
+    // a failure here leaves no half-written pair; the adapter answers a share
+    // it cannot resolve with the event anyway, marked, and the log says why.
+    const derived = await this.deriveWebhookActivities({
+      provider: "granola", connection, context, adapter: this.registry().get("granola"), source, normalized, envelope,
+    });
+    const activities = [normalized, ...derived.activities].map((activity) => ({
+      ...activity,
+      rawContentHash: activity.rawContentHash ?? envelope.bodyHash,
+    }));
     if (this.env.WORKSPACE_DOS) {
       const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
         await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
@@ -2566,17 +3071,17 @@ export class ConnectionService {
           expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
         }),
       );
-      const persisted = await persistNormalizedActivity(this.env, {
-        ...normalized,
-        rawContentHash: normalized.rawContentHash ?? envelope.bodyHash,
-      }, "granola");
+      const [persisted, ...rest] = await Promise.all(
+        activities.map((activity) => persistNormalizedActivity(this.env, activity, "granola")),
+      );
       return {
-        duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
-        activityId: persisted.activityId,
+        duplicate: receipt.outcome === "duplicate" || persisted!.duplicate,
+        activityId: persisted!.activityId,
+        ...(rest.length > 0 ? { derivedActivityIds: rest.map((entry) => entry.activityId) } : {}),
       };
     }
-    const activityId = newId();
     const receiptId = newId();
+    const activityIds = activities.map(() => newId());
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
@@ -2588,7 +3093,7 @@ export class ConnectionService {
         receivedAt,
         new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
       ),
-      this.env.DB.prepare(
+      ...activities.map((activity, index) => this.env.DB.prepare(
         `INSERT INTO activities
          (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
           provider, provider_event_id, event_type, resource_type, provider_resource_id,
@@ -2600,47 +3105,55 @@ export class ConnectionService {
                  '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
-        activityId,
+        activityIds[index],
         connection.workspace_id,
         connection.id,
-        verified.event_id,
-        normalized.eventType,
-        normalized.providerResourceId,
-        JSON.stringify(normalized.subject),
-        normalized.occurredAt,
+        activity.providerEventId,
+        activity.eventType,
+        activity.providerResourceId,
+        JSON.stringify(activity.subject),
+        activity.occurredAt,
         receivedAt,
-        normalized.title,
+        activity.title,
         payloadKey,
-        JSON.stringify(normalized.visibility),
-        JSON.stringify(normalized.entityKeys),
-        normalized.dedupeKey,
-        normalized.rawContentHash,
-        JSON.stringify(normalized.targetUserIds),
-        JSON.stringify(normalized.externalPeople ?? []),
-        JSON.stringify(normalized.metadata),
-      ),
+        JSON.stringify(activity.visibility),
+        JSON.stringify(activity.entityKeys),
+        activity.dedupeKey,
+        activity.rawContentHash,
+        JSON.stringify(activity.targetUserIds),
+        JSON.stringify(activity.externalPeople ?? []),
+        JSON.stringify(activity.metadata),
+      )),
     ]);
+    const canonicalIds: string[] = [];
+    for (const [index, activity] of activities.entries()) {
+      const inserted = Number(results[index + 1]?.meta.changes ?? 0) > 0;
+      const canonical = inserted
+        ? { id: activityIds[index]! }
+        : await this.env.DB.prepare(
+            `SELECT id FROM activities
+             WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
+             ORDER BY received_at DESC LIMIT 1`,
+          ).bind(connection.id, activity.providerEventId, activity.eventType).first<{ id: string }>();
+      if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
+      canonicalIds.push(canonical.id);
+    }
     const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
-    const canonical = insertedActivity
-      ? { id: activityId }
-      : await this.env.DB.prepare(
-          `SELECT id FROM activities
-           WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
-           ORDER BY received_at DESC LIMIT 1`,
-        ).bind(connection.id, verified.event_id, verified.event_type).first<{ id: string }>();
-    if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
-    // Re-enqueue the canonical row on retries as crash-window recovery. If a
+    // Re-enqueue the canonical rows on retries as crash-window recovery. If a
     // previous request committed D1 but failed before queue delivery, Granola's
-    // retry must still make the durable activity visible to the consumer.
-    await this.env.ACTIVITY_QUEUE.send({
-      region: this.env.AVALON_REGION,
-      workspaceId: connection.workspace_id,
-      activityId: canonical.id,
-      attempt: 0,
-    });
+    // retry must still make the durable activities visible to the consumer.
+    for (const activityId of canonicalIds) {
+      await this.env.ACTIVITY_QUEUE.send({
+        region: this.env.AVALON_REGION,
+        workspaceId: connection.workspace_id,
+        activityId,
+        attempt: 0,
+      });
+    }
     return {
       duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
-      activityId: canonical.id,
+      activityId: canonicalIds[0]!,
+      ...(canonicalIds.length > 1 ? { derivedActivityIds: canonicalIds.slice(1) } : {}),
     };
   }
 
@@ -2686,7 +3199,9 @@ export class ConnectionService {
     const receiptId = newId();
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/webhook-${envelope.bodyHash}.json`;
     const normalized = source.normalize(context, envelope, payloadKey);
-    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Webhook event is not supported");
+    if (!normalized) throw unsupportedWebhookEvent(this.env, {
+      provider: connection.connector_type, connectionId: connection.id, eventType: envelope.eventType,
+    });
     if (connection.scope === "workspace" && normalized.targetUserIds.length > 0) {
       const uniqueTargets = [...new Set(normalized.targetUserIds)];
       const members = await this.env.DB.prepare(
@@ -2716,7 +3231,11 @@ export class ConnectionService {
           expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
         }),
       );
+      const derived = await this.deriveWebhookActivities({
+        provider: "generic_webhook", connection, context, adapter: this.registry().get("generic_webhook"), source, normalized, envelope,
+      });
       const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
+      for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "generic_webhook");
       return {
         duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
         activityId: persisted.activityId,
@@ -2966,6 +3485,9 @@ export class ConnectionService {
          FROM connector_connections WHERE id = ?`,
     ).bind(connectionId).first<ConnectorIngressRouteSource>();
     if (!connection) return;
+    if (connection.connector_type === "ashby" && connection.scope === "workspace") {
+      await registerAshbyRoute(this.env, { connectionId, region: this.env.AVALON_REGION, status: connection.status === "disabled" ? "disabled" : "active" });
+    }
     const route = connectorIngressRouteValues(connection, this.env.AVALON_REGION);
     await workspaceRegionalDatabase(this.env).prepare(
       `INSERT INTO connector_ingress_routes (
@@ -3272,6 +3794,19 @@ export class ConnectionService {
     ).bind(workspaceId, connectionId, at, at, JSON.stringify(rows)).run();
   }
 
+  private async recordInstallationAudit(installation: ConnectorInstallation, action: string, phase = String(installation.generation)): Promise<void> {
+    const auth = this.requireAuth();
+    const operationKey = `${installation.connectionId}:${action}:${phase}`;
+    await this.env.DB.prepare(`INSERT INTO audit_events
+      (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
+      SELECT ?, ?, 'user', ?, ?, 'connector_connection', ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM audit_events WHERE workspace_id = ? AND target_id = ?
+        AND action = ? AND actor_user_id = ? AND json_extract(metadata_json, '$.operationKey') = ?)`)
+      .bind(newId(), auth.workspaceId, auth.userId, action, installation.connectionId,
+        JSON.stringify({ operationKey, provider: installation.provider, generation: installation.generation }), nowIso(),
+        auth.workspaceId, installation.connectionId, action, auth.userId, operationKey).run();
+  }
+
   private async recordConnectionAudit(
     workspaceId: string,
     userId: string,
@@ -3473,6 +4008,74 @@ export class ConnectionService {
   }
 }
 
+/**
+ * One refusal for a delivery whose event type a connector does not model.
+ *
+ * The reason was always thrown — each site's message said it in prose — but no
+ * operator could read it. `request_failed` records a refusal's `detail_keys`
+ * and deliberately withholds their values, and it never records the message at
+ * all, so every one of these landed in the log as a bare
+ * `request_failed 400 unsupported_webhook_event`: you learn that a delivery was
+ * refused and never which one. Recovering it meant joining against whatever
+ * `connector_operation_finished` happened to share the millisecond, which works
+ * only while traffic is this thin.
+ *
+ * Naming the event type is safe for two different reasons, depending on the
+ * connector. For one Rally ships, it is published vocabulary: the type is in
+ * the manifest and `connector_operation_finished` already logs it. For
+ * `generic_webhook` there is no manifest to check it against — the type is
+ * whatever the workspace's own sender put in the body — so what makes it safe
+ * is that it is the caller's own string going back to the caller that signed
+ * the request, with `redact` bounding it in the log.
+ *
+ * The `details` carry it too: a provider dashboard replaying a delivery shows
+ * the response body, and "Rally does not model the fireflies event
+ * meeting.bot_joined" is the whole diagnosis without anyone opening a log.
+ */
+function unsupportedWebhookEvent(
+  env: Env,
+  input: { provider: string; connectionId: string; eventType: string },
+): ApiError {
+  logWarn(env, "connector_webhook_event_refused", {
+    connection_id: input.connectionId,
+    connector_type: input.provider,
+    event_type: input.eventType,
+    code: "unsupported_webhook_event",
+  });
+  return new ApiError(
+    400,
+    "unsupported_webhook_event",
+    `Rally does not model the ${input.provider} event ${input.eventType}`,
+    { provider: input.provider, eventType: input.eventType },
+  );
+}
+
+/**
+ * Whether a disconnected connection's installation is still unsettled: the
+ * condition under which its row stays in the connections list so that Manage
+ * events remains reachable. Settled means every registration removed
+ * (`disconnected`), or the administrator forgot the cleanup credential, which
+ * is the explicit "I have dealt with this" for a webhook only they can remove.
+ */
+export function awaitingCleanup(installation: ConnectorInstallation): boolean {
+  return installation.state !== "disconnected" && !installation.cleanupCredentialForgotten;
+}
+
+function installationActionError(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const refusals = [
+    ["connector_installation_not_found", "This connection has no workspace event installation"],
+    ["connector_still_enabled", "Disconnect this connection before forgetting its cleanup credential"],
+    ["connector_disabled", "This connection is disconnected"],
+    ["connector_cleanup_credential_unavailable", "The cleanup credential is unavailable. Remove the recorded webhook in the provider dashboard"],
+    ["connector_reconciliation_invalid", "Choose an unresolved registration and supply its provider webhook ID"],
+    ["connector_adoption_invalid", "The existing workspace connection changed. Reload its status before trying again"],
+    ["connector_installation_superseded", "The connection changed during this operation. Reload its status before trying again"],
+  ] as const;
+  const refusal = refusals.find(([code]) => error.message.includes(code));
+  return refusal ? new ApiError(refusal[0] === "connector_installation_not_found" ? 404 : 409, refusal[0], refusal[1]) : error;
+}
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
@@ -3564,6 +4167,18 @@ function verifiedIdentityConfig(
     handle: null,
     verifiedEmail: null,
     identityDisplayName: null,
+  };
+  // Fireflies' personal scope is the hosted-MCP pass-through, so its account id
+  // is the resource URL — the same shape as a configured MCP server, and for the
+  // same reason: the authorization publishes no user identity, so there is none
+  // to join on. Falling through would split the URL on its scheme colon and
+  // record every Fireflies member's tenant as "https".
+  if (provider === "fireflies") return {
+    providerTenantId: providerAccountId,
+    providerUserId: null,
+    handle: null,
+    verifiedEmail: stringField(credentials, "verifiedEmail") ?? stringField(credentials, "userEmail"),
+    identityDisplayName: stringField(credentials, "providerAccountName"),
   };
   if (provider === "granola") return {
     providerTenantId: stringField(credentials, "workspaceId") ?? providerAccountId,

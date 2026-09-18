@@ -1,37 +1,44 @@
-import { accessOperatorRoutes } from './routes/access-operations';
+import { daytonaWebhookRoutes } from "./routes/daytona";
 import { Hono } from "hono";
-import { searchRoutes } from "./routes/search";
 import type { HonoAppEnv } from "./env";
-import { errorHandler, notFoundHandler } from "./middleware/errors";
-import { requireAuth, requireIdentityAuth } from "./middleware/auth";
-import { requestContext, securityMiddleware } from "./middleware/request-context";
+import {
+  isAllowedNotionIngressRoute,
+  isSharedNotionIngress,
+} from "./lib/notion-ingress";
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
+import { requireAuth, requireIdentityAuth } from "./middleware/auth";
+import { errorHandler, notFoundHandler } from "./middleware/errors";
+import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
+import { accessOperatorRoutes } from './routes/access-operations';
 import { authRoutes } from "./routes/auth";
-import { devRoutes } from "./routes/dev";
 import { automationRoutes, sidekickRoutes } from "./routes/automations";
-import { conversationRoutes } from "./routes/conversations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
+import { connectorMaintenanceOperatorRoutes } from './routes/connector-maintenance-operations';
+import { conversationRoutes } from "./routes/conversations";
+import { demoOperatorRoutes } from './routes/demo-operations';
+import { devRoutes } from "./routes/dev";
 import { digestRoutes } from "./routes/digest";
 import { featureFlagRoutes } from "./routes/feature-flags";
+import { faviconRoutes } from "./routes/favicons";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
-import { noteRoutes } from "./routes/notes";
 import { projectRoutes } from "./routes/projects";
+import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
-import { resourceRoutes } from "./routes/resources";
 import { resendInboundRoutes } from "./routes/resend";
+import { resourceRoutes } from "./routes/resources";
+import { searchRoutes } from "./routes/search";
+import { slackIngressRoutes } from "./routes/slack";
 import { socketRoutes } from "./routes/socket";
 import { speechRoutes } from "./routes/speech";
-import { workspaceRoutes } from "./routes/workspace";
-import { workspaceMembershipRoutes } from "./routes/workspace-membership";
-import { workstreamRoutes } from "./routes/workstreams";
-import { workOpportunityRoutes } from "./routes/work-opportunities";
-import { slackIngressRoutes } from "./routes/slack";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
+import { workOpportunityRoutes } from "./routes/work-opportunities";
+import { workspaceRoutes } from "./routes/workspace";
+import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
-import { demoOperatorRoutes } from './routes/demo-operations';
+import { workstreamRoutes } from "./routes/workstreams";
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -40,10 +47,6 @@ import {
   isAllowedLinearIngressRoute,
   isSharedLinearIngress,
 } from "./services/linear-routing-service";
-import {
-  isAllowedNotionIngressRoute,
-  isSharedNotionIngress,
-} from "./lib/notion-ingress";
 import {
   isAllowedSlackIngressRoute,
   isSharedSlackIngress,
@@ -127,15 +130,19 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
   app.route("/ingest/resend", resendInboundRoutes);
+  app.route("/ingest/daytona", daytonaWebhookRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
   app.route("/telemetry", publicTelemetryRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/demos', demoOperatorRoutes);
+  app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);
   app.route('/internal/access', accessOperatorRoutes);
   app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
+  // Both sub-apps are root-mounted. Hono runs their wildcard middleware in
+  // order for protected routes, so `requireAuth` reuses this identity result.
   identityApi.use("*", requireIdentityAuth);
   identityApi.route("/onboarding", onboardingRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
@@ -149,14 +156,15 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workspaces", workspaceMembershipRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
-  protectedApi.route("/notes", noteRoutes);
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/digest", digestRoutes);
+  protectedApi.route("/push-devices", pushDeviceRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/sidekicks", sidekickRoutes);
   protectedApi.route("/conversations", conversationRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/resources", resourceRoutes);
+  protectedApi.route("/favicons", faviconRoutes);
   protectedApi.route("/search", searchRoutes);
   protectedApi.route("/speech", speechRoutes);
   protectedApi.route("/realtime", realtimeRoutes);

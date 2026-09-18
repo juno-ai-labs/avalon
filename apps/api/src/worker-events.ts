@@ -1,3 +1,4 @@
+import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
 import { privateAccessEdge } from './services/private-access-edge';
 import { isDurableObjectMigrationCommandQueue } from "@rally/contracts/durable-object-migrations";
 import { app } from "./app";
@@ -135,6 +136,11 @@ export default {
     return app.fetch(request, env, context);
   },
   queue: withEnvContract(async (batch, env) => {
+    // Accepted notifications drain using current read-only eligibility during maintenance.
+    if (/^avalon-(global|eu)-push-deliveries$/.test(batch.queue)) {
+      await consumePushDeliveryQueue(batch, env);
+      return;
+    }
     // Revocations dispatch before the maintenance gate, not after. They are a
     // separate queue resource so they never wait behind an activity backlog,
     // and they are the only path from a retraction to an open socket — so

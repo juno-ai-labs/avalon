@@ -9,7 +9,8 @@ ships directly for newly created accounts, with no feature flag.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/onboarding.ts` | Account appearance and scoped journey contracts. |
+| `packages/contracts/src/onboarding.ts` | Account appearance and scoped journey contracts; the selectable connector ids, derived. |
+| `packages/contracts/src/connector-connection-card.ts` | Where those connector ids originate — the catalog the journey enum derives from. |
 | `packages/db/migrations/0099_account_onboarding.sql` | Global identity preferences and regional projections; existing-account exemption. |
 | `apps/api/src/services/account-onboarding-service.ts` | Revision-checked account saves. |
 | `apps/api/src/services/platform-onboarding-service.ts` | Narrow profile projection through the existing regional identity bridge. |
@@ -18,6 +19,7 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/lib/account-profile-editor.ts` | Account-scoped immediate drafts and serial revision-checked autosave. |
 | `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Introduction, connector setup, invitations and personal setup. |
+| `apps/desktop/src/renderer/lib/connector-catalog.ts` | The tiles the picker offers, and the compile-time check that each is saveable. |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `lib/onboarding-motion.ts`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
 ## How it works
@@ -29,36 +31,10 @@ Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
 choose the regional workspace. Its creator starts at connectors; invited or
 existing members start at personal setup. Optional connector and invitation
 steps can be skipped. OAuth uses the existing connector authorization and
-workspace-addressed callback machinery. The personal action reads **Connect only
-for me**, using the same catalog label as Settings.
-
-Global `users` owns the introduction flag, eligibility, appearance and revision.
-Appearance includes the chosen display name and avatar initials; the name also
-updates `users.name`, and subsequent Google sign-in preserves the custom choice.
-An account save compares the expected revision. A replay of the same saved
-appearance succeeds; a stale different choice returns a conflict. The existing
-identity bridge projects these fields into EU user rows, never a workspace's
-content. Workspace sync invalidations refresh the account and member roster;
-focus also refreshes the account. Theme accents derive from the existing semantic
-palette. Sidebar backgrounds retain the neutral light/dark theme colors rather
-than taking the account accent. Account settings edits preview immediately and
-save each valid change without a Save button or typing delay. One write runs at
-a time; edits arriving during it are combined into the next write using its
-acknowledged revision. The account gate owns the writer so leaving the settings
-pane cannot cancel pending edits. Invalid drafts stay local until corrected;
-failed writes retain the draft and expose Retry after refreshing the revision.
-An older response cannot replace later typing. Onboarding retains its explicit
-Continue step.
-
-Global member notifications are published independently of EU discovery, so an
-EU outage cannot suppress Global profile updates. WorkspaceDO streams the
-existing workspace-profile and member-directory invalidations to connected
-members; their account and roster queries fetch the committed state. New or
-reconnecting users load the current profile through the same authoritative
-queries. EU discovery retains the narrow identity projection and regional
-notifications. Background publication failures remain visible to the Worker
-runtime rather than being swallowed; later discovery still reconciles the EU
-projection.
+workspace-addressed callback machinery. The actions read **Connect for me** and
+**Connect for workspace**, matching Settings. Ashby and Granola workspace setup
+opens Settings → Connections for the API key and event configuration; their
+personal connections continue through browser authorization.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
@@ -86,6 +62,10 @@ editable. Onboarding has no teammate discovery API.
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
 - The visible email list and invitation action authorize sending through the existing workspace service.
+- The connectors the picker offers and the connectors the journey accepts are one
+  set, derived from the connection-card catalog rather than listed twice. Reads of a
+  stored selection drop ids the catalog no longer has, so retiring a connector cannot
+  make an existing journey unreadable; writes still have to name ids that exist.
 
 ## Boundary
 
@@ -124,17 +104,12 @@ equal projections do not emit repeated invalidations.
 
 ## Testing
 
-Desktop `account-profile-editor.test.ts` covers immediate drafts, serial writes,
-coalescing, conflicts, invalid fields and navigation; `guided-onboarding.test.tsx`
-exercises the real settings fields and account-gate lifecycle. Settings search
-and workspace-socket suites cover discovery and streamed query invalidations.
-`test-workers/account-profile-realtime.test.ts` drives a real account PATCH,
-D1 persistence and delivery to another member's WorkspaceDO socket while EU
-discovery fails. Dropping the route's publication must fail that test.
-
 Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
-`test-workers/onboarding-journey.test.ts`. Account tests apply the actual regional
+`test-workers/onboarding-journey.test.ts`, whose retired-connector case covers the
+tolerant read. The desktop journey itself is covered by
+`src/renderer/screens/guided-onboarding.test.tsx`, including that every connector
+the picker offers on both pages saves. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
 The write-loss and profile-update mutation checks demonstrate those integration
 tests fail when persistence is broken. Desktop session-gate and app-session suites
@@ -144,7 +119,35 @@ Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
 Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
 
-## Changelog
+### 2026-09-17 — Derive the selectable connector ids from the connection-card catalog
+
+The journey's connector enum was a hand-kept copy of the ids in the
+connection-card catalog. Fireflies was added to that catalog and to the picker
+but never to the enum, so its tile was offered and then refused: the selection is
+saved as one array, so a new account that chose Fireflies had every other choice
+rejected with it and could connect nothing at all. The enum is now derived from
+`ConnectorConnectionCardIds` plus the three identities that have no card — Custom
+MCP, inbound webhook, and X — and the renderer catalog asserts at compile time
+that every tile it draws is a selection the schema accepts. The alternative, just
+adding `fireflies` to the list, leaves the next connector to break the same way.
+A connector that must be offered in onboarding but not as a connection card needs
+a second derived source rather than a return to a hand-kept list.
+
+While picking, every tile reserves two lines for its name (`min-height: 2lh` on
+the label), because a name that wraps to two lines made its entire row taller
+than the rows below it. Equalizing the rows with `grid-auto-rows: 1fr` was tried
+first and only holds while the grid fits: at its `max-height` the container's
+height is definite, so `1fr` divides that space instead of matching the tallest
+row, and the mismatch came back at exactly the length the picker actually is.
+Configuring keeps intrinsic heights: those cards carry descriptions of genuinely
+different lengths.
+
+The picker's own save no longer reports a `ZodError`'s JSON to the person; it
+names the field through `describeZodIssues`, per `docs/naming-a-schema-failure.md`.
+Reads of a stored selection now drop ids the catalog no longer offers, so
+retiring a connector cannot make an existing journey unreadable — `update` reads
+before it writes, so that rejection would have cost the person the ability to see
+or advance their own onboarding, not just to save a selection.
 
 ### 2026-09-09 — Keep pending onboarding from admitting conversations
 
@@ -190,15 +193,6 @@ workspace still opens the composer. The rule and the reason are in
 [`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream).
 
 ### 2026-09-08 — Save profile changes immediately and move personal appearance to Account
-
-Account profile edits now preview immediately and autosave through one
-account-scoped writer. Queuing every keystroke independently was rejected because
-requests could race on the same revision and responses could erase newer typing.
-The writer combines pending edits, preserves them across pane navigation and
-keeps failed drafts for retry. Global realtime invalidations no longer depend on
-successful EU discovery; the previous coupling could persist a profile while
-silently leaving every connected Global member stale. Sidebar backgrounds remain
-neutral; personal accent and avatar colors still update.
 
 Account settings now uses compact settings rows for name, initials and color,
 with a small live avatar and no Save action. The onboarding editor keeps its

@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearAllLocalCache,
@@ -23,7 +24,7 @@ const strictNotes = defineLocalCacheSlice<Note>({ kind: 'test-notes', version: 1
 const USER = '00000000-0000-7000-8000-0000000000aa';
 const OTHER_USER = '00000000-0000-7000-8000-0000000000bb';
 const global1 = localCacheScope(USER, 'global', '00000000-0000-7000-8000-000000000001');
-const eu1 = localCacheScope(USER, 'eu', '00000000-0000-7000-8000-000000000001');
+const eu1 = localCacheScope(USER, 'enterprise', '00000000-0000-7000-8000-000000000001');
 
 async function settle(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -69,12 +70,12 @@ describe('local cache store', () => {
 
   it('clears one workspace and leaves the others', async () => {
     await notes.write(global1, 'a', { text: 'global' });
-    await notes.write(eu1, 'a', { text: 'eu' });
+    await notes.write(eu1, 'a', { text: 'enterprise' });
 
     await clearWorkspaceLocalCache(USER, 'global', '00000000-0000-7000-8000-000000000001');
 
     expect(await notes.read(global1, 'a')).toBeNull();
-    expect(await notes.read(eu1, 'a')).toEqual({ text: 'eu' });
+    expect(await notes.read(eu1, 'a')).toEqual({ text: 'enterprise' });
   });
 
   it('keeps two accounts\' rows for one workspace apart, and clears only the leaving account\'s', async () => {
@@ -95,7 +96,7 @@ describe('local cache store', () => {
     await notes.write(global1, 'p:0', { text: 'main' }, 'p');
     await notes.write(global1, 'p:child', { text: 'child' }, 'p');
     await notes.write(global1, 'q:0', { text: 'other' }, 'q');
-    await notes.write(eu1, 'p:0', { text: 'main in eu' }, 'p');
+    await notes.write(eu1, 'p:0', { text: 'main in enterprise' }, 'p');
 
     expect((await notes.entries(global1)).map((entry) => `${entry.subject}/${entry.key}`).sort())
       .toEqual(['p/p:0', 'p/p:child', 'q/q:0']);
@@ -104,7 +105,7 @@ describe('local cache store', () => {
     expect((await notes.entries(global1)).map((entry) => entry.key)).toEqual(['q:0']);
     expect(await notes.read(eu1, 'p:0')).toBeNull();
 
-    await notes.write(eu1, 'q:0', { text: 'other in eu' }, 'q');
+    await notes.write(eu1, 'q:0', { text: 'other in enterprise' }, 'q');
     await notes.removeKey('q:0');
     expect(await notes.entries(global1)).toEqual([]);
     expect(await notes.entries(eu1)).toEqual([]);
@@ -114,7 +115,7 @@ describe('local cache store', () => {
     await notes.write(global1, 'p:0', { text: 'main' }, 'p');
     await notes.write(global1, 'p:child', { text: 'child' }, 'p');
     await notes.write(global1, 'q:0', { text: 'other' }, 'q');
-    await notes.write(eu1, 'p:0', { text: 'main in eu' }, 'p');
+    await notes.write(eu1, 'p:0', { text: 'main in enterprise' }, 'p');
 
     expect((await notes.entriesForSubject(global1, 'p')).map((entry) => entry.key).sort()).toEqual(['p:0', 'p:child']);
     expect((await notes.entriesForSubject(eu1, 'p')).map((entry) => entry.key)).toEqual(['p:0']);
@@ -130,4 +131,40 @@ describe('local cache store', () => {
     expect(await notes.read(global1, 'a')).toBeNull();
     expect(await notes.read(global1, 'b')).toEqual({ text: 'b' });
   });
+});
+
+
+it('upgrades inactive cached workspaces and removes only structured meeting content', async () => {
+  closeLocalCache();
+  const request = <T>(value: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+    value.onsuccess = () => resolve(value.result);
+    value.onerror = () => reject(value.error);
+  });
+  await request(indexedDB.deleteDatabase('rally-local-cache'));
+  const opening = indexedDB.open('rally-local-cache', 1);
+  opening.onupgradeneeded = () => {
+    const entries = opening.result.createObjectStore('entries', { keyPath: ['scope', 'kind', 'key'] });
+    entries.createIndex('kindSubject', ['kind', 'subject']);
+    entries.createIndex('kindKey', ['kind', 'key']);
+  };
+  const database = await request(opening);
+  const transaction = database.transaction('entries', 'readwrite');
+  const complete = new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  transaction.objectStore('entries').put({ scope: eu1, kind: 'directory', key: 'directory', subject: 'directory', version: 1,
+    updatedAt: 1, value: { notes: [{ title: 'private meeting' }], workstreams: [{ title: 'keep' }] } });
+  transaction.objectStore('entries').put({ scope: eu1, kind: 'conversation-test', key: 'conversation', subject: 'conversation', version: 1,
+    updatedAt: 1, value: { text: 'ordinary conversation mentioning a meeting', attachments: [
+      { provider: 'avalon_note', title: 'private transcript' }, { provider: 'granola', title: 'keep' },
+    ] } });
+  await complete;
+  database.close();
+  const directory = defineLocalCacheSlice({ kind: 'directory', version: 2, parse: value => value });
+  const conversation = defineLocalCacheSlice({ kind: 'conversation-test', version: 1, parse: value => value });
+  expect(await directory.read(eu1, 'directory')).toEqual({ workstreams: [{ title: 'keep' }] });
+  expect(await conversation.read(eu1, 'conversation')).toEqual({ text: 'ordinary conversation mentioning a meeting',
+    attachments: [{ provider: 'granola', title: 'keep' }] });
+  closeLocalCache();
 });

@@ -75,79 +75,6 @@ pagination contract, not a claim that hashing prevents existence inference.
 A resource returns after its first valid attachment grant; unrelated
 alternative locations do not need to be read once access is established.
 
-Search decision snapshots use Global `AUTHORIZATION_CACHE` KV, with WorkspaceDO
-SQLite as the regional fallback (including EU). Keys hash the schema version,
-workspace, user, delegation and exact resource address. New keys never read the
-legacy snapshots. Member search answers a miss unavailable, omits the candidate
-without reporting it, and resolves canonical authority once after the response
-(`waitUntil`), storing allowed, denied or not-found decisions; other callers
-resolve the miss inline. A miss is the exception, not the first-search norm:
-every push job first registers the pairs its target reaches (see below), so the
-decision a search needs exists before the search. A KV miss whose decision the
-durable projection already holds is answered from there and republished to KV
-under its generation fence, so a cached negative lookup does not keep missing.
-Global reads only KV on the request; EU reads the WorkspaceDO snapshot table, one
-warm object, on the request. Cache hits never recheck owners or schedule work.
-There is no TTL, age-based denial, or periodic/demand-driven refresh. Relevant
-WorkspaceDO row mutations and accepted child inventory deliveries transactionally
-record a coalesced push intent. The alarm sends a reference-only
-`search_authorization_push_v1` target job to the regional activity queue.
-The consumer first registers the pairs its target reaches, read from the
-WorkspaceDO's own directories (`search-authorization-universe.ts`): a parent
-reaches its members when workspace-scoped and its participants otherwise, for
-the main feed, every child the inventories or backfill registry name, and every
-attachment-admitted resource located under it; a connection reaches every member
-for one `connection` address; a note reaches every member, an upload the readers
-of its locations and its uploader; a member reaches everything that member could
-read, skipping archived rooms. This is discovery for registration, never a
-grant, and it over-approximates on purpose: a registered denial costs one key,
-a missing grant costs a search result. Connector resources are not registered
-per resource at all. Their readability is exactly their connection's (scope,
-owner, status), so the index row carries `connection_id` and the read path
-admits it by the `(subject, connection)` decision; the busiest workspace holds
-about 81,000 synced resources against 18 connections, which is the difference
-between a projection that fits a Durable Object and one that does not.
-Membership changes name the member: a removal, a departure or an accepted
-invitation publishes a `member` push for that user alone, on top of the
-`member_directory` refresh of every registered key. WorkspaceDO migration 48
-queues one push per live parent, connection and attachment-admitted resource so
-existing workspaces are registered without waiting for a mutation.
-The consumer then reloads the registered subjects' canonical decisions and publishes
-replacements through WorkspaceDO. Registration allocates a monotonically increasing
-per-key generation before authority reads; superseded generations cannot publish.
-A superseded push retries so a newer, failed cache fill cannot consume its durable
-mutation intent.
-An instance-local per-key queue orders KV writes without holding a DO-wide
-`blockConcurrencyWhile` across network I/O. Unrelated events and keys remain runnable.
-Unavailable owners preserve the previous decision and retry through the queue.
-Push jobs identify a changed parent, resource or connection. Indexed key addresses
-and a normalized dependency table select
-matching resource addresses, recorded owner dependencies and current attachment
-locations, so new grants and removed grants both reach their keys. Pending
-mutations coalesce per target. Misses register their key before loading owners,
-so concurrent source changes can reach a decision being populated. Unavailable
-placeholders are targeted by address/current locations rather than included in
-every parent push. Failed subjects do not prevent remaining subjects from
-publishing; failed queue messages retry without abandoning sibling messages.
-Registration retains current attachment dependencies before reading owners, so
-a removal during an initial fill still targets that key. Cache-read or
-miss-population failures become unavailable candidates, preserving
-partial search results. Archived conversation content remains excluded by the
-index's archive attribute, independently of cached authorization.
-Changes reach cached grants and denials without another search. This deliberately
-accepts eventual consistency for grants and revocations, including queue and KV
-propagation delay. Five minutes remains a design goal, never a refresh trigger.
-
-A cache-admitted candidate renders from the index: its text, title, time and
-archive state travel with the row, written by the owning object (see
-[text search](text-search.md)). No content RPC runs on the read path.
-`readAdmittedSearchContent` and `resourceSearchRecords` remain callable for one
-release so Workers still rolling out can finish their requests, and are
-otherwise unused. Normal product reads continue through their own access path.
-Legacy snapshot RPCs remain inert for rolling compatibility; the shipped SQLite
-table is reused under the new key prefix and must not be dropped. EU never reads
-Global KV.
-
 The attachment reverse index remains Queue-maintained discovery, never a grant.
 Each positive attachment path is checked against its current canonical owner.
 Completed negative discovery is usable regardless of observation age; source
@@ -181,9 +108,14 @@ children; even delayed child jobs check the current parent registry.
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent
 discovery followed by child inventories; `status` reports completion receipts.
-An incomplete attachment lookup automatically schedules missing discovery without
-resetting in-progress jobs, and returns retryable `projection_incomplete` until
-a canonical grant or complete negative evidence can be established. Explicit
+An incomplete attachment lookup automatically schedules missing discovery and
+returns retryable `projection_incomplete` until a canonical grant or complete
+negative evidence can be established. That path re-queues exactly the discovery
+that is missing and nothing else: a parent whose own discovery has not
+completed, or, under a parent that has completed, each individual child receipt
+still at `completed = 0`. It writes nothing for a receipt that finished and
+nothing for one whose delivery row is still queued, so a retryable failure
+cannot reset a workspace or turn repeated reads into repeated writes. Explicit
 backfill can refresh existing receipts. Source mutations also queue inventory
 updates through their transactional outbox.
 
@@ -247,11 +179,16 @@ reach the configured activity dead-letter queue; incomplete receipts prevent
 discovery. An unprovisioned registered child therefore requires repair before
 negative attachment evidence is complete; it cannot silently disappear from the backfill.
 
-A dead-lettered projection after discovery completes can leave a newly shared
-resource denied indefinitely, until that projection is repaired or another source
-mutation republishes it. There is no age-triggered self-heal. Repair the failing
-consumer or source first, then replay the reference-only authorization jobs from
-the regional activity dead-letter queue. For a workspace-wide rebuild, trusted
+A dead-lettered projection leaves a receipt at `completed = 0` with no delivery
+row behind it, and coverage is workspace-wide, so one such receipt denies every
+attachment-gated resource in the workspace to everyone but each resource's own
+uploader. The read path re-queues that receipt on every `projection_incomplete`,
+which restores coverage without operator action once the underlying consumer or
+source is healthy again. That is a retry, not an age-triggered self-heal: the
+trigger is the missing receipt, never elapsed time, and a job that keeps failing
+keeps dead-lettering. Repair the failing consumer or source first, then replay
+the reference-only authorization jobs from the regional activity dead-letter
+queue. For a workspace-wide rebuild, trusted
 operator tooling can call `AuthorizationControl.execute({ workspaceId, action:
 "backfill" })`; it invokes `beginAuthorizationBackfill` with refresh enabled by
 default and queues fresh canonical inventories. Poll `action: "status"` until
@@ -283,18 +220,6 @@ reads, initial population, regional persistence, and mutation outbox delivery.
 The conversation contract test proves a cached grant stays usable until a push
 publishes revocation. Deliberately disabling cache reuse, publication, and queue
 delivery makes the corresponding regression tests fail.
-
-## Regional impact
-
-All owner state, Queue references and WorkspaceDO snapshots stay in their
-workspace region. Global Wrangler configuration declares a dedicated KV binding
-for provisioning on first deployment. The pinned Wrangler 4.129.0 CLI enables
-`experimental-provision` and `experimental-auto-create` by default; its binding
-provisioner creates or reuses the named resource. No production deployment was
-performed to verify that operation. KV stores Global search decisions when bound;
-regional SQLite provides the fallback. The binding is therefore absent from the
-environment contract's required `productionOnlyBindings` list. EU deliberately has
-no authorization KV binding and does not use a Global fallback. See [regionalization](regionalization.md).
 
 ## Operations
 
@@ -356,12 +281,6 @@ not authorization rechecks on ordinary reads.
 
 ### Explicit visibility experiment
 
-`scripts/fixtures/kv-visibility-probe.mjs` is a disposable Worker, separate from
-product traffic. Bind the Global authorization namespace as `AUTHORIZATION_CACHE`,
-set a temporary `PROBE_TOKEN`, and deploy copies with explicit `placement.region`
-hints (for example `gcp:us-west1` and `gcp:europe-west1`). It can only access synthetic
-`measurement:kv-visibility:` UUID keys. No user grants or EU product data enter the experiment.
-
 Run `PROBE_TOKEN=... node scripts/measure-kv-visibility.mjs --writer <url>
 --reader <url> --reader <url> --samples <n> --interval-ms <n> --observation-ms <n>`.
 The caller chooses the experimental sample count, polling resolution, and observation
@@ -373,8 +292,6 @@ reports unfinished observations explicitly, and deletes its synthetic key afterw
 placement hints with results. Visibility times include polling resolution and use
 Worker timestamps; they are not exact replication timestamps. Remove probe deployments
 after the experiment. Pair these results with mutation-to-write-ack queue events.
-
-## Changelog
 
 ### 2026-09-10 — Republish a durable decision after a cached KV miss
 
@@ -426,6 +343,50 @@ among them, keep the inline fill because nothing hands them a deferral. Content
 and display now come from the index, so the content RPC contract above is inert;
 see the text-search changelog for the read path. A future change must not put an
 owner read back into a member search request to close the first-search gap.
+
+### 2026-09-10 — Retry missing authorization discovery from the unavailable read
+
+`beginAuthorizationBackfill({ refresh: false })` skipped every parent already
+present in `authorization_backfill`, complete or not, and only ever queued
+parent-level jobs. The unavailable read path is its only `refresh: false`
+caller, so any discovery receipt left at `completed = 0` with no delivery row
+behind it was never retried. Coverage is workspace-wide, so one such receipt
+returned `authorization_unavailable` for every attachment-gated resource in the
+workspace, to every member except each resource's own uploader, permanently.
+
+The dominant way to reach that state is a child receipt, not a parent one. A
+parent job always returns at the `registerAuthorizationChildren` branch, which
+marks the parent complete; `authorization_projection_conversation_not_ready` is
+below that return and is therefore reachable only on a child job. The stuck
+workspace is thus a *completed* parent with one incomplete child, which the
+parent-only guard could never have reached.
+
+The read path now re-queues the specific missing receipt: the parent when its
+own discovery is incomplete, otherwise each child still at `completed = 0`. It
+skips any receipt whose delivery row is still present, because work already
+scheduled — including work waiting out a backoff — does not need requesting
+again.
+
+**Considered and rejected:** re-running the parent job to recover a stuck child,
+which is the smaller diff, was rejected because a parent job runs with
+`refreshExisting` enabled and resets every sibling receipt to `completed = 0`.
+That would widen the same workspace-wide outage it is meant to close, for as
+long as the re-registered children take to drain. Also rejected: an age or
+retry-count trigger, which would introduce the time-based self-heal this design
+deliberately does not have, and repairing inside the evaluator, which would put
+a write on the read path.
+
+**What a future change has to respect:** the delivery-row check is what keeps
+this path from amplifying client retries into writes on the workspace object,
+which is single-threaded and is also what has to drain the backlog. Re-queueing
+must stay idempotent through `enqueueAuthorizationDiscovery`, which upserts on
+`[parentId, substreamId]` and preserves an existing `not_before`. The
+child-registration guard is deliberately not changed to match; it is reached
+from parent jobs that legitimately refresh their whole child set. This extends
+the write-owned recovery of the 2026-09-09 entry below to the receipts that
+recovery leaves behind.
+
+Reported in production in a Global workspace.
 
 ### 2026-09-09 — Make projection recovery write-owned
 

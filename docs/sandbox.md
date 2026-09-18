@@ -10,8 +10,6 @@ that bring the application up inside it, read
 Set up one environment. Rally needs no database server, so unlike a
 PostgreSQL-backed project there is no second environment to maintain.
 
-## `avalon-node22`
-
 ### Network access
 
 `Full`.

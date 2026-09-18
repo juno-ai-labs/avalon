@@ -1,3 +1,4 @@
+import { refreshTerminalProviderObservation } from "./terminal/observation";
 /**
  * What a workspace's alarm actually runs.
  *
@@ -24,8 +25,9 @@ import {
   type ConnectorPollWorkflowInput,
 } from "@rally/contracts";
 import { newId } from "@rally/db";
+import { z } from "zod";
 
-import type { Env } from "../env";
+import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
 import type {
   WorkspaceDirectoryScheduleTargetsRequest,
   WorkspaceDirectoryScheduleTargetsResult,
@@ -37,29 +39,26 @@ import type {
   WorkspaceNotificationIntentReapResult,
 } from "../durable-objects/workspace-notification-intent-protocol";
 import { SLACK_INGRESS_ATTEMPT_LIMIT } from "../durable-objects/workspace-slack-protocol";
+import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
+import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
+import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import { fireDigestSchedule } from "./digest-run-service";
 import { processMemoryIndexOutbox } from "./memory-service";
-import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
-import { reapDeletedNoteObjects } from "./note-resource-cleanup";
 import {
   reapDeletedResourceObjects,
   reapExpiredDraftResources,
 } from "./resource-object-cleanup";
 import { backfillResourceSlugs } from "./resource-slug";
-import { SlackAgentService } from "./slack-agent-service";
+import { SLACK_LINK_CHALLENGE_GRACE_MS, SlackAgentService } from "./slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./slack-unfurl-refresh";
-import { createTerminalPortFactory } from "./terminal/object-port";
 import { parseTerminalRegionConfiguration } from "./terminal/contract";
-import { createTerminalProviderRpcClient } from "./terminal/provider-rpc-client";
-import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "./terminal/lifecycle";
-import { emitProductUsageTelemetry } from "../telemetry/product-usage";
-import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
-import { SLACK_LINK_CHALLENGE_GRACE_MS } from "./slack-agent-service";
 import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
-import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
+import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "./terminal/lifecycle";
+import { createTerminalPortFactory } from "./terminal/object-port";
+import { createTerminalProviderRpcClient } from "./terminal/provider-rpc-client";
 
 /**
  * The directory reads a schedule needs, satisfied without an RPC hop.
@@ -106,8 +105,6 @@ export const WORKSPACE_ALARM_SOURCE_KINDS: ReadonlyMap<string, readonly Workspac
   ["resources", ["maintenance", "watch"]],
   ["resource_versions", ["maintenance"]],
   ["resource_object_deletion_outbox", ["maintenance"]],
-  ["note_resource_deletion_outbox", ["maintenance"]],
-  ["note_privacy_change_outbox", ["maintenance"]],
   ["memory_index_outbox", ["maintenance"]],
   ["slack_ingress_jobs", ["maintenance"]],
   ["slack_agent_thread_claims", ["maintenance"]],
@@ -228,11 +225,6 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
   resource_objects: async (ctx) => progressedIf(await reapDeletedResourceObjects(ctx.workspaceEnv, ctx.workspaceId)),
   expired_drafts: async (ctx) => progressedIf(await reapExpiredDraftResources(ctx.workspaceEnv, ctx.workspaceId)),
   resource_slugs: async (ctx) => progressedIf(await backfillResourceSlugs(ctx.workspaceEnv, ctx.workspaceId)),
-  note_objects: async (ctx) => progressedIf(await reapDeletedNoteObjects(ctx.workspaceEnv, ctx.workspaceId)),
-  note_privacy: async (ctx) => progressedIf(await processPendingNotePrivacyNotifications(
-    ctx.workspaceEnv,
-    { workspaceId: ctx.workspaceId },
-  )),
   memory_index: async (ctx) => progressedIf(await processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId)),
   notification_intents: async (ctx) => progressedIf((
     await ctx.notificationIntents.reapSettledWorkstreamNotificationIntents({
@@ -339,19 +331,6 @@ const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKind; sql
     // waits here. Counts exactly the rows the pass names.
     sql: `SELECT 'resource_slugs' AS id, MIN(created_at) AS due_at
             FROM resources WHERE workspace_id = ?1 AND slug IS NULL HAVING COUNT(*) > 0`,
-  },
-  {
-    kind: "maintenance",
-    scoped: false,
-    sql: `SELECT 'note_objects' AS id, MIN(created_at) AS due_at
-            FROM note_resource_deletion_outbox HAVING COUNT(*) > 0`,
-  },
-  {
-    kind: "maintenance",
-    scoped: true,
-    sql: `SELECT 'note_privacy' AS id, MIN(created_at) AS due_at
-            FROM note_privacy_change_outbox
-           WHERE workspace_id = ?1 AND processed_at IS NULL HAVING COUNT(*) > 0`,
   },
   {
     kind: "maintenance",
@@ -518,7 +497,12 @@ export async function recordWorkspaceScheduleFailure(
     workspace_id: ctx.workspaceId,
     target_kind: target.kind,
     target_id: target.id,
-    code: error instanceof Error ? error.message : "unknown_error",
+    // The row keeps the message, which a target here throws as a code. A
+    // stored row that no longer parses is the exception, and it is composed
+    // the way the schedule and watch rows compose theirs above.
+    code: error instanceof z.ZodError
+      ? diagnosticErrorCode(error, "workspace_schedule_target_failed")
+      : error instanceof Error ? error.message : "unknown_error",
   });
 }
 
@@ -556,6 +540,15 @@ async function reconcileTerminalSandbox(
   const provider = createTerminalProviderRpcClient(ctx.env.TERMINAL_PROVIDER, configuration);
   const executionEnv = ctx.workspaceEnv;
   const port = createTerminalPortFactory(executionEnv);
+  const terminal = port(ctx.workspaceId, workstreamId);
+  const sandbox = await terminal.sandbox();
+  const observation = await terminal.providerObservation();
+  const observationDue = Boolean(sandbox?.sandboxId && (!observation || observation.nextObserveAt <= now.getTime()));
+  if (observationDue && sandbox?.sandboxId) {
+    await refreshTerminalProviderObservation(terminal, provider, {
+      sandboxId: sandbox.sandboxId, generation: sandbox.generation,
+    });
+  }
   const result = await reconcileDueTerminalSandbox(
     createHarnessRunPortFactory(executionEnv),
     port,
@@ -572,9 +565,12 @@ async function reconcileTerminalSandbox(
       transition: result.transition,
     });
   }
-  if (result.transition !== "expired") return terminalReconcileOutcome(result.transition);
+  if (result.transition !== "expired") {
+    if (observationDue && result.transition === "none") return { waitMs: TERMINAL_DIRECTORY_CATCHUP_MS };
+    return terminalReconcileOutcome(result.transition);
+  }
   const repository = await port(ctx.workspaceId, workstreamId).selectedRepository();
-  await emitProductUsageTelemetry(ctx.env, {
+  emitProductUsageTelemetry(ctx.env, {
     workspaceId: asWorkspaceId(ctx.workspaceId),
     name: "terminal_workspace_terminal",
     properties: {
@@ -588,7 +584,7 @@ async function reconcileTerminalSandbox(
     },
     operationId: workstreamId,
     eventId: newId(),
-  }).catch(() => undefined);
+  });
   return terminalReconcileOutcome(result.transition);
 }
 
@@ -717,6 +713,20 @@ async function runResourceWatch(
     .run();
 }
 
+/**
+ * The code an operator-visible failure record carries.
+ *
+ * A target's audit row keeps its own constant and the thrown message beside
+ * it. A stored row that no longer parses — a schedule's or a watch's
+ * `ConnectorPollWorkflowInputSchema`, built from the row itself — is the
+ * exception: its message is a JSON blob, and the field it names is what an
+ * operator filters on, so it rides behind the constant the way
+ * `diagnosticErrorCode` composes it everywhere else.
+ */
+function scheduleFailureCode(error: unknown, constant: string): string {
+  return error instanceof z.ZodError ? diagnosticErrorCode(error, constant) : constant;
+}
+
 async function recordScheduleFailure(
   ctx: WorkspaceScheduleContext,
   scheduleId: string,
@@ -733,7 +743,7 @@ async function recordScheduleFailure(
       uuidV7(),
       ctx.workspaceId,
       scheduleId,
-      JSON.stringify({ code: "schedule_execution_failed", message: message.slice(0, 500) }),
+      JSON.stringify({ code: scheduleFailureCode(error, "schedule_execution_failed"), message: message.slice(0, 500) }),
       new Date().toISOString()
     )
     .run();
@@ -756,7 +766,7 @@ async function recordWatchFailure(
       uuidV7(),
       ctx.workspaceId,
       watchId,
-      JSON.stringify({ code: "resource_watch_poll_failed", message: message.slice(0, 500) }),
+      JSON.stringify({ code: scheduleFailureCode(error, "resource_watch_poll_failed"), message: message.slice(0, 500) }),
       new Date().toISOString()
     )
     .run();

@@ -55,7 +55,7 @@ const AnsweredElicitationSchema = z.strictObject({
 const InitializedWorkstreamSchema = z.strictObject({
   workstream: WorkstreamSchema,
   turnId: z.string().uuid(),
-  harnessRunId: z.string().uuid(),
+  harnessRunId: z.string().uuid().nullable(),
 });
 
 async function objectStub(
@@ -221,7 +221,7 @@ export class WorkstreamObjectClient {
   async initialize(input: InitializeWorkstreamObjectRequest): Promise<{
     workstream: Workstream;
     turnId: string;
-    harnessRunId: string;
+    harnessRunId: string | null;
   }> {
     return InitializedWorkstreamSchema.parse(await this.request({ operation: "initialize", input }));
   }

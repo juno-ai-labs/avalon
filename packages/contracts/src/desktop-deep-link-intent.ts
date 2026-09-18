@@ -39,8 +39,7 @@ export type DesktopDeepLinkIntent =
       attemptId: string | null;
       errorCode: string | null;
       region: WorkspaceTargetRegion | null;
-    }
-  | { kind: "note"; noteId: string };
+    };
 
 function exactKeys(parameters: URLSearchParams, required: readonly string[], optional: readonly string[] = []): boolean {
   const entries = [...parameters.keys()];
@@ -82,7 +81,7 @@ function parseConnectorResult(
   const provider = connectorProvider(providerValue);
   if (!provider || (status !== "connected" && status !== "denied" && status !== "failed")) return null;
   const callbackRegion = target?.region ?? url.searchParams.get("region");
-  if (callbackRegion !== "global" && callbackRegion !== "eu") return null;
+  if (!callbackRegion || !/^[a-z][a-z0-9-]*$/u.test(callbackRegion)) return null;
   const attemptId = url.searchParams.get("attempt");
   if (attemptId !== null && !ATTEMPT_PATTERN.test(attemptId)) return null;
   const routingKeys = target ? [] : ["region"];
@@ -171,10 +170,6 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
       ? { kind: "workstream", workstreamId, target, ...(substreamId ? { substreamId } : {}) }
       : null;
   }
-  if (url.hostname === "notes") {
-    const noteId = url.pathname.slice(1);
-    return !target && UUID_PATTERN.test(noteId) && !url.search ? { kind: "note", noteId } : null;
-  }
   if (url.hostname === "settings") {
     const section = url.pathname.slice(1);
     return (section === "workspace" || section === "connections" || section === "digest") && !url.search
@@ -193,7 +188,7 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   if (url.hostname === "invitations" && url.pathname === "/accept" && !target) {
     const token = url.searchParams.get("token");
     const region = url.searchParams.get("region");
-    return token && TOKEN_PATTERN.test(token) && (region === "global" || region === "eu")
+    return token && TOKEN_PATTERN.test(token) && (region !== null && /^[a-z][a-z0-9-]*$/u.test(region))
       && exactKeys(url.searchParams, ["token", "region"])
       ? { kind: "invitation", token, region }
       : null;

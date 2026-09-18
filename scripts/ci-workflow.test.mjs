@@ -48,8 +48,9 @@ test('CI distributes the expensive verification work across independent lanes', 
   assert.equal(
     matrixCommand(workflow, 'typecheck-and-build-invariants'),
     'pnpm typecheck && pnpm --filter @rally/api build && '
-      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:telemetry && '
+      + 'pnpm --filter @rally/api build:telemetry && '
       + 'pnpm --filter @rally/api check:telemetry-startup-boundary && '
+      + 'pnpm --filter @rally/api build:ashby && '
       + 'pnpm --filter @rally/api build:pricing && '
       // The artifact-serving Workers are dry-run built here rather than only in
       // the deploy workflow, unlike the documents and Terminal services: they
@@ -57,7 +58,6 @@ test('CI distributes the expensive verification work across independent lanes', 
       // route, binding, or startup profile is worth catching on the pull
       // request instead of at release.
       + 'pnpm --filter @rally/api build:artifacts && '
-      + 'pnpm --filter @rally/api build:artifacts:eu && '
       + 'pnpm --filter @rally/desktop test:release',
   );
   assert.equal(
@@ -104,11 +104,19 @@ test('CI shards the package-owned desktop and API test commands without drift', 
   );
   assert.equal(
     matrixCommand(workflow, 'api-tests-workers-1-of-n'),
-    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=1/2`,
+    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=1/4`,
   );
   assert.equal(
     matrixCommand(workflow, 'api-tests-workers-2-of-n'),
-    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=2/2`,
+    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=2/4`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-workers-3-of-n'),
+    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=3/4`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-workers-4-of-n'),
+    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=4/4`,
   );
 });
 
@@ -139,6 +147,8 @@ test('CI still runs every repository quality gate', async () => {
     'api-tests-3-of-n',
     'api-tests-workers-1-of-n',
     'api-tests-workers-2-of-n',
+    'api-tests-workers-3-of-n',
+    'api-tests-workers-4-of-n',
     'remaining-tests',
   ].flatMap((lane) => matrixCommand(workflow, lane).split(' && '));
 
@@ -146,7 +156,6 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm lint',
     'pnpm typecheck',
     'pnpm --filter @rally/api build',
-    'pnpm --filter @rally/api build:eu',
     'pnpm --filter @rally/api build:telemetry',
     'pnpm --filter @rally/api check:telemetry-startup-boundary',
     'pnpm --filter @rally/api build:pricing',
@@ -158,8 +167,8 @@ test('CI still runs every repository quality gate', async () => {
 
   assert.equal(
     commands.filter((command) => command.includes('vitest.workers.config.ts')).length,
-    2,
-    'CI must retain the workers suite across two shards',
+    4,
+    'CI must retain the workers suite across four shards',
   );
 });
 

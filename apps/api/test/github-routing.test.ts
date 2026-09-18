@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../src/env";
@@ -190,9 +191,9 @@ class FakeBucket {
 
 describe("shared GitHub App routing", () => {
   it("uses the region prefix while keeping the rest of state opaque", () => {
-    expect(createGitHubInstallState("eu", "c".repeat(32))).toBe(`eu.${"c".repeat(32)}`);
+    expect(createGitHubInstallState("enterprise", "c".repeat(32))).toBe(`enterprise.${"c".repeat(32)}`);
     expect(githubRegionFromInstallState(`global.${"a".repeat(32)}`)).toBe("global");
-    expect(githubRegionFromInstallState(`eu.${"b".repeat(32)}`)).toBe("eu");
+    expect(githubRegionFromInstallState(`enterprise.${"b".repeat(32)}`)).toBe("enterprise");
     expect(() => githubRegionFromInstallState("opaque-without-region")).toThrow(/state/i);
   });
 
@@ -252,7 +253,7 @@ describe("shared GitHub App routing", () => {
       sender: { id: 7, login: "octocat" },
     });
     await expect(service.ingestGitHub(revoked.bytes, revoked.headers)).resolves.toMatchObject({ accepted: true });
-    expect(dispatches.map((entry) => entry.region)).toEqual(["global", "eu"]);
+    expect(dispatches.map((entry) => entry.region)).toEqual(["global", "enterprise"]);
     expect(dispatches[0]?.bytes).toEqual(revoked.bytes);
   });
 
@@ -287,7 +288,7 @@ describe("shared GitHub App routing", () => {
     const dispatches: Array<{ region: Region; bytes: Uint8Array }> = [];
     const setupInRegion = vi.fn(async () => ({
       url: "https://github.com/login/oauth/authorize?state=regional",
-      workspaceId: "workspace-eu",
+      workspaceId: "workspace-enterprise",
     }));
     const service = new GitHubRoutingService(environment(database, bucket), {
       now: () => NOW,
@@ -310,12 +311,12 @@ describe("shared GitHub App routing", () => {
     expect(bucket.values.size).toBe(0);
     expect(dispatches).toHaveLength(0);
 
-    await expect(service.setupGitHub("42", `eu.${"x".repeat(32)}`)).resolves.toContain("github.com");
-    expect(setupInRegion).toHaveBeenCalledWith("eu", "42", `eu.${"x".repeat(32)}`);
+    await expect(service.setupGitHub("42", `enterprise.${"x".repeat(32)}`)).resolves.toContain("github.com");
+    expect(setupInRegion).toHaveBeenCalledWith("enterprise", "42", `enterprise.${"x".repeat(32)}`);
     expect(database.routes).toEqual([{
       installationId: "42",
-      region: "eu",
-      workspaceId: "workspace-eu",
+      region: "enterprise",
+      workspaceId: "workspace-enterprise",
       status: "active",
     }]);
     expect(dispatches).toHaveLength(0);
@@ -326,21 +327,21 @@ describe("shared GitHub App routing", () => {
     const database = new FakeDatabase();
     const bucket = new FakeBucket();
     const failSetupInRegion = vi.fn(async () =>
-      `avalon://auth/complete?provider=github&region=eu&status=failed&error=github_setup_failed`);
+      `avalon://auth/complete?provider=github&region=enterprise&status=failed&error=github_setup_failed`);
     const service = new GitHubRoutingService(environment(database, bucket), {
       failSetupInRegion,
     });
-    const state = `eu.${"x".repeat(32)}`;
+    const state = `enterprise.${"x".repeat(32)}`;
 
     await expect(service.failGitHubSetup(state, "github_setup_failed")).resolves.toContain("provider=github");
-    expect(failSetupInRegion).toHaveBeenCalledWith("eu", state, "github_setup_failed");
+    expect(failSetupInRegion).toHaveBeenCalledWith("enterprise", state, "github_setup_failed");
   });
 
   it("fans out installation deliveries and disables every route after deletion", async () => {
     const database = new FakeDatabase();
     database.routes.push(
       { installationId: "42", region: "global", workspaceId: "workspace-global", status: "active" },
-      { installationId: "42", region: "eu", workspaceId: "workspace-eu", status: "active" },
+      { installationId: "42", region: "enterprise", workspaceId: "workspace-enterprise", status: "active" },
     );
     const regions: Region[] = [];
     const service = new GitHubRoutingService(environment(database, new FakeBucket()), {
@@ -360,7 +361,7 @@ describe("shared GitHub App routing", () => {
       duplicate: false,
       activityCount: 0,
     });
-    expect(regions).toEqual(["eu", "global"]);
+    expect(regions).toEqual(["enterprise", "global"]);
     expect(database.routes.every((route) => route.status === "disabled")).toBe(true);
   });
 });

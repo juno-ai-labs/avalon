@@ -25,6 +25,13 @@ watches, and written to the activity log — it just never interrupts anybody on
 a schedule. Most of what a provider emits is operational, and that is the normal
 case rather than a failure.
 
+## Ashby
+
+| Activity type | Digestible? | Why |
+| --- | --- | --- |
+| `applicationSubmit` | No | Recruiting trigger evidence for explicitly bound automations; not general workspace digest news. |
+| `candidateStageChange` | No | Application progression is operational recruiting data, not a workspace-wide announcement. |
+
 ## GitHub
 
 Thirty of ninety-one. The loudest connector Rally has: continuous integration
@@ -270,14 +277,31 @@ Three of seven, and one of three polling streams withheld outright.
 
 ## Granola
 
-One of four.
+One of three.
 
 | Activity type | Digestible | Reason |
 | --- | --- | --- |
 | `note.generated` | Yes | The meeting note was written for the first time; effectively "the meeting happened". |
-| `note.regenerated` | No | Granola improving its own earlier output. |
-| `note.edited` | No | A revision to a note already reported. |
-| `note.access_granted` | No | A permission change, not something that happened. |
+| `note.edited` | No | A revision to a note already reported, including Granola regenerating its own earlier output. |
+| `note.access_granted` | No | A permission change, not something that happened. When the shared note already has a summary, the ingress stores a `note.generated` beside it, and that one is digestible: from the workspace's side, that is when the meeting arrived. |
+
+## Fireflies
+
+One of two. Fireflies reports the same meeting twice, minutes apart, and only
+the second report has anything written about it.
+
+Worth stating plainly, because the Yes above promises more than the digest
+receives: a Fireflies webhook carries `{event, timestamp, meeting_id}` and
+nothing else, so the activity has no title, no snippet and no link, and the
+digest brief renders it as "Fireflies meeting summarized" with no meeting
+identity. The overview and action items exist, but only behind a hydration the
+digest path does not perform — the same shape as Granola. Fixing that is a
+change to how the digest hydrates, not to this row.
+
+| Activity type | Digestible | Reason |
+| --- | --- | --- |
+| `meeting.summarized` | Yes | The meeting arriving — the one of the two reports that means something was written about the call. |
+| `meeting.transcribed` | No | The same meeting a few minutes earlier, with the words captured and nothing concluded from them. Digesting both would tell somebody about one call twice, and the later one is the useful half. |
 
 ## X
 
