@@ -3223,6 +3223,7 @@ export async function runWorkstreamHarness(
       workspaceId: input.workspaceId,
       resolveAzureModelPricing: createAzureModelPricingResolver(env),
       workstreamId: input.parentId,
+      substreamId: input.substreamId ?? "0",
       loopId: input.loopId,
       harnessRunId: input.harnessRunId,
       executionPrincipal: input.executionPrincipal,

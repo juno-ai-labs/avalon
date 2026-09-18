@@ -706,7 +706,7 @@ export function createTerminalResourceBridge(
             );
           }
           const timestamp = Date.now();
-          await terminalPort(context.workspaceId, context.workstreamId)
+          await terminalPort(context.workspaceId, context.workstreamId, context.substreamId ?? "0")
             .recordImportedResource({
               sandboxGeneration,
               resourceId: row.id,
@@ -742,7 +742,7 @@ export function createTerminalResourceBridge(
         );
       }
       const plannedAt = Date.now();
-      await terminalPort(context.workspaceId, context.workstreamId)
+      await terminalPort(context.workspaceId, context.workstreamId, context.substreamId ?? "0")
         .recordImportedResource({
           sandboxGeneration,
           resourceId: row.id,
@@ -790,7 +790,7 @@ export function createTerminalResourceBridge(
         );
       }
       const importedAt = Date.now();
-      await terminalPort(context.workspaceId, context.workstreamId)
+      await terminalPort(context.workspaceId, context.workstreamId, context.substreamId ?? "0")
         .completeImportedResource({
           sandboxGeneration,
           resourceId: row.id,

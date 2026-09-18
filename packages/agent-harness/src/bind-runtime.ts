@@ -1764,6 +1764,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           toolResult = await raceWithSignal(dispatched.tool.execute(args, {
             workspaceId: input.workspaceId,
             workstreamId: input.workstreamId,
+            substreamId: input.substreamId ?? "0",
             harnessRunId: input.harnessRunId,
             toolCallId: receiptId,
             ...(effectIntentId ? { effectIntentId } : {}),

@@ -2929,6 +2929,8 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
 export interface HarnessToolContext {
   workspaceId: string;
   workstreamId: string;
+  /** The conversation that owns the call; omitted only by legacy callers. */
+  substreamId?: string;
   harnessRunId: string;
   /** Stable durable receipt ID for this exact tool request. */
   toolCallId: string;
@@ -3695,6 +3697,8 @@ export interface RunHarnessInput {
   };
   workspaceId: string;
   workstreamId: string;
+  /** The substream whose persistent loop is executing; absent is main `"0"`. */
+  substreamId?: string;
   /** Stable identity of the one persistent Bind loop owned by this substream. */
   loopId: string;
   /** Subordinate execution receipt; never used as loop or turn identity. */
