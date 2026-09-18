@@ -1,3 +1,4 @@
+import { PromoteWorkspaceGuestSchema, WorkspaceRelationshipSchema } from "@rally/contracts/scope-grants";
 import { OnboardingJourneyService } from '../services/onboarding-journey-service';
 import { OnboardingJourneySchema, UpdateOnboardingJourneySchema } from '@rally/contracts';
 import { Hono, type Context } from "hono";
@@ -90,7 +91,8 @@ workspaceRoutes.get("/members", async (c) =>
  *
  * `PATCH` on the membership rather than a `promote`/`demote` pair: the role is
  * one field with one assignable set, and two endpoints would be two places to
- * grow a third role into.
+ * grow a third role into. It is a different operation from the guest promotion
+ * below, which moves an access class rather than a role.
  */
 workspaceRoutes.patch(
   "/members/:userId/role",
@@ -103,6 +105,11 @@ workspaceRoutes.patch(
     );
     return c.body(null, 204);
   },
+);
+workspaceRoutes.post("/members/:id/promote", zValidator("param", invitationParam),
+  zValidator("json", PromoteWorkspaceGuestSchema), async (c) =>
+    c.json(WorkspaceRelationshipSchema.parse(await new WorkspaceService(c.env, getAuth(c))
+      .promoteGuest(c.req.valid("param").id, c.req.valid("json")))),
 );
 workspaceRoutes.get("/invitations", async (c) =>
   c.json(InvitationPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitations() })),

@@ -62,8 +62,12 @@ admission is split in two.
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
    the current regional session ID, and, for a feed, the parent kind (`pk`),
-   the parent id, the authenticated role, the current authority generation,
+   the parent id, the authenticated role (null for guests), the current authority generation,
    and whether the parent said it is archived (`parent_archived`). The
+   ticket also binds the authorized conversation membership version. Session
+   validation retains the existing workspace membership-incarnation check. An implicit workspace-member Main read uses
+   version zero; explicit grants use positive revisions and their existing local
+   freshness check. A guest has no implicit Main admission. The
    conversation feed route also returns that `jti` as `ticketId` beside the
    ticket, the id of the credential and never the credential, because the
    upgrade it authorizes opens a new

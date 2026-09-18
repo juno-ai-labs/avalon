@@ -1,7 +1,9 @@
+import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
+import { resolveConnectorAudience } from "../src/services/connector-workstream-audience";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   recordConnectorActorIdentity,
   resolveConnectorActorIdentity,
@@ -254,3 +256,26 @@ function seededDatabase(): DatabaseSync {
   `);
   return database;
 }
+
+
+it("attributes verified guests without admitting them as connector participants", async () => {
+  const database = migratedSqliteDatabase();
+  databases.push(database);
+  database.exec(`INSERT INTO users (id,email,name,created_at,updated_at)
+    VALUES ('guest','guest@example.test','Guest','now','now'), ('member','member@example.test','Member','now','now');
+    INSERT INTO workspaces (id,name,slug,region,created_by_user_id,created_at,updated_at)
+    VALUES ('00000000-0000-4000-8000-000000000071','Workspace','workspace','global','member','now','now');
+    INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at)
+    VALUES ('00000000-0000-4000-8000-000000000071','guest','guest',NULL,'active','now'), ('00000000-0000-4000-8000-000000000071','member','member','owner','active','now');`);
+  const workspace = createTestWorkspaceDO({ workspaceId: "00000000-0000-4000-8000-000000000071", regionalDatabase: database });
+  databases.push(workspace.objectDatabase);
+  const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test",
+    WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ["executeRuntimeSql"]) });
+  const actor = { provider: "linear", providerAccountId: "org", providerUserId: "external", displayName: "Guest", avatarUrl: null };
+  expect(await resolveConnectorActorIdentity(env, "00000000-0000-4000-8000-000000000071", actor, "guest@example.test"))
+    .toEqual({ userId: "guest", verification: "verified_email", accessClass: "guest" });
+  expect(await resolveConnectorAudience(env, "00000000-0000-4000-8000-000000000071", [
+    { actor, verifiedEmail: "guest@example.test" },
+    { actor: { ...actor, providerUserId: "member" }, verifiedEmail: "member@example.test" },
+  ])).toEqual({ userIds: ["member"], unresolved: 1, unresolvedIndexes: [0] });
+});

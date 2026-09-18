@@ -21,6 +21,8 @@ import {
 } from "../lib/durable-object-namespace";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { logInfo, logWarn } from "../observability/logger";
+import { WorkspaceRelationshipChangeMessageSchema, type WorkspaceRelationshipChangeMessage } from "../services/workspace-relationship-delivery";
+import { publishWorkspaceSync } from "../services/workspace-realtime-service";
 import {
   AccessRevocationMessageSchema,
   descendantRevocation,
@@ -50,6 +52,7 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     workspaceId: message.workspaceId,
     userId: message.userId,
     sessionId: message.sessionId,
+    ...(message.membershipIncarnation ? { membershipIncarnation:message.membershipIncarnation } : {}),
   };
   const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
   const target = message.target;
@@ -196,6 +199,18 @@ export async function consumeAccessRevocationQueue(
   env: Env,
 ): Promise<void> {
   await Promise.all(batch.messages.map(async (message) => {
+    const relationshipChange = WorkspaceRelationshipChangeMessageSchema.safeParse(message.body);
+    if (relationshipChange.success) {
+      try {
+        await applyWorkspaceRelationshipChange(env, relationshipChange.data);
+        message.ack();
+      } catch (error) {
+        logWarn(env, "workspace_relationship_apply_failed", { sequence: relationshipChange.data.sequence,
+          error: error instanceof Error ? error.message : "unknown" });
+        message.retry();
+      }
+      return;
+    }
     const parsed = AccessRevocationMessageSchema.safeParse(message.body);
     if (!parsed.success) {
       // A message this consumer cannot read will never become readable, so it
@@ -247,4 +262,30 @@ export async function consumeAccessRevocationQueue(
       message.retry();
     }
   }));
+}
+
+/** Process the root; descendant queue hops retain their own retry lifecycle. */
+export async function applyWorkspaceRelationshipChange(env: Env, message: WorkspaceRelationshipChangeMessage): Promise<void> {
+  const { relationship, removed } = message;
+  try {
+    if (removed || relationship.status !== "active") {
+      await applyAccessRevocation(env, {
+        kind: "access_revoked", reason: "workspace_membership_removed",
+        workspaceId: relationship.workspaceId, userId: relationship.userId,
+        sessionId: null, membershipIncarnation:relationship.incarnation, target: { scope: "workspace" }, occurredAt: new Date().toISOString(),
+      });
+    }
+    await publishWorkspaceSync(env, relationship.workspaceId,
+      ["workspace_profile", "member_directory", "workstream_directory"], { memberUserIds: [relationship.userId] });
+  } catch (error) {
+    // Retirement is terminal and has already fenced the object's readers.
+    // Match the existing revocation consumer's terminal treatment.
+    if (!isRetirementRefusal(error)) throw error;
+  }
+  // Root processing is not an acknowledgement from every descendant. Do not
+  // label this timestamp fully applied in a sharing/revocation UI.
+  await env.DB.prepare(`UPDATE workspace_relationship_deliveries SET processed_at = ?
+    WHERE sequence = ? AND workspace_id = ? AND user_id = ? AND incarnation = ? AND revision = ?`)
+    .bind(new Date().toISOString(), message.sequence, relationship.workspaceId, relationship.userId,
+      relationship.incarnation, relationship.revision).run();
 }

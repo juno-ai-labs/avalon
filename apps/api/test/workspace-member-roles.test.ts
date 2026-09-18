@@ -46,6 +46,8 @@ const NOW = "2026-09-17T12:00:00.000Z";
 
 let database: DatabaseSync;
 let env: Env;
+/** The relationship queue. Doubled because there is no local Queues implementation. */
+let queueSend: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<void>>>;
 
 function seedUser(id: string, email: string, name: string): void {
   database.prepare(
@@ -59,6 +61,14 @@ function seedMember(userId: string, role: string, status = "active"): void {
     `INSERT INTO workspace_members(workspace_id, user_id, role, status, joined_at)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(WORKSPACE_ID, userId, role, status, NOW);
+}
+
+/** A guest: an access class with no administrative role, which the table's own CHECK enforces. */
+function seedGuest(userId: string): void {
+  database.prepare(
+    `INSERT INTO workspace_members(workspace_id, user_id, role, status, access_class, joined_at)
+     VALUES (?, ?, NULL, 'active', 'guest', ?)`,
+  ).run(WORKSPACE_ID, userId, NOW);
 }
 
 function roleOf(userId: string): string | undefined {
@@ -83,9 +93,11 @@ beforeEach(() => {
   // outlives a test unless it is cleared here.
   vi.mocked(publishWorkspaceSync).mockClear();
   database = migratedSqliteDatabase();
+  queueSend = vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined);
   env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
+    ACCESS_REVOCATION_QUEUE: { send: queueSend, sendBatch: async () => undefined },
     // The route test authenticates through the real middleware, which needs the
     // development header path switched on; the service tests ignore both.
     APP_ENV: "development",
@@ -249,6 +261,45 @@ describe("assigning a workspace member's role", () => {
     seedMember(OUTSIDER_ID, "member");
     expect((await patch(OUTSIDER_ID, MEMBER_ID, { role: "member" })).status).toBe(403);
     expect(roleOf(MEMBER_ID)).toBe("admin");
+  });
+
+  it("refuses a guest as a guest, not as a membership that changed underneath the caller", async () => {
+    // A guest's role is `NULL`, and the conditional write re-asserts `role = ?`
+    // against it — a comparison nothing matches. Left to the write, a guest
+    // comes back as `membership_changed`: a lost race, which invites a retry
+    // that can never succeed. The truth is that a guest holds no role until
+    // `promoteGuest` moves their access class.
+    seedGuest(OUTSIDER_ID);
+    await expect(serviceAs(OWNER_ID, "owner").setMemberRole(OUTSIDER_ID, "admin"))
+      .rejects.toMatchObject({ status: 409, code: "member_is_guest" });
+    expect(roleOf(OUTSIDER_ID)).toBeNull();
+    expect(publishWorkspaceSync).not.toHaveBeenCalled();
+  });
+
+  it("records a relationship delivery for the admission change the role is", async () => {
+    // The membership triggers turn the write into a revision bump and a durable
+    // delivery row. Without one, nothing that consumes admission changes learns
+    // that this person's standing moved.
+    await serviceAs(OWNER_ID, "owner").setMemberRole(MEMBER_ID, "admin");
+    const deliveries = database.prepare(
+      `SELECT role, access_class, change_kind, revision, dispatched_at
+         FROM workspace_relationship_deliveries
+        WHERE workspace_id = ? AND user_id = ? ORDER BY sequence`,
+    ).all(WORKSPACE_ID, MEMBER_ID) as {
+      role: string; access_class: string; change_kind: string; revision: number;
+      dispatched_at: string | null;
+    }[];
+    const latest = deliveries.at(-1)!;
+    expect(latest).toMatchObject({ role: "admin", access_class: "member", change_kind: "upsert" });
+    expect(latest.revision).toBeGreaterThan(1);
+    // Recorded is not sent. The queue call and `dispatched_at` are what fail if
+    // the service records an admission change and never hands it on.
+    expect(queueSend).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "workspace_relationship_changed",
+      removed: false,
+      relationship: expect.objectContaining({ userId: MEMBER_ID, accessClass: "member", role: "admin" }),
+    }));
+    expect(latest.dispatched_at).toEqual(expect.any(String));
   });
 
   it("names the field when the role is not one an administrator may assign", async () => {

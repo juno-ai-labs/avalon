@@ -83,7 +83,7 @@ async function fixture() {
     await env.DB.batch([
       env.DB.prepare("INSERT INTO users(id, name) VALUES (?, 'Installation reviewer')").bind(userId),
       env.DB.prepare("INSERT INTO workspace_members(workspace_id, user_id, status, role) VALUES (?, ?, 'active', ?)").bind(memberWorkspace, userId, role),
-      env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')").bind(memberSession, userId, memberWorkspace),
+      env.DB.prepare("INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at) VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')").bind(memberSession, userId, memberWorkspace),
     ]);
     return { userId, workspaceId: memberWorkspace, sessionId: memberSession, role, region: 'global' };
   }

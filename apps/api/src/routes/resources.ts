@@ -6,9 +6,11 @@ import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
-import { getAuth } from "../middleware/auth";
+import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
+import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
+import { ConversationService } from "../services/conversation-service";
 
 const idParam = z.object({ id: IdSchema });
 const versionParam = idParam.extend({ version: z.coerce.number().int().positive() });
@@ -72,10 +74,12 @@ const ArtifactErrorListSchema = z.array(z.strictObject({
 }));
 
 export const resourceRoutes = new Hono<HonoAppEnv>();
+resourceRoutes.use("*",requireWorkspaceAuth);
+resourceRoutes.use("*",workspaceRealtimeInvalidation);
 
 resourceRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(ResourcePageSchema.parse(await new ResourceService(c.env, getAuth(c)).list({
+  return c.json(ResourcePageSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).list({
     ...(query.q ? { query: query.q } : {}),
     ...(query.cursor ? { cursor: query.cursor } : {}),
     limit: query.limit,
@@ -90,16 +94,16 @@ resourceRoutes.post("/upload", async (c) => {
   const draftId = IdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DRAFT_ID));
   if (!draftId.success) throw new ApiError(422, "draft_id_required", "A valid draft attachment ID is required");
   return c.json(ResourceSchema.parse(
-    await new ResourceService(c.env, getAuth(c)).upload(file, title, draftId.data)), 201);
+    await new ResourceService(c.env, getWorkspaceAuth(c)).upload(file, title, draftId.data)), 201);
 });
 resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
-  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).resolve(c.req.valid("json"))), 201),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).resolve(c.req.valid("json"))), 201),
 );
 resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
-  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).get(c.req.valid("param").id))),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).get(c.req.valid("param").id))),
 );
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
-  new ResourceService(c.env, getAuth(c)).content(c.req.valid("param").id),
+  new ResourceService(c.env, getWorkspaceAuth(c)).content(c.req.valid("param").id),
 );
 /**
  * Mint this person's access to a live artifact.
@@ -112,19 +116,19 @@ resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
  */
 resourceRoutes.post("/:id/artifact/open", zValidator("param", idParam), async (c) =>
   c.json(ArtifactOpenResultSchema.parse(
-    await new ArtifactOpenService(c.env, getAuth(c)).open(c.req.valid("param").id),
+    await new ArtifactOpenService(c.env, getWorkspaceAuth(c)).open(c.req.valid("param").id),
   )),
 );
 /** What the artifact's server module threw, for the rail to show a participant. */
 resourceRoutes.get("/:id/artifact/errors", zValidator("param", idParam), async (c) =>
   c.json(ArtifactErrorListSchema.parse(
-    await new ArtifactOpenService(c.env, getAuth(c)).errors(c.req.valid("param").id),
+    await new ArtifactOpenService(c.env, getWorkspaceAuth(c)).errors(c.req.valid("param").id),
   )),
 );
 /** The tables a stateful artifact keeps, for the rail's Data view. */
 resourceRoutes.get("/:id/artifact/data", zValidator("param", idParam), async (c) =>
   c.json(ArtifactDataSchemaSchema.parse(
-    await new ArtifactOpenService(c.env, getAuth(c)).describeData(c.req.valid("param").id),
+    await new ArtifactOpenService(c.env, getWorkspaceAuth(c)).describeData(c.req.valid("param").id),
   )),
 );
 /**
@@ -140,45 +144,52 @@ resourceRoutes.get(
   async (c) => {
     const param = c.req.valid("param");
     return c.json(ArtifactDataPageSchema.parse(
-      await new ArtifactOpenService(c.env, getAuth(c))
+      await new ArtifactOpenService(c.env, getWorkspaceAuth(c))
         .pageData(param.id, param.table, c.req.valid("query").offset),
     ));
   },
 );
 resourceRoutes.get("/:id/versions", zValidator("param", idParam), async (c) =>
   c.json(ResourceRevisionListSchema.parse(
-    await new ResourceService(c.env, getAuth(c)).versions(c.req.valid("param").id),
+    await new ResourceService(c.env, getWorkspaceAuth(c)).versions(c.req.valid("param").id),
   )),
 );
 resourceRoutes.get("/:id/versions/:version", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
   return c.json(ResourceRevisionSchema.parse(
-    await new ResourceService(c.env, getAuth(c)).version(param.id, param.version),
+    await new ResourceService(c.env, getWorkspaceAuth(c)).version(param.id, param.version),
   ));
 });
 resourceRoutes.get("/:id/versions/:version/content", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
-  return new ResourceService(c.env, getAuth(c)).versionContent(param.id, param.version, "original");
+  return new ResourceService(c.env, getWorkspaceAuth(c)).versionContent(param.id, param.version, "original");
 });
 resourceRoutes.get("/:id/versions/:version/model-content", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
-  return new ResourceService(c.env, getAuth(c)).versionContent(param.id, param.version, "model");
+  return new ResourceService(c.env, getWorkspaceAuth(c)).versionContent(param.id, param.version, "model");
 });
 resourceRoutes.get("/:id/preview", zValidator("param", idParam), async (c) =>
-  new ResourceService(c.env, getAuth(c)).preview(c.req.valid("param").id, c.req.raw.signal),
+  new ResourceService(c.env, getWorkspaceAuth(c)).preview(c.req.valid("param").id, c.req.raw.signal),
 );
 resourceRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
-  await new ResourceService(c.env, getAuth(c)).deleteDraft(c.req.valid("param").id);
+  await new ResourceService(c.env, getWorkspaceAuth(c)).deleteDraft(c.req.valid("param").id);
   return c.body(null, 204);
 });
 resourceRoutes.post("/:id/hydrate", zValidator("param", idParam), async (c) =>
-  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).hydrate(c.req.valid("param").id))),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).hydrate(c.req.valid("param").id))),
 );
-resourceRoutes.post("/:id/watch", zValidator("param", idParam), zValidator("json", watchBody), async (c) =>
-  c.json(WatchStateSchema.parse(
-    await new ResourceService(c.env, getAuth(c)).watch(c.req.valid("param").id, c.req.valid("json").workstreamId))),
-);
+// Watches deliver updates to Main; a child-only share cannot change that feed.
+resourceRoutes.post("/:id/watch", zValidator("param", idParam), zValidator("json", watchBody), async (c) => {
+  const auth = getWorkspaceAuth(c);
+  const { workstreamId } = c.req.valid("json");
+  await new ConversationService(c.env, auth).writableClient(workstreamId);
+  return c.json(WatchStateSchema.parse(
+    await new ResourceService(c.env, auth).watch(c.req.valid("param").id, workstreamId)));
+});
 resourceRoutes.delete("/:id/watch", zValidator("param", idParam), zValidator("query", watchQuery), async (c) => {
-  await new ResourceService(c.env, getAuth(c)).unwatch(c.req.valid("param").id, c.req.valid("query").workstreamId);
+  const auth = getWorkspaceAuth(c);
+  const { workstreamId } = c.req.valid("query");
+  await new ConversationService(c.env, auth).writableClient(workstreamId);
+  await new ResourceService(c.env, auth).unwatch(c.req.valid("param").id, workstreamId);
   return c.body(null, 204);
 });

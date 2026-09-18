@@ -191,6 +191,28 @@ export async function bootstrapConversationChildRuntime(
 }
 
 /**
+ * Pay the child object's cold schema cost without claiming an authority
+ * generation. Confirmation performs the fenced authoritative bootstrap.
+ */
+export async function warmConversationChildRuntime(
+  env: Env,
+  workspaceId: string,
+  parentId: string,
+  substreamId: string,
+): Promise<{
+  objectId: string;
+  authorityMode: "unclaimed" | "preparing" | "authoritative";
+}> {
+  const stub = await durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    workspaceId,
+    conversationObjectName(env.AVALON_REGION, asWorkspaceId(workspaceId), parentId, asSubstreamId(substreamId)),
+  );
+  return stub.wake();
+}
+
+/**
  * Write what a system-provisioned work stream is, on the object that owns it.
  *
  * The other half of {@link bootstrapWorkstreamRuntimeEnvironment}: that opens an

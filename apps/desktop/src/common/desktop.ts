@@ -1,3 +1,4 @@
+import type { ClientSession } from "@rally/contracts/client-session";
 import type {
   TelemetryEventProperties,
   WorkspaceAttention,
@@ -44,24 +45,8 @@ export interface RuntimeConfig {
   devAuthEnabled: boolean;
 }
 
-export interface DesktopSession {
+export interface DesktopSession extends ClientSession {
   accessToken: string;
-  expiresAt: string;
-  apiBaseUrl: string;
-  user: {
-    id: string;
-    email: string;
-    name: string;
-    avatarUrl?: string;
-    timezone?: string;
-  };
-  workspace: {
-    id: string;
-    name: string;
-    region: RallyRegion;
-    role: 'owner' | 'admin' | 'member';
-    timezone?: string;
-  } | null;
 }
 
 export interface DesktopAuthAttempt {
@@ -251,7 +236,8 @@ export interface DesktopWorkspaceSummary {
   name: string;
   slug: string;
   region: RallyRegion;
-  role: 'owner' | 'admin' | 'member';
+  role: 'owner' | 'admin' | 'member' | null;
+  accessClass?: 'member' | 'guest';
   createdAt: string;
   /** Whether this device holds a regional credential for the workspace — the
    * only thing that can read its background attention. Absent from a row the
