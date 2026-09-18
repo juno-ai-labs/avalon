@@ -67,11 +67,14 @@ Measured live on 2026-09-17 from
 Rally uses `S256`. `plain` being offered is the provider's weakness, not an
 option to take.
 
-**Refresh is advertised, not yet verified end to end.** Metadata lists the
-refresh grant and no `offline_access` scope; neither proves that a token is
-issued by default or that renewal succeeds. Use Rally's credential coordinator
-and test issuance, expiry, refresh rotation and revocation through the actual
-Rally connection. A recoverable `401` enters refresh before reconnect is required.
+**Refresh issuance and immediate rotation are verified in an isolated live
+probe.** On 2026-09-18 Canva issued access and refresh tokens, reported a
+four-hour access lifetime, and accepted immediate refresh with a rotated refresh
+token; the new access token worked. This used DCR with backend-held client
+credentials, not the actual Rally connection. Use Rally's credential coordinator
+and test renewal after expiry, concurrent refresh, durable rotation, revocation
+and disconnect in Rally. A recoverable `401` enters refresh before reconnect is
+required.
 The advertised revocation endpoint shares the token URL; verify disconnect's
 request shape and remote result as well as immediate local removal.
 
@@ -84,24 +87,37 @@ hands back real credentials; the refusal comes one step later as a bare
 allowlist. Measured; the table of hosts tried is in
 [`research.md`](research.md#the-live-probe-2026-09-17).
 
-Two paths follow, and the PRD takes the first with the second held in reserve:
+The server callback is the primary path; loopback is the interim desktop
+fallback until Canva approves the submitted application.
 
-**Primary — an allowlisted Rally redirect.** Apply to the waitlist for the host
-Rally will use, then authorize normally: the connector's `redirectUri` is
-Rally's, the flow is the one every other connector uses, and it works from every
-client Rally has or will have. Blocked until Canva grants it.
+**Primary — an allowlisted Rally redirect.** After approval, Canva redirects
+the browser to `https://api.rallywith.ai/connections/canva/callback` with an
+authorization code. Rally's backend exchanges it, stores the tokens encrypted
+against the member's connection, and uses them for agent MCP calls. Electron
+receives connection status, not Canva tokens. This path supports all Rally clients.
 
-**Fallback — loopback from the desktop client.** `http://127.0.0.1:<port>/…` and
-`localhost` were accepted for the tested ports without approval. This is
-the standard native-application flow, not a circumvention. The desktop client
-opens a listener bound to loopback for one attempt, the system browser completes
-the authorization, the listener receives the code and hands it to the member's
-region, and the region exchanges it. **No token ever rests on the desktop**, and
-the listener closes after one code.
+**Interim fallback — loopback from the desktop client.** The desktop opens a
+listener bound to loopback for one authorization attempt. Canva redirects the
+browser there; Electron forwards the code to Rally's backend through an
+authenticated handoff bound to that member and attempt. The backend retains the
+PKCE verifier and client credentials, validates state and single-use status,
+and exchanges the code with the exact registered redirect URI. Tokens stay on
+the backend; the listener closes after the handoff.
 
-Its limit is reach, not safety: it needs a local process, so the iOS client and
-any browser session are excluded. Building the connector's only authorization
-path on the one client that cannot generalize is why it is the fallback.
+The live two-process probe verified this protocol, including a successful MCP
+read and immediate refresh. It did not run Electron or the Rally API: both
+stand-ins ran on one computer, used an in-memory bearer for handoff authentication,
+and kept tokens in backend memory. Real session authorization, HTTPS handoff,
+encrypted persistence and desktop lifecycle remain implementation acceptance.
+The existing hosted-MCP OAuth helper requires HTTPS redirect URIs at registration,
+authorization and exchange; add explicitly scoped HTTP loopback support, keeping
+HTTPS required for ordinary server callbacks.
+
+This fallback requires the desktop app for connection setup; a browser-only or
+iOS-only session cannot establish it. Once approved and tested, use the primary
+server callback for new connections. Technical success does not establish
+Canva's permission to ship the interim flow while approval is pending; obtain
+clarification before treating it as a permitted production launch path.
 
 The redirect URI is therefore a configured value rather than a constant, and the
 connector is absent from the catalog while no accepted redirect exists — Goal 6.

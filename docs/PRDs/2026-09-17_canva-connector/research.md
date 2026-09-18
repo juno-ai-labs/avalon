@@ -149,8 +149,8 @@ Three further observations:
 ```
 
 - **Refresh is advertised**, and `offline_access` is not published. This does
-  not prove default token issuance, successful refresh or rotation; those remain
-  live acceptance tests.
+  not itself prove token issuance or renewal. The later handoff probe below
+  verified issuance and immediate rotation for its DCR client.
 - PKCE offers `plain` as well as `S256`; use `S256`.
 - Revocation shares the token endpoint URL.
 - `.well-known/openid-configuration` → `404`. Not an OIDC provider.
@@ -236,7 +236,8 @@ template creation, import. Two disposable designs remain in the test account.
 ### What could not be settled
 
 CIMD redirect eligibility, refresh issuance/renewal, revocation and link-only
-access were not settled. The current official route is the waitlist application;
+access were not settled by this first probe. The later handoff probe verified
+refresh issuance and immediate renewal. The current official route is the waitlist application;
 a speculative CIMD bypass is not a prerequisite to applying.
 
 ## Live watch follow-up (2026-09-18)
@@ -405,3 +406,37 @@ requires.
 - **No content-change events**, even with webhooks.
 - **No least-privilege consent**, measured.
 - **No organization-level authentication**, stated by Canva.
+
+## Live loopback-to-backend handoff (2026-09-18)
+
+An isolated two-process Node probe completed against live Canva with user consent.
+A desktop stand-in received the loopback authorization code and sent it through
+an authenticated handoff to a separate backend stand-in. The backend retained
+PKCE S256, OAuth state and DCR client credentials; it validated the attempt and
+exchanged the code using the matching redirect URI and `client_secret_post`.
+
+Canva issued access and refresh tokens with a reported access lifetime of
+14,400 seconds. Backend `get-design` succeeded. Immediate refresh succeeded,
+rotated the refresh token, and the new access token successfully called
+`tools/list`. That run exposed 34 tools versus the earlier 35, reinforcing live
+discovery. The desktop received only `{ok: true}`. Missing handoff authentication,
+wrong state and replay returned 401, 400 and 409 respectively. Calls were read-only;
+the existing Inspector connection was untouched and both probe processes exited.
+
+This verifies provider protocol compatibility, not the shipped integration.
+Both processes ran on one machine; the handoff used a random in-memory bearer
+and tokens stayed in backend memory. Actual Electron, Rally member/session
+binding, deployed HTTPS handoff, encrypted persistence, renewal after expiry,
+concurrent refresh, crash recovery and durable rotated-token storage were not
+tested. Neither CIMD nor public-client token authentication was tested.
+`hosted-mcp.ts` currently applies `normalizeHttpsUrl` to redirects during
+registration, authorization and exchange, so scoped loopback support is new work.
+
+Loopback is the interim desktop fallback until the submitted server callback is
+approved. Canva's documentation does not establish permission to ship this exact
+flow while approval is pending; the earlier categorical “not a circumvention”
+claim is withdrawn. Production permission remains a separate clarification.
+
+Sanitized evidence is retained locally as `loopback-handoff-results.md` and
+`loopback-handoff-evidence.json` in the probe artifact folder. No codes, tokens,
+client secrets, account identifiers or design IDs are included here.
