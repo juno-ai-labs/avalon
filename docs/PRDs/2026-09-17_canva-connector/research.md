@@ -1,7 +1,7 @@
 # Canva platform research
 
 > Read from Canva's published documentation on 2026-09-17, and measured against
-> the live provider the same day. Documentation claims and live measurements are
+> the live provider the same day; followed up on 2026-09-18. Documentation claims and live measurements are
 > kept apart deliberately, because two of the load-bearing ones disagreed.
 >
 > The second half of this document — the Connect APIs and their webhooks — is no
@@ -39,7 +39,7 @@ Sources: [MCP overview](https://www.canva.dev/docs/mcp/),
   URL serving a JSON document, so no client is pre-registered and no secret is
   held. **DCR is documented as deprecated** but still accepted.
 - **The redirect URI must be allowlisted by Canva**, through a
-  [waitlist form](https://docs.google.com/forms/d/1jgC4vAA2-5LqaNzVhnP8ygSknF4Vysc1UzAWJukzcp0/viewform)
+  [waitlist form](https://docs.google.com/forms/d/e/1FAIpQLSdtsKA9LSmY-JEf_nF5QYBdjxfnXbgqvlKzd8obKGSPSK_eOA/viewform)
   reviewed for "brand alignment, trust and safety considerations, compliance
   readiness, technical fit, and strategic alignment". Canva notes that many
   established AI tools already have access.
@@ -66,7 +66,7 @@ level only: Rally's pass-through must read `tools/list` live, and a snapshot in
 source is a second authority that goes stale — which two of Canva's own pages
 already demonstrate.
 
-Plan gating, which the documentation is clear about:
+Historical tool-page plan claims (2026-09-17; the current overview differs):
 
 - **All plans**: design generation, editing, search, exports, comments, asset
   uploads, folders, imports.
@@ -128,7 +128,7 @@ Three further observations:
 - **It is partner identification.** Canva fingerprints the redirect host and
   forwards `mcp_client_type` upstream — `ClaudeConnector`, `ChatGPTConnector`,
   `Other` for loopback.
-- **Loopback is unconditionally allowed**, any port, http or https. That is the
+- **Tested loopback URLs were accepted**, across the tested ports and schemes. That is the
   standard native-application flow, and it is the one path needing no approval.
 
 ### Authorization server metadata
@@ -148,9 +148,9 @@ Three further observations:
  "client_id_metadata_document_supported":true}
 ```
 
-- **Refresh tokens are supported, and `offline_access` is not a published
-  scope** — refresh is granted by default rather than scope-requested. The
-  opposite of Fireflies.
+- **Refresh is advertised**, and `offline_access` is not published. This does
+  not prove default token issuance, successful refresh or rotation; those remain
+  live acceptance tests.
 - PKCE offers `plain` as well as `S256`; use `S256`.
 - Revocation shares the token endpoint URL.
 - `.well-known/openid-configuration` → `404`. Not an OIDC provider.
@@ -180,7 +180,7 @@ Canva's own published advice to request only the minimum scopes needed.
 
 A second probe the same day connected MCP Inspector 2.7.0 to
 `https://mcp.canva.com/mcp` with per-user OAuth on a real Canva account,
-protocol `2025-11-25`. A loopback redirect needed no registration and no waitlist
+protocol `2025-11-25`. A loopback redirect needed no manual registration and no waitlist
 approval — which is what made it possible, and which says nothing about
 production redirect eligibility.
 
@@ -190,25 +190,26 @@ and `fetch`, which it does. Neither list is the contract; `tools/list` is.
 
 Properties of the live surface, all from the schemas:
 
-- **`user_intent` is required on all 35 tools** — "Mandatory description of what
-  the user is trying to accomplish with this tool call", recommended under 255
-  characters. There is no opting out.
+- **All 35 descriptions call `user_intent` mandatory**, but none includes it
+  in the schema's `required` array. Calls supplied it; omission was not tested.
+  Neither model authorship nor a telemetry purpose follows from the schema.
 - **No tool declares an `outputSchema`.** Responses are undeclared.
 - **`search-designs` takes `sort_by`** with `relevance`, `modified_descending`,
   `modified_ascending`, `title_descending`, `title_ascending`, and `ownership`
   with `any`, `owned`, `shared`. Canva's own documentation page for this tool
-  publishes neither parameter. This is what makes a polling high-water line
-  possible, after the documentation suggested it was not.
+  publishes neither parameter. Ordering alone does not establish an incremental
+  cursor: stopping at a prior top ID misses an older design edited before that
+  top design. Shared ownership is not a sharing-event feed.
 - **`list-folder-items` takes `sort_by`** across created, modified and title, in
   both directions, and `folder_id: 'root'` lists the top level.
 - **`list-comments(design_id, limit ≤ 100, continuation)`** pages a design's
-  threads, and `list-replies` takes a `comment_id`, so threads carry stable ids.
-  Their response shapes were not exercised.
+  threads, and `list-replies` takes a `comment_id`. These input schemas alone
+  did not prove stable IDs or response shapes; the follow-up below tested them.
 - **`get-design` accepts a full Canva share URL**, and its description states
   that "any collaboration token embedded in the URL is needed to access a design
   shared via link and will be parsed and forwarded automatically". A share URL is
-  therefore bearer authority.
-- **Annotations misclassify.** `generate-design` and `export-design` are
+  potentially access-bearing; exact link-only access semantics remain untested.
+- **Annotations do not determine Rally authority or quota consumption.** `generate-design` and `export-design` are
   `readOnlyHint: true` although both create and consume quota;
   `commit-editing-transaction` and `cancel-editing-transaction` are
   `destructiveHint: true`.
@@ -223,27 +224,83 @@ replacement, commit, re-read, get design, list export formats (PDF, JPG, PNG,
 PPTX, GIF, MP4), export to PDF, and resize. The edit was visually confirmed in
 the Canva editor afterwards.
 
-`resize-design` succeeded on an account with no paid entitlement and returned
+`resize-design` succeeded on the tested account and returned
 `trial_information.uses_remaining = 1` — so a plan-gated tool can answer from a
 trial quota rather than refusing, which is a second reason not to pre-screen on
 plan. `list-brand-kits` and `search-brand-templates` returned empty lists, which
 proves neither entitlement nor absence.
 
-Not exercised: comments and replies, asset upload, folder operations, brand
+Not exercised in this first probe: comments and replies, asset upload, folder operations, brand
 template creation, import. Two disposable designs remain in the test account.
 
 ### What could not be settled
 
-**Whether CIMD bypasses the redirect-host allowlist.** It could not be tested
-without hosting a client metadata document on a domain we control, and passing an
-unfetchable HTTPS `client_id` returns the same opaque `500` as a nonexistent
-client — so the result proves nothing either way. This is the question with the
-most leverage in the whole PRD: if CIMD bypasses the host gate, the waitlist
-stops being blocking.
+CIMD redirect eligibility, refresh issuance/renewal, revocation and link-only
+access were not settled. The current official route is the waitlist application;
+a speculative CIMD bypass is not a prerequisite to applying.
 
-Also inconclusive: whether the per-tool rate limits are per user or per client,
-and what `list-comments` and `list-replies` actually return — the Inspector
-session can settle the second whenever someone runs it again.
+## Live watch follow-up (2026-09-18)
+
+Used the same authenticated Inspector connection, a disposable design, and the
+Canva browser editor. These are observed integration behaviors, not published
+ordering/consistency guarantees. No user identifiers, design IDs, signed URLs,
+credentials or test content are copied into this record.
+
+| Experiment | Observed result | Consequence |
+| --- | --- | --- |
+| Browser title and text edits | `get-design.updated_at` advanced | Candidate signal for an eventual change notification |
+| Isolated layout-only move | Timestamp advanced; content text unchanged | Content-text comparison alone misses layout changes |
+| Duplicate page | Initial metadata/pages lagged; later reads and browser reload showed two pages | No fixed propagation latency measured |
+| Create four threads and three replies | IDs matched creation responses | IDs support observed deduplication |
+| Force one item per page | Threads newest-first; replies oldest-first; both ended with a continuation to an empty page | Follow continuation until absent; do not depend on observed ordering |
+| Insert thread during pagination | Existing scan finished older threads; fresh scan found insertion | Repeat complete scans; cursor is not a proven snapshot |
+| Add replies to oldest thread | Parent timestamp/order and design timestamp unchanged; no embedded replies/count | Scan replies independently, including old threads |
+| Resolve a thread in browser | Thread remained, with `thread_type.resolver`; timestamp unchanged | Timestamps cannot announce resolution either |
+
+Observed thread fields: `id`, `design_id`, `thread_type` (type, content,
+mentions, optional resolver), author, `created_at`, `updated_at`. Replies carried
+`id`, `design_id`, `thread_id`, author, content, mentions and timestamps. There
+was no separate status field in this observed thread shape.
+
+`get-design-content` returned text. No `metadata.revision_id` was observed; the
+earlier PRD claim was unsupported. The proposed watch is a coalesced report of
+change since an observation, not an exact revision feed. Full comment and reply
+scans with durable ID deduplication are justified; a top-ID waterline is not.
+
+Still untested: deletions, comment/reply edits, mentions, other-user actions,
+reopening, timestamp ties, large designs and provider consistency guarantees.
+Rally's checkpoint atomicity, failed scans and delivery recovery also require
+implementation tests. The disposable design retains the probe edits and
+comments; other designs were not changed.
+
+## Current access and policy review (2026-09-18)
+
+The [overview](https://www.canva.dev/docs/mcp/) continues to direct partners to
+apply for redirect allowlisting, and recommends CIMD while retaining DCR. Local
+Inspector success is not production approval. The application is drafted, not
+submitted. The proposed Global and EU callback paths are recorded in the PRD;
+they are not implemented or approved. Rally is pre-launch with zero active
+users. The suggested initial pilot forecast is fewer than 1,000 aggregate MCP
+tool calls per month across users and workspaces, not a measured demand figure,
+per-user quota or contractual promise.
+
+The current overview assigns resize to Pro+ and brand kits, templates and
+autofill to Enterprise, unlike the earlier tool-page claims above. Per-call
+results remain authoritative for entitlement; trial-backed resize does not
+establish the account's full plan status.
+
+The [usage policy](https://www.canva.dev/docs/mcp/usage-policy/) establishes:
+
+- Background access requires opt-in and clear controls, never a default watch.
+- Shared agents cannot run with another user's token; access to derived outputs
+  requires each user's own authentication. Shared work-stream/digest compatibility
+  needs Canva clarification; membership is not sufficient evidence.
+- Canva data cannot train, evaluate or improve external models. Brand Kits stay
+  within Canva design workflows; operational retention must be minimized.
+- MCP limits are per user; OAuth protections are per client. Backoff and error
+  monitoring are required, and credit consumption should remain visible.
+
+These policy requirements are separate from what a successful API call permits.
 
 ## Why the workspace scope was cut
 
