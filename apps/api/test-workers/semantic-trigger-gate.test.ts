@@ -50,6 +50,7 @@ const REGISTRATION_ID = "00000000-0000-7000-8000-000000000ae5";
 const EVENT_ID = "00000000-0000-7000-8000-000000000ae6";
 const SECOND_EVENT_ID = "00000000-0000-7000-8000-000000000ae7";
 const THIRD_EVENT_ID = "00000000-0000-7000-8000-000000000ae8";
+const FOURTH_EVENT_ID = "00000000-0000-7000-8000-000000000ae9";
 const EVENT_TYPE = "applicationSubmit";
 const CONDITION = "The application is for a design role.";
 const NOW = "2026-09-18T09:00:00.000Z";
@@ -116,6 +117,34 @@ async function activate(definition: AutomationDraft): Promise<void> {
     automationId: AUTOMATION_ID,
   });
   expect(created.created).toBe(true);
+  await submitAndApply(definition);
+  // Registrations are written directly rather than through the apply tail, so
+  // the activation boundary is set once and the event sequence stays this test's
+  // to control.
+  await workspace().applyExternalEventRegistrations({
+    sourceGeneration: await runInDurableObject(automation(), (_instance, state) => state.storage.sql.exec<{ registration_generation: number }>(
+      `UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1 RETURNING registration_generation`,
+    ).one().registration_generation),
+    schemaVersion: 1,
+    workspaceId: WORKSPACE_ID,
+    destination: { kind: "automation", automationId: AUTOMATION_ID },
+    evaluators: [{
+      evaluatorId: REGISTRATION_ID,
+      source: { connectorType: "ashby", connectionId: CONNECTION_ID, eventType: EVENT_TYPE },
+      when: { kind: "always" },
+    }],
+  });
+}
+
+/**
+ * Accept a new definition on an automation that already exists.
+ *
+ * Split out of `activate` so a test can change what the accepted revision says
+ * without recreating the automation or rewriting its registrations — which is the
+ * only way to reach the window where a condition moves under a delivery whose
+ * plan has already been read.
+ */
+async function submitAndApply(definition: AutomationDraft): Promise<void> {
   await automation().submitDefinition({
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
@@ -140,22 +169,6 @@ async function activate(definition: AutomationDraft): Promise<void> {
     actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
   }));
   expect(detail.lifecycle).toBe("active");
-  // Registrations are written directly rather than through the apply tail, so
-  // the activation boundary is set once and the event sequence stays this test's
-  // to control.
-  await workspace().applyExternalEventRegistrations({
-    sourceGeneration: await runInDurableObject(automation(), (_instance, state) => state.storage.sql.exec<{ registration_generation: number }>(
-      `UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1 RETURNING registration_generation`,
-    ).one().registration_generation),
-    schemaVersion: 1,
-    workspaceId: WORKSPACE_ID,
-    destination: { kind: "automation", automationId: AUTOMATION_ID },
-    evaluators: [{
-      evaluatorId: REGISTRATION_ID,
-      source: { connectorType: "ashby", connectionId: CONNECTION_ID, eventType: EVENT_TYPE },
-      when: { kind: "always" },
-    }],
-  });
 }
 
 async function ingest(eventId: string, providerEventId: string): Promise<void> {
@@ -312,6 +325,55 @@ describe("semantic trigger conditions", () => {
       conditionVerdict: { admit: true, code: "condition_met", confidence: 0.93, model: "jev-1.13.0" },
     })).toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
     expect(await runCount()).toBe(1);
+  });
+
+  /**
+   * Why a verdict does not need to carry what it judged.
+   *
+   * The classifier runs between the plan read and the admission, so an `apply`
+   * can change the condition while the model call is in flight, keeping the same
+   * registration identity — which looks like a window where the object sees the
+   * new condition and admits on a verdict for the old one. It is closed, by
+   * something one clause earlier and for an unrelated reason: `apply` is the only
+   * path that can move an accepted condition, it re-establishes
+   * `effective_after_event_sequence` at the sequence current when its
+   * registration tail lands, and the boundary check is ordered *before* the
+   * semantic one. An event ingested before the apply is at or below that
+   * boundary, so it never reaches the gate.
+   *
+   * Both halves were checked by breaking them. Removing the `= NULL` that apply
+   * writes does **not** open the hole, because the registration tail sets the
+   * boundary forward anyway. Moving the semantic check above the boundary check
+   * does: the delivery then admits on the superseded verdict, which is exactly
+   * the failure this pins. So what protects the gate is the ordering, and the
+   * ordering is invisible from the gate's own clause.
+   */
+  it("refuses a delivery whose condition was replaced after its plan was read", async () => {
+    await activate(SEMANTIC_DEFINITION);
+    await ingest(FOURTH_EVENT_ID, "event-replanned");
+
+    const request = await admission(FOURTH_EVENT_ID);
+    expect(await automation().externalEventAdmissionPlan(request)).toMatchObject({ kind: "judge" });
+
+    await submitAndApply({
+      ...SEMANTIC_DEFINITION,
+      triggers: [{
+        type: "semantic_activity",
+        connectorType: "ashby",
+        sourceBindingKey: "ashby_events",
+        suggestedSourcePluginId: "plugin_ashby",
+        deterministicPrefilter: { eventType: EVENT_TYPE },
+        condition: "The candidate withdrew from the process.",
+      }],
+    });
+
+    // A verdict for the condition that has just been replaced, at the highest
+    // confidence the classifier can report: the point is that it cannot admit.
+    expect(await automation().admitExternalEvent({
+      ...request,
+      conditionVerdict: { admit: true, code: "condition_met", confidence: 0.99, model: "jev-1.13.0" },
+    })).toEqual({ admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
+    expect(await runCount()).toBe(0);
   });
 
   it("leaves a deterministic activity trigger ungated", async () => {

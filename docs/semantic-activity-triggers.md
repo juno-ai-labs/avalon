@@ -162,6 +162,7 @@ selected, and TypeSafe.
 | JEV answers `condition_not_met` | Refused, `sidekick_semantic_condition_not_met`. No run, no retry: the answer is the product's. |
 | JEV answers `condition_not_judgeable` | Refused, `sidekick_semantic_condition_not_judgeable`. This is an authoring defect — a condition no event of that kind can settle — and it is kept distinct from a failed test so it can be found. |
 | Confidence at or below the threshold | Refused, `sidekick_semantic_confidence_below_threshold`. |
+| The condition changed while the model call was in flight | Refused, `sidekick_event_before_activation_boundary` — not by the gate. See [What closes the stale-verdict window](#what-closes-the-stale-verdict-window). |
 | JEV unavailable: HTTP error, malformed response, deadline | Refused, `sidekick_semantic_classifier_unavailable`, with the provider's own failure kind on the log line. The delivery is **not** retried for this: a retry would ask the same question of the same outage. |
 | No `TYPESAFE_API_KEY` | Refused as unavailable. Hosted regions always have one (`assertEnvContract` requires it), so this is local development, where refusing is honest and admitting would reproduce the defect. |
 | A gated delivery from an older isolate, with no verdict | Refused, `sidekick_semantic_condition_unjudged`. During a rolling deploy the reverse is also possible — a new consumer calling an object that does not know the field — and there the RPC throws, the delivery retries, and the retry succeeds once the deploy completes. |
@@ -202,6 +203,52 @@ so adding one is a small change, but
 asks for a fallback to be chosen after the primary is frozen and evaluated on the
 subset it will actually receive, and neither has happened for this decision yet.
 
+### The gate is joined to the event type, not to the matched trigger
+
+`semanticConditionsForEventType` selects every semantic trigger whose
+`deterministicPrefilter.eventType` matches the delivered event type, and discards
+the `registrationId` the delivery was matched through. Two consequences, both
+reachable: a Sidekick carrying a deterministic `connector_activity` trigger *and* a
+`semantic_activity` trigger on one event type has its deterministic deliveries
+gated by the semantic condition, which can suppress runs that used to fire; and two
+semantic triggers sharing an event type are judged as an OR across both conditions,
+so the condition belonging to the other trigger can admit. Nothing in
+`AutomationDraftSchema` forbids either shape. The fix is a trigger identity carried
+through publication into `ExternalEventEvaluatorV1` and the delivery, which does not
+exist today — triggers have no ids, and the only link from a trigger to its
+evaluator is `sourceBindingKey`, which the draft validation explicitly allows two
+triggers to share. Until that exists, a Sidekick whose triggers overlap on one event
+type is gated more broadly than its author wrote.
+
+### What closes the stale-verdict window
+
+The model call runs between the plan read and the admission, so an `apply` can
+land in that window and change the condition while keeping the same registration
+identity — every check the gate itself applies still passes. The verdict carries
+no proof of what it judged, so read on its own that is a window where the object
+sees the new condition and admits on a verdict for the old one.
+
+It is closed one clause earlier, and for an unrelated reason. `apply` is the only
+path that can move an accepted condition; it re-establishes
+`effective_after_event_sequence` at the sequence current when its registration
+tail lands; and the activation-boundary check is ordered **before** the semantic
+one. An event ingested before the apply is at or below that boundary, so it is
+refused there and never reaches the gate.
+
+That is worth writing down because it is invisible from the gate's own clause,
+and because it was checked rather than assumed. Removing the `= NULL` that apply
+writes does not open the hole — the registration tail moves the boundary forward
+regardless. Moving the semantic check above the boundary check does: the delivery
+then admits on the superseded verdict.
+`apps/api/test-workers/semantic-trigger-gate.test.ts` pins it, and that is the
+break it was proved against.
+
+**So the verdict deliberately carries no plan token.** Binding one would mean a
+new required field on a strict schema that crosses the object's RPC boundary,
+guarding a window that is already closed — a mechanism whose only justification
+is a scenario nobody can produce. If the ordering above ever changes, the token
+is the fix, and the test named above is what will say so.
+
 ## Testing
 
 | Suite | Covers |
@@ -217,6 +264,10 @@ fails the two refusal cases, and the delivery's by treating a `judge` plan as an
 
 ## Open questions
 
+- **The gate is joined to the event type rather than to the matched trigger**, per
+  the known gap above. The fix needs trigger identity through publication and
+  delivery, which is a field on a strict schema an older isolate would reject
+  mid-deploy, so it is its own change rather than a late addition to this one.
 - **The corpus is synthetic.**
   The request that ships was selected by an optimization over 274 cases with a
   split made before tuning and an independent adjudication layer, which is what
@@ -328,6 +379,16 @@ firing exactly when a calibrated P(match) exceeds **1/4**, so "err towards firin
 is true and stops being true at one in four. The negative question fires at roughly
 P(match) > 0.05. The shipped threshold of `0.5` on the positive question sits in
 the flat region that both the sweep and that arithmetic point at.
+
+**Found in review and not fixed here:** the gate joins a delivery to its
+conditions by event type rather than by the trigger the delivery was matched
+through, which over-gates a Sidekick whose triggers overlap on one event type.
+[The gate is joined to the event type, not to the matched trigger](#the-gate-is-joined-to-the-event-type-not-to-the-matched-trigger)
+has the two reachable shapes and why the fix is its own change. A second review
+finding — that a verdict could be stale by the time it is admitted — turned out
+not to be reachable, and
+[What closes the stale-verdict window](#what-closes-the-stale-verdict-window)
+records the ordering that closes it and the break that proves it.
 
 **What a future change has to respect:** the object is the authority. A delivery
 path may compute a verdict, but `admitExternalEvent` decides, and a gated event
