@@ -14,7 +14,8 @@
     "@rally/contracts": "workspace:*",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@rally/ui": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",

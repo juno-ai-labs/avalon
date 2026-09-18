@@ -9,8 +9,8 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 
 | File | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/scope-grant-storage.ts` | Grant mutation, delivery intent and alarm in one transaction. |
-| `apps/api/src/durable-objects/workstream-do.ts` | Alarm transfers intents into the existing parent outbox. |
+| `apps/api/src/durable-objects/scope-grant-storage.ts` | Grant mutation and existing parent outbox enqueue in one transaction. |
+| `apps/api/src/durable-objects/workstream-do.ts` | Owns grant mutation and projection delivery through the existing parent outbox. |
 | `packages/contracts/src/conversation-effects.ts` | Typed parent effect carrying the grant. |
 | `apps/api/src/queues/activity-consumer.ts` | Existing Queue delivery to WorkspaceDO. |
 | `apps/api/src/durable-objects/scope-grant-directory.ts` | Versioned projection and incarnation-specific candidate query. |
@@ -20,33 +20,20 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 
 ## How it works
 
-A changed grant writes `scope_grant_deliveries` and schedules
-`scope_grant_directory/pending` inside the grant transaction. The alarm writes
-one parent projection per user and exact scope, acknowledging the intent in the
-same local transaction. The existing durable outbox sends it to ACTIVITY_QUEUE.
-WorkstreamDO migration 15 extends its outbox kind constraint while preserving
-pending and inflight rows.
+Every grant mutation invokes the parent's existing projection writer within its
+SQLite transaction, including invitation acceptance. The same durable outbox owns
+versioning, retries and WorkspaceDO delivery; there is no intermediate delivery alarm.
+Migration 17 drains pending legacy delivery rows into that outbox transactionally,
+then removes their old alarm. The empty legacy table remains for schema compatibility.
 
-WorkspaceDO migration 60 adds `scope_grant_directory`. The consumer checks the
-workspace, region, parent, effect hash, source generation and per-scope version.
-It retains revoked rows as tombstones. Candidate lookup selects distinct parent
-IDs for an active grant and the exact membership incarnation. It returns no
-conversation title, transcript, resource, or scope authorization. Legacy grants
-without an incarnation remain stored but cannot match a current relationship.
-
-The serving service reads the current relationship, finds candidate parents, and
-asks each WorkstreamDO for its readable conversations. After its relationship
-read, the owner synchronously evaluates current grants and lifecycle before
-releasing labels. Only readable Main admits the parent title; child-only access
-returns a null parent title, displayed as Shared workstream. Restricted or
-unready children are omitted. Archived content stays discoverable under the
-existing read-only policy. The service rechecks membership incarnation/revision
-before returning the assembled response. The browser refreshes on focus and
-provides a refresh action; this directory does not open a workspace socket.
+The WorkspaceDO index supplies candidates only. Directory reads admit each candidate
+at its canonical parent concurrently and preserve ordering. A final relationship
+incarnation/revision check fences the combined response. Main-derived titles and
+appearance are withheld for child-only shares; workspace identity remains visible.
 
 ## Invariants
 
-- Intent acknowledgement and outbox insertion are atomic. Otherwise a crash can
+- Grant mutation and outbox insertion are atomic. Otherwise a crash can
   make an accepted share permanently undiscoverable.
 - Revocation retains its version. Deleting the row would let a delayed addition
   recreate a stale candidate.
@@ -67,7 +54,7 @@ entry and its limited collaboration surface belong to
 
 ## Failure modes and limits
 
-The shared alarm retries an interrupted handoff. Queue transport failure leaves
+The existing outbox alarm retries interrupted delivery. Queue transport failure leaves
 the durable outbox row available for retry. Identical deliveries are idempotent;
 older deliveries are ignored. Equal-version conflicting payloads fail rather
 than silently selecting one. Malformed addresses or hashes fail delivery.
@@ -99,4 +86,7 @@ and ordering semantics without introducing a second transport. Canonical owner
 admission remains mandatory because an asynchronous index can be stale. The
 serving endpoint now performs that admission and withholds Main-derived labels
 for independent child grants. Browser navigation consumes those results without
-opening the member directory.
+opening the member directory. Grant transactions now enqueue directly into that
+outbox; retaining an intermediate delivery table and alarm duplicated its
+responsibility. Migration 17 moves pending old intents transactionally before
+retiring their alarm. Parent reads run concurrently with a final relationship fence.

@@ -4524,8 +4524,9 @@ export class WorkstreamTranscriptStorage {
     const authorUserId = pending.author_user_id;
     const root = this.sql.exec<{
       unread_tracking_start_ordinal: number;
+      authority_transferred: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT unread_tracking_start_ordinal FROM workstream WHERE id = 1`,
+      `SELECT unread_tracking_start_ordinal, EXISTS(SELECT 1 FROM participant_authority_transfer WHERE singleton=1) AS authority_transferred FROM workstream WHERE id = 1`,
     ).one();
     const confirmedAtAdmission = prepared.authorization.confirmedParticipantUserIds
       .filter((userId) => userId !== authorUserId);
@@ -4543,9 +4544,7 @@ export class WorkstreamTranscriptStorage {
     // undo a later participant removal. Epoch equality distinguishes a row
     // that is still the admission-time identity from one explicitly revoked or
     // re-added while the input waited for a safe boundary.
-    const authorityTransferred = this.sql.exec(
-      "SELECT 1 FROM participant_authority_transfer WHERE singleton=1",
-    ).toArray().length > 0;
+    const authorityTransferred = root.authority_transferred !== 0;
     const participantUserIds = admittedParticipantUserIds.filter((userId) => {
       const expectedEpoch = prepared.authorization.participantEpochs[userId];
       const currentEpoch = previous.get(userId)?.participant_epoch ?? null;

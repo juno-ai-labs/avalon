@@ -719,6 +719,7 @@ export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
   sidekicks?: SidekickRow[] | undefined;
   sidekicksError?: string | undefined;
+  loadSidekickOptions: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
   openParticipantDialog: () => void;
@@ -742,6 +743,7 @@ export interface ConversationSurfaceProps {
   substreamId: string;
   /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
   workstreamContext?: WorkstreamDetail;
+  sidebarScope?: "workstream" | "conversation";
   onStartSubstream?: (throughTurnId: string) => void;
   /**
    * A substream being written in front of this conversation.
@@ -778,6 +780,7 @@ export function ConversationSurface({
   parentId: id,
   substreamId,
   workstreamContext,
+  sidebarScope = "workstream",
   renderHeader,
   renderSidebar,
   onStartSubstream,
@@ -1669,8 +1672,7 @@ export function ConversationSurface({
   const recommendationOptions = useQuery({
     queryKey: ['sidekick-recommendation-options', id, substreamId],
     queryFn: ({ signal }) => api!.getSidekickRecommendationOptions(id!, substreamId, signal),
-    enabled: Boolean(api && id && parentKind === 'workstream'),
-    refetchOnWindowFocus: 'always',
+    enabled: false,
   });
   const removeSidekick = useMutation({
     mutationKey: ['remove-sidekick', id, substreamId],
@@ -1693,7 +1695,6 @@ export function ConversationSurface({
     } else {
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
       void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', id] });
-      void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', id] });
       // A room's Sidekick is created from its conversation, by the run that is
       // writing the turns this sequence counts, so the list that would show it
       // is stale exactly when the transcript moves.
@@ -2092,7 +2093,7 @@ export function ConversationSurface({
       presenceUserIdsByWorkstream[id] ?? [],
     ),
   };
-  const sidebarDetail = workstreamContext?.id === id ? workstreamContext : {
+  const sidebarDetail = sidebarScope === "conversation" ? displayedDetail : workstreamContext?.id === id ? workstreamContext : {
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
   const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
@@ -2127,15 +2128,16 @@ export function ConversationSurface({
     <div className="conversation-layout">
       {renderSidebar?.({
         sidekicks: sidekickRows,
+        loadSidekickOptions: () => { void recommendationOptions.refetch(); },
         sidekicksError,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId('0'); setParticipantDialogOpen(true); },
-        openResource: openWorkstreamResourceDetails,
+        openParticipantDialog: () => { setParticipantDialogSubstreamId(workstreamContext ? '0' : substreamId); setParticipantDialogOpen(true); },
+        openResource: workstreamContext ? openWorkstreamResourceDetails : openResourceDetails,
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        openArtifact: sidebarCitations.openPreview,
+        openArtifact: workstreamContext ? sidebarCitations.openPreview : citations.openPreview,
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx(
@@ -2181,6 +2183,7 @@ export function ConversationSurface({
       {renderHeader?.({
         detail: displayedDetail,
         sidekicks: sidekickRows,
+        loadSidekickOptions: () => { void recommendationOptions.refetch(); },
         sidekicksError,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],

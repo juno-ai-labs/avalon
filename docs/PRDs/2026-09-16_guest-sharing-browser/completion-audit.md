@@ -85,3 +85,36 @@ fixtures for the creation-helper rename and directory-before-viewer delivery. No
 
 The final implementation inventory is in [implementation.md](implementation.md).
 Its dated sections retain intermediate evidence as history, not outstanding tasks.
+
+
+## Shared UI and review follow-through — 2026-09-17
+
+Desktop and browser now consume `@rally/ui`: the existing header, navigation row,
+context sidebar, account trigger, Sidekick controls, primitives, semantic styles,
+fonts and theme runtime. Desktop adapters retain routing/IPC; the browser remains
+lite. Main metadata is still withheld from child-only grants. Token generation and
+CSS checks follow the shared source.
+
+Management options no longer refetch on ordinary transcript events. Initial guest
+skill discovery shares its recommendation read. Browser requests defer target
+session authentication to normal middleware, addressed startup skips the workspace
+picker, and overlapping restores coalesce while preserving cross-tab invalidation.
+Discovery admits parents concurrently. Grants write directly to the durable outbox,
+with a transactionally drained version-17 upgrade. Membership removal immediately
+dispatches its existing durable intent instead of sending a second fanout.
+
+Connector replay checks now precede relationship reads; UUID creation, alarm arming
+and participant projection delivery occur only when needed. First-time connector
+events in transferred workstreams still require the parent receipt and current
+relationship check. The child-to-parent authority probe remains; eliminating it
+safely needs an authoritative routing fact at ingress. We have not added a cache or
+claimed that this existing migration path has zero overhead. Normal transcript
+participant application combines its transfer fence into the existing root query.
+
+Validation for this follow-through is scoped: lint/typecheck, token generation,
+script and CSS suites, browser/desktop builds, grant/invitation/connector and session
+runtime cases, membership-removal cases, shared-component tests, and real Chrome
+and Electron windows. Chrome light/dark screenshots use API/socket fixtures;
+Electron checks the extracted desktop components. These do not establish deployed
+mailbox delivery or whole-app pixel equality. Upgrade/outbox and immediate membership
+delivery checks were demonstrated to fail when their production write was removed.

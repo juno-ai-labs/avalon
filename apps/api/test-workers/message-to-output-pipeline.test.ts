@@ -83,7 +83,6 @@ import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-mess
 import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
 import { resolveSidekickSkills } from "../src/services/sidekick-skills";
 import { AuthorizationService } from "../src/services/authorization-service";
-import { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
@@ -2571,15 +2570,15 @@ describe("a member's message travels the whole pipeline", () => {
       await runDurableObjectAlarm(parent);
       await expect.poll(() => parent.beginChildParticipantMigration(address), { timeout:30_000 })
         .toEqual({ status:"complete",transferId:migration.transferId });
-      await runInDurableObject(parent, (_instance,state) => {
-        expect(new ScopeGrantStorage(state.storage,address).forUser(USER_ID)).toEqual([]);
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](address).forUser(USER_ID)).toEqual([]);
       });
       await runDurableObjectAlarm(parent);
       await expect.poll(() => runInDurableObject(child, (_instance,state) =>
         state.storage.sql.exec("SELECT user_id FROM participants WHERE status='active' ORDER BY user_id").toArray()),
       { timeout:30_000 }).toEqual([{ user_id:OTHER_USER_ID }]);
       await runInDurableObject(parent, (_instance,state) => {
-        const store = new ScopeGrantStorage(state.storage,address);
+        const store = _instance['scopeGrants'](address);
         expect(store.forUser(OTHER_USER_ID)).toMatchObject([{ target:{ kind:"conversation",substreamId },active:true }]);
         expect(store.forUser(USER_ID)).toEqual([]);
         expect(store.read(OTHER_USER_ID,{ kind:"workstream",workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID })).toBeNull();
@@ -3002,8 +3001,8 @@ describe("a member's message travels the whole pipeline", () => {
       }, apiEnv);
       expect((await changeSidekickAppearance("blue")).status).toBe(403);
       const parentTarget = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };
-      await runInDurableObject(parent, (_instance, state) => {
-        expect(new ScopeGrantStorage(state.storage, address).mutate({ operationId: crypto.randomUUID(),
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(),
           actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: 0 }, "existing-member"))
           .toMatchObject({ status: "committed" });
       });
@@ -3041,8 +3040,8 @@ describe("a member's message travels the whole pipeline", () => {
       expect((await recommendationMutation(unselectedSidekick.automationId, "PUT")).status).toBe(403);
       expect((await recommendationMutation(recommendedSidekick.automationId, "PUT")).status).toBe(200);
       expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(200);
-      await runInDurableObject(parent, (_instance, state) => {
-        const store = new ScopeGrantStorage(state.storage, address);
+      await runInDurableObject(parent, (_instance) => {
+        const store = _instance['scopeGrants'](address);
         expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID, userId: USER_ID,
           target: parentTarget, active: false, expectedRevision: store.read(USER_ID, parentTarget)!.revision }, "existing-member"))
           .toMatchObject({ status: "committed" });
@@ -3116,7 +3115,7 @@ describe("a member's message travels the whole pipeline", () => {
       await runInDurableObject(parent, (_instance, state) => {
         state.storage.sql.exec("INSERT INTO conversation_children(substream_id,kind,created_at) VALUES (?,'child',0)", secondChildId);
         state.storage.sql.exec("INSERT INTO child_participant_migrations(substream_id,transfer_id,phase) VALUES (?,?,'complete')", secondChildId, crypto.randomUUID());
-        expect(new ScopeGrantStorage(state.storage, address).mutate({ operationId: crypto.randomUUID(),
+        expect(_instance['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(),
           actorUserId: OTHER_USER_ID, userId: USER_ID, target: { kind: "conversation", ...secondAddress },
           active: true, expectedRevision: 0 }, "existing-member")).toMatchObject({ status: "committed" });
       });
@@ -3206,8 +3205,8 @@ describe("a member's message travels the whole pipeline", () => {
       expect(overlappingDownload.status).toBe(200);
       expect(await overlappingDownload.text()).toBe("Shared extracted text");
       expect(await artifactHost.checkSession(artifactSession!.session, 0)).toMatchObject({ ok: true });
-      await runInDurableObject(parent, (_instance, state) => {
-        const store = new ScopeGrantStorage(state.storage, address);
+      await runInDurableObject(parent, (_instance) => {
+        const store = _instance['scopeGrants'](address);
         const target = { kind: "conversation" as const, ...secondAddress };
         expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID, userId: USER_ID,
           target, active: false, expectedRevision: store.read(USER_ID, target)!.revision }, "existing-member"))
@@ -3248,7 +3247,7 @@ describe("a member's message travels the whole pipeline", () => {
       childSocket.socket.close(1000,"done");
       expect(await parent.addPrivateChildParticipant(participantRequest)).toEqual(added);
       await runInDurableObject(parent, (_instance,state) => {
-        expect(new ScopeGrantStorage(state.storage,address).read(USER_ID,{ kind:"conversation",...address }))
+        expect(_instance['scopeGrants'](address).read(USER_ID,{ kind:"conversation",...address }))
           .toMatchObject({ active:false,revision:removed.membershipVersion });
         // The legacy authority stays frozen at its pre-migration fact.
         expect(state.storage.sql.exec("SELECT version,active FROM private_child_memberships WHERE substream_id=? AND user_id=?",substreamId,USER_ID).one())
@@ -3262,7 +3261,7 @@ describe("a member's message travels the whole pipeline", () => {
       await runInDurableObject(parent, (_instance, state) => {
         state.storage.sql.exec("INSERT INTO main_participant_migration VALUES (1, ?, '{}', 'complete')", crypto.randomUUID());
         state.storage.sql.exec("INSERT OR IGNORE INTO conversation_children (substream_id,kind,status,created_by_user_id,created_at) VALUES ('0','main','ready',?,0)", OTHER_USER_ID);
-        const store = new ScopeGrantStorage(state.storage, address);
+        const store = _instance['scopeGrants'](address);
         expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID,
           userId: USER_ID, target: mainTarget, active: true, expectedRevision: 0 }, "existing-member"))
           .toMatchObject({ status: "committed" });
@@ -3315,7 +3314,7 @@ describe("a member's message travels the whole pipeline", () => {
       await runInDurableObject(parent, (_instance, state) => {
         expect(state.storage.sql.exec("SELECT phase FROM child_participant_migrations WHERE substream_id=?", substreamId).one())
           .toEqual({ phase: "complete" });
-        expect(new ScopeGrantStorage(state.storage, { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID })
+        expect(_instance['scopeGrants']({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID })
           .participantProjection(substreamId, USER_ID)?.active).toBe(true);
       });
       await runInDurableObject(child, (_instance, state) => {
@@ -3381,8 +3380,8 @@ describe("a member's message travels the whole pipeline", () => {
       // grant that survives removal of the parent grant.
       expect(await parent.joinConversation({ operationId: crypto.randomUUID(), actorUserId: USER_ID,
         userId: USER_ID, target: request.targets[0]!, active: true })).toEqual({ status: "ready" });
-      await runInDurableObject(parent, (_instance, state) => {
-        expect(new ScopeGrantStorage(state.storage, request).forUser(USER_ID))
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](request).forUser(USER_ID))
           .toMatchObject([{ target: { kind: "workstream" } }]);
       });
       if (queuedTurnId !== null) {
@@ -3392,8 +3391,8 @@ describe("a member's message travels the whole pipeline", () => {
         await runInDurableObject(stub, (_instance, state) => {
           expect(state.storage.sql.exec("SELECT 1 FROM participants WHERE user_id=? AND status='active'", OTHER_USER_ID).toArray()).toEqual([]);
         });
-        await runInDurableObject(parent, (_instance, state) => {
-          expect(new ScopeGrantStorage(state.storage, request).forUser(OTHER_USER_ID)).toEqual([]);
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](request).forUser(OTHER_USER_ID)).toEqual([]);
         });
         return;
       }
@@ -3432,8 +3431,8 @@ describe("a member's message travels the whole pipeline", () => {
 
         const add = { operation:"add_participant",auth:guestAuth,userId:recipientId,operationId:crypto.randomUUID() };
         expect(await product(stub,add)).toMatchObject({ status:200 });
-        await runInDurableObject(parent, (_instance,state) => {
-          expect(new ScopeGrantStorage(state.storage,request).forUser(recipientId))
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](request).forUser(recipientId))
             .toMatchObject([{ active:true,target:{ kind:"conversation",substreamId:"0" } }]);
         });
         const parentTarget = { kind:"workstream" as const,workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID };
@@ -3442,8 +3441,8 @@ describe("a member's message travels the whole pipeline", () => {
         if (inherited.status !== "committed") throw new Error("Expected parent grant");
         const remove = { operation:"remove_participant",auth:guestAuth,userId:recipientId,operationId:crypto.randomUUID() };
         expect(await product(stub,remove)).toMatchObject({ status:409,body:{ error:"participant_inherited_access" } });
-        await runInDurableObject(parent, (_instance,state) => {
-          expect(new ScopeGrantStorage(state.storage,request).forUser(recipientId).every((grant) => grant.active)).toBe(true);
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](request).forUser(recipientId).every((grant) => grant.active)).toBe(true);
         });
         expect(await parent.mutateScopeGrant({ operationId:crypto.randomUUID(),actorUserId:USER_ID,
           userId:recipientId,target:parentTarget,active:false,expectedRevision:inherited.grant.revision }))
@@ -3464,8 +3463,8 @@ describe("a member's message travels the whole pipeline", () => {
           confirmedParticipantUserIds: participation === "self" ? [] : [OTHER_USER_ID] } };
       expect(await product(stub, message)).toMatchObject({ status: 200 });
       expect(await product(stub, message)).toMatchObject({ status: 200 });
-      await runInDurableObject(parent, (_instance, state) => {
-        expect(new ScopeGrantStorage(state.storage, request).forUser(OTHER_USER_ID))
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](request).forUser(OTHER_USER_ID))
           .toMatchObject([{ active: true, target: { kind: "conversation", substreamId: "0" } }]);
       });
       await runInDurableObject(stub, (_instance, state) => {
@@ -3519,7 +3518,7 @@ describe("a member's message travels the whole pipeline", () => {
         // Advance the failed entry's retry gate explicitly, without timing the
         // test against the production scheduler's backoff interval.
         state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at=0 WHERE kind='main_participant_migration'");
-        const revision = new ScopeGrantStorage(state.storage,target).read(USER_ID,target)!.revision;
+        const revision = _instance['scopeGrants'](target).read(USER_ID,target)!.revision;
         await state.storage.setAlarm(Date.now());
         return revision;
       });
@@ -3551,8 +3550,8 @@ describe("a member's message travels the whole pipeline", () => {
         if (result.status !== "committed") throw new Error("Expected revocation");
         await runDurableObjectAlarm(parent);
         expect((await closed).code).toBe(1008);
-        await runInDurableObject(parent, (_instance,state) => {
-          expect(new ScopeGrantStorage(state.storage,target).pendingParticipantProjection("0",USER_ID,result.grant.revision)).toBeNull();
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](target).pendingParticipantProjection("0",USER_ID,result.grant.revision)).toBeNull();
         });
         await runInDurableObject(stub, (_instance,state) => {
           expect(new ParticipantAuthorityTransferStorage(state.storage).projectionForUser(USER_ID))
@@ -3572,8 +3571,8 @@ describe("a member's message travels the whole pipeline", () => {
       expect(await product(stub, remove)).toEqual({ status: 200, body: { ok: true } });
       expect(await product(stub, remove)).toEqual({ status: 200, body: { ok: true } });
       expect((await product(stub, add)).status).toBe(409);
-      await runInDurableObject(parent, (_instance,state) => {
-        expect(new ScopeGrantStorage(state.storage,target).read(USER_ID,target)?.active).toBe(false);
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](target).read(USER_ID,target)?.active).toBe(false);
       });
       await runInDurableObject(stub, (_instance,state) => {
         expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id=?",USER_ID).one().status).toBe("removed");

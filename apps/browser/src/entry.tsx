@@ -15,7 +15,7 @@ const initialRegion = configuredRegions[0]!;
 type Proof = { region: string; challengeId: string; credential: string; redemptionId: string };
 
 /** This entry has no account setup step. Collaboration mounts after authentication. */
-export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession) => ReactNode } = {}) {
+export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void) => ReactNode } = {}) {
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
   const [workspaceSession, setWorkspaceSession] = useState<BrowserSession | null>(null);
   const [region, setRegion] = useState(initialRegion);
@@ -32,6 +32,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [error, setError] = useState<string | null>(null);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
   const sessionRead = useRef(0);
+  const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
 
@@ -64,22 +65,40 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       } else setError("This sign-in link is invalid. Request another email.");
       setChecking(false);
     }
-    const restore = (renew = false) => { const read = ++sessionRead.current; void browserRequest(selected,
-      renew ? "/session/renew" : "/session", BrowserSessionSchema, renew ? {} : undefined).then(async (current) => {
-      const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
-      if (active && read === sessionRead.current) {
-        setSession(current); setWorkspaces(result.workspaces);
+    let restoring: Promise<void> | null = null;
+    let invalidated = false;
+    const restore = (renew = false) => {
+      if (restoring) return;
+      const read = ++sessionRead.current;
+      restoring = (async () => {
+        if (renew) await browserRequest(selected, "/session/renew", BrowserSessionSchema, {});
+        const current = target
+          ? await browserRequest(selected, "/workspace/select", BrowserSessionSchema, { workspaceId: target.workspaceId })
+          : await browserRequest(selected, "/session", BrowserSessionSchema);
+        if (!active || read !== sessionRead.current) return;
+        setSession(current);
+        setError(null);
         setAccepted((previous) => previous?.acceptedByUserId === current.user.id ? previous : null);
-      }
-    }).catch((cause: unknown) => {
-      if (!active || read !== sessionRead.current) return;
-      if (cause instanceof BrowserApiError && cause.status === 401) { setSession(null); setWorkspaces([]); setAccepted(null); }
-      else setError("Unable to restore your session. Try again.");
-    }).finally(() => { if (active) setChecking(false); }); };
+        if (!target) {
+          const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
+          if (active && read === sessionRead.current) setWorkspaces(result.workspaces);
+        }
+      })().catch((cause: unknown) => {
+        if (!active || read !== sessionRead.current) return;
+        if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
+          setSession(null); setWorkspaceSession(null); setWorkspaces([]); setAccepted(null);
+          setError(cause.status === 403 ? cause.message : null);
+        } else setError("Unable to restore your session. Try again.");
+      }).finally(() => {
+        restoring = null;
+        if (active && invalidated) { invalidated = false; restore(); }
+        else if (active && read === sessionRead.current) setChecking(false);
+      });
+    };
     if (!hasMagicProof) restore();
     // Magic links can sign in another tab. Returning to this invitation keeps
     // its in-memory proof and discovers the same-origin HttpOnly session.
-    const resume = () => restore(true);
+    const resume = () => restore(Date.now() >= renewalAt.current);
     const visible = () => { if (document.visibilityState === "visible") resume(); };
     refreshSession.current = restore;
     window.addEventListener("focus", resume);
@@ -90,7 +109,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(`rally-browser-session:${selected}`);
     sessionChannel.current = channel;
     if (channel) channel.onmessage = (event: MessageEvent<unknown>) => {
-      if (event.data === "session-changed") restore();
+      if (event.data === "session-changed") {
+        ++sessionRead.current;
+        if (restoring) invalidated = true;
+        else restore();
+      }
     };
     return () => {
       active = false;
@@ -110,7 +133,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // to recover via focus/online after a network failure. This is scheduling,
     // not a new lifetime policy. An unchanged expiry (the absolute ceiling)
     // does not rerun this effect or create a renewal loop.
-    const cancelRenewal = scheduleSessionDeadline(Date.now() + Math.max(0, expiry - Date.now()) / 2, () => {
+    renewalAt.current = Date.now() + Math.max(0, expiry - Date.now()) / 2;
+    const cancelRenewal = scheduleSessionDeadline(renewalAt.current, () => {
       if (document.visibilityState === "visible") refreshSession.current?.(true);
     });
     const cancelExpiry = scheduleSessionDeadline(expiry, () => {
@@ -123,6 +147,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   useEffect(() => {
     if (!session || !destination) { setWorkspaceSession(null); return; }
+    if (session.workspace?.id === destination.workspaceId && session.workspace.region === destination.region) {
+      setWorkspaceSession(session);
+      return;
+    }
     let active = true;
     void browserRequest(destination.region, "/workspace/select", BrowserSessionSchema, { workspaceId: destination.workspaceId })
       .then((selected) => {
@@ -145,8 +173,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     setSession(current);
     setProof(null);
     sessionChannel.current?.postMessage("session-changed");
-    const result = await browserRequest(region, "/workspaces", BrowserWorkspacesSchema);
-    setWorkspaces(result.workspaces);
+    if (!destination) {
+      const result = await browserRequest(region, "/workspaces", BrowserWorkspacesSchema);
+      setWorkspaces(result.workspaces);
+    }
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -196,11 +226,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
-      <header className="browser-toolbar"><a href="/">{workspaceSession.workspace?.name}</a>
-        <button disabled={busy} onClick={() => { void signOut(); }}>Sign out</button>
-        {error && <p role="alert">{error}</p>}
-      </header>
-      <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession)}</div>
+      {error && <p role="alert">{error}</p>}
+      <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, () => { void signOut(); })}</div>
     </div>;
   }
 

@@ -1,4 +1,4 @@
-:root { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #292822; background: #f8f7f4; font-synthesis: none; color-scheme: light; }
+.entry { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #292822; background: #f8f7f4; font-synthesis: none; color-scheme: light; }
 * { box-sizing: border-box; }
 body { margin: 0; }
 a { color: inherit; }
@@ -15,41 +15,10 @@ a { color: inherit; }
 .error { color: #a12c23; margin: 22px 0 0; }
 .workspace-link { display: flex; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid #ddd9cf; text-decoration: none; }
 .workspace-link:hover { color: #a43d1d; }
-@media (prefers-color-scheme: dark) { :root { background: #20211e; color: #efeee8; color-scheme: dark; } .entry p, .entry button.secondary { color: #b3b2aa; } .entry input { background: #2b2d28; border-color: #515348; } .entry button { background: #e7e6df; color: #24251f; } .workspace-link { border-color: #45463f; } .error { color: #ffb4a4; } }
+@media (prefers-color-scheme: dark) { .entry { background: #20211e; color: #efeee8; color-scheme: dark; } .entry p, .entry button.secondary { color: #b3b2aa; } .entry input { background: #2b2d28; border-color: #515348; } .entry button { background: #e7e6df; color: #24251f; } .workspace-link { border-color: #45463f; } .error { color: #ffb4a4; } }
 
 .browser-shell { height: 100dvh; display: flex; flex-direction: column; }
-.browser-toolbar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--av-sys-color-border-default); }
-.browser-toolbar a { flex: 1; text-decoration: none; font-weight: 550; }
-.browser-toolbar button { cursor: pointer; padding: 6px 10px; }
-.browser-toolbar p { margin: 0; }
-.browser-conversation { flex: 1; min-height: 0; display: flex; }
-.browser-conversation > * { flex: 1; min-width: 0; }
-.browser-workspace { display: flex; min-height: 0; }
-.browser-navigation { flex: 0 0 240px; overflow: auto; padding: 16px; border-right: 1px solid var(--av-sys-color-border-default); }
-.browser-navigation summary { font-weight: 600; cursor: pointer; }
-.browser-workspace-identity { display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); vertical-align: middle; }
-.browser-workspace-identity > span:last-child { min-width: 0; overflow-wrap: anywhere; }
-.browser-workspace-identity .workspace-mark { flex-shrink: 0; }
-.browser-workspace-identity small { display: block; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--av-sys-color-text-muted); }
-.browser-navigation section { margin: 22px 0; }
-.browser-navigation h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
-.browser-navigation a { display: block; padding: 8px; border-radius: 6px; text-decoration: none; overflow-wrap: anywhere; }
-.browser-navigation a[aria-current="page"] { background: var(--av-sys-color-accent-wash); font-weight: 600; }
-.browser-navigation p { font-size: 13px; margin: 16px 0; }
-.browser-navigation button { font: inherit; font-size: 12px; padding: 8px; cursor: pointer; }
-.browser-feed { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.browser-conversation, .browser-workspace, .browser-feed { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .browser-feed > * { flex: 1; min-width: 0; }
-.browser-feed .workstream-screen { grid-template-rows: auto minmax(0, 1fr) auto; }
-.browser-feed-header { flex-wrap: wrap; gap: 8px; }
-.browser-feed-header h1 { min-width: 0; overflow-wrap: anywhere; }
-.browser-feed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.browser-feed-actions > button { cursor: pointer; font: inherit; padding: 6px 0; }
-.browser-sidekick-menu { max-width: min(360px, calc(100vw - 24px)); }
-.browser-sidekick-menu [role="group"] { padding: 8px 0; }
-.browser-sidekick-description { margin: 4px 8px; color: var(--av-sys-color-text-muted); font-size: 13px; overflow-wrap: anywhere; }
 .browser-empty { padding: 32px; }
-.browser-empty h1 { font-size: 24px; margin-bottom: 12px; }
-@media (max-width: 640px) {
-  .browser-workspace { flex-direction: column; }
-  .browser-navigation { flex: 0 0 auto; max-height: 35dvh; border-right: 0; border-bottom: 1px solid var(--av-sys-color-border-default); padding: 12px 16px; }
-}
+.browser-workspace { --av-cmp-sidebar-width: 280px; --screen-drag-strip-height: 0px; }

@@ -1,3 +1,4 @@
+import { conversationSidekickCandidateIds } from "./sidekick-skills";
 import { AutomationService } from "./automation-service";
 import { readWorkspaceRelationship } from "./workspace-relationship-service";
 import { ConversationService } from "./conversation-service";
@@ -705,6 +706,22 @@ export class WorkstreamService {
     return { items };
   }
 
+  /** Call after exact-conversation admission; these IDs do not themselves grant access. */
+  private async conversationSidekickIds(id: string, substreamId: string, explicit?: readonly string[]) {
+    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId));
+    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, this.auth.workspaceId, asWorkstreamId(id)));
+    const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId)));
+    const [recommended, owned, loaded] = await Promise.all([
+      explicit ?? room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
+      workspace.automationIdsOwnedByWorkstream({ workspaceId: this.auth.workspaceId, workstreamId: id }),
+      child.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id }),
+    ]);
+    return conversationSidekickCandidateIds([...recommended, ...owned.automationIds], loaded);
+  }
+
   /** One capability/catalog decision for browser controls and person-authorized tools. */
   async sidekickRecommendationOptions(id: string, substreamId = "0"): Promise<SidekickRecommendationOptions> {
     const conversation = new ConversationService(this.env, this.auth);
@@ -725,10 +742,8 @@ export class WorkstreamService {
         .map((item) => ({ id: item.id, name: item.name, description: item.description,
           available: item.status === "active" && item.loadable }));
     } else {
-      const [recommended, loaded] = await Promise.all([
-        this.recommendedSidekicks(id, substreamId), this.sidekickAttachments(id, undefined, substreamId),
-      ]);
-      const candidates = [...new Map([...recommended.items, ...loaded.items].map((item) => [item.id, item])).values()];
+      const candidates = await this.conversationSidekickSummaries(id, substreamId,
+        [...await this.conversationSidekickIds(id, substreamId, [...explicit])]);
       const eligible = await Promise.all(candidates.map(async (item) => {
         const source = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
           automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(item.id)));
@@ -779,10 +794,7 @@ export class WorkstreamService {
     if (attached) {
       const relationship = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
       if (relationship?.accessClass === "guest") {
-        const [recommended, loaded] = await Promise.all([
-          this.recommendedSidekicks(id, visibleSubstreamId), this.sidekickAttachments(id, undefined, visibleSubstreamId),
-        ]);
-        if (![...recommended.items, ...loaded.items].some((item) => item.id === sidekickId)) {
+        if (!(await this.conversationSidekickIds(id, visibleSubstreamId)).has(sidekickId)) {
           throw new ApiError(403, "sidekick_attachment_forbidden", "Choose a Sidekick already available in this conversation");
         }
       }

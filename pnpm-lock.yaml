@@ -206,6 +206,9 @@ importers:
 
   apps/browser:
     dependencies:
+      '@rally/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@rally/contracts':
         specifier: 'workspace:*'
         version: link:../../packages/contracts
@@ -255,6 +258,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@rally/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@radix-ui/react-avatar':
         specifier: latest
         version: 1.2.6(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -584,6 +590,64 @@ importers:
       wrangler:
         specifier: 4.126.0
         version: 4.126.0(@cloudflare/workers-types@5.20260827.1)
+
+  packages/ui:
+    dependencies:
+      '@radix-ui/react-avatar':
+        specifier: latest
+        version: 1.2.6(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@radix-ui/react-context-menu':
+        specifier: latest
+        version: 2.3.7(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@radix-ui/react-dialog':
+        specifier: latest
+        version: 1.1.23(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@radix-ui/react-dropdown-menu':
+        specifier: latest
+        version: 2.1.24(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@radix-ui/react-select':
+        specifier: latest
+        version: 2.3.7(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@radix-ui/react-tooltip':
+        specifier: latest
+        version: 1.2.16(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@rally/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@tabler/icons-react':
+        specifier: ^3.46.0
+        version: 3.46.0(react@19.2.8)
+      '@thesvg/react':
+        specifier: ^3.3.1
+        version: 3.3.1(react@19.2.8)
+      clsx:
+        specifier: latest
+        version: 2.1.1
+      lucide-react:
+        specifier: latest
+        version: 1.34.0(react@19.2.8)
+      react:
+        specifier: latest
+        version: 19.2.8
+      react-dom:
+        specifier: latest
+        version: 19.2.8(react@19.2.8)
+      thinking-orbs:
+        specifier: 0.2.0
+        version: 0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      tw-fade:
+        specifier: ^0.8.0
+        version: 0.8.0(tailwindcss@3.4.19(tsx@4.23.12)(yaml@2.9.0))
+    devDependencies:
+      '@types/react':
+        specifier: latest
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: latest
+        version: 19.2.5(@types/react@19.2.18)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
 
 
 packages:

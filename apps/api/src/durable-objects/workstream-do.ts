@@ -1,3 +1,4 @@
+import type { ScopeGrant } from "@rally/contracts/scope-grants";
 import { ConnectorParticipantAdmissionSchema, ScopeGrantManagementRequestSchema, ManagedScopeGrantsSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsRequestSchema, ScopeSharingOptionsSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { ListScopeInvitationsSchema } from "@rally/contracts/scope-grants";
@@ -657,6 +658,10 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       event_id TEXT PRIMARY KEY, request_json TEXT NOT NULL CHECK(json_valid(request_json))
     ) STRICT`,
   ],
+}, {
+  version: 17,
+  description: "retire intermediate grant discovery deliveries",
+  statements: ["DELETE FROM scope_grant_deliveries WHERE delivered_at IS NOT NULL"],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -769,6 +774,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
+        afterMigrations: (_sql, applied) => {
+          if (!applied.includes(17)) return;
+          this.retireGrantDirectoryDeliveries();
+        },
       }));
       await this.armNextAlarm();
     });
@@ -792,7 +801,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       const metadata = this.metadataRow();
       if (!metadata) throw new Error("scope_grant_directory_parent_missing");
       this.state.storage.transactionSync(() => {
-        const store = new ScopeGrantStorage(this.state.storage, { workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
+        const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
         for (const { grant } of store.pendingDeliveries()) {
           const scopeKey = grant.target.kind === "workstream" ? "workstream" : `conversation:${grant.target.substreamId}`;
           this.enqueueProjection(`grant:${grant.userId}:${scopeKey}`, { kind: "scope_grant_directory", grant }, Date.now());
@@ -812,7 +821,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   private async deliverParticipantProjection(substreamId: string, userId: string, revision?: number): Promise<void> {
     const metadata = this.metadataRow();
     if (!metadata) throw new Error("participant_projection_parent_missing");
-    const store = new ScopeGrantStorage(this.state.storage, { workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
+    const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
     const delivery = store.pendingParticipantProjection(substreamId, userId, revision);
     if (!delivery) return;
     const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
@@ -846,7 +855,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const address = { workspaceId, parentId: metadata.workstream_id, substreamId: asSubstreamId("0"), transferId: migration.transfer_id };
     const prepared = await source.transferParticipantAuthority({ ...address, phase: "prepare" });
     if (prepared.status !== "prepared") throw new Error(`participant_migration_prepare_${prepared.status}`);
-    const store = new ScopeGrantStorage(this.state.storage,address);
+    const store = this.scopeGrants(address);
     store.importParticipants({ kind: "workstream",workspaceId,parentId: metadata.workstream_id },prepared.snapshot,
       z.record(z.string(),z.string().min(1)).parse(JSON.parse(migration.incarnations_json)));
     const committed = await source.transferParticipantAuthority({ ...address,phase: "commit" });
@@ -902,7 +911,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     this.state.storage.transactionSync(() => {
       // Parent membership was imported before any external await. The child's
       // local roster is only a reconciliation audience, never granting evidence.
-      new ScopeGrantStorage(this.state.storage,address).registerParticipantProjection(substreamId,migration.transfer_id,
+      this.scopeGrants(address).registerParticipantProjection(substreamId,migration.transfer_id,
         prepared.snapshot.participants.map((participant) => participant.userId));
       this.parentSql.exec("UPDATE child_participant_migrations SET phase='complete' WHERE substream_id=? AND transfer_id=?",
         substreamId,migration.transfer_id);
@@ -943,7 +952,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         request.substreamId,
       ).toArray();
       this.parentSql.exec("INSERT INTO child_participant_migrations(substream_id,transfer_id,phase) VALUES (?,?,'pending')",request.substreamId,transferId);
-      new ScopeGrantStorage(this.state.storage,request).importParticipants({ kind:"conversation",...request },
+      this.scopeGrants(request).importParticipants({ kind:"conversation",...request },
         ParticipantTransferSnapshotSchema.parse({ transferId,participants:participants.map((participant) => ({
           userId:participant.user_id,addedByUserId:participant.added_by_user_id,addedAt:participant.added_at,reason:"explicit",
         })) }),incarnations);
@@ -1139,7 +1148,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,
         archived: current?.archived_at != null || child?.archived_at != null,
         childStatus: child?.status ?? null,
-        membershipVersion: new ScopeGrantStorage(this.state.storage,request).participantProjection(substreamId,request.userId)?.revision ?? 0 });
+        membershipVersion: this.scopeGrants(request).participantProjection(substreamId,request.userId)?.revision ?? 0 });
     }
     if (request.requireGrantAuthority) {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized:false,archived:row.archived_at !== null });
@@ -1190,10 +1199,33 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       target:{ kind:"conversation",workspaceId:asWorkspaceId(request.workspaceId),parentId:request.parentId,substreamId } },relationship);
   }
 
+  /** Runs synchronously inside the version-17 migration transaction. */
+  private retireGrantDirectoryDeliveries(): void {
+    const metadata = this.metadataRow();
+    if (metadata) {
+      const legacy = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: metadata.workstream_id });
+      for (const { grant } of legacy.pendingDeliveries()) this.enqueueGrantDirectory(grant, Date.now());
+    } else if (this.parentSql.exec("SELECT 1 FROM scope_grant_deliveries LIMIT 1").toArray().length) {
+      throw new Error("scope_grant_directory_parent_missing");
+    }
+    this.parentSql.exec("DELETE FROM scope_grant_deliveries");
+    this.parentSql.exec("DELETE FROM _internal_durable_alarms WHERE kind=?", SCOPE_GRANT_DIRECTORY_ALARM);
+  }
+
+  private scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage {
+    return new ScopeGrantStorage(this.state.storage, address, (grant, now) => this.enqueueGrantDirectory(grant, now));
+  }
+
+  private enqueueGrantDirectory(grant: ScopeGrant, now: number): void {
+    const scopeKey = grant.target.kind === "workstream" ? "workstream" : `conversation:${grant.target.substreamId}`;
+    this.enqueueProjection(`grant:${grant.userId}:${scopeKey}`, { kind: "scope_grant_directory", grant }, now);
+  }
+
   private scopeInvitations(): ScopeInvitationService {
     return new ScopeInvitationService(this.env, this.state.storage,
       (request, relationship) => this.resolveScopeAccess(request, relationship),
-      (request) => this.completeWorkstreamCoverage(request.targets));
+      (request) => this.completeWorkstreamCoverage(request.targets),
+      (grant, now) => this.enqueueGrantDirectory(grant, now));
   }
 
   private completeWorkstreamCoverage(targets: readonly ScopeGrantTarget[]): boolean {
@@ -1316,7 +1348,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       return access.allowed && access.writable && access.grantIds.length > 0;
     };
     if (!canManage(actor)) return ManagedScopeGrantsSchema.parse(denied);
-    const store = new ScopeGrantStorage(this.state.storage, request.target);
+    const store = this.scopeGrants(request.target);
     const initial = store.forTarget(request.target).filter((grant) => grant.active);
     const profiles = new Map(await Promise.all(initial.map(async (grant) => [grant.userId,
       await this.env.DB.prepare("SELECT name,email FROM users WHERE id=?").bind(grant.userId)
@@ -1393,6 +1425,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (!conversations.length) return null;
     return SharedWorkstreamSchema.parse({ parentId: request.parentId,
       title: conversations.some((child) => child.substreamId === "0") ? metadata.title : null,
+      ...(conversations.some((child) => child.substreamId === "0") && this.childCommonProjections()[0]?.appearance
+        ? { appearance: this.childCommonProjections()[0]!.appearance } : {}),
       conversations });
   }
 
@@ -1410,7 +1444,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       parentExists: true, parentArchived: metadata.archived_at !== null,
       parentVisibility: metadata.scope,
       conversation: conversation ? { status: conversation.status, archived: conversation.archived_at !== null, audience: conversation.audience } : null,
-      grants: new ScopeGrantStorage(this.state.storage, request.target).forUser(request.userId),
+      grants: this.scopeGrants(request.target).forUser(request.userId),
     }));
   }
 
@@ -1446,13 +1480,23 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (this.participantMigrationPhase("0") === null) return { status: "legacy" };
     const userIds = [...new Set(request.userIds)].sort();
     const canonical = JSON.stringify({ ...request, userIds });
-    const operations = await Promise.all(userIds.map((userId) =>
-      stableUuid(["connector-participant", request.eventId, userId])));
+    const receipt = this.parentSql.exec<{ request_json: string }>(
+      "SELECT request_json FROM connector_participant_admissions WHERE event_id=?", request.eventId,
+    ).toArray()[0];
+    if (receipt) {
+      if (receipt.request_json !== canonical) throw new Error("connector_participant_admission_conflict");
+      const store = this.scopeGrants(request);
+      for (const userId of userIds) {
+        if (store.pendingParticipantProjection("0", userId)) await this.deliverParticipantProjection("0", userId);
+      }
+      return { status: "ready" };
+    }
     const relationships = await Promise.all(userIds.map((userId) =>
       readWorkspaceRelationship(this.env.DB, request.workspaceId, userId)));
     const target = { kind: "conversation" as const, workspaceId: request.workspaceId,
       parentId: request.parentId, substreamId: asSubstreamId("0") };
-    const store = new ScopeGrantStorage(this.state.storage, target);
+    const store = this.scopeGrants(target);
+    let changed = false;
     const result = this.state.storage.transactionSync(() => {
       if (this.participantMigrationPhase("0") !== "complete") return { status: "pending" as const };
       const prior = this.parentSql.exec<{ request_json: string }>(
@@ -1471,15 +1515,18 @@ export class WorkstreamDO extends ConversationParentDurableObject {
         const access = this.resolveScopeAccess({ target, userId }, relationship);
         if (access.allowed && access.grantIds.length > 0) continue;
         const mutation = store.mutateCurrent({ target, userId, actorUserId: request.addedByUserId ?? userId,
-          operationId: operations[index]!, active: true }, relationship.incarnation);
+          operationId: uuidV7(), active: true }, relationship.incarnation);
         if (mutation.status !== "committed") throw new Error("connector_participant_admission_conflict");
+        changed = true;
       }
       this.parentSql.exec("INSERT INTO connector_participant_admissions(event_id,request_json) VALUES (?,?)", request.eventId,canonical);
       return { status: "ready" as const };
     });
-    await this.armNextAlarm();
+    if (changed) await this.armNextAlarm();
     if (result.status === "ready") {
-      for (const userId of userIds) await this.deliverParticipantProjection("0", userId);
+      for (const userId of userIds) {
+        if (store.pendingParticipantProjection("0", userId)) await this.deliverParticipantProjection("0", userId);
+      }
     }
     return result;
   }
@@ -1494,7 +1541,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const relationship = await readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.userId);
     const access = this.migratedConversationAccess({ ...request.target, userId: request.userId }, request.target.substreamId, relationship);
     if (!access.allowed || !access.writable || relationship?.status !== "active") return { status: "denied" };
-    const store = new ScopeGrantStorage(this.state.storage, request.target);
+    const store = this.scopeGrants(request.target);
     // Existing inherited access remains inherited. Materializing a direct grant
     // here would incorrectly survive removal of the parent grant.
     if (access.grantIds.length === 0) {
@@ -1524,7 +1571,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       return { status: "denied", reason: "sharing_required" };
     }
     if (request.active && recipient?.status !== "active") return { status: "denied", reason: "recipient_relationship_required" };
-    const store = new ScopeGrantStorage(this.state.storage,request.target);
+    const store = this.scopeGrants(request.target);
     if (useCurrentRevision && !request.active && request.target.kind === "conversation"
       && !store.hasOperation(request.operationId)) {
       const inherited = store.read(request.userId, { kind: "workstream", workspaceId: request.target.workspaceId,
@@ -1571,7 +1618,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     const migrated = request.substreamIds.filter((id) => this.participantMigrationPhase(id) !== null);
     const relationship = migrated.length
       ? await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId) : null;
-    const store = new ScopeGrantStorage(this.state.storage, request);
+    const store = this.scopeGrants(request);
     const scopes = migrated.map((substreamId) => ({ substreamId,
       access: this.migratedConversationAccess(request, substreamId, relationship),
       revision: JSON.stringify([relationship?.incarnation, relationship?.revision,

@@ -49,8 +49,9 @@ cookie.
 
 `/browser/api/<workspace ID>/<product path>` adapts the cookie to the ordinary
 API. `_` selects the identity-only session, for example during invitation
-acceptance. A request-local bearer is minted internally after the same session
-checks used by the desktop transport. It is never returned to JavaScript. The
+acceptance. The cookie resolver validates the root binding and chooses the target session.
+A request-local bearer is minted internally; ordinary API middleware authenticates
+that target once using the same checks as desktop. It is never returned to JavaScript. The
 adapter strips cookies and development identity headers from the forwarded
 request and overwrites caller-supplied Authorization. Only named product route
 families are forwarded; authentication/token issuance, internal operations and

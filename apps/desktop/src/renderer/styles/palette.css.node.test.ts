@@ -16,8 +16,8 @@ import { PROJECT_COLOR_COLUMNS, glyphInk, projectColorCells } from '../lib/proje
 
 // Read from disk for the same reason `themes.css.node.test.ts` does: Vite hands
 // `?raw` an empty string for a file it is already processing as CSS.
-const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
-const onboarding = readFileSync(resolve(process.cwd(), 'src/renderer/styles/onboarding.css'), 'utf8');
+const app = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/app.css'), 'utf8');
+const onboarding = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/onboarding.css'), 'utf8');
 const tokensDirectory = resolve(process.cwd(), '../../config/design-tokens');
 
 /**

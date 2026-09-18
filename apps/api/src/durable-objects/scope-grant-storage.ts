@@ -109,7 +109,8 @@ export interface ScopeGrantDelivery {
 export class ScopeGrantStorage {
   private readonly parent: Extract<ScopeGrantTarget, { kind: "workstream" }>;
 
-  constructor(private readonly storage: DurableObjectStorage, address: { workspaceId: string; parentId: string }) {
+  constructor(private readonly storage: DurableObjectStorage, address: { workspaceId: string; parentId: string },
+    private readonly enqueueDirectory?: (grant: ScopeGrant, now: number) => void) {
     this.parent = ScopeGrantTargetSchema.options[0].parse({ kind: "workstream",
       workspaceId: address.workspaceId, parentId: address.parentId });
   }
@@ -306,12 +307,8 @@ export class ScopeGrantStorage {
           request.userId, request.target.kind,
           request.target.kind === "workstream" ? "" : request.target.substreamId, grantJson,
         );
-        this.storage.sql.exec(
-          `INSERT INTO scope_grant_deliveries (revision, grant_json, actor_user_id, created_at)
-           VALUES (?, ?, ?, ?)`, revision, grantJson, request.actorUserId, now,
-        );
-        new ScheduledAlarmStore(this.storage.sql).schedule({ kind: SCOPE_GRANT_DIRECTORY_ALARM,
-          key: "pending", dueAt: now, payload: null });
+        if (!this.enqueueDirectory) throw new Error("scope_grant_directory_writer_required");
+        this.enqueueDirectory(grant, now);
         result = { status: "committed", grant };
         const targets = this.storage.sql.exec<{ substream_id: string }>(
           `SELECT target.substream_id FROM participant_projection_targets target

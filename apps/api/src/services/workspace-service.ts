@@ -21,7 +21,7 @@ import {
   sendWorkspaceInvitationResolutionEmail,
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
-import { publishAccessRevocation } from "./access-revocation";
+import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
@@ -501,15 +501,7 @@ export class WorkspaceService {
         "The workspace membership changed while this removal was in flight. Check it and try again.",
       );
     }
-    await publishAccessRevocation(this.env, {
-      reason: "workspace_membership_removed",
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(userId),
-      membershipIncarnation: member.incarnation,
-      // Close all sessions from this incarnation, preserving a later rejoin.
-      sessionId: null,
-    });
-    await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [userId] });
+    await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId });
   }
 
   /**
@@ -569,8 +561,7 @@ export class WorkspaceService {
       ]);
       const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
       if (abandoned) {
-        await this.publishOwnMembershipRevocation();
-        await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [this.auth.userId] });
+        await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId });
         return { outcome: "abandoned" };
       }
       throw new ApiError(
@@ -599,8 +590,7 @@ export class WorkspaceService {
        RETURNING user_id, incarnation`,
     ).bind(this.auth.workspaceId, this.auth.userId).first<{ user_id: string; incarnation: string }>();
     if (departure) {
-      await this.publishOwnMembershipRevocation(departure.incarnation);
-      await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [this.auth.userId] });
+      await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId });
       return { outcome: "left" };
     }
 
@@ -635,15 +625,7 @@ export class WorkspaceService {
     );
   }
 
-  private async publishOwnMembershipRevocation(membershipIncarnation?: string): Promise<void> {
-    await publishAccessRevocation(this.env, {
-      reason: "workspace_membership_removed",
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      ...(membershipIncarnation ? { membershipIncarnation } : {}),
-      sessionId: null,
-    });
-  }
+
 
   async promoteGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {
     if (this.auth.role !== "owner" && this.auth.role !== "admin") {

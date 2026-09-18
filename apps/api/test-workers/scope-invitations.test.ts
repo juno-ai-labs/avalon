@@ -7,7 +7,6 @@ import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:tes
 import { beforeEach, expect, it } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
-import { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
 import { decryptString } from "../src/lib/crypto";
 import { BrowserSessionService } from "../src/services/browser-session-service";
@@ -71,7 +70,7 @@ beforeEach(async () => {
     state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at) VALUES ('0','main',0), (?,'child',0)", childId);
     state.storage.sql.exec("INSERT INTO main_participant_migration VALUES (1, ?, '{}', 'complete')", crypto.randomUUID());
     state.storage.sql.exec("INSERT INTO child_participant_migrations VALUES (?, ?, 'complete')", childId, crypto.randomUUID());
-    const grants = new ScopeGrantStorage(state.storage, { workspaceId, parentId });
+    const grants = _instance['scopeGrants']({ workspaceId, parentId });
     for (const target of [main, child]) grants.mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
       userId: actorId, target, active: true, expectedRevision: 0 }, "actor-membership");
   });
@@ -106,8 +105,8 @@ it("accepts only a verified recipient and grants a child without Main", async ()
 it("never restores a revoked grant or a removed membership when acceptance is replayed", async () => {
   const request = await create();
   const accepted = await room().acceptScopeInvitation(request);
-  await runInDurableObject(room(), (_instance, state) => {
-    const grants = new ScopeGrantStorage(state.storage, child);
+  await runInDurableObject(room(), (_instance) => {
+    const grants = _instance['scopeGrants'](child);
     grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: recipientId, target: child, active: false },
       grants.forUser(recipientId)[0]!.membershipIncarnation);
   });
@@ -138,7 +137,7 @@ it("commits all target grants with acceptance, or retries after rolling every gr
   await expect(runInDurableObject(room(), (instance) => instance.acceptScopeInvitation(request)))
     .rejects.toThrow("simulated child write failure");
   await runInDurableObject(room(), (_instance, state) => {
-    expect(new ScopeGrantStorage(state.storage, child).forUser(recipientId)).toEqual([]);
+    expect(_instance['scopeGrants'](child).forUser(recipientId)).toEqual([]);
     expect(new ScopeInvitationStorage(state.storage).read(request.invitationId)?.summary.status).toBe("pending");
     state.storage.sql.exec("DROP TRIGGER reject_child_grant");
   });
@@ -266,7 +265,7 @@ it("preserves browser sessions and independent shares across a second workstream
     state.storage.sql.exec("INSERT INTO conversation_children (substream_id,kind,created_at) VALUES ('0','main',0), (?,'child',0)", childId);
     state.storage.sql.exec("INSERT INTO main_participant_migration VALUES (1, ?, '{}', 'complete')", crypto.randomUUID());
     state.storage.sql.exec("INSERT INTO child_participant_migrations VALUES (?, ?, 'complete')", childId, crypto.randomUUID());
-    new ScopeGrantStorage(state.storage, secondChild).mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
+    _instance['scopeGrants'](secondChild).mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
       userId: actorId, target: secondChild, active: true, expectedRevision: 0 }, "actor-membership");
   });
   const result = await room(secondParent).createScopeInvitations({ ...invitation([secondChild]), parentId: secondParent });
@@ -321,8 +320,8 @@ it("lists invitation summaries only when the actor can share every target", asyn
   if (before.status !== "ready") throw new Error("expected sharing authority");
   expect(before.invitations.map((item) => item.email).sort()).toEqual(["both@example.test", "guest@example.test"]);
   expect(JSON.stringify(before)).not.toMatch(/token|Encrypted|grantOperationIds/);
-  await runInDurableObject(room(), (_instance, state) => {
-    const grants = new ScopeGrantStorage(state.storage, main);
+  await runInDurableObject(room(), (_instance) => {
+    const grants = _instance['scopeGrants'](main);
     grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId,
       target: main, active: false }, "actor-membership");
   });
@@ -350,8 +349,8 @@ it("offers independent share scopes and refuses incomplete workstream coverage",
   const address = { workspaceId, parentId, actorUserId: actorId };
   const parent: ScopeGrantTarget = { kind: "workstream", workspaceId, parentId };
   expect(await room().scopeSharingOptions(address)).toMatchObject({ completeWorkstreamTargets: null });
-  await runInDurableObject(room(), (_instance, state) => {
-    new ScopeGrantStorage(state.storage, parent).mutate({ operationId: crypto.randomUUID(),
+  await runInDurableObject(room(), (_instance) => {
+    _instance['scopeGrants'](parent).mutate({ operationId: crypto.randomUUID(),
       actorUserId: actorId, userId: actorId, target: parent, active: true, expectedRevision: 0 }, "actor-membership");
   });
   const options = await room().scopeSharingOptions(address);

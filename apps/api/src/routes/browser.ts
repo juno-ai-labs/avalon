@@ -64,7 +64,7 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const service = new BrowserSessionService(c.env);
     const cookie = await service.register(session);
     writeCookie(c,cookie.credential,cookie.expiresAt);
-    return c.json(BrowserSessionSchema.parse(await service.describe(await service.read(cookie.credential))));
+    return c.json(BrowserSessionSchema.parse(cookie.session));
   });
   routes.get("/session",async (c) => {
     const service = new BrowserSessionService(c.env);
@@ -101,7 +101,7 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       throw new ApiError(404,"not_found","This browser operation is unavailable");
     }
     if (c.req.header("upgrade")) throw new ApiError(400,"browser_socket_route_required","Use the socket ticket endpoint");
-    const auth = await new BrowserSessionService(c.env).read(credential(c),workspaceId);
+    const auth = await new BrowserSessionService(c.env).resolve(credential(c),workspaceId);
     const headers = new Headers(c.req.raw.headers);
     headers.delete("cookie");
     for (const key of [RALLY_HEADERS.DEV_USER_ID,RALLY_HEADERS.DEV_WORKSPACE_ID]) {
