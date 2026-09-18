@@ -2263,7 +2263,7 @@ export class RallyApi {
 
   async reconnectConnection(
     id: string,
-    provider?: 'ashby' | 'fireflies' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    provider?: 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace' = 'you',
     capabilityCount = 0,
   ): Promise<ConnectorOAuthStart> {

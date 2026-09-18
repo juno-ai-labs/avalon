@@ -31,6 +31,7 @@ const supportConnectorPages = [
   { provider: 'custom_mcp', slug: 'custom-mcp', title: 'Custom MCP server' },
   { provider: 'ashby', slug: 'ashby', title: 'Ashby' },
   { provider: 'fireflies', slug: 'fireflies', title: 'Fireflies' },
+  { provider: 'canva', slug: 'canva', title: 'Canva' },
 ] as const;
 
 const supportPagePaths = [

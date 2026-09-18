@@ -1007,7 +1007,7 @@ describe("workspace schema migration in workerd", () => {
          '["canva.personal.mcp"]', 'plugin_canva_workspace', 'healthy', '{}', '{}',
          '2026-09-18T00:00:00.000Z', '2026-09-18T00:00:00.000Z')`)).not.toThrow();
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%\_v61%' ESCAPE '\'`).one())
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%\\_v61%' ESCAPE '\\'`).one())
         .toEqual({ count: 0 });
     });
   });
