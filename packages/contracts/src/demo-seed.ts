@@ -37,7 +37,7 @@ export const DemoSeedTurnSchema = z.discriminatedUnion("kind", [
   DemoSeedSayTurnSchema,
   /**
    * One assistant turn that ends in a blocking question, through the real
-   * `core_request_elicitation` tool with the arguments it validates. It is
+   * `request_elicitation` tool with the arguments it validates. It is
    * addressed to the room: the elicitation contract has no addressee, and this
    * feature does not add one. The run settles as `needs_input`, and whoever
    * answers starts an ordinary, unseeded run.

@@ -141,7 +141,7 @@ describe("seeding a pack", () => {
     // connector call, recorded or replayed, appears anywhere.
     const toolNames = transcript.ranges.flatMap((range) => range.turns)
       .flatMap((turn) => turn.blocks.flatMap((block) => block.type === "tool" ? [block.toolName] : []));
-    expect(new Set(toolNames)).toEqual(new Set(["core_request_elicitation"]));
+    expect(new Set(toolNames)).toEqual(new Set(["request_elicitation"]));
 
     // Two runs: the opening and the question. The two lines the pack marked as
     // starting none started none, in a room with three people in it — which

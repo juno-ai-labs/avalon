@@ -90,11 +90,30 @@ export const ConnectorConnectionStateResultSchema = z.strictObject({
 });
 export type ConnectorConnectionStateResult = z.infer<typeof ConnectorConnectionStateResultSchema>;
 
-/** The canonical definition name; Bind adds the `core_` wire prefix. */
+/**
+ * The canonical definition names, which are also the model-facing wire names:
+ * `rally:core` carries no wire prefix, so Bind advertises these unchanged.
+ */
 export const CONNECTOR_CONNECTION_CARD_TOOL_NAME = "show_connector_connection";
-export const CONNECTOR_CONNECTION_CARD_WIRE_NAME = `core_${CONNECTOR_CONNECTION_CARD_TOOL_NAME}`;
+export const CONNECTOR_CONNECTION_CARD_WIRE_NAME = CONNECTOR_CONNECTION_CARD_TOOL_NAME;
 export const CONNECTOR_CONNECTION_STATE_TOOL_NAME = "get_connector_connection_state";
-export const CONNECTOR_CONNECTION_STATE_WIRE_NAME = `core_${CONNECTOR_CONNECTION_STATE_TOOL_NAME}`;
+export const CONNECTOR_CONNECTION_STATE_WIRE_NAME = CONNECTOR_CONNECTION_STATE_TOOL_NAME;
+
+/**
+ * What every card row written before the prefix was dropped still carries. A
+ * durable tool event stores the wire name it was called under, so recognizing
+ * a card is a match against both names for as long as those rows exist —
+ * matching only the current one silently turns every historical card back into
+ * a plain tool row.
+ */
+export const LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME = `core_${CONNECTOR_CONNECTION_CARD_TOOL_NAME}`;
+export const LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME = `core_${CONNECTOR_CONNECTION_STATE_TOOL_NAME}`;
+
+/** True for either name a connector card row may have been stored under. */
+export function isConnectorConnectionCardWireName(name: string | undefined): boolean {
+  return name === CONNECTOR_CONNECTION_CARD_WIRE_NAME
+    || name === LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME;
+}
 
 export function connectorConnectionCardSummary(input: ConnectorConnectionCardInput): string {
   return `Presented the ${input.connectorId} ${input.scope} connection card`;
@@ -113,7 +132,7 @@ export function connectorConnectionCardInputFromToolEvent(event: {
   summary?: string;
   status?: string;
 } | undefined): ConnectorConnectionCardInput | null {
-  if (event?.name !== CONNECTOR_CONNECTION_CARD_WIRE_NAME || event.status !== "completed") return null;
+  if (!isConnectorConnectionCardWireName(event?.name) || event?.status !== "completed") return null;
   for (const candidate of [event.input, event.output]) {
     const parsed = ConnectorConnectionCardInputSchema.safeParse(candidate);
     if (parsed.success) return parsed.data;

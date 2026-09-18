@@ -6,9 +6,9 @@ import { pluginGroup } from './plugin-groups';
 import {
   AutomationActivationV1Schema,
   AutomationDraftProposedV1Schema,
-  CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   ElicitationSchema,
   connectorConnectionCardInputFromToolEvent,
+  isConnectorConnectionCardWireName,
   type TranscriptActivity,
   type PendingTranscriptInput,
   type TranscriptPluginRun,
@@ -1157,7 +1157,7 @@ function pluginGroupContribution(message: Message): {
  * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
-  if (message.toolEvent?.name === CONNECTOR_CONNECTION_CARD_WIRE_NAME) return false;
+  if (isConnectorConnectionCardWireName(message.toolEvent?.name)) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';

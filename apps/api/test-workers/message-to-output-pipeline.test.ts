@@ -1466,7 +1466,7 @@ describe("a member's message travels the whole pipeline", () => {
                   index: 0,
                   id: "retry-fence-tool-1",
                   type: "function",
-                  function: { name: "core_current_time", arguments: "{}" },
+                  function: { name: "current_time", arguments: "{}" },
                 }],
               },
               finish_reason: "tool_calls",
@@ -2087,7 +2087,7 @@ describe("a member's message travels the whole pipeline", () => {
                   id: "aside-elicitation-1",
                   type: "function",
                   function: {
-                    name: "core_request_elicitation",
+                    name: "request_elicitation",
                     arguments: JSON.stringify({
                       prompt: "Which option?",
                       responseType: "radio",
@@ -3447,7 +3447,7 @@ describe("a member's message travels the whole pipeline", () => {
       index: 0,
       id,
       type: "function",
-      function: { name: "core_current_time", arguments: "{}" },
+      function: { name: "current_time", arguments: "{}" },
     });
     const expectedOrder = ["text:text A", "tool", "text:text B", "tool", "text:final C"];
     let liveSocket: WebSocket | null = null;

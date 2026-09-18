@@ -9,6 +9,8 @@ import {
   ConnectorConnectionStateResultSchema,
   connectorConnectionCardSummary,
   connectorConnectionCardInputFromToolEvent,
+  isConnectorConnectionCardWireName,
+  LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
 } from "./connector-connection-card";
 
 describe("connector connection card contract", () => {
@@ -17,8 +19,8 @@ describe("connector connection card contract", () => {
       connectorId: "slack",
       scope: "personal",
     })).toEqual({ connectorId: "slack", scope: "personal" });
-    expect(CONNECTOR_CONNECTION_CARD_WIRE_NAME).toBe("core_show_connector_connection");
-    expect(CONNECTOR_CONNECTION_STATE_WIRE_NAME).toBe("core_get_connector_connection_state");
+    expect(CONNECTOR_CONNECTION_CARD_WIRE_NAME).toBe("show_connector_connection");
+    expect(CONNECTOR_CONNECTION_STATE_WIRE_NAME).toBe("get_connector_connection_state");
   });
 
   it("accepts only closed connector connection states", () => {
@@ -55,6 +57,21 @@ describe("connector connection card contract", () => {
       status: "completed",
       summary: "Please present the slack personal connection card",
     })).toBeNull();
+  });
+
+  it("still recognizes a card row stored under the retired core_ wire name", () => {
+    // `rally:core` dropped its wire prefix. Rows written before that keep the
+    // prefixed name, and a card that stops being recognized silently degrades
+    // to a plain tool row with no connect button on it.
+    expect(connectorConnectionCardInputFromToolEvent({
+      name: LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+      status: "completed",
+      output: { connectorId: "slack", scope: "personal" },
+    })).toEqual({ connectorId: "slack", scope: "personal" });
+    expect(isConnectorConnectionCardWireName(LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME)).toBe(true);
+    expect(isConnectorConnectionCardWireName(CONNECTOR_CONNECTION_CARD_WIRE_NAME)).toBe(true);
+    expect(isConnectorConnectionCardWireName(CONNECTOR_CONNECTION_STATE_WIRE_NAME)).toBe(false);
+    expect(isConnectorConnectionCardWireName(undefined)).toBe(false);
   });
 
   it("derives every accepted id and scope from the shared non-UI catalog", () => {
