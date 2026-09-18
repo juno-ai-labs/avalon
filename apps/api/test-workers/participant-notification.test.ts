@@ -387,6 +387,21 @@ async function viewerProjectionVersion(
     ).toArray()[0]?.next_version ?? 0) - 1);
 }
 
+/** The durable child projection survives after its queued envelope is delivered. */
+async function storedViewerProjection(
+  userId: string,
+  workstreamId = WORKSTREAM_ID,
+): Promise<Record<string, unknown> | null> {
+  return runInDurableObject(parentStub(workstreamId), (_instance, state) => {
+    const row = state.storage.sql.exec<{ effect_json: string }>(
+      `SELECT effect_json FROM substream_user_directory
+        WHERE substream_id = '0' AND user_id = ?`,
+      userId,
+    ).toArray()[0];
+    return row ? JSON.parse(row.effect_json) as Record<string, unknown> : null;
+  });
+}
+
 /**
  * The notification effects the parent object has taken delivery of.
  *
@@ -747,7 +762,10 @@ describe("naming somebody when the work stream is created", () => {
     ));
     expect(mentionNotifications).toHaveLength(1);
     expect(participantNotifications).toHaveLength(0);
-    expect(viewer?.effect).toMatchObject({
+    // A successful parent alarm may forward and delete the queued viewer row
+    // before this later read. Its child projection is committed atomically
+    // with that enqueue and is the durable witness after delivery.
+    expect(viewer?.effect ?? await storedViewerProjection(INVITEE_ID)).toMatchObject({
       kind: "directory_user",
       userId: INVITEE_ID,
       youAreMentioned: true,

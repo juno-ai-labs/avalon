@@ -87,6 +87,7 @@ import {
   type ConversationCacheKeys,
 } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import { desktopBridge } from './platform';
 import {
   isSocketTicketRequestTimeoutError,
   SOCKET_TICKET_REQUEST_TIMEOUT_MS,
@@ -923,10 +924,13 @@ export function useWorkstreamSocket(
     const sendPendingSubstreamCommands = (target: RealtimeSocket | null = socket): void => {
       if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
       for (const pending of pendingSubstreamCommands.values()) {
-        // A command remains pending until its private receipt arrives, but a
-        // later command must not replay it onto the same healthy connection.
-        // A reconnect creates a different socket object and deliberately sends
-        // every unresolved command again.
+        // A command remains pending until its private receipt arrives. An
+        // ordinary later command must not replay it onto the same healthy
+        // connection, while a reconnect deliberately sends every unresolved
+        // command again. Application-foreground recovery is the one explicit
+        // same-socket exception: the renderer may have missed the private
+        // receipt while suspended, and the original operation ID makes that
+        // replay idempotent.
         if (pending.sentOn === target) continue;
         try {
           target.send(JSON.stringify(pending.command));
@@ -1071,6 +1075,7 @@ export function useWorkstreamSocket(
      * arriving would pile up behind a paused reveal. Nobody is watching a
      * hidden window: show everything at once, which is also what new frames do
      * while it stays hidden.
+     *
      */
     const handleVisibilityChange = (): void => {
       if (document.visibilityState !== 'hidden') return;
@@ -1078,6 +1083,32 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
           mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
       }
+    };
+    /**
+     * Electron may suspend this renderer after it sends a command but before
+     * the private receipt is processed. Main's application-focus signal is the
+     * trustworthy recovery edge: a window can lose and regain application
+     * focus without ever becoming document-hidden.
+     *
+     * Replay only unresolved commands with their original operation IDs,
+     * reconcile canonical state, and verify an open transport immediately. A
+     * socket which already closed bypasses its background-throttled reconnect
+     * timer and starts a fresh attempt now. Retained conversations without a
+     * pending command do no foreground work.
+     */
+    const handleApplicationForegroundChange = (foregrounded: boolean): void => {
+      if (!foregrounded) return;
+      if (pendingSubstreamCommands.size === 0) return;
+      if (socket?.readyState === REALTIME_SOCKET_CONNECTING) return;
+      if (socket?.readyState !== REALTIME_SOCKET_OPEN) {
+        clearReconnectTimer();
+        void connect();
+        return;
+      }
+      for (const pending of pendingSubstreamCommands.values()) pending.sentOn = null;
+      sendPendingSubstreamCommands();
+      requestCanonicalSnapshot();
+      probeHeartbeatNow(socket);
     };
     /**
      * When this effect began dialling, so an open trace can report how long the
@@ -1878,18 +1909,32 @@ export function useWorkstreamSocket(
       }, SOCKET_STABLE_CONNECTION_MS);
     };
 
+    const probeHeartbeatNow = (target: RealtimeSocket): void => {
+      if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
+      // Preserve the older deadline. Restarting it on every focus flap would
+      // let a half-open socket avoid heartbeat_timeout indefinitely.
+      if (pongTimer !== null) return;
+      clearHeartbeat();
+      try {
+        target.send('ping');
+      } catch {
+        socketTelemetry.willClose('transport_error');
+        target.close();
+        return;
+      }
+      pongTimer = window.setTimeout(() => {
+        pongTimer = null;
+        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
+        socketTelemetry.willClose('heartbeat_timeout');
+        target.close();
+      }, PONG_TIMEOUT_MS);
+    };
+
     const scheduleHeartbeat = (target: RealtimeSocket): void => {
       clearHeartbeat();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
-        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
-        target.send('ping');
-        pongTimer = window.setTimeout(() => {
-          pongTimer = null;
-          if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
-          socketTelemetry.willClose('heartbeat_timeout');
-          target.close();
-        }, PONG_TIMEOUT_MS);
+        probeHeartbeatNow(target);
       }, socketHeartbeatDelay());
     };
 
@@ -2324,6 +2369,9 @@ export function useWorkstreamSocket(
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    const stopApplicationForeground = desktopBridge().onApplicationForegroundChanged(
+      handleApplicationForegroundChange,
+    );
     // The disk paints first and the socket corrects it. Hydration lands only
     // in caches that are still empty, so a live snapshot that beats the read
     // is never overwritten; the mirror writes only what a live snapshot
@@ -2398,6 +2446,7 @@ export function useWorkstreamSocket(
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopApplicationForeground();
       if (revealFrame !== null) {
         window.cancelAnimationFrame(revealFrame);
         revealFrame = null;

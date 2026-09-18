@@ -1305,6 +1305,128 @@ describe('useWorkstreamSocket', () => {
     await Promise.all([first, second]);
   });
 
+  it('reconciles and replays an unresolved command on application foreground', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const workstreamId = '00000000-0000-7000-8000-000000000607';
+    const clientMessageId = 'client-message-foreground-recovery';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    try {
+      await flushPromises();
+      const socket = FakeWebSocket.instances[0]!;
+      act(() => socket.open());
+      const admission = result.current.createMessage({
+        text: 'Recover this message.',
+        clientId: clientMessageId,
+      });
+      await flushPromises();
+      const firstCommand = sentFrames(socket).find((frame): frame is Extract<ClientSocketEvent, {
+        type: 'create_message';
+      }> => frame.type === 'create_message');
+      expect(firstCommand).toBeDefined();
+      expect(sentFrames(socket).filter((frame) => frame.type === 'create_message')).toHaveLength(1);
+
+      act(() => window.dispatchEvent(new Event('focus')));
+
+      const foregroundFrames = sentFrames(socket);
+      expect(foregroundFrames.filter((frame) => frame.type === 'create_message')).toEqual([
+        firstCommand,
+        firstCommand,
+      ]);
+      expect(foregroundFrames.filter((frame) => frame.type === 'request_snapshot')).toHaveLength(1);
+      expect(socket.send).toHaveBeenCalledWith('ping');
+      expect(socket.send.mock.calls.filter(([frame]) => frame === 'ping')).toHaveLength(1);
+
+      // A second focus event cannot replace the older liveness deadline.
+      act(() => window.dispatchEvent(new Event('focus')));
+      expect(socket.send.mock.calls.filter(([frame]) => frame === 'ping')).toHaveLength(1);
+
+      act(() => socket.rawMessage('pong'));
+      act(() => socket.message({
+        type: 'client_command_succeeded',
+        command: 'create_message',
+        operationId: firstCommand!.operationId,
+        clientMessageId,
+        turn: {
+          turnId: '00000000-0000-7000-8000-000000000608',
+          clientMessageId,
+          createdAt: '2026-09-17T12:00:00.000Z',
+        },
+        deliveryState: 'canonical',
+      }));
+      await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
+
+      const settledCallCount = socket.send.mock.calls.length;
+      act(() => window.dispatchEvent(new Event('focus')));
+      expect(socket.send).toHaveBeenCalledTimes(settledCallCount);
+    } finally {
+      hasFocus.mockRestore();
+    }
+  });
+
+  it('reconnects immediately on application foreground when a command lost its socket', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000609';
+    const clientMessageId = 'client-message-foreground-reconnect';
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const firstSocket = FakeWebSocket.instances[0]!;
+    act(() => firstSocket.open());
+    const admission = result.current.createMessage({
+      text: 'Recover after close.',
+      clientId: clientMessageId,
+    });
+    await flushPromises();
+    const command = sentFrames(firstSocket).find((frame): frame is Extract<ClientSocketEvent, {
+      type: 'create_message';
+    }> => frame.type === 'create_message')!;
+    act(() => firstSocket.close(1006));
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    act(() => window.dispatchEvent(new Event('focus')));
+    await flushPromises();
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    const recoveredSocket = FakeWebSocket.instances[1]!;
+    act(() => recoveredSocket.open());
+    expect(sentFrames(recoveredSocket).filter((frame) => frame.type === 'create_message')).toEqual([command]);
+    act(() => recoveredSocket.message({
+      type: 'client_command_succeeded',
+      command: 'create_message',
+      operationId: command.operationId,
+      clientMessageId,
+      turn: {
+        turnId: '00000000-0000-7000-8000-000000000610',
+        clientMessageId,
+        createdAt: '2026-09-17T12:00:00.000Z',
+      },
+      deliveryState: 'canonical',
+    }));
+    await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
+  });
+
   it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000631';
