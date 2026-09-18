@@ -959,9 +959,19 @@ regional effect, run dispatch, agent timer, or keep-alive heartbeat. A due
 timer admits work into the same agent that created it, preserving its transcript
 and authority.
 
-Terminal remains a Bind plugin backed by Daytona. The child stores the terminal
-workspace, command/task receipts, imports, repository selection, publication
-grants, and convergence state; actual coding execution remains in Daytona.
+Terminal remains a Bind plugin backed by Daytona. The child that owns a
+sandbox stores the terminal workspace, command/task receipts, imports,
+repository selection, publication grants, and convergence state; actual coding
+execution remains in Daytona. Which child that is — a run's own conversation,
+or for a background agent the conversation that started it — is
+[`terminal-workspaces.md`](terminal-workspaces.md)'s decision. What this
+object contributes is the address rule and the deadline: a port that names no
+substream resolves to the conversation it executes in, a port that names one
+is answered locally only by that conversation and dispatches otherwise; and
+`WorkstreamDO` folds the earliest `nextTerminalActionAt` of any child
+projection into the main conversation's row so the workspace alarm wakes for a
+side thread's sandbox, then answers `childTerminalDeadlines` so the sweep can
+find it.
 
 ### Sidebar, activity, and notifications
 
@@ -1646,6 +1656,42 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-09-18 — An explicit substream names one conversation, and a work stream's Terminal deadline is its children's earliest
+
+**What changed:** `localWorkstreamAuthority` tells two calls apart that used
+to be one: a port built with no substream means the conversation the run
+executes in and is answered locally inside every conversation object, while a
+port that names a substream — `"0"` included — is answered locally only by the
+object that *is* that conversation and dispatches to it otherwise.
+`createObjectPort` and the Terminal port pass an absent substream through
+instead of defaulting it to `"0"`; the wire request still says `"0"` for an
+absent one. `WorkstreamDO` overrides `aggregateCommon` to carry the minimum
+`nextTerminalActionAt` across every child projection, re-publishes its common
+projection and bumps `workstream_metadata` when a non-main child moves that
+minimum, and answers `childTerminalDeadlines` from `substream_directory`.
+
+**Why:** Terminal needed a background agent to address the conversation that
+started it from inside the agent's own object, and the default-answers-locally
+rule made an explicit `"0"` indistinguishable from no substream at all: the
+agent's port was answered out of its own tables. The doc comment already
+promised the explicit form went over the wire; the code did not. The deadline
+change is the other half of the same problem: the workspace directory holds one
+Terminal deadline per work stream, aggregated from the main conversation alone,
+so a sandbox owned by any other conversation was never swept.
+
+**Considered and rejected:** Aggregating every child projection into the
+work stream's row, which would make a side thread's title or state the work
+stream's; only the deadline crosses. A separate directory column per
+conversation, which would put a fan-out write on WorkspaceDO for a value the
+parent already holds.
+
+**Consequences:** Every existing caller passes the run's own substream or
+nothing, so nothing resolved differently on this change; a caller inside a
+child that names `"0"` now reaches the main conversation, which is what it
+says. A non-main child's `directory_common` can now cause a common projection
+envelope from the parent; it dedupes on payload, so only a moved deadline
+sends one.
 
 ### 2026-09-18 — Overlap independent inference preparation reads
 

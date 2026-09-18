@@ -100,7 +100,10 @@ describe("Daytona webhook reconciliation", () => {
     const unused = async (): Promise<never> => { throw new Error("unrelated scheduler operation"); };
     const context = { env: f.env, workspaceEnv: f.env, workspaceId: W,
       directory: { workstreamScheduleTargets: unused },
-      notificationIntents: { notificationIntentMaintenanceTarget: unused, reapSettledWorkstreamNotificationIntents: unused } };
+      notificationIntents: { notificationIntentMaintenanceTarget: unused, reapSettledWorkstreamNotificationIntents: unused },
+      // The work stream's parent is not built here; the main conversation is
+      // the one this fixture's sandbox row belongs to.
+      dueTerminalSubstreams: async () => [] };
     const target = { kind: "terminal" as const, id: S, dueAt: new Date(0).toISOString() };
     expect(await runWorkspaceScheduleTarget(context, target, new Date())).toEqual({ waitMs: 30_000 });
     expect(await f.terminal.providerObservation()).toMatchObject({ state: "archived" });

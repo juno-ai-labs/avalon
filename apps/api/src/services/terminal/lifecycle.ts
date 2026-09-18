@@ -105,11 +105,13 @@ export async function reconcileDueTerminalSandbox(
   now = new Date(),
   preserveBeforeExpiry?: (providerSandboxId: string, generation: number) => Promise<void>,
   providerClaimClock?: () => number,
+  /** The conversation whose object owns this sandbox; the main one by default. */
+  substreamId = "0",
 ): Promise<{ transition: TerminalLifecycleTransition }> {
   const claimClockStartedAt = Date.now();
   const claimNow = providerClaimClock
     ?? (() => now.getTime() + (Date.now() - claimClockStartedAt));
-  const terminal = terminalPort(workspaceId, workstreamId);
+  const terminal = terminalPort(workspaceId, workstreamId, substreamId);
   const row = await terminal.sandbox();
   if (!row?.sandboxId || row.lifecycleState === "expired") return { transition: "none" };
 
@@ -118,7 +120,10 @@ export async function reconcileDueTerminalSandbox(
     && row.operationLeaseExpiresAt
     && row.operationLeaseExpiresAt > now.getTime()
   ) {
-    if (await runsPort(workspaceId, workstreamId).runIsActive({ runId: row.operationRunId })) {
+    // The holder's run row is in the conversation it executed in, which is
+    // the sandbox's own unless a background agent holds its owner's lease.
+    const holderSubstreamId = row.operationRunSubstreamId ?? substreamId;
+    if (await runsPort(workspaceId, workstreamId, holderSubstreamId).runIsActive({ runId: row.operationRunId })) {
       return { transition: "deferred" };
     }
   }
@@ -308,10 +313,12 @@ export function createTerminalFinalDiffPreserver(
   provider: Pick<TerminalSandboxProvider, "runUtilityCommand">,
   workspaceId: string,
   workstreamId: string,
+  /** The conversation whose object owns the sandbox; the main one by default. */
+  substreamId = "0",
 ): (providerSandboxId: string, generation: number) => Promise<void> {
   return async (providerSandboxId, generation) => {
     const workspace = env.DB;
-    const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId);
+    const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId, substreamId);
     if (await terminal.finalDiffResourceId()) return;
     const result = await provider.runUtilityCommand(providerSandboxId, {
       operation: "lifecycle.final_diff",

@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   TerminalSandboxCoordinator,
+  terminalSandboxStableName,
   type TerminalClock,
 } from "../src/services/terminal/coordinator";
 import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
 import { TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS } from "../src/services/terminal/contract";
+import { sha256 } from "../src/lib/crypto";
 import type {
   TerminalSandboxProvider,
   TerminalSandboxState,
@@ -28,6 +30,7 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
   testResourcePortFactory,
+  testHarnessRunPort,
   testTerminalPortFactory,
 } from "./helpers/durable-authority";
 
@@ -963,5 +966,71 @@ describe("Terminal sandbox coordinator", () => {
       harnessRunId: successorRun,
       toolCallId: "renew-race-successor",
     })).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+  });
+
+  it("names a side thread's sandbox by its own conversation and keeps the main conversation's name", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const thread = "00000000-0000-4000-8000-000000000077";
+    // The main conversation's derivation is the one every deployed sandbox
+    // was created under; a changed hash would orphan them all at Daytona.
+    const legacyHash = await sha256(`${WORKSPACE_ID}:${WORKSTREAM_ID}`);
+    const mainName = `avalon-${legacyHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
+    await expect(terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, "0")).resolves.toBe(mainName);
+
+    const coordinator = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+    );
+    await coordinator.acquire(context());
+
+    const created = vi.mocked(provider.createSandbox).mock.calls[0]![0];
+    expect(created.substreamId).toBe(thread);
+    expect(created.stableName).not.toBe(mainName);
+    expect(created.stableName).toBe(await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, thread));
+  });
+
+  it("lets a background agent hold its owner's lease from another conversation until it yields", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const worker = "00000000-0000-4000-8000-000000000088";
+    const workerRun = "00000000-0000-4000-8000-000000000089";
+    // The worker's run row is in the worker's own object, never in the
+    // owner's, so the owner's storage cannot read its liveness itself.
+    const workerStore = testWorkstreamObjectStore();
+    openDatabases.push(workerStore);
+    seedWorkstreamObjectRoot(workerStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+    seedWorkstreamRun(workerStore, { id: workerRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
+    const runsPort = (_workspaceId: string, _workstreamId: string, substreamId?: string) =>
+      testHarnessRunPort(substreamId === worker ? workerStore : objectStore);
+    const owner = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+    );
+    const agent = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined,
+      { runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+    );
+    const workerContext = { ...context(), harnessRunId: workerRun, toolCallId: "worker-call" };
+
+    await expect(agent.acquire(workerContext)).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id, operation_run_substream_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: workerRun, operation_run_substream_id: worker });
+    // Held: the worker is still running in its own object, which is where
+    // the owner's coordinator asks.
+    await expect(owner.acquire(context())).rejects.toMatchObject({ code: "sandbox_busy" });
+
+    workstreamObjectRun(workerStore, "UPDATE runs SET status = 'completed' WHERE run_id = ?", workerRun);
+    await expect(owner.acquire(context())).resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT operation_run_id, operation_run_substream_id FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ operation_run_id: RUN_ID, operation_run_substream_id: null });
+    // One sandbox, shared: the worker created it and the owner reused it.
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 });

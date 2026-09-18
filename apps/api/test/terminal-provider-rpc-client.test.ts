@@ -78,6 +78,7 @@ describe("Terminal provider RPC client", () => {
       stableName: "terminal-1",
       workspaceId: "workspace-1",
       workstreamId: "workstream-1",
+      substreamId: "0",
       generation: 1,
       domainAllowList: ["github.com"],
       environment: {},

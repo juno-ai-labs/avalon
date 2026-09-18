@@ -17,7 +17,9 @@ import {
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
+import { resolveTerminalRunScope, workspaceAgentOwnerLookup } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
+import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { createResourcePortFactory } from "../../runtime/resource-port";
 import type { TerminalSandboxProvider } from "./provider-contract";
 import { createTerminalProviderRpcClient } from "./provider-rpc-client";
@@ -76,11 +78,18 @@ export async function createAvalonTerminalPlugin(
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
 
+  // Which conversation's sandbox this run uses: its own, or for a background
+  // agent the conversation that started it, so the agents a conversation
+  // spawns work in its files under its lease. Decided once, here, and bound
+  // into the factory so nothing below needs to know a run's Terminal address
+  // can differ from its own.
+  const scope = await resolveTerminalRunScope(input, workspaceAgentOwnerLookup(env, input.workspaceId));
   // No in-object variant to choose between: the owning object installs its
   // Terminal executor on the environment a run is handed, so this factory is
-  // local inside that object and a stub anywhere else, without either caller
+  // local inside that object when the object is the authority conversation,
+  // and a stub to that conversation anywhere else, without either caller
   // knowing which. See `runtime/local-authorities.ts`.
-  const terminalPort = createTerminalPortFactory(env);
+  const terminalPort = createTerminalPortFactory(env, undefined, scope.authoritySubstreamId);
   // The conversation's context-residency ledger, addressed by the substream
   // this run is: residency is a fact about one transcript. Resolves in-object
   // the same way the Terminal port does.
@@ -156,6 +165,7 @@ export async function createAvalonTerminalPlugin(
       operationId: context.harnessRunId,
       eventId: newId(),
     }),
+    { ...scope, runsPort: createHarnessRunPortFactory(env) },
   );
   const readGateway = options.readGateway ?? createGitHubRestReadGateway(env);
   const prepareRepository = async (
@@ -258,6 +268,8 @@ export async function createAvalonTerminalPlugin(
         logStructuredEvent(env, "info", "terminal_tool_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
+          substream_id: scope.runSubstreamId,
+          terminal_substream_id: scope.authoritySubstreamId,
           harness_run_id: context.harnessRunId,
           // `tool_invocation_id` names the receipt row everywhere else it is
           // logged, and until the identity arrived on the context this had no
@@ -287,6 +299,8 @@ export async function createAvalonTerminalPlugin(
         logStructuredEvent(env, "warn", "terminal_tool_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
+          substream_id: scope.runSubstreamId,
+          terminal_substream_id: scope.authoritySubstreamId,
           harness_run_id: context.harnessRunId,
           // `tool_invocation_id` names the receipt row everywhere else it is
           // logged, and until the identity arrived on the context this had no
@@ -347,6 +361,8 @@ export async function createAvalonTerminalPlugin(
         logStructuredEvent(env, level, "terminal_plugin_activation_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
+          substream_id: scope.runSubstreamId,
+          terminal_substream_id: scope.authoritySubstreamId,
           harness_run_id: context.harnessRunId,
           tool_call_id: toolCallId,
           activation_attempt: activationAttemptNumber,
@@ -372,6 +388,8 @@ export async function createAvalonTerminalPlugin(
       logStructuredEvent(env, "info", "terminal_plugin_activation_started", {
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
+        substream_id: scope.runSubstreamId,
+        terminal_substream_id: scope.authoritySubstreamId,
         harness_run_id: context.harnessRunId,
         tool_call_id: toolCallId,
         activation_attempt: activationAttemptNumber,

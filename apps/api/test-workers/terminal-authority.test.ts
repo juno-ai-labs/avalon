@@ -811,6 +811,57 @@ describe("Terminal authority on real workerd", () => {
     ]);
   });
 
+  it("answers a child's own Terminal locally and dispatches a factory bound to its owner's conversation", async () => {
+    const stub = agent();
+    const child = "00000000-0000-7000-8000-000000000001";
+    await boot(stub);
+    const observed = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      state.storage.sql.exec(
+        `INSERT OR REPLACE INTO substream_agent_identity
+           (id, external_substream_id, created_at, updated_at)
+         VALUES (1, ?, 1, 1)`,
+        child,
+      );
+      // The environment a run in this child is handed: its own authorities,
+      // installed for its own substream.
+      const execution = new Proxy(
+        (instance as unknown as {
+          localRuntimeEnvironment(workspaceId: string, workstreamId: string, substreamId: string): Env;
+        }).localRuntimeEnvironment(WORKSPACE_ID, WORKSTREAM_ID, child),
+        {
+          get(target, property, receiver) {
+            if (property === "SUBSTREAM_AGENTS") throw new Error("terminal operation left the isolate");
+            return Reflect.get(target, property, receiver) as unknown;
+          },
+        },
+      );
+      const results: string[] = [];
+      // A background agent's factory is bound to the conversation that
+      // started it. From inside the agent's own object that is another
+      // object, and the port must go there rather than answer here.
+      try {
+        await createTerminalPortFactory(execution, undefined, "0")(WORKSPACE_ID, WORKSTREAM_ID).sandbox();
+        results.push("owner_terminal_answered_locally");
+      } catch (error) {
+        results.push(error instanceof Error ? error.message : "unknown_terminal_error");
+      }
+      // The child's own Terminal, whether the factory is bound to it or to
+      // nothing, is this object's to answer.
+      results.push(await createTerminalPortFactory(execution, undefined, child)(WORKSPACE_ID, WORKSTREAM_ID).sandbox()
+        === null ? "own_terminal_answered_locally" : "own_terminal_unexpected_row");
+      results.push(await createTerminalPortFactory(execution)(WORKSPACE_ID, WORKSTREAM_ID).sandbox()
+        === null ? "unbound_terminal_answered_locally" : "unbound_terminal_unexpected_row");
+      return results;
+    });
+
+    expect(observed).toEqual([
+      "terminal operation left the isolate",
+      "own_terminal_answered_locally",
+      "unbound_terminal_answered_locally",
+    ]);
+  });
+
   describe("the operation lease", () => {
     it("admits one run and refuses a second while the holder is still live", async () => {
       const stub = agent();
@@ -835,6 +886,51 @@ describe("Terminal authority on real workerd", () => {
       expect(contender.value).toBeNull();
       const held = await terminal(stub, "sandbox");
       expect((held.value as { operationRunId: string }).operationRunId).toBe(RUN_A);
+    });
+
+    it("holds a lease for a run in another conversation until that conversation says it yielded", async () => {
+      const stub = agent();
+      const worker = "00000000-0000-7000-8000-00000000wk01";
+      await boot(stub);
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        // Only the contender has a run row here. The holder ran in the
+        // worker's own object, so this object's `runs` cannot say whether it
+        // is live — and must not read its absence as having yielded.
+        seedRunRow(state, RUN_B, "admitted");
+      });
+      await reserve(stub, RUN_A, { runSubstreamId: worker });
+
+      const contender = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 2_000,
+      });
+      expect(contender.status).toBe(200);
+      expect(contender.value).toBeNull();
+
+      // The coordinator asked the worker's conversation and was told the run
+      // yielded; the takeover names that exact holder.
+      const takenOver = await terminal(stub, "claimOperation", {
+        runId: RUN_B,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 2_000,
+        yieldedForeignHolder: { runId: RUN_A, substreamId: worker },
+      });
+      expect(takenOver.value).toMatchObject({ operationRunId: RUN_B, operationRunSubstreamId: null });
+
+      // A holder that ran here is still judged by its own run row: the same
+      // takeover names nobody this object holds a lease for.
+      const stale = await terminal(stub, "claimOperation", {
+        runId: RUN_A,
+        generation: 1,
+        leaseExpiresAt: 9_000_000,
+        now: 3_000,
+        yieldedForeignHolder: { runId: RUN_B, substreamId: worker },
+      });
+      expect(stale.value).toBeNull();
     });
 
     it("reclaims a lease whose holder is no longer running", async () => {

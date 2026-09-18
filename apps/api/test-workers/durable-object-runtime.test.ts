@@ -1295,6 +1295,73 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(false);
   });
 
+  it("forwards the earliest Terminal deadline of any conversation and lists which conversations own one", async () => {
+    const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await fetchAndDrain(stub, "https://workstream.test/health");
+    const at = "2026-08-17T20:00:00.000Z";
+    const mainDue = "2026-08-17T21:00:00.000Z";
+    const threadDue = "2026-08-17T20:30:00.000Z";
+    const common = (title: string, nextTerminalActionAt: string | null) => ({
+      kind: "directory_common" as const,
+      title,
+      description: "Whose sandbox is due",
+      preview: "",
+      scope: "workspace" as const,
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: at,
+      completedAt: null,
+      archivedAt: null,
+      nextTerminalActionAt,
+    });
+    // Inspected in the same invocation as the writes, before the drain alarm
+    // can forward and delete what the parent queued (docs/testing.md).
+    const forwarded = await runInDurableObject(stub, async (instance, state) => {
+      const testable = instance as unknown as TestableWorkstreamDO;
+      const deadline = () => state.storage.sql.exec<{ next_terminal_action_at: number | null }>(
+        `SELECT next_terminal_action_at FROM workstream_metadata WHERE id = 1`,
+      ).one().next_terminal_action_at;
+      testable.applyChildEnvelope("0", childEffectEnvelope(common("Main", mainDue), "main-terminal-1"));
+      expect(deadline()).toBe(Date.parse(mainDue));
+      // A side thread's sandbox comes due first. The thread's projection is
+      // not the one the workspace sees, but its deadline has to be: the
+      // workspace alarm is the only thing that ever stops that sandbox.
+      testable.applyChildEnvelope(CHILD_SUBSTREAM_ID, childEffectEnvelope(
+        common("Thread", threadDue), "thread-terminal-1", 1, WORKSTREAM_ID, CHILD_SUBSTREAM_ID,
+      ));
+      expect(deadline()).toBe(Date.parse(threadDue));
+      await expect(instance.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+        .resolves.toEqual({ items: [
+          { substreamId: CHILD_SUBSTREAM_ID, nextTerminalActionAt: threadDue },
+          { substreamId: "0", nextTerminalActionAt: mainDue },
+        ] });
+      // The thread's sandbox is gone; the main conversation's is the earliest again.
+      testable.applyChildEnvelope(CHILD_SUBSTREAM_ID, childEffectEnvelope(
+        common("Thread", null), "thread-terminal-2", 2, WORKSTREAM_ID, CHILD_SUBSTREAM_ID,
+      ));
+      expect(deadline()).toBe(Date.parse(mainDue));
+      await expect(instance.childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+        .resolves.toEqual({ items: [{ substreamId: "0", nextTerminalActionAt: mainDue }] });
+      return state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM durable_outbox
+          WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
+            AND json_extract(payload_json, '$.partitionKey') = 'common'
+          ORDER BY created_at, message_id`,
+      ).toArray().map((row) => (JSON.parse(row.payload_json) as {
+        effect: { title: string; nextTerminalActionAt: string | null };
+      }).effect);
+    });
+    // Every row the workspace hears is the main conversation's, carrying
+    // whichever deadline was earliest at the time.
+    expect(forwarded).toEqual([
+      { ...common("Main", mainDue) },
+      { ...common("Main", threadDue) },
+      { ...common("Main", mainDue) },
+    ].map((effect) => expect.objectContaining({ title: effect.title, nextTerminalActionAt: effect.nextTerminalActionAt })));
+  });
+
   it("stores private child projections without changing Main's directory in WorkstreamDO", async () => {
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),

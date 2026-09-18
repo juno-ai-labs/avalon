@@ -152,6 +152,25 @@ describe("a tool-receipt port built inside the object that owns the receipts", (
 
     await expect(port.receiptsByIds({ effectIntentIds: [] })).resolves.toEqual([]);
   });
+
+  /**
+   * Inside a child conversation, a port that names no substream means this
+   * conversation; a port that names one means exactly that one. The
+   * distinction is what lets a background agent address its owner's Terminal
+   * from inside its own object: before it existed, naming the main
+   * conversation from a child was answered out of the child's own tables.
+   */
+  it("answers a child's own conversation locally, and dispatches an explicitly named other one", async () => {
+    const child = "55555555-5555-4555-8555-555555555555";
+    const carried = withLocalWorkstreamAuthorities(env(), WORKSPACE, WORKSTREAM, child, { toolReceipt: residentReceipts() });
+
+    await expect(createToolReceiptObjectPort(carried, WORKSPACE, WORKSTREAM)
+      .receiptsByIds({ effectIntentIds: [] })).resolves.toEqual([]);
+    await expect(createToolReceiptObjectPort(carried, WORKSPACE, WORKSTREAM, undefined, child)
+      .receiptsByIds({ effectIntentIds: [] })).resolves.toEqual([]);
+    await expect(createToolReceiptObjectPort(carried, WORKSPACE, WORKSTREAM, undefined, "0")
+      .receiptsByIds({ effectIntentIds: [] })).rejects.toThrow("receipt operation left the isolate");
+  });
 });
 
 /**

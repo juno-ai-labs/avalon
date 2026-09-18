@@ -2,9 +2,10 @@
 
 Terminal is Rally's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
-work stream one private Daytona sandbox without turning Rally into an
-interactive coding harness: the model receives nine typed tools, not a PTY or a
-provider API, and a sandbox is allocated only when one of those tools executes.
+conversation one private Daytona sandbox — shared with every background agent
+that conversation starts — without turning Rally into an interactive coding
+harness: the model receives nine typed tools, not a PTY or a provider API, and a
+sandbox is allocated only when one of those tools executes.
 
 ## Where the code lives
 
@@ -12,7 +13,8 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | --- | --- |
 | `apps/api/src/services/terminal/contract.ts` | Canonical plugin prompt, nine tool descriptors and strict argument schemas, and regional configuration contract. |
 | `apps/api/src/services/terminal/plugin.ts` | Regional composition boundary and allocation-free deferred plugin registration. |
-| `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-work-stream acquisition, authority fencing, exclusive mutation leases, and recovery after ambiguous provider calls. |
+| `apps/api/src/services/terminal/authority.ts` | Which conversation's sandbox a run uses: its own, or for a background agent the conversation that (transitively) started it, resolved once at plugin composition from WorkspaceDO's delegation records. |
+| `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-conversation acquisition, authority fencing, exclusive mutation leases — including a lease held by a run in another conversation — and recovery after ambiguous provider calls. |
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
 | `apps/api/src/services/terminal/patch-format.ts`, `vendor/apply_patch.py` | The two patch texts `apply_patch` reads: the unified-diff and `*** Begin Patch` parsers that validate paths and shape the result, and OpenAI's reference applier for the second, vendored unmodified (MIT; provenance in `vendor/README.md`) and written into the sandbox beside a patch that needs it. |
@@ -41,11 +43,26 @@ the model, so the sandbox is built while the model does work that needs no
 sandbox. The first Terminal tool awaits that same promise, collecting the work
 in flight rather than starting it, and it — not activation — is where a
 provider failure reaches the model, with the coordinator's own guidance. The
-acquisition asks `TerminalSandboxCoordinator` for the work stream's exclusive
+acquisition asks `TerminalSandboxCoordinator` for the conversation's exclusive
 Terminal mutation lease. It creates, starts, or restores the stable private
 sandbox and records the provider result in the owning SubstreamAgent. That
 successful acquisition, authority/policy decision, and
 repository preparation are reused for later tools in the same harness run.
+
+Which conversation owns the sandbox is decided once, when the plugin is
+composed (`authority.ts`), and bound into the Terminal port factory so nothing
+below it knows a run's Terminal address can differ from its own. An ordinary
+run uses its own conversation's sandbox: the main conversation's sandbox is the
+work stream's, and a private side thread has one of its own. A background
+agent uses the sandbox of the conversation that started it — through any
+further delegation, up to the first conversation nobody delegated — so the
+agents a conversation spawns work in its files and its checkout, under its
+lease, rather than each provisioning a sandbox of their own. The main
+conversation's Daytona name keeps the derivation every deployed sandbox was
+created under; any other conversation folds its substream in. A background
+agent's port reaches the owning conversation's object over the wire, and the
+lease it takes there records which conversation its run executes in, because
+the owner's object cannot read that run's liveness from its own tables.
 Repository checkout explicitly invalidates the run-local acquisition because it
 can replace the sandbox generation; a later tool then acquires and prepares the
 replacement once. A new harness run performs its own acquisition.
@@ -253,7 +270,16 @@ The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
-observed provider state after ambiguous calls.
+observed provider state after ambiguous calls. The workspace directory carries
+one Terminal deadline per work stream: the earliest across every conversation
+under it, which `WorkstreamDO` folds into the main conversation's projection
+(see [`workstream-durable-object.md`](workstream-durable-object.md)). When that
+entry comes due the sweep asks the work stream's parent object which
+conversations are due (`childTerminalDeadlines`) and reconciles each one's
+sandbox on its own row; a work stream that lists none is treated as the main
+conversation's, as every work stream was before conversations reported their
+own. A sandbox whose lease holder ran in another conversation is held while
+that conversation says the run is active.
 
 **Daytona owns provider state; Rally owns identity, authority, leases, and
 retention intent.** Acquisition reads metadata before reusing the recorded
@@ -367,7 +393,9 @@ intent. Callers must not present the intent as a fresh Daytona observation.
 `POST /ingest/daytona` verifies Svix signatures against the raw body and the
 standard five-minute replay window, then checks the configured organization.
 Events only trigger metadata readback; their state and timestamp do not overwrite
-storage. Provider labels route to an active workspace in the receiving region,
+storage. Provider labels route to an active workspace in the receiving region
+and to the conversation whose object owns the sandbox (`rally.substream`; a
+sandbox created before the label existed belongs to the main conversation),
 and the current sandbox ID/generation must match. Each configured regional endpoint can
 subscribe to the shared organization; Global is currently the only deployment. Duplicate and out-of-order delivery is
 safe. An already-deleted sandbox has no routing labels to read, so its owning
@@ -404,10 +432,20 @@ personless; it is not duplicated into these product events.
 
 ## Invariants
 
-- **One regional sandbox generation belongs to one work stream and one frozen
+- **One regional sandbox generation belongs to one conversation and one frozen
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
-  caller's unauthorized input, so a mismatch destroys and reprovisions it.
+  caller's unauthorized input, so a mismatch destroys and reprovisions it. The
+  conversation is the one that owns the sandbox rows, which for a background
+  agent is the conversation that started it, never the agent's own; two
+  conversations of one work stream never share a generation, and a run never
+  uses a sandbox under another work stream.
+- **A lease held by a run in another conversation is judged by that
+  conversation, never by this object's own run table.** The row records which
+  conversation the holder ran in; the claim SQL reads liveness from `runs` only
+  for a holder that ran here, and the coordinator and the lifecycle sweep ask
+  the holder's conversation before taking over or stopping. Treating a missing
+  run row as a yielded run would let two runs hold one sandbox.
 - **A published document's identity is the owning work stream plus its
   normalized publish path, and that derivation is frozen once documents
   exist.** "Owning" is the room for a work-stream-scoped Sidekick and the run's
@@ -575,7 +613,18 @@ The focused API suites are `apps/api/test/terminal-*.test.ts`; they use injected
 Daytona, GitHub, R2, clock, and D1 fakes and never require network access. The
 schema those fixtures are built on is proved by
 `packages/db/test/baseline-migration.test.ts`. Renderer states are covered by
-`workspace-settings.test.tsx` and `inspector-rail.test.tsx`.
+`workspace-settings.test.tsx` and `inspector-rail.test.tsx`. Which conversation
+a run's sandbox belongs to is `terminal-authority.test.ts` over a table of
+delegations; a side thread's own Daytona name, and a background agent holding
+its owner's lease from another conversation until it yields, are in
+`terminal-coordinator.test.ts`; the sweep holding such a sandbox is in
+`terminal-lifecycle.test.ts`; the port resolution rule is in
+`workstream-tool-receipt-locality.test.ts`. On real workerd,
+`test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
+that ran elsewhere and that a factory bound to the owner's conversation leaves
+the agent's object, and `test-workers/durable-object-runtime.test.ts` proves
+`WorkstreamDO` forwards the earliest conversation deadline and lists the
+conversations that own one.
 Run the API set with:
 
 ```text
@@ -617,7 +666,9 @@ workspace policy into WorkspaceDO:
 - WorkspaceDO `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
   for the revisioned preview/confirm/read-back protocol and full history;
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
-  retention, and final-diff state;
+  retention, and final-diff state — including, since conversation schema 63,
+  `operation_run_substream_id`: the conversation the lease holder's run
+  executes in when that is not this object's own, `NULL` otherwise;
 - `terminal_provider_observation` for generation-fenced provider readback, freshness,
   errors, and the next observation deadline (SubstreamAgent schema 57);
 - `terminal_tasks` for durable command submission and one final result;
@@ -1089,6 +1140,58 @@ request merges, and sandboxes already created stay at the size they were made
 with. A future change to these numbers has to stay in this manifest: the weekly
 job builds from the repository, and a size configured anywhere else is reverted
 by the next adoption pull request without anyone noticing.
+
+### 2026-09-18 — A sandbox belongs to a conversation and is shared with the agents it starts
+
+**What changed:** The sandbox is scoped to a conversation rather than a work
+stream, and a background agent uses the sandbox of the conversation that
+(transitively) started it. `authority.ts` resolves that once at plugin
+composition from WorkspaceDO's delegation records and binds it into the
+Terminal port factory; the port and the generic object ports now read an
+explicit substream as "exactly that conversation" and no substream as "the
+conversation this run executes in", so a factory bound to the owner's
+conversation leaves a background agent's object over the wire. A side thread's
+Daytona name folds its substream in while the main conversation keeps the
+derivation every deployed sandbox was created under. `terminal_workspace`
+gained `operation_run_substream_id` (conversation schema 63): the claim SQL
+reads holder liveness from `runs` only for a holder that ran in this object,
+the task fences do the same, and the coordinator takes over a holder that ran
+elsewhere only after that conversation's own harness-run authority says it
+yielded, naming the exact holder. `WorkstreamDO` forwards the earliest Terminal
+deadline of any conversation under it and lists them (`childTerminalDeadlines`);
+the workspace sweep and the settings policy application reconcile each
+conversation's sandbox, and the Daytona webhook routes by a `rally.substream`
+label.
+
+**Why:** Terminal was documented as one sandbox per work stream, but its rows
+had followed the conversation into the object: a background agent's Terminal
+port resolved to the agent's own tables, reserved the work stream's stable
+name, and — because Daytona names are unique — was handed the main
+conversation's sandbox by the create-then-lookup fallback, under a second,
+independent lease and lifecycle. Two authorities over one sandbox, neither
+seeing the other's commands, and the agent's never swept. Sharing was the
+product intent; it had to become a decision rather than an accident.
+
+**Considered and rejected:** Per-run or per-operation leases so a conversation
+and its agents could mutate one sandbox concurrently. The serialization
+invariant above stands: two runs editing one checkout at once is the corruption
+the lease exists to prevent, and a background agent's tool waits with
+`sandbox_busy` while its owner's run holds the lease, exactly as a linked run
+does. Carrying the owning conversation in `WorkstreamWorkflowInput` or a child
+column instead of reading delegation at composition — cheaper per run, but a
+second copy of an ownership fact WorkspaceDO already owns. Making
+`WorkstreamDO` aggregate every child projection — a side thread's title or state
+is its own affair; only the deadline crosses.
+
+**Consequences:** A conversation and the agents it starts share one filesystem,
+one checkout, and one exclusive lease; the agents' runs cannot overlap the
+owner's on that sandbox, and a background agent's `run_command` is fenced by
+its lease deadline rather than by a run row the owner's object cannot see. The
+sweep's directory entry for a work stream is now the earliest of several
+conversations, so one due entry may reconcile several sandboxes. The desktop's
+per-work-stream Terminal card still reads the main conversation's sandbox; a
+side thread's is reachable only through the sweep, the settings policy
+application, and its own runs.
 
 ### 2026-09-18 — Terminal's tools take the names the model already knows
 

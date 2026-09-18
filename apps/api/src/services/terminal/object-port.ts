@@ -14,10 +14,20 @@ import { localWorkstreamAuthority } from "../../runtime/local-authorities";
 import type { WorkstreamTerminalStorage } from "../../durable-objects/workstream-terminal-storage";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
-/** Builds a port for one work stream; injected so callers stay testable. */
+/**
+ * Builds a port for one conversation's Terminal authority; injected so callers
+ * stay testable.
+ *
+ * `substreamId` names the conversation whose SubstreamAgent owns the sandbox
+ * rows. A factory bound at plugin composition already carries the run's
+ * authority substream, so its callers omit it; the lifecycle sweep, the
+ * settings service, and the Daytona webhook name one explicitly because they
+ * address sandboxes that are not their own.
+ */
 export type TerminalPortFactory = (
   workspaceId: string,
   workstreamId: string,
+  substreamId?: string,
 ) => TerminalObjectPort;
 
 /** Execute one operation without crossing a Durable Object request boundary. */
@@ -58,9 +68,17 @@ export class TerminalObjectPortError extends Error {
 export function createTerminalPortFactory(
   env: Env,
   local?: WorkstreamTerminalStorage | TerminalOperationExecutor,
+  /**
+   * The conversation every port from this factory addresses unless a call
+   * names another. Plugin composition binds the run's Terminal authority here
+   * — its own conversation, or the owner's for a background agent — so the
+   * coordinator, repository, and publication code below it need no idea that
+   * a sandbox can belong to a conversation other than the run's.
+   */
+  substreamId?: string,
 ): TerminalPortFactory {
-  return (workspaceId, workstreamId) =>
-    createTerminalObjectPort(env, workspaceId, workstreamId, local);
+  return (workspaceId, workstreamId, requested = substreamId) =>
+    createTerminalObjectPort(env, workspaceId, workstreamId, local, requested);
 }
 
 /**
@@ -94,8 +112,17 @@ export function createTerminalObjectPort(
    * so it can keep those semantics without RPCing back into its own event.
    */
   localOverride?: WorkstreamTerminalStorage | TerminalOperationExecutor,
-  /** Which of the parent's conversations; the main one by default. */
-  substreamId: string = "0",
+  /**
+   * Which of the parent's conversations holds the Terminal rows.
+   *
+   * Left out, the conversation the caller executes in: the main one from a
+   * Worker, this object's own inside a conversation object. Given, exactly
+   * that conversation — so a background agent's factory bound to its owner's
+   * substream dispatches to the owner's object rather than answering out of
+   * the agent's own tables, which is what made two conversations of one work
+   * stream each believe they owned the same stable sandbox name.
+   */
+  substreamId?: string,
 ): TerminalObjectPort {
   // The same seam the eight object ports take through `createObjectPort`:
   // an explicit override for a focused test, otherwise whatever the owning
@@ -120,13 +147,13 @@ export function createTerminalObjectPort(
         env.AVALON_REGION,
         asWorkspaceId(workspaceId),
         workstreamId,
-        substreamId === "0" ? "0" : asSubstreamId(substreamId),
+        substreamId === undefined || substreamId === "0" ? "0" : asSubstreamId(substreamId),
       ),
     );
     const result = await stub.executeTerminalOperation({
       workspaceId,
       workstreamId,
-      substreamId,
+      substreamId: substreamId ?? "0",
       operation,
       args,
     });

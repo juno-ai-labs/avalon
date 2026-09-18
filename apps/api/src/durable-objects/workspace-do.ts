@@ -125,6 +125,7 @@ import { resolveClientFeatureFlagsForSubject } from "../services/client-feature-
 import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import { conversationParentStub } from "../services/conversation-parent-client";
 import {
   recordWorkspaceScheduleFailure,
   runWorkspaceScheduleTarget,
@@ -4456,6 +4457,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       directory: this,
       notificationIntents: this,
+      // The directory row is this object's; which conversation the deadline
+      // belongs to is the work stream's own knowledge, read from its parent
+      // object rather than copied here.
+      dueTerminalSubstreams: async (workstreamId, through) => {
+        const parent = await conversationParentStub(this.env, {
+          workspaceId: asWorkspaceId(workspaceId),
+          parentKind: "workstream",
+          parentId: workstreamId,
+        });
+        const { items } = await parent.childTerminalDeadlines({
+          workspaceId: asWorkspaceId(workspaceId),
+          parentId: workstreamId,
+        });
+        return items
+          .filter((item) => Date.parse(item.nextTerminalActionAt) <= through.getTime())
+          .map((item) => item.substreamId);
+      },
     };
   }
 
