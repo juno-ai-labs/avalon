@@ -26,7 +26,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CandidateContract, EvalCase } from "./contract";
-import { loadCases } from "./run";
+import { loadCases, UTILITY_FALSE_FIRE, UTILITY_MISSED_FIRE } from "./run";
 import type { CandidateReport } from "./run";
 
 interface GenerationFile {
@@ -128,9 +128,15 @@ export function digest(
     const key = `${failure.truth} judged ${failure.verdict ?? "no answer"}`;
     byClass.set(key, [...(byClass.get(key) ?? []), failure]);
   }
-  // Round-robin across error classes so the digest spans them.
+  // Round-robin across error classes so the digest spans them, expensive class
+  // first. The two errors do not cost the same — a miss costs three points of
+  // utility against a false fire's one, per `objective.md` — and a budget of
+  // twelve that fills up on the cheap class hands the teacher the wrong problem.
   const chosen: typeof failures = [];
-  const queues = [...byClass.values()].map((group) => [...group].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0)));
+  const classCost = (key: string) => (key.startsWith("met judged") ? 1 - UTILITY_MISSED_FIRE : 1 - UTILITY_FALSE_FIRE);
+  const queues = [...byClass.entries()]
+    .sort(([left], [right]) => classCost(right) - classCost(left))
+    .map(([, group]) => [...group].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0)));
   while (chosen.length < failureBudget && queues.some((queue) => queue.length > 0)) {
     for (const queue of queues) {
       const next = queue.shift();
@@ -158,6 +164,11 @@ export function digest(
   for (const [verdict, stats] of Object.entries(report.aggregate.perClass)) {
     lines.push(`- ${verdict}: support ${stats.support}, correct ${stats.correct}, predicted ${stats.predicted}`);
   }
+  lines.push("");
+  lines.push("### What the failures cost");
+  lines.push(`A miss — truth \`met\`, judged anything else — costs ${1 - UTILITY_MISSED_FIRE} points of utility.`);
+  lines.push(`A false fire costs ${1 - UTILITY_FALSE_FIRE}. Recovering one miss is worth ${(1 - UTILITY_MISSED_FIRE) / (1 - UTILITY_FALSE_FIRE)} avoided false fires,`);
+  lines.push("so the class to attack is the one that dropped a run somebody asked for.");
   lines.push("");
   lines.push("### Failures by family");
   const familyCounts = new Map<string, { wrong: number; total: number }>();

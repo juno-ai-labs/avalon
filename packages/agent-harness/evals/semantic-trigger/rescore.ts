@@ -1,0 +1,237 @@
+/**
+ * Re-derive the objective from stored runs, without calling the provider.
+ *
+ * The utility matrix in `objective.md` is a product decision, and it has already
+ * changed once: it originally charged a false fire double a miss, and the
+ * product's economics are the other way round — what sits behind this gate is a
+ * model that decides for itself whether there is anything to do, so an unwanted
+ * session is cheap and a dropped request is not. Every band utility published
+ * before that reversal ranked the population backwards.
+ *
+ * Re-running eleven candidates against a live model to answer "what would this
+ * have scored under a different matrix" is both slow and noisy: the answers did
+ * not change, only the price list did. This reads the answers back out of
+ * `reports/`, replays the gate's own rule through `firesInBand` from `run.ts`,
+ * and pools repeats of the same candidate so a ranking is not read off one run.
+ *
+ *   tsx evals/semantic-trigger/rescore.ts reports/30-wide-dev.json [...]
+ *
+ * It is deliberately not a copy of the aggregation in `run.ts`: it reports the
+ * objective and the decision counts, which is what a ranking needs, and points
+ * at the report for anything per-class.
+ */
+import { readFileSync } from "node:fs";
+
+import type { CandidateContract, EvalCase } from "./contract";
+import { primitiveOf } from "./contract";
+import {
+  bandUtilityOf,
+  firesInBand,
+  loadCases,
+  OPERATING_BAND,
+  utility,
+  type CandidateReport,
+} from "./run";
+import { splitOf } from "./split";
+
+const DIR = "evals/semantic-trigger";
+
+interface GenerationFile {
+  split: string;
+  corpusHash: string;
+  caseCount: number;
+  ranAt: string;
+  candidates: CandidateContract[];
+  reports: CandidateReport[];
+}
+
+interface RunScore {
+  reportFile: string;
+  ranAt: string;
+  split: string;
+  n: number;
+  bandUtility: number;
+  /** Utility at each threshold in the band, because the band average hides where it fires. */
+  utilityAt: number[];
+  /** Utility across the wider curve, when one was asked for. */
+  curveUtility: number[];
+  fireBrier: number;
+  threeClass: number;
+  recall: number | null;
+  precision: number | null;
+  missedFires: number;
+  falseFires: number;
+  /** Standing watches that dropped at least one occurrence they should have caught. */
+  watchesDropped: number;
+  /** Standing watches that started at least one unwanted run. */
+  watchesNoisy: number;
+  watches: number;
+}
+
+function mean(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function spread(values: number[]): number {
+  return values.length < 2 ? 0 : Math.max(...values) - Math.min(...values);
+}
+
+function scoreRun(
+  file: GenerationFile,
+  reportFile: string,
+  report: CandidateReport,
+  scenarioOf: Map<string, string | undefined>,
+  curve: number[],
+): RunScore {
+  const candidate = file.candidates.find((entry) => entry.id === report.candidateId);
+  if (!candidate) throw new Error(`${reportFile} has a report for ${report.candidateId} with no candidate`);
+  const primitive = primitiveOf(candidate);
+
+  let utilityTotal = 0;
+  const utilityAt = OPERATING_BAND.map(() => 0);
+  const curveUtility = curve.map(() => 0);
+  let missedFires = 0;
+  let falseFires = 0;
+  let firedWanted = 0;
+  let firedTotal = 0;
+  let wantedTotal = 0;
+  const dropped = new Set<string>();
+  const noisy = new Set<string>();
+  const watches = new Set<string>();
+
+  for (const outcome of report.cases) {
+    const shouldFire = outcome.truth === "met";
+    const fires = firesInBand(primitive, outcome.verdict, outcome.confidence);
+    utilityTotal += bandUtilityOf(fires, shouldFire);
+    fires.forEach((fired, index) => { utilityAt[index]! += utility(fired, shouldFire); });
+    firesInBand(primitive, outcome.verdict, outcome.confidence, curve)
+      .forEach((fired, index) => { curveUtility[index]! += utility(fired, shouldFire); });
+
+    // The decision counts are reported at the gate's single verdict rather than
+    // over the band, because "how many runs did it drop" is a count of events and
+    // not of threshold points. The band is what the objective averages over.
+    const fired = outcome.verdict === "met";
+    const scenarioId = scenarioOf.get(outcome.caseId);
+    if (scenarioId) watches.add(scenarioId);
+    if (shouldFire) wantedTotal += 1;
+    if (fired) firedTotal += 1;
+    if (fired && shouldFire) firedWanted += 1;
+    if (fired && !shouldFire) {
+      falseFires += 1;
+      if (scenarioId) noisy.add(scenarioId);
+    }
+    if (!fired && shouldFire) {
+      missedFires += 1;
+      if (scenarioId) dropped.add(scenarioId);
+    }
+  }
+
+  return {
+    reportFile,
+    ranAt: file.ranAt,
+    split: file.split,
+    n: report.cases.length,
+    bandUtility: utilityTotal / report.cases.length,
+    utilityAt: utilityAt.map((total) => total / report.cases.length),
+    curveUtility: curveUtility.map((total) => total / report.cases.length),
+    fireBrier: report.aggregate.brierBinary,
+    threeClass: report.aggregate.threeClassAccuracy,
+    recall: wantedTotal === 0 ? null : firedWanted / wantedTotal,
+    precision: firedTotal === 0 ? null : firedWanted / firedTotal,
+    missedFires,
+    falseFires,
+    watchesDropped: dropped.size,
+    watchesNoisy: noisy.size,
+    watches: watches.size,
+  };
+}
+
+function main(): void {
+  const files = process.argv.slice(2).filter((argument) => !argument.startsWith("--") && !/^[\d.,]+$/.test(argument));
+  const curveIndex = process.argv.indexOf("--curve");
+  // The band is where the threshold is *allowed* to sit; the curve is for asking
+  // whether that band is the right one, which the reversed asymmetry reopened.
+  const curve = curveIndex === -1
+    ? []
+    : (process.argv[curveIndex + 1] ?? "").split(",").map(Number).filter((value) => Number.isFinite(value));
+  if (files.length === 0) {
+    console.error("usage: tsx evals/semantic-trigger/rescore.ts <report.json> [...]");
+    process.exit(1);
+  }
+  const cases = loadCases(`${DIR}/cases.jsonl`);
+  const scenarioOf = new Map<string, string | undefined>(
+    cases.map((testCase: EvalCase) => [testCase.id, testCase.scenarioId]),
+  );
+
+  const byCandidate = new Map<string, { words: number; runs: RunScore[] }>();
+  const splits = new Set<string>();
+  const corpora = new Set<string>();
+  for (const path of files) {
+    const file = JSON.parse(readFileSync(path, "utf8")) as GenerationFile;
+    splits.add(file.split);
+    corpora.add(file.corpusHash);
+    for (const report of file.reports) {
+      const entry = byCandidate.get(report.candidateId)
+        ?? { words: report.size.words, runs: [] };
+      entry.runs.push(scoreRun(file, path, report, scenarioOf, curve));
+      byCandidate.set(report.candidateId, entry);
+    }
+  }
+
+  if (corpora.size > 1) {
+    console.log(`WARNING: pooling runs across ${corpora.size} corpus hashes; the labels moved between them.`);
+  }
+  console.log(`band=[${OPERATING_BAND.join(", ")}] splits=${[...splits].join(",")}`
+    + ` corpus=${[...corpora].map((hash) => hash.slice(0, 8)).join(",")}`);
+  console.log("");
+  const bandColumns = OPERATING_BAND.map((threshold) => `u@${threshold}`).join(" | ");
+  console.log(`| candidate | runs | words | band utility | spread | ${bandColumns} | fireBrier | 3-class | recall | precision | missed | false fires | watches dropped | watches noisy |`);
+  console.log(`| --- | ---: | ---: | ---: | ---: | ${OPERATING_BAND.map(() => "---:").join(" | ")} | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |`);
+
+  const rows = [...byCandidate.entries()]
+    .map(([candidateId, entry]) => ({
+      candidateId,
+      words: entry.words,
+      runs: entry.runs,
+      bandUtility: mean(entry.runs.map((run) => run.bandUtility)),
+      utilitySpread: spread(entry.runs.map((run) => run.bandUtility)),
+    }))
+    .sort((left, right) => right.bandUtility - left.bandUtility);
+
+  const percent = (value: number | null) => (value === null ? "n/a" : `${(value * 100).toFixed(1)}%`);
+  for (const row of rows) {
+    const runs = row.runs;
+    console.log(`| ${row.candidateId} | ${runs.length} | ${row.words}`
+      + ` | ${row.bandUtility.toFixed(3)} | ${row.utilitySpread.toFixed(3)}`
+      + ` | ${OPERATING_BAND.map((_, index) => mean(runs.map((run) => run.utilityAt[index]!)).toFixed(3)).join(" | ")}`
+      + ` | ${mean(runs.map((run) => run.fireBrier)).toFixed(3)}`
+      + ` | ${percent(mean(runs.map((run) => run.threeClass)))}`
+      + ` | ${percent(mean(runs.map((run) => run.recall ?? 0)))}`
+      + ` | ${percent(mean(runs.map((run) => run.precision ?? 0)))}`
+      + ` | ${mean(runs.map((run) => run.missedFires)).toFixed(1)}`
+      + ` | ${mean(runs.map((run) => run.falseFires)).toFixed(1)}`
+      + ` | ${mean(runs.map((run) => run.watchesDropped)).toFixed(1)}`
+      + ` | ${mean(runs.map((run) => run.watchesNoisy)).toFixed(1)} |`);
+  }
+
+  if (curve.length > 0) {
+    console.log("");
+    console.log("Utility across the threshold curve, to ask whether the band itself is right:");
+    console.log("");
+    console.log(`| candidate | ${curve.map((threshold) => `u@${threshold}`).join(" | ")} |`);
+    console.log(`| --- | ${curve.map(() => "---:").join(" | ")} |`);
+    for (const row of rows) {
+      console.log(`| ${row.candidateId} | ${curve
+        .map((_, index) => mean(row.runs.map((run) => run.curveUtility[index]!)).toFixed(3))
+        .join(" | ")} |`);
+    }
+  }
+
+  console.log("");
+  console.log(`Every number is the mean over a candidate's runs; spread is max − min of its band utility`);
+  console.log(`across them, which is the only honest error bar available at ${Math.max(...rows.map((row) => row.runs.length))} runs.`);
+  console.log(`Split note: ${cases.filter((testCase) => splitOf(testCase.id) === "dev").length} dev,`
+    + ` ${cases.filter((testCase) => splitOf(testCase.id) === "holdout").length} holdout.`);
+}
+
+main();

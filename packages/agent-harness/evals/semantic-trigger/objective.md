@@ -16,6 +16,11 @@ coin flips and one above 0.7 throws away recall to buy precision that is not
 there. Every score below is computed at 0.5, 0.6 and 0.7 and averaged, so a
 candidate cannot win by being tuned to one point inside the band.
 
+The band is an input, not a finding: it is where the threshold is allowed to
+sit. Under the asymmetry below the objective will pull towards its low end,
+because the error a higher threshold buys down is the cheap one. Where inside
+the band to land is reported from the sweep rather than chosen here.
+
 ## The three numbers, in priority order
 
 ### 1. Band utility — what ships
@@ -25,18 +30,31 @@ and the truth either wanted a fire or did not.
 
 | | Wanted a run | Did not |
 | --- | ---: | ---: |
-| **Fired** | +1 | **−2** |
-| **Did not fire** | +1 | +1 |
+| **Fired** | +1 | 0 |
+| **Did not fire** | **−2** | +1 |
 
-A false fire costs double a miss, and that asymmetry is the whole product
-argument rather than a tuning knob: an unwanted fire starts an agent run holding
-the Sidekick's write tools and interrupts somebody, while a miss loses one
-occurrence and the next matching event gets another chance. A missed fire scores
-0 rather than −1, because the case still counted in the denominator; the cost of
-missing shows up as forgone +1.
+**A miss costs double a false fire**, and that asymmetry is the whole product
+argument rather than a tuning knob. What sits behind this gate is a
+state-of-the-art model that decides for itself whether the event it was handed
+is worth acting on, not a destructive action: an unwanted fire buys a session
+that concludes there is nothing to do, and the Sidekick's own judgement is the
+second line of defence. A miss has no second line. The user asked to be told
+when something happened, the thing happened, and the product silently said
+nothing — and "the next matching event gets another chance" is no comfort on a
+watch whose whole point was this occurrence.
+
+So the cheap error is the one we take. A false fire scores 0 rather than −1,
+because the case still counted in the denominator; the cost of firing wrongly
+shows up as forgone +1, which is the price of one session.
 
 This is reported as the mean per case, so 1.0 is perfect and a candidate that
-fires on everything scores well below zero on a standing watch.
+answers `not_met` to everything scores well below zero on a watch that had
+anything to catch.
+
+**The direction is the product's; the magnitude is the team's.** The three
+weights are `UTILITY_CORRECT`, `UTILITY_FALSE_FIRE` and `UTILITY_MISSED_FIRE` in
+`run.ts`, in one place, and the ranking is worth re-deriving if the cost of a
+session ever stops being small relative to the cost of dropping a request.
 
 ### 2. Multiclass Brier score — did the confidence mean anything
 
@@ -72,7 +90,10 @@ even when it is not a scoring one.
 
 Two candidates can share an accuracy and differ here by a lot, and the difference
 is exactly what a threshold can and cannot fix. Errors that arrive at 0.5 are
-recoverable by moving the threshold; errors that arrive at 0.97 are not.
+recoverable by moving the threshold; errors that arrive at 0.97 are not. The
+error that matters most here is a *confident* miss — a candidate that says
+`not_met` at 0.95 about an event that should have fired has put the decision
+somewhere no threshold can reach.
 
 ### 3. Words — the tiebreaker
 
@@ -94,3 +115,13 @@ and 4.1 at worst on three-class accuracy. Band utility and Brier are pooled acro
 runs for the same reason. **A difference smaller than the spread across a
 candidate's own repeats is not a result**, and a candidate that wins on one run
 has told us about that run.
+
+## Every band-utility number published before 2026-09-18 is superseded
+
+The matrix above was inverted on that date. Earlier reports in `reports/` and the
+tables in `digests/` scored a false fire at −2 and a miss at 0, which is the
+opposite ranking: they favour the quiet candidate and penalise the one that
+passes events through. The accuracy, Brier, precision, recall and word counts in
+those reports stand; the band utility, the `score` the Pareto front was built
+from, and therefore the *ordering* of every population run before that date do
+not. Re-run rather than reading the old table.
