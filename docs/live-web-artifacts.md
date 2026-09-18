@@ -402,6 +402,11 @@ facet that holds a stateful artifact's data. It does not own:
 - **Durable Object addressing rules.** `lib/durable-object-namespace.ts` is the
   one supported resolver; this module added `durableObjectStubForArtifact` to it
   rather than routing raw.
+- **Operator inspection.** The supervisor inherits the shared raw-SQL RPC and
+  the engineering MCP routes it as `run_artifact_sql`;
+  [`engineering-mcp.md`](engineering-mcp.md) owns what that admits and how an
+  artifact is fenced. That tool reaches this object's own database only — a
+  stateful artifact's facet stays behind `queryData`.
 
 ## Failure modes and limits
 
@@ -525,7 +530,39 @@ retain their execution-scope authorization. A
 compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
+`viewer_sessions` is also readable and writable by an admitted operator through
+the engineering MCP. It stores digests rather than cookie values, so nothing
+there reconstructs a live session, but an operator who can write the table can
+mint one; that is inside that console's stated authority rather than a boundary
+this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
+
 ## Changelog
+
+### 2026-09-18 — The supervisor becomes inspectable
+
+**What changed:** `ArtifactHostDO` extends `InternallyInspectableDurableObject`
+rather than `MigratableDurableObject`, which gives it the shared raw-SQL
+`runInspectionSql` the engineering MCP reaches through the private regional
+bridge.
+
+**Why:** `error_log` exists to turn "the page is broken" into something
+pasteable, and until now only a work-stream-authorized product surface could
+read it. The one object whose whole job is holding the serving-side truth was
+the one an operator could not open.
+
+**Considered and rejected:** A narrow read-only inspection method on this class
+instead of the shared base, to keep `viewer_sessions` out of reach. Rejected
+because the console's purpose is repair and a second, weaker SQL surface would
+have to be maintained beside the one four other classes already share —
+`docs/durable-object-sqlite.md` keeps exactly one intentional raw-SQL exception,
+and adding a second shape to it is how that stops being true.
+
+**Consequences:** The operator console can read and write this object's
+database, viewer session digests included. A future change must not add a
+credential *value* to this object's storage on the assumption that only Rally
+code reads it. That console reads the same object the guest-viewer authority
+below fences for product callers; the two are separate authorities and neither
+substitutes for the other.
 
 ### 2026-09-17 — Admit artifact viewers through shared resource authority
 
