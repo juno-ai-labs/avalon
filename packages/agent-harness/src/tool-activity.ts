@@ -353,8 +353,6 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   // `reply_to_message` was called `reply`, so the rows it wrote say
   // `agents_reply` — not the `agents_reply_to_message` the line above derives.
   agents_reply: AGENT_PROSE.reply_to_message!,
-  // `reply_to_message` was called `reply`, so the rows it wrote say
-  // `agents_reply` — not the `agents_reply_to_message` the line above derives.
   post_result: SIDEKICK_POST_RESULT_PROSE,
   sidekick_post_result: SIDEKICK_POST_RESULT_PROSE,
 };
