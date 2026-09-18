@@ -33,7 +33,11 @@ export function useWorkspaceQuery(): UseQueryResult<Workspace> {
   return useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user?.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
-    enabled: Boolean(api && session?.workspace && session.user),
+    // `session` alone, exactly as `App.tsx` had it. A session with no workspace
+    // still has to run this read: the boot depends on its *error* to notice a
+    // session that cannot resolve one, and gating it on `session.workspace`
+    // leaves that boot waiting on a query that never runs.
+    enabled: Boolean(api && session),
     staleTime: 30_000,
     placeholderData: placeholder,
   });
