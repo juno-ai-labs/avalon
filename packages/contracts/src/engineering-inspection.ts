@@ -2,6 +2,7 @@ import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
 import { RegionSchema } from "./index";
+import { AutomationIdSchema } from "./automation-agent";
 import {
   SubstreamIdSchema,
   WorkspaceIdSchema,
@@ -66,6 +67,30 @@ export const EngineeringSubstreamSchema = deferredZodSchema(() => z.strictObject
 }));
 export type EngineeringSubstream = z.infer<typeof EngineeringSubstreamSchema>;
 
+/**
+ * One Sidekick as its workspace's directory holds it.
+ *
+ * `sidekickId` is an `AutomationId` because that is the identifier the product
+ * stores, names the object with, and keys every route by; only the operator's
+ * vocabulary was renamed. `lifecycle` is reported rather than filtered on: a
+ * paused or deleted Sidekick still has an object, and it is the one an operator
+ * most often needs to open.
+ */
+export const EngineeringSidekickSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+  region: RegionSchema,
+  lifecycle: z.string(),
+  scope: z.string(),
+  owningWorkstreamId: WorkstreamIdSchema.nullable(),
+  title: z.string(),
+  // Not bounded below: the column carries no CHECK, and one odd timestamp
+  // must not make a whole workspace's Sidekicks unlistable.
+  nextRunAt: z.number().int().nullable(),
+  projectedAt: z.number().int().nonnegative(),
+}));
+export type EngineeringSidekick = z.infer<typeof EngineeringSidekickSchema>;
+
 export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
 
@@ -92,6 +117,12 @@ export const SubstreamInspectionInputSchema = deferredZodSchema(() => z.strictOb
 }));
 export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
 
+export const SidekickInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+}));
+export type SidekickInspectionInput = z.infer<typeof SidekickInspectionInputSchema>;
+
 const AuthorityGenerationSchema = z.number().int().positive();
 
 export const EngineeringWorkspaceTargetSchema = deferredZodSchema(() => z.strictObject({
@@ -111,6 +142,11 @@ export const EngineeringSubstreamTargetSchema = deferredZodSchema(() => Engineer
 }).strict());
 export type EngineeringSubstreamTarget = z.infer<typeof EngineeringSubstreamTargetSchema>;
 
+export const EngineeringSidekickTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
+  sidekickId: AutomationIdSchema,
+}).strict());
+export type EngineeringSidekickTarget = z.infer<typeof EngineeringSidekickTargetSchema>;
+
 export const WorkspaceSqlInspectionInputSchema = deferredZodSchema(() => WorkspaceInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
@@ -128,6 +164,12 @@ export const SubstreamSqlInspectionInputSchema = deferredZodSchema(() => Substre
   query: InspectionSqlRequestSchema,
 }).strict());
 export type SubstreamSqlInspectionInput = z.infer<typeof SubstreamSqlInspectionInputSchema>;
+
+export const SidekickSqlInspectionInputSchema = deferredZodSchema(() => SidekickInspectionInputSchema.unwrap().extend({
+  authorityGeneration: AuthorityGenerationSchema,
+  query: InspectionSqlRequestSchema,
+}).strict());
+export type SidekickSqlInspectionInput = z.infer<typeof SidekickSqlInspectionInputSchema>;
 
 function lookupResultSchema<T extends z.ZodType>(value: T) {
   return z.discriminatedUnion("found", [
@@ -151,6 +193,13 @@ export const EngineeringSubstreamListLookupSchema = deferredZodSchema(() => look
 })));
 export type EngineeringSubstreamListLookup = z.infer<typeof EngineeringSubstreamListLookupSchema>;
 
+export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  items: z.array(EngineeringSidekickSchema),
+})));
+export type EngineeringSidekickListLookup = z.infer<typeof EngineeringSidekickListLookupSchema>;
+
 export const EngineeringWorkspaceTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringWorkspaceTargetSchema,
 ));
@@ -172,11 +221,19 @@ export type EngineeringSubstreamTargetLookup = z.infer<
   typeof EngineeringSubstreamTargetLookupSchema
 >;
 
+export const EngineeringSidekickTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
+  EngineeringSidekickTargetSchema,
+));
+export type EngineeringSidekickTargetLookup = z.infer<
+  typeof EngineeringSidekickTargetLookupSchema
+>;
+
 export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema.nullable(),
   substreamId: SubstreamIdSchema.nullable(),
+  sidekickId: AutomationIdSchema.nullable(),
   result: InspectionSqlResultSchema,
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
@@ -186,10 +243,13 @@ export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
   listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
+  listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;
   resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
   resolveWorkstream(input: WorkstreamInspectionInput): Promise<EngineeringWorkstreamTargetLookup>;
   resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
+  resolveSidekick(input: SidekickInspectionInput): Promise<EngineeringSidekickTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runWorkstreamSql(input: WorkstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runSidekickSql(input: SidekickSqlInspectionInput): Promise<EngineeringSqlLookup>;
 }

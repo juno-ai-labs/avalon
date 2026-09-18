@@ -1,6 +1,8 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  EngineeringSidekickListLookupSchema,
+  EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
   EngineeringSubstreamListLookupSchema,
@@ -9,6 +11,8 @@ import {
   EngineeringWorkstreamListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
+  SidekickInspectionInputSchema,
+  SidekickSqlInspectionInputSchema,
   SubstreamSqlInspectionInputSchema,
   SubstreamInspectionInputSchema,
   WorkspaceInspectionInputSchema,
@@ -16,6 +20,8 @@ import {
   WorkstreamInspectionInputSchema,
   WorkstreamSqlInspectionInputSchema,
   type EngineeringInspectionRpcBinding,
+  type EngineeringSidekickListLookup,
+  type EngineeringSidekickTargetLookup,
   type EngineeringSqlLookup,
   type EngineeringSubstreamListLookup,
   type EngineeringSubstreamTargetLookup,
@@ -27,10 +33,11 @@ import {
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 
-import { conversationObjectName, workspaceDOName } from "./durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName } from "./durable-objects/names";
 import {
   resolveInspectionWorkspaceRoute,
   resolveInspectionWorkstreamRoute,
+  type InspectionWorkspaceRoute,
   type InspectionWorkstreamRoute,
 } from "./engineering-inspection-routes";
 import type { Env } from "./env";
@@ -58,6 +65,16 @@ const WorkstreamDirectoryRowSchema = z.strictObject({
 
 const SubstreamDirectoryRowSchema = z.strictObject({
   substream_id: z.string(),
+});
+
+const SidekickDirectoryRowSchema = z.strictObject({
+  automation_id: z.string(),
+  lifecycle: z.string(),
+  scope: z.string(),
+  owning_workstream_id: z.string().nullable(),
+  title: z.string(),
+  next_run_at: z.number().int().nullable(),
+  projected_at: z.number().int().nonnegative(),
 });
 
 async function workspaceStub(env: Env, workspaceId: string) {
@@ -99,6 +116,42 @@ async function resolveInspectionSubstreamRoute(
   const directory = await workstream.runInspectionSql({
     sql: `SELECT substream_id FROM substream_directory WHERE substream_id = ?`,
     bindings: [input.substreamId],
+  });
+  return directory.rows.length === 0 ? null : route;
+}
+
+/**
+ * A Sidekick is fenced by its workspace, because that is what owns both halves
+ * of its identity: the directory row that proves the object exists, and the
+ * workspace id its Durable Object is named by.
+ *
+ * The directory is consulted for the same reason a child substream's is. A
+ * SidekickDO shares the parent-id namespace with every work stream — both are
+ * bare UUIDs in `workstream_authority_routes` — so an active route alone cannot
+ * tell the two apart, and resolving a work-stream id here would name, and
+ * thereby create, an empty SidekickDO that never existed. The directory row is
+ * the only thing in reach that distinguishes them.
+ *
+ * It costs a real object: a Sidekick created since the last projection is
+ * refused until its directory row lands. Refusing an object that exists is the
+ * recoverable half of that trade; materializing one that does not is not.
+ */
+async function resolveInspectionSidekickRoute(
+  env: Env,
+  input: { workspaceId: string; sidekickId: string },
+  expectedGeneration?: number,
+): Promise<InspectionWorkspaceRoute | null> {
+  const route = await resolveInspectionWorkspaceRoute(
+    env,
+    input.workspaceId,
+    expectedGeneration,
+  );
+  if (!route) return null;
+  const workspace = await workspaceStub(env, input.workspaceId);
+  const directory = await workspace.runInspectionSql({
+    sql: `SELECT automation_id FROM automation_directory
+           WHERE automation_id = ? AND workspace_id = ?`,
+    bindings: [input.sidekickId, input.workspaceId],
   });
   return directory.rows.length === 0 ? null : route;
 }
@@ -196,6 +249,42 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  async listSidekicks(input: unknown): Promise<EngineeringSidekickListLookup> {
+    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listSidekicks");
+    if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
+      return { found: false };
+    }
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    // Every lifecycle, deleted included: the object outlives the product row,
+    // and a deleted Sidekick is a common inspection target.
+    const result = await workspace.runInspectionSql({
+      sql: `SELECT automation_id, lifecycle, scope, owning_workstream_id, title,
+                   next_run_at, projected_at
+              FROM automation_directory
+             WHERE workspace_id = ?
+             ORDER BY title COLLATE NOCASE, automation_id`,
+      bindings: [request.workspaceId],
+    });
+    return EngineeringSidekickListLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        items: z.array(SidekickDirectoryRowSchema).parse(result.rows).map((row) => ({
+          workspaceId: request.workspaceId,
+          sidekickId: row.automation_id,
+          region: this.env.AVALON_REGION,
+          lifecycle: row.lifecycle,
+          scope: row.scope,
+          owningWorkstreamId: row.owning_workstream_id,
+          title: row.title,
+          nextRunAt: row.next_run_at,
+          projectedAt: row.projected_at,
+        })),
+      },
+    });
+  }
+
   async resolveWorkspace(input: unknown): Promise<EngineeringWorkspaceTargetLookup> {
     const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "resolveWorkspace");
     const route = await resolveInspectionWorkspaceRoute(this.env, request.workspaceId);
@@ -241,6 +330,21 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  async resolveSidekick(input: unknown): Promise<EngineeringSidekickTargetLookup> {
+    const request = parseRpcInput(SidekickInspectionInputSchema, input, "resolveSidekick");
+    const route = await resolveInspectionSidekickRoute(this.env, request);
+    if (!route) return { found: false };
+    return EngineeringSidekickTargetLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        sidekickId: request.sidekickId,
+        authorityGeneration: route.authority_generation,
+      },
+    });
+  }
+
   async runWorkspaceSql(input: unknown): Promise<EngineeringSqlLookup> {
     const request = parseRpcInput(WorkspaceSqlInspectionInputSchema, input, "runWorkspaceSql");
     if (!await resolveInspectionWorkspaceRoute(
@@ -256,6 +360,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.workspaceId,
         workstreamId: null,
         substreamId: null,
+        sidekickId: null,
         result: await workspace.runInspectionSql(request.query),
       },
     });
@@ -277,6 +382,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: route.workspace_id,
         workstreamId: route.workstream_id,
         substreamId: null,
+        sidekickId: null,
         result: await workstream.runInspectionSql(request.query),
       },
     });
@@ -308,7 +414,34 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.workspaceId,
         workstreamId: request.workstreamId,
         substreamId: request.substreamId,
+        sidekickId: null,
         result: await substream.runInspectionSql(request.query),
+      },
+    });
+  }
+
+  async runSidekickSql(input: unknown): Promise<EngineeringSqlLookup> {
+    const request = parseRpcInput(SidekickSqlInspectionInputSchema, input, "runSidekickSql");
+    if (!await resolveInspectionSidekickRoute(
+      this.env,
+      request,
+      request.authorityGeneration,
+    )) return { found: false };
+    const sidekick = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_DOS,
+      request.workspaceId,
+      automationDOName(this.env.AVALON_REGION, request.workspaceId, request.sidekickId),
+    );
+    return EngineeringSqlLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        sidekickId: request.sidekickId,
+        result: await sidekick.runInspectionSql(request.query),
       },
     });
   }
