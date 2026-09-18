@@ -233,6 +233,62 @@ the contract towards recall, and the threshold — not the prose — is the leve
 that trades the two. A further generation aimed at recall is not the next thing to
 try.
 
+### Asking the negative question does not work, and the reason generalizes
+
+The gate's uncertainty was falling the wrong way. Under the positive question an
+answer of "probably a match, 0.4" stops the run, so a hesitant match is scored as
+the expensive error — and no threshold fixes that, because the threshold is the
+thing doing it. Turning the question around fixes it in principle: ask whether the
+Sidekick should **ignore** this event, refuse only on a confident yes, and
+hesitation falls through to firing. `polarity` in
+[`contract.ts`](contract.ts) is that, and
+[`digests/negative-polarity-brief.md`](digests/negative-polarity-brief.md) is the
+brief three teachers were given.
+
+**The mechanism works and the trade is bad.** Misses go to almost nothing — 0 to 1
+per 453 case-runs, recall 99–100% — and the bill arrives as unwanted sessions:
+
+| Candidate | Band utility | Recall @0.6 | False fires @0.6 | Noisy watches | 3-class |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `w8-noul-reader` (positive) | 0.837 | 85.7% | 5.7 | 3 of 12 | 86.1% |
+| `gen4-merged` (positive) | 0.808 | 78.1% | 5.3 | 2 of 12 | 84.5% |
+| `neg-noul` (negative) | 0.730 | 96.2% | 31.7 | 9 of 12 | 74.8% |
+| `neg-state` (negative) | 0.580 | 99.0% | 59.3 | **12 of 12** | 74.0% |
+| `neg-choice` (negative) | 0.494 | 99.0% | 74.7 | **12 of 12** | 68.7% |
+
+Two separate things went wrong, and separating them is the useful part.
+
+**The framing damaged the label, not just the calibration.** At a threshold of
+zero the polarity's fall-through is inactive and the label decides alone, which is
+an apples-to-apples comparison of the two questions: `gen4-merged` scores 0.812
+there against `neg-choice`'s 0.667, and `w3-state` 0.830 against `neg-state`'s
+0.713. Three-class accuracy drops 10 to 16 points, and the fire-decision Brier
+roughly doubles (0.081 to 0.189). The model is simply worse at this discrimination
+when it is asked to find a reason to ignore rather than a reason to act. That is
+not a wording problem one more generation fixes; it is the negation.
+
+**And the fall-through has a floor that the price list can compute.** From the
+matrix in [`objective.md`](objective.md#what-the-price-list-implies-before-any-measurement),
+the optimal gate fires when a calibrated P(match) exceeds **0.25** — above that a
+fire is worth its risk, below it three cheap errors cost as much as the expensive
+one they avoid. So "a miss is expensive, err towards firing" is true and stops
+being true at one in four. The negative question drives the effective firing point
+to roughly P(match) > 0.05, which is five times too permissive.
+
+That was checked directly, on a third mechanism that needs no new requests:
+`rescore.ts --probability-gate` thresholds the provider's own probability mass on
+the match label instead of the chosen label's confidence, which is the richest
+available reading of the same stored answers. Its curve is flat from 0.2 to 0.6
+for every positive candidate — inside the noise floor, so the 0.25 is not
+contradicted and not confirmed sharply either — and degrades below 0.2. All three
+routes to "let uncertainty fire" agree with each other and with the arithmetic.
+
+**Nothing shipped from this.** The production gate keeps the positive question and
+its 0.5 threshold, which sits in the flat region the sweep and the arithmetic both
+point at. What the exercise bought is the knowledge that the remaining utility is
+**not** in the miss column: recall can be taken to 99% whenever we want it, and it
+is not worth having.
+
 ### Evidentially loaded state field names bought nothing
 
 `w3-state`'s thesis was that the state's field names *are* the instruction: it
