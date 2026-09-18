@@ -23,6 +23,14 @@ const SLICES = ["cases-engineering.jsonl", "cases-comms.jsonl", "cases-meetings.
 const MERGED = `${DIR}/cases.jsonl`;
 const STRIPPED = `${DIR}/cases-for-adjudication.jsonl`;
 const ADJUDICATION = `${DIR}/adjudication.jsonl`;
+/**
+ * A second pass over cases whose text changed after the first adjudication.
+ *
+ * Kept as its own file rather than edited into the first: the provenance of a
+ * label is part of the evidence, and a corpus where you cannot tell an original
+ * judgement from a corrected one cannot be audited later.
+ */
+const READJUDICATION = `${DIR}/readjudication.jsonl`;
 
 const LABELS = new Set(["condition_met", "condition_not_met", "condition_not_judgeable"]);
 
@@ -102,6 +110,11 @@ function fold(): void {
     readJsonl<{ id: string; label: string; rationale: string }>(ADJUDICATION)
       .map((row) => [row.id, row]),
   );
+  if (existsSync(READJUDICATION)) {
+    for (const row of readJsonl<{ id: string; label: string; rationale: string }>(READJUDICATION)) {
+      adjudications.set(row.id, row);
+    }
+  }
   let agreed = 0;
   const disagreements: Array<{ id: string; authored: string; adjudicated: string; family: string }> = [];
   const merged = cases.map((testCase) => {
