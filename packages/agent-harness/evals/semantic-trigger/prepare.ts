@@ -19,7 +19,18 @@ import type { EvalCase } from "./contract";
 import { splitOf } from "./split";
 
 const DIR = "evals/semantic-trigger";
-const SLICES = ["cases-engineering.jsonl", "cases-comms.jsonl", "cases-meetings.jsonl"];
+const SLICES = [
+  // The balanced half: one condition per case, built to exercise the class
+  // boundaries.
+  "cases-engineering.jsonl",
+  "cases-comms.jsonl",
+  "cases-meetings.jsonl",
+  // The production-shaped half: standing watches, one condition over a series of
+  // events, where almost nothing should fire.
+  "cases-loops-engineering.jsonl",
+  "cases-loops-meetings.jsonl",
+  "cases-loops-projects.jsonl",
+];
 const MERGED = `${DIR}/cases.jsonl`;
 const STRIPPED = `${DIR}/cases-for-adjudication.jsonl`;
 const ADJUDICATION = `${DIR}/adjudication.jsonl`;
@@ -78,6 +89,32 @@ function merge(): void {
   console.log("families:", Object.fromEntries([...byFamily].sort()));
   console.log("split:", Object.fromEntries([...bySplit].sort()));
   console.log("hard:", cases.filter((testCase) => testCase.difficulty === "hard").length);
+
+  // The scenario half gets its own accounting, because its whole point is a base
+  // rate the balanced half deliberately does not have.
+  const scenarios = new Map<string, EvalCase[]>();
+  for (const testCase of cases) {
+    if (!testCase.scenarioId) continue;
+    scenarios.set(testCase.scenarioId, [...(scenarios.get(testCase.scenarioId) ?? []), testCase]);
+  }
+  if (scenarios.size > 0) {
+    const scenarioCases = [...scenarios.values()].flat();
+    const met = scenarioCases.filter((testCase) => (testCase.adjudicatedLabel ?? testCase.intendedLabel) === "condition_met");
+    console.log(`scenarios: ${scenarios.size} watches, ${scenarioCases.length} events, `
+      + `${met.length} should fire = ${((met.length / scenarioCases.length) * 100).toFixed(1)}% base rate`);
+    for (const [scenarioId, group] of [...scenarios].sort()) {
+      const fires = group.filter((testCase) => (testCase.adjudicatedLabel ?? testCase.intendedLabel) === "condition_met").length;
+      const ordered = [...group].sort((a, b) => (a.sequenceIndex ?? 0) - (b.sequenceIndex ?? 0));
+      const outOfOrder = ordered.some((testCase, index) => index > 0
+        && (testCase.observedAt ?? "") < (ordered[index - 1]!.observedAt ?? ""));
+      if (fires > 2) throw new Error(`${scenarioId}: ${fires} firing events, at most 2 allowed`);
+      if (outOfOrder) throw new Error(`${scenarioId}: observedAt is not increasing`);
+      console.log(`  ${scenarioId}: ${group.length} events, ${fires} fire`);
+    }
+    const silent = [...scenarios.values()].filter((group) => group
+      .every((testCase) => (testCase.adjudicatedLabel ?? testCase.intendedLabel) !== "condition_met")).length;
+    console.log(`  watches that should never fire: ${silent}`);
+  }
   // Per-split label balance, because a dev split that is missing a class cannot
   // teach a boundary the holdout then tests.
   for (const split of ["dev", "holdout"] as const) {
@@ -92,6 +129,9 @@ function merge(): void {
 /** What an adjudicator is allowed to see: the decision, and nothing about the answer. */
 function strip(): void {
   const cases = readJsonl<EvalCase>(MERGED);
+  // The scenario fields are withheld as well. An adjudicator who can see that a
+  // case belongs to a watch with eleven siblings can infer that almost none of
+  // them fire, and label to that prior instead of to the evidence.
   writeJsonl(STRIPPED, cases.map((testCase) => ({
     id: testCase.id,
     connector: testCase.connector,
