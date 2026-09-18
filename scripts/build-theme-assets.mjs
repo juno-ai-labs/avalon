@@ -13,7 +13,7 @@
  *
  * | Artefact | What reads it |
  * | --- | --- |
- * | `renderer/styles/themes.css` | The renderer: `@font-face` rules and one custom-property block per theme. |
+ * | `packages/ui/src/styles/themes.css` | The renderer: `@font-face` rules and one custom-property block per theme. |
  * | `common/theme-assets.ts` | The cached remote-font manifest and fixed export syntax palette. |
  *
  * A token path becomes a custom property by prefixing the namespace and

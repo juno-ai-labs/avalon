@@ -22,7 +22,7 @@ const rendererContentSecurityPolicy = {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@rally/contracts'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['@rally/contracts', '@rally/ui'] })],
     build: {
       sourcemap: true,
     },

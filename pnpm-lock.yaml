@@ -575,10 +575,10 @@ importers:
         specifier: latest
         version: 1.34.0(react@19.2.8)
       react:
-        specifier: latest
+        specifier: ^19.2.8
         version: 19.2.8
       react-dom:
-        specifier: latest
+        specifier: ^19.2.8
         version: 19.2.8(react@19.2.8)
       thinking-orbs:
         specifier: 0.2.0

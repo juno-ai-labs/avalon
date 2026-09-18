@@ -19,7 +19,7 @@ attempt at the opposite that the changelog records.
 | --- | --- |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
+| `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
