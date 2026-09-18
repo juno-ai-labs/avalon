@@ -4,6 +4,7 @@ import {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
+  POLLING_FOR_EVENTS_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   WRITING_AN_EMAIL_SKILL,
   runHarness,
@@ -557,6 +558,27 @@ describe("built-in skills", () => {
     // The whole procedure ends in writing files in a sandbox and publishing the
     // directory, so a run without Terminal should never be offered it.
     expect(BUILDING_LIVE_SITES_SKILL.ownerPlugin).toBe("rally:terminal");
+  });
+
+  it("scopes the polling skill to the plugin that drafts the Sidekick", () => {
+    // The whole procedure is drafting a Sidekick, so a run without the
+    // Sidekicks plugin — an automation occurrence, which is deliberately never
+    // given the drafting tools — should never be offered it.
+    expect(POLLING_FOR_EVENTS_SKILL.ownerPlugin).toBe("rally:sidekicks");
+  });
+
+  it("states the polling floor the team set, and the rule that keeps a run honest", () => {
+    const body = POLLING_FOR_EVENTS_SKILL.body;
+    // The floor is the whole reason the skill exists in this shape: a cadence
+    // the model picks for itself is the failure it prevents.
+    expect(body).toContain("600");
+    expect(body).toContain("ten minutes");
+    // Slower is fine and the person's own cadence wins — without this the floor
+    // reads as the interval.
+    expect(body).toContain("the person's own cadence wins");
+    // Dedupe is the other half: a timer with no memory re-reports forever.
+    expect(body).toContain("keyColumns");
+    expect(body).toContain("## Anti-patterns");
   });
 
   it("teaches the site contract the runtime actually enforces", () => {
