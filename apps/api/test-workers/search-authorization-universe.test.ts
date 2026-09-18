@@ -35,11 +35,14 @@ const sorted = (items: readonly unknown[]) => [...items].map((item) => JSON.stri
 beforeAll(async () => {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
-      status TEXT NOT NULL, role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id))`),
+      status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT DEFAULT 'member', last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id))`),
     ...[[OWNER, 'active'], [MEMBER, 'active'], [OUTSIDER, 'removed']].map(([userId, status]) => env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, ?, 'member')
        ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = excluded.status`).bind(WORKSPACE_ID, userId, status)),
   ]);
+  // Resource background work addresses the canonical workspace even when a
+  // universe-only case uses its own named object for directory isolation.
+  await env.WORKSPACE_DOS.getByName(workspaceDOName('global',WORKSPACE_ID)).initializeWorkspace(WORKSPACE_ID,'wnam');
 });
 afterEach(() => vi.restoreAllMocks());
 

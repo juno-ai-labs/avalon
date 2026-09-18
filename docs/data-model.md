@@ -32,6 +32,10 @@ relationally queried.
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
 
+Passwordless challenge storage is defined by migration 0111 and documented in
+[email sign-in](email-login.md). Challenge redemption records an identity-only
+session receipt; workspace relationships and grants remain separate authorities.
+
 ## Agent communication relationships
 
 WorkspaceDO migration 59 adds `agent_teams`, `agent_team_members`,
@@ -132,7 +136,7 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
 
 ### Identity and tenancy
 
-- `users` stores Google identity subjects and display information, plus the
+- `users` stores provider-independent identity and display information, plus the
   account's IANA `timezone` and the `timezone_source` that says who put it
   there. `client` means a desktop sign-in seeded it from the machine and a
   later sign-in may seed it again; `user` means somebody chose it in settings,
@@ -142,7 +146,15 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
   zone chosen in one region does not cross to another.
 
-- `workspace_members` authorizes users as owner, admin, or member.
+- `workspace_members` records member/guest access class separately from the
+  owner/admin/member administrative role. A guest's role is null. Incarnation
+  identifies one membership lifetime; revision orders admission changes within
+  it. Promotion changes the existing row without replacing its user or sessions.
+
+- WorkspaceDO's `scope_grant_directory` is a typed-RPC-only candidate projection
+  keyed by parent, user and exact scope. It retains generation/version tombstones
+  and filters by membership incarnation. It never replaces canonical grant
+  admission; see [scope grant directory](scope-grant-directory.md).
 
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion. A session that
@@ -151,6 +163,12 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   [`access-revocation.md`](access-revocation.md). `oauth_states`
   is the signed pre-workspace callback route/security receipt; the user-visible
   `connector_oauth_attempts` status row lives in the selected WorkspaceDO.
+
+- `browser_sessions` stores the hash of an opaque browser credential against an
+  ordinary identity session. `browser_workspace_sessions` maps each browser and
+  workspace to an ordinary incarnation-bound workspace session. There is no
+  shared active-workspace field or separate browser user ledger. See
+  [browser sessions](browser-sessions.md).
 
 - `workspace_invitations` supports explicit membership growth. Acceptance adds
   one row to the already-many-to-many `workspace_members` authority; it does not
@@ -1029,6 +1047,19 @@ fails when a table referencing `connector_connections` is added without being
 declared, which is the failure that otherwise waits until the next rebuild drops
 its rows.
 
+## Scoped participant authority (implementation in progress)
+
+Unpublished WorkstreamDO migration 14 owns exact grants, immutable operation
+receipts, participant migration tokens and projection targets. Its
+`participant_projection_deliveries` row holds the latest effective roster
+payload per conversation/user, including revocation tombstones. Successful
+receiver delivery records `acknowledged_revision` without deleting that payload:
+viewer admission still needs its version. A new desired revision clears the
+acknowledgement in the same transaction as the grant and alarm. Source-side
+Substream migration 62 freezes legacy roster writers and records applied
+projection revisions. See [workstream authority](workstream-durable-object.md)
+for handoff and delivery ordering; live migration remains disabled.
+
 ## Push devices
 
 Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, and
@@ -1038,6 +1069,62 @@ one workspace intent and device. Notification content remains in WorkspaceDO,
 read through typed RPC. See [Apple push](push-notifications.md).
 
 ## Changelog
+
+### 2026-09-16 — Separate guest relationship from administrative role
+
+Migration 0109 adds workspace-specific access class, membership incarnation and
+admission revision. SQL forbids a guest from carrying an administrative role.
+`workspace-relationship-service.ts` creates or reuses the ordinary membership
+row without demoting members or reactivating suspended guests. Promotion checks
+the current administrator, target incarnation and revision in the same update.
+The desktop Make member action submits that observed incarnation/revision through
+`POST /workspace/members/:id/promote`; it never creates a replacement identity
+or workspace relationship. Ordinary refresh exposes the new role on the same
+session binding.
+An accepted full membership invitation explicitly promotes an existing guest.
+
+Membership insertion, admission changes and removal record durable
+`workspace_relationship_deliveries` rows in their transaction. Existing writers
+that change role/status also advance revision; last-seen activity does not.
+Removal intents survive deletion of the relationship and a later rejoin receives
+a fresh incarnation. The cron dispatches pending intents to the existing access
+revocation queue; root processing publishes invalidation or starts the revocation
+walk. Dispatch and root-processing markers are separate from the still-pending
+per-descendant acknowledgement and guest-serving integration.
+The existing member middleware does not admit null-role guests as full members.
+
+Migration 0110 binds sessions to `workspace_members.incarnation`. Backfill
+preserves current sessions, insert/workspace-selection triggers bind new ones,
+and a same-workspace update cannot revive an older membership's credentials.
+Promotion retains the binding; removal/rejoin invalidates it. Auth and refresh
+compare against the active relationship, as do all three socket authorities.
+
+Real migrated SQLite tests in `workspace-relationship-service.test.ts` cover
+promotion, stale incarnations, suspended relationships and atomic intent writes.
+
+### 2026-09-16 — Support verified email identities without duplicate users
+
+Guest invitations need an ordinary user ID before any Google login or workspace
+onboarding. Migration 0108 makes the legacy Google subject nullable and adds
+`user_login_identities` and `user_verified_emails`. Existing Google sign-in
+already verifies the mailbox before creating an identity, so migration carries
+those verified bindings forward. It preserves the complete foreign-key
+dependency closure with enforcement on, including sessions, memberships and
+routing anchors, and restores the existing immutability/authority triggers.
+
+`login-identity-service.ts` records provider verification in a D1 batch. Email
+resolution reuses only an explicitly verified primary address, creates a normal
+email-only identity without a fabricated Google subject, and converges concurrent
+first logins. It does not silently link a new Google subject to an existing
+email-only account. A verified Google mailbox change removes prior email login
+bindings so the old address cannot authenticate as the same person. User IDs,
+authorship and workspace relationships are unchanged. Google subject remains a
+compatibility field while existing clients and identity flows continue to use it.
+
+This is identity persistence, not an email authentication endpoint: mailbox
+challenge verification, browser sessions and invitation acceptance must precede
+exposing email login. `test/login-identity-service.test.ts` uses the real migrated
+SQLite schema and a populated pre-0108 upgrade to cover these invariants.
 
 ### 2026-09-15 — Recommend Sidekicks at workstream scope
 

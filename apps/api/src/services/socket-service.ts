@@ -61,7 +61,7 @@ export interface WorkstreamSocketAdmission {
    * refuses their writes: a child never outlives its parent's archive.
    */
   parentArchived: boolean;
-  /** Zero for main/automation conversations; parent-owned membership version for a private child. */
+  /** Parent-issued participant projection revision after migration; legacy membership version otherwise. */
   membershipVersion?: number;
 }
 
@@ -218,7 +218,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
           && (typeof payload.membership_version !== "number"
             || !Number.isInteger(payload.membership_version)
             || payload.membership_version < 0))
-        || (payload.role !== "owner" && payload.role !== "admin" && payload.role !== "member")
+        || (payload.role !== null && payload.role !== "owner" && payload.role !== "admin" && payload.role !== "member")
         || (payload.analytics_workspace_id !== null
           && typeof payload.analytics_workspace_id !== "string")
       ) throw new Error("Incomplete socket admission claims");
@@ -561,7 +561,7 @@ export class SocketService {
           RALLY_HEADERS.SOCKET_ADMISSION_AUTHORITY_GENERATION,
           String(claims.admission.authorityGeneration),
         );
-        headers.set(RALLY_HEADERS.SOCKET_ADMISSION_ROLE, claims.admission.role);
+        headers.set(RALLY_HEADERS.SOCKET_ADMISSION_ROLE, claims.admission.role ?? "null");
         headers.set(
           RALLY_HEADERS.SOCKET_ADMISSION_MEMBERSHIP_VERSION,
           String(claims.admission.membershipVersion ?? 0),

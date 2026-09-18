@@ -9,6 +9,19 @@ the account menu changes that selection without merging workspace content.
 Read this before changing plural onboarding, stored desktop sessions, workspace
 switching, background attention, leaving, or abandonment.
 
+Desktop platform discovery and activation currently require `access_class = member`.
+Guest relationships are withheld until the guest shell can bootstrap without the
+member-only `/workspace` endpoint. Guest-aware regional `/auth/workspaces` and
+`/auth/workspace/select` remain available to the browser/API integration. This is
+a client compatibility gate; it does not remove the relationship or its shares.
+The ordinary member directory includes guests with `accessClass: guest`, a null
+administrative role and a Guest badge. It also carries the current incarnation
+and revision. An owner or administrator can use Make member in desktop Settings;
+`POST /workspace/members/:id/promote` compares both values in the guarded D1 write.
+A stale request returns a conflict and refreshes the roster. Promotion retains
+identity and session bindings; the durable relationship delivery invalidates
+participant/directory views without closing valid conversations.
+
 ## Where the code lives
 
 | Path | Responsibility |

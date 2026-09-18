@@ -166,6 +166,13 @@ Recovery is part of the contract too. A durable job that failed on authorization
 
 ### Actor identity and work-stream attribution
 
+The resolver preserves guest identity for attribution, using the role returned by
+its existing regional membership query. Automatic connector audience admission
+excludes guests, including on legacy conversations; a provider audience cannot
+create an unrelated grant. Slack also excludes guests from automatic creator
+seating and session assignment. Explicit scope sharing remains the admission
+path, and guests retain access to connectors within their shared workstreams.
+
 Every connector that can start work from a provider identity resolves that identity to an
 Rally member through one shared mapping, `resolveConnectorActorIdentity` over
 `external_user_identities`. This is the contract for every agent connector rather than
@@ -1199,6 +1206,12 @@ so a new connector is enrolled without anyone remembering to add it. Do not narr
 one to a fixture list to make a new adapter pass — declare the exemption in the
 fixture table instead, where it is reviewable.
 
+Guest-triggered conversational runs also recheck exact conversation admission at
+run-authority boundaries. The connector executor repeats this check after
+credential refresh and immediately before calling the adapter. Remaining an
+active workspace guest is insufficient after the addressed share is revoked.
+Workspace-principal automation runs retain their separate lifecycle authority.
+
 ## Changelog
 
 ### 2026-09-17 — A Granola event tells the run which note it is about
@@ -1285,6 +1298,30 @@ and logged as `unexpected_shape` rather than passed off as a summary not yet
 written.
 
 PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
+
+### 2026-09-17 — Seat connector audiences through scoped grants
+
+After a workstream's Main participant handoff, connector audience admission
+writes exact Main grants through WorkstreamDO and lets durable participant
+projections publish roster changes. Each connector event has an immutable batch
+receipt, preventing retries from restoring access removed after that event.
+Ordinary active members can still join from a new source-conversation event;
+guests need explicit sharing, and inherited grants remain inherited. The legacy
+identity writer remains only for workstreams that have not transferred authority.
+The existing identity admission RPC reports whether it still owns that writer;
+ordinary connector turns never contact WorkstreamDO just to discover this.
+Guest-triggered tool execution now repeats the canonical conversation check;
+checking only workspace membership would let an already-running guest continue
+using connectors after their specific share ended.
+Keeping that writer after handoff would hit the source's write fence on every
+new mapped speaker, while bypassing the fence would restore two roster owners.
+
+Slack session assignment follows this boundary too. Main corrects creator
+attribution without touching its transferred roster, then shared connector
+reconciliation requests admission with a stable session/user identity. A retry
+finishes admission after an attribution-only partial result, and an old accepted
+assignment cannot recreate access removed later. Guests remain subject to
+explicit sharing even when a connector identifies them as the original author.
 
 ### 2026-09-16 — A removed connection leaves the list, and Test says pass or fail
 
