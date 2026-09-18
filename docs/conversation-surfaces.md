@@ -59,7 +59,7 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   streaming; a human body names it *Speak*, not *Speak response*. Look Up and
   Share are macOS-only, behind trusted IPC. Share sends the selected or
   whole-message rendered plain text, never the stored markdown.
-- `apps/desktop/src/renderer/components/primitives.tsx` owns `Tip` and
+- `packages/ui/src/components/primitives.tsx` owns `Tip` and
   `TipGroup`: a hover explanation, and the group a row of controls shares one
   delay and one provider through. A new tooltip comes from there rather than
   from Radix's five parts; eight files still assemble those by hand and predate

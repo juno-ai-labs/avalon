@@ -10,10 +10,12 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(),
   getConversation: vi.fn(),
 }));
+const session = vi.hoisted(() => ({ current: null as unknown }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api, session: null }),
+vi.mock('../lib/collaboration-session', () => ({
+  useOptionalCollaborationSession: () => null,
+  useCollaborationSession: () => ({ api, session: session.current }),
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
@@ -27,6 +29,7 @@ vi.mock('../lib/workstream-socket-pool', () => ({
 
 vi.mock('../lib/workspace-socket', () => ({
   useWorkspaceSocket: () => ({ presenceUserIdsByWorkstream: {} }),
+  useOptionalWorkspaceSocket: () => null,
 }));
 
 vi.mock('../lib/use-file-attachments', () => ({
@@ -121,16 +124,21 @@ function WorkstreamRouteControls(): React.JSX.Element {
   );
 }
 
-function renderScreen(): QueryClient {
+function renderScreen(child = false): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   seedWorkstream(queryClient, firstWorkstreamId, 'First work stream');
   seedWorkstream(queryClient, secondWorkstreamId, 'Second work stream');
+  if (child) {
+    const { transcript, ...detail } = boot(firstWorkstreamId, 'Shared child');
+    queryClient.setQueryData(['substream-workstream', firstWorkstreamId, 'child'], detail);
+    queryClient.setQueryData(['substream-ordered-transcript', firstWorkstreamId, 'child'], transcript);
+  }
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/workstreams/${firstWorkstreamId}`]}>
+        <MemoryRouter initialEntries={[`/workstreams/${firstWorkstreamId}${child ? "?substream=child" : ""}`]}>
           <WorkstreamRouteControls />
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
@@ -151,6 +159,7 @@ function switchWorkstream(): void {
 describe('the right sidebar does not follow a work-stream switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    session.current = null;
     // jsdom has no layout; exercise the expanded sidebar's conversation link.
     // Compact mode deliberately omits that redundant navigation row.
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
@@ -169,6 +178,14 @@ describe('the right sidebar does not follow a work-stream switch', () => {
   });
 
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it('does not show or retain Main for a guest opening a child', async () => {
+    session.current = { user: { id: 'guest', email: 'guest@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'guest' } };
+    renderScreen(true);
+    await screen.findByRole('heading', { name: 'Shared child' });
+    expect(screen.queryByRole('button', { name: /Go to conversation:/ })).not.toBeInTheDocument();
+    expect(retainedSocket).toHaveBeenCalledWith(api, firstWorkstreamId, false, 'workstream', '0');
+  });
 
   it('closes the inspector rail, and drops the document it was showing', async () => {
     renderScreen();
