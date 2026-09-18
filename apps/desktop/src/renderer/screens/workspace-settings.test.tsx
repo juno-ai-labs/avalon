@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
   getConnectionToolCount: vi.fn(),
   getGitHubRepositoryAccessSettings: vi.fn(),
@@ -407,6 +408,23 @@ describe('Workspace settings', () => {
       supported: true,
     }));
     resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+  });
+
+  it('promotes a guest from the current membership revision and refreshes the roster', async () => {
+    const guest = { ...member, name: 'Guest Sam', accessClass: 'guest' as const, role: null, incarnation: 'membership', revision: 3 };
+    api.getWorkspaceMembers.mockResolvedValue([owner, guest]);
+    api.promoteWorkspaceGuest.mockImplementationOnce(async () => {
+      api.getWorkspaceMembers.mockResolvedValue([owner, { ...guest, accessClass: 'member', role: 'member', revision: 4 }]);
+      return {};
+    });
+    renderSettings();
+    openSettingsSection('Workspace');
+    fireEvent.click(await screen.findByRole('button', { name: 'Make Guest Sam a member' }));
+    expect(api.promoteWorkspaceGuest).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Make member' }));
+    await waitFor(() => expect(api.promoteWorkspaceGuest).toHaveBeenCalledWith(guest.id, { incarnation: 'membership', expectedRevision: 3 }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Make Guest Sam a member' })).not.toBeInTheDocument());
+    expect(screen.getByText('Guest Sam')).toBeVisible();
   });
 
   it('opens on the member list the application already holds', async () => {
@@ -1399,8 +1417,19 @@ describe('Workspace settings', () => {
       'A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key.',
     );
 
+    // A paste that cannot be a Granola key says so, rather than leaving a dead
+    // Connect button and no reason for it. Typing is held back until the field
+    // settles; a paste is a finished value, so it is judged at once.
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-live' } });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    fireEvent.paste(apiKeyInput);
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-live-wrong-provider-key' } });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
+    expect(within(dialog).getByRole('button', { name: 'Connect for workspace' })).toBeDisabled();
+
     const apiKey = `grn_${'a'.repeat(24)}`;
     fireEvent.change(apiKeyInput, { target: { value: apiKey } });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
 
     await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey, expect.any(String)));

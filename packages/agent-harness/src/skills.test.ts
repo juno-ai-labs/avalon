@@ -4,6 +4,7 @@ import {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
+  POLLING_FOR_EVENTS_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   WRITING_AN_EMAIL_SKILL,
   runHarness,
@@ -11,6 +12,7 @@ import {
   type HarnessPlugin,
   type HarnessSkill,
 } from "./index";
+import { AUTOMATIONS_PLUGIN_ID } from "./automation-creator-tools";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
 
 const triage: HarnessSkill = {
@@ -569,6 +571,39 @@ describe("built-in skills", () => {
     // The whole procedure ends in writing files in a sandbox and publishing the
     // directory, so a run without Terminal should never be offered it.
     expect(BUILDING_LIVE_SITES_SKILL.ownerPlugin).toBe("rally:terminal");
+  });
+
+  it("scopes the polling skill to the plugin that drafts the Sidekick", () => {
+    // The whole procedure is drafting a Sidekick, so a run without the
+    // Sidekicks plugin — an automation occurrence, which is deliberately never
+    // given the drafting tools — should never be offered it. Asserted against
+    // the drafting tools' own constant rather than a second copy of the
+    // literal: the id has been renamed once already, and a test mirroring the
+    // string would stay green through the next rename while the skill silently
+    // left every catalog.
+    expect(POLLING_FOR_EVENTS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
+  });
+
+  it("states the polling floor the team set, and the rule that keeps a run honest", () => {
+    const body = POLLING_FOR_EVENTS_SKILL.body;
+    // The whole sentence, not "600" and "ten minutes" separately: "3600" in the
+    // hourly example contains the first and step 4 says the second, so the loose
+    // form stayed green with every actual statement of the floor deleted.
+    expect(body).toContain("**Ten minutes — 600 seconds — is the floor, not the answer.**");
+    // Slower is fine and the person's own cadence wins — without this the floor
+    // reads as the interval.
+    expect(body).toContain("**the person's own cadence wins**");
+    // Dedupe is the other half: a timer with no memory re-reports forever.
+    expect(body).toContain("keyColumns");
+    expect(body).toContain("## Anti-patterns");
+    // `webhook` is a submittable trigger on the very draft tool this skill
+    // drives, so a body that names only the other two event kinds sends a
+    // drafter to the team for something it could have drafted.
+    expect(body).toContain("`webhook`");
+    // Nothing starts a Sidekick from a `resource_watch` trigger — SidekickDO
+    // builds it neither a schedule nor an evaluator — and it is exactly the kind
+    // a model reaches for when told to watch one named document.
+    expect(body).toContain("`resource_watch`");
   });
 
   it("teaches the site contract the runtime actually enforces", () => {

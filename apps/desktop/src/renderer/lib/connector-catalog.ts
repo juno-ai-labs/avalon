@@ -36,7 +36,7 @@ export const connectorProviders = [
     id: 'ashby' as const,
     provider: ConnectorConnectionCardCatalog.ashby.providerType,
     name: 'Ashby',
-    description: "Personal recruiting queries through Ashby's beta MCP server, and independently authorized workspace application events. Hiring, candidates, interviews, applicant tracking, and pipelines.",
+    description: 'Hiring, candidates, interviews, applicant tracking, and pipelines.',
     mark: ConnectorConnectionCardCatalog.ashby.iconName,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['ashby.personal.mcp'],
@@ -46,7 +46,7 @@ export const connectorProviders = [
     id: 'fireflies' as const,
     provider: ConnectorConnectionCardCatalog.fireflies.providerType,
     name: 'Fireflies',
-    description: "Your own Fireflies meetings through its live tools, or the team's transcripts and summaries through an admin API key.",
+    description: 'Meeting transcripts, summaries, and the action items they name.',
     mark: ConnectorConnectionCardCatalog.fireflies.iconName,
     // Personal only. The workspace connection was one administrator's API key
     // that every member read through, so it handed the whole workspace every

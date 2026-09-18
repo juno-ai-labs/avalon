@@ -1,3 +1,6 @@
+import { ShareConversationDialog } from './scope-sharing-panel';
+import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { IconShare2 } from '@tabler/icons-react';
 import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
 import { NewWorkstreamMenu } from "./new-workstream-menu";
 import * as ContextMenu from '@radix-ui/react-context-menu';
@@ -555,6 +558,8 @@ function WorkstreamRow({
   canDropOnProjects: boolean;
 }): React.JSX.Element {
   const location = useLocation();
+  const collaboration = useOptionalCollaborationSession();
+  const [sharing, setSharing] = useState(false);
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const markerStatus = workstreamMarkerStatus(workstream);
@@ -626,6 +631,8 @@ function WorkstreamRow({
   // The API refuses it; the menu simply does not raise the question.
   const scopeIsThisRowsToDecide = !workstream.systemKind;
   return (
+    <>
+    {collaboration?.api && <ShareConversationDialog api={collaboration.api} workspaceId={workspace.id} parentId={workstream.id} substreamId="0" open={sharing} onOpenChange={setSharing} />}
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
@@ -836,6 +843,7 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onMarkUnread(workstream)}>
             <EyeOff aria-hidden="true" size={16} /> Mark as unread
           </ContextMenu.Item>
+          <ContextMenu.Item className="menu-item" disabled={!collaboration?.api} onSelect={() => setSharing(true)}><IconShare2 aria-hidden="true" size={16} stroke={1.8} /> Share</ContextMenu.Item>
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
@@ -865,7 +873,7 @@ function WorkstreamRow({
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
-    </ContextMenu.Root>
+    </ContextMenu.Root></>
   );
 }
 
