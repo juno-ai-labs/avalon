@@ -1,5 +1,5 @@
-import { Share2 } from 'lucide-react';
-import { Button } from '@rally/ui/components/primitives';
+import { IconShare2 } from '@tabler/icons-react';
+import { Button, IconButton } from '@rally/ui/components/primitives';
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
@@ -132,10 +132,16 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
   </section>;
 }
 
-export function ShareConversationButton(props: Parameters<typeof ScopeSharingPanel>[0]): React.JSX.Element {
+export function ShareConversationDialog({ open, onOpenChange, ...props }: Parameters<typeof ScopeSharingPanel>[0] & {
+  open: boolean; onOpenChange: (open: boolean) => void;
+}): React.JSX.Element {
+  return <Modal open={open} onOpenChange={onOpenChange} title="Share conversation" description="Invite people to collaborate using their email address.">
+    {open ? <ScopeSharingPanel {...props} /> : null}
+  </Modal>;
+}
+
+export function ShareConversationButton({ disabled = false, ...props }: Parameters<typeof ScopeSharingPanel>[0] & { disabled?: boolean }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  return <><Button aria-label="Share conversation" onClick={() => setOpen(true)}><Share2 aria-hidden="true" size={16} />Share</Button>
-    <Modal open={open} onOpenChange={setOpen} title="Share conversation" description="Invite people to collaborate using their email address.">
-      {open ? <ScopeSharingPanel {...props} /> : null}
-    </Modal></>;
+  return <><IconButton label="Share" disabled={disabled} aria-haspopup="dialog" aria-expanded={open} data-state={open ? 'open' : 'closed'} onClick={() => setOpen(true)}><IconShare2 aria-hidden="true" size={18} stroke={1.8} /></IconButton>
+    <ShareConversationDialog {...props} open={open} onOpenChange={setOpen} /></>;
 }
