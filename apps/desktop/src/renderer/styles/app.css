@@ -2080,7 +2080,7 @@ pre {
 
 .settings-row-copy,
 .settings-profile-card > span,
-.settings-member-row > span:not(.avatar, .badge),
+.settings-member-row > span:not(.avatar, .badge, .settings-member-actions),
 .settings-connection-copy,
 .invitation-row > span:first-child {
   display: flex;
@@ -2467,10 +2467,15 @@ pre {
   border-bottom: 1px solid var(--av-sys-color-border-subtle);
   display: grid;
   gap: 11px;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 58px;
   padding: 8px 13px;
 }
+/* The badge and the role control share the third track rather than taking one
+   each: an explicit track is never collapsed, so a row that draws no control —
+   the owner's, an invited member's, every row for a member — still paid the
+   column gap and sat its badge 11px inside the others. */
+.settings-member-actions { align-items: center; display: flex; gap: 11px; }
 .settings-member-row:last-child { border-bottom: 0; }
 
 .settings-diagnostics { margin: 0; padding: 0 14px; }
