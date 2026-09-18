@@ -109,8 +109,8 @@ describe('connector installation teardown', () => {
     const disconnected = await f.service.changeInstallation(f.connectionId, { action: 'disconnect' });
     expect(disconnected.installation?.state).toBe('cleanup_pending');
     await f.assertDisabled();
-    expect(await env.AUDIT_DB.prepare("SELECT actor_user_id FROM audit_events WHERE target_id = ? AND action = 'connector.disabled'").bind(f.connectionId).first())
-      .toEqual({ actor_user_id: f.userId });
+    await vi.waitFor(async () => expect(await env.AUDIT_DB.prepare("SELECT actor_user_id FROM audit_events WHERE target_id = ? AND action = 'connector.disabled'").bind(f.connectionId).first())
+      .toEqual({ actor_user_id: f.userId }));
   });
 
   it('keeps a disconnected connection in the list until its cleanup settles or is forgotten', async () => {

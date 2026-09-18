@@ -304,10 +304,13 @@ describe('public connector installation boundaries', () => {
     expect(replaced.status, JSON.stringify(replaced.body)).toBe(200);
     const repaired = await f.request(`/connections/${installed.connectionId}/installation`, f.owner, { action: 'repair' });
     expect(repaired.status, JSON.stringify(repaired.body)).toBe(200);
-    const rows = (await env.AUDIT_DB.prepare('SELECT action, actor_user_id, target_id, metadata_json FROM audit_events ORDER BY action').all<{
+    const rows = await vi.waitFor(async () => {
+      const rows = (await env.AUDIT_DB.prepare('SELECT action, actor_user_id, target_id, metadata_json FROM audit_events ORDER BY action').all<{
       action: string; actor_user_id: string; target_id: string; metadata_json: string;
-    }>()).results;
-    expect(rows.map((row) => row.action)).toEqual(['connector.authorized', 'connector.credentials.replaced', 'connector.installation.repair']);
+      }>()).results;
+      expect(rows.map((row) => row.action)).toEqual(['connector.authorized', 'connector.credentials.replaced', 'connector.installation.repair']);
+      return rows;
+    });
     expect(rows.every((row) => row.actor_user_id === f.owner.userId && row.target_id === installed.connectionId)).toBe(true);
     const credentials = (await f.readEnvelope(installed.connectionId)).credentials!;
     const serialized = JSON.stringify(rows);
