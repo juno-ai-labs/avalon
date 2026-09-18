@@ -33,28 +33,33 @@ export interface SidekickRow {
  * still kept apart in the caller, because only one of them may ever be turned
  * into a claim about the room.
  *
- * An `error` sits *beside* the rows rather than replacing them. The rows it
+ * A `failed` state sits *beside* the rows rather than replacing them. The rows it
  * would replace are ones that arrived: a detach that failed is no reason for
  * the Sidekicks it did not detach to disappear, and a failed read of one of
  * the two lists behind this section is no reason to drop the other. Alone —
  * nothing arrived — it takes the section's heading with it, because then the
  * reader is being told about this section rather than about a row in it.
+ *
+ * The state is deliberately boolean. A transport or provider message is
+ * diagnostic data, not product copy; accepting only presence keeps arbitrary
+ * API responses out of the sidebar and leaves this shared presentation
+ * boundary responsible for the words a person sees.
  */
-export function SidekickSection({ items, error, onOpen, onMenuOpen }: {
+export function SidekickSection({ items, failed, onOpen, onMenuOpen }: {
   items?: SidekickRow[] | undefined;
-  error?: string | undefined;
+  failed?: boolean | undefined;
   onOpen?: (id: string) => void; onMenuOpen?: () => void;
 }): React.JSX.Element | null {
   const Row = onOpen ? 'button' : 'div';
   if (!items?.length) {
-    return error
+    return failed
       ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
-        <InlineError>{error}</InlineError>
+        <InlineError>Sidekicks couldn’t be loaded.</InlineError>
       </section>
       : null;
   }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
-    {error && <InlineError>{error}</InlineError>}
+    {failed && <InlineError>Some Sidekick information may be out of date.</InlineError>}
     <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright

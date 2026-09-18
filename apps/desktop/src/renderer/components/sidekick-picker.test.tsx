@@ -111,6 +111,35 @@ describe('Sidekick recommendation picker', () => {
     expect(api.setRecommendedSidekick).toHaveBeenCalledWith('room', 'workspace-helper', true, '0');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('keeps route diagnostics out of the picker when options cannot load', async () => {
+    const diagnostic = 'INTERNAL ROUTER RESPONSE: requested API route does not exist; shard=17';
+    api.getSidekickRecommendationOptions.mockRejectedValueOnce(new Error(diagnostic));
+    renderPicker(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByText('Sidekick options couldn’t be loaded.')).toBeVisible();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
+  });
+
+  it('keeps mutation diagnostics out of the picker when attachment fails', async () => {
+    const diagnostic = 'provider mutation failed: durable object 9a2';
+    api.getSidekickRecommendationOptions.mockResolvedValue({ canManage: true, items: [
+      { id: 'helper', name: 'Guide', description: '', available: true, attached: false },
+    ] });
+    api.setRecommendedSidekick.mockRejectedValueOnce(new Error(diagnostic));
+    renderPicker(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Add Sidekick' }), { button: 0, ctrlKey: false });
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Attach existing Sidekick' })).not.toHaveAttribute('aria-disabled', 'true'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach existing Sidekick' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Guide' }));
+
+    expect(await screen.findByText('That Sidekick couldn’t be added.')).toBeVisible();
+    expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
+  });
+
   it('opens the existing new-Sidekick composer from the dropdown', async () => {
     const client = new QueryClient();
     renderPicker(client);
