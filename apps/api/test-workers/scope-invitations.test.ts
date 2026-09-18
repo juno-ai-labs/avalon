@@ -410,12 +410,13 @@ it("manages accepted grants by exact scope and preserves later shares on retry",
 
 
 it("rechecks management authority after profile reads interleave with suspension", async () => {
-  let release = () => {}, started = () => {};
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const reading = new Promise<void>((resolve) => { started = resolve; });
-  await runInDurableObject(room(), (instance) => {
+  await runInDurableObject(room(), async (instance) => {
+    let release = () => {}, started = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reading = new Promise<void>((resolve) => { started = resolve; });
     const target = instance as unknown as { env: Env };
-    const original = target.env.DB;
+    const originalEnv = target.env;
+    const original = originalEnv.DB;
     const wrap = (statement: D1PreparedStatement): D1PreparedStatement => new Proxy(statement, {
       get(current, property) {
         if (property === "bind") return (...values: unknown[]) => wrap(current.bind(...values));
@@ -435,13 +436,15 @@ it("rechecks management authority after profile reads interleave with suspension
       },
     });
     target.env = new Proxy(target.env, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    const listing = instance.listManagedScopeGrants({ actorUserId: actorId, target: child });
+    try {
+      try {
+        await reading;
+        await original.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
+      } finally { release(); }
+      expect(await listing).toEqual({ status: "denied", reason: "sharing_required" });
+    } finally { target.env = originalEnv; }
   });
-  const listing = room().listManagedScopeGrants({ actorUserId: actorId, target: child });
-  try {
-    await reading;
-    await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(actorId).run();
-  } finally { release(); }
-  expect(await listing).toEqual({ status: "denied", reason: "sharing_required" });
 });
 
 
