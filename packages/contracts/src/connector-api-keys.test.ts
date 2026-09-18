@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ConnectorApiKeyGuidanceCatalog,
+  ConnectorApiKeyProviders,
   connectorApiKeyAcceptable,
   connectorApiKeyMismatch,
   isConnectorApiKeyProvider,
 } from "./connector-api-keys";
-import { ConnectorInstallationProviders } from "./connector-installation";
 
 describe("connector API key guidance", () => {
   it("covers every provider that asks somebody to paste a key", () => {
-    expect(Object.keys(ConnectorApiKeyGuidanceCatalog).sort()).toEqual([...ConnectorInstallationProviders].sort());
+    expect(Object.keys(ConnectorApiKeyGuidanceCatalog).sort()).toEqual([...ConnectorApiKeyProviders].sort());
   });
 
   it("points every provider at an https page", () => {
@@ -26,6 +26,26 @@ describe("connector API key guidance", () => {
     expect(ConnectorApiKeyGuidanceCatalog.ashby.format).toBeNull();
     expect(ConnectorApiKeyGuidanceCatalog.fireflies.format).toBeNull();
     expect(ConnectorApiKeyGuidanceCatalog.granola.format).not.toBeNull();
+  });
+
+  it("declares every pattern anchored, and neither global nor sticky", () => {
+    // One `RegExp` instance is `.test()`-ed from the Worker's request schema,
+    // from the adapter, and from the renderer on every change. A `g` or `y`
+    // flag makes `lastIndex` persist between those calls, so the same valid key
+    // would alternate accepted and rejected across all three. An unanchored
+    // pattern would accept a key with junk around it in the same three places.
+    for (const guidance of Object.values(ConnectorApiKeyGuidanceCatalog)) {
+      if (!guidance.format) continue;
+      expect(guidance.format.pattern.global).toBe(false);
+      expect(guidance.format.pattern.sticky).toBe(false);
+      expect(guidance.format.pattern.source.startsWith("^")).toBe(true);
+      expect(guidance.format.pattern.source.endsWith("$")).toBe(true);
+    }
+  });
+
+  it("holds its verdict across repeated calls with the same key", () => {
+    const key = `grn_${"a".repeat(24)}`;
+    expect([1, 2, 3].map(() => connectorApiKeyAcceptable("granola", key))).toEqual([true, true, true]);
   });
 
   it("names the provider's shape when a paste cannot be its key", () => {

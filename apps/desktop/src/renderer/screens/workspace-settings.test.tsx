@@ -1395,7 +1395,11 @@ describe('Workspace settings', () => {
     );
 
     // A paste that cannot be a Granola key says so, rather than leaving a dead
-    // Connect button and no reason for it.
+    // Connect button and no reason for it. Typing is held back until the field
+    // settles; a paste is a finished value, so it is judged at once.
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-live' } });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    fireEvent.paste(apiKeyInput);
     fireEvent.change(apiKeyInput, { target: { value: 'sk-live-wrong-provider-key' } });
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
     expect(within(dialog).getByRole('button', { name: 'Connect for workspace' })).toBeDisabled();
