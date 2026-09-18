@@ -21,6 +21,13 @@ that stayed on screen for one second, documented in
 [`ios-client.md`](ios-client.md). It does not open the pin/recent/running swarm
 or keep sockets across suspend.
 
+The lite browser host forwards same-origin ticketed upgrades through a configured
+regional API service binding. It returns the source upgrade directly, without
+accepting a socket or relaying frames. The shared API client maps browser ticket
+URLs to that route and preserves the ticket subprotocol. This implements the
+transport boundary; the browser's visible-surface subscription owners are still
+under construction. See [browser-client.md](browser-client.md).
+
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
 short-lived ticket, subprotocol, and server admission contract;
@@ -535,6 +542,45 @@ closes after the existing pong deadline and reconnects through the normal
 cursor-based path.
 
 Shipped in [#818](https://github.com/juno-ai-labs/avalon/pull/818).
+
+### 2026-09-17 — Browser upgrades retain source socket ownership
+
+The lite browser uses the existing ticketed APIs through an explicit cookie mode
+in the shared API client. Its web host forwards same-origin upgrades through the
+regional service binding, removing cookie/bearer headers and preserving ticket
+subprotocols. The source object still owns admission and the connection. This
+avoids introducing a frame multiplexer or a second authority merely to host the
+browser on another origin. Transport forwarding is tested in real workerd; the
+browser now mounts standalone conversation feeds without the desktop pool. The
+direct feed fallback does not acquire a parent control socket; a native pool
+continues to own its control/feed pair. A real browser check confirms child-only
+links request no Main, parent-control or workspace socket. Successful feed and
+mutation lifecycle acceptance remains unfinished.
+
+### 2026-09-16 — Migrated Main and child feeds share the grant revision fence
+
+**What changed:** Once participant authority is transferred, both Main and child
+feed admission require an active local projection with the ticket's exact revision.
+Main socket preparation forwards the parent-issued revision instead of zero.
+The feed protocol preserves a guest's null workspace role in signed tickets,
+forwarded admission, stored attachments and product calls. An absent role still
+means a legacy attachment requiring reauthorization; null is an admitted guest.
+
+**Why:** Main's legacy bypass otherwise accepted pre-migration tickets even after
+its roster authority moved to grants. Checking the current session alone cannot
+prove the ticket still names the current conversation access.
+
+**Considered and rejected:** Keeping the child-only check leaves different
+revocation semantics for two conversations governed by the same grant primitive.
+
+**Consequences:** A stale ticket must be reacquired. Unmigrated Main retains its
+legacy admission; this does not activate live migration or guest product routes.
+Public conversation ticket issuance uses exact grant authority for guest
+relationships. Its workspace-public legacy fallback is disabled, and the same
+check protects the addressed conversation's REST recovery snapshot. The real
+pipeline covers authenticated ticket issuance, signed-ticket upgrade, guest
+message delivery and revocation closure. Mutation proofs catch both the old Main
+revision bypass and a guest falling back to legacy workspace-public access.
 
 ### 2026-09-15 — Socket ticket acquisition cannot strand reconnect loops
 

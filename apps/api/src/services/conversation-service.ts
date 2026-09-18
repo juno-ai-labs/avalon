@@ -87,6 +87,7 @@ export class ConversationService {
       parentId,
       userId: this.auth.userId,
       substreamId: asSubstreamId(substreamId),
+      ...(this.auth.role === null ? { requireGrantAuthority:true } : {}),
     }));
     if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     if (parent.kind === "automation") {
@@ -201,7 +202,7 @@ export class ConversationService {
         ...(afterSequence === undefined ? {} : { afterSequence }),
         speculative,
         authorityGeneration: authority.generation,
-        membershipVersion: 0,
+        membershipVersion: parent.membershipVersion,
       });
     }
     const url = new URL(this.env.PUBLIC_API_BASE_URL);

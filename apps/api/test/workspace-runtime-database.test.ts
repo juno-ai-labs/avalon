@@ -184,6 +184,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "project_participants",
   "project_workstream_memberships",
   "projects",
+  "scope_grant_directory", // Typed candidate projection/read RPCs own this table.
   "suggested_work_ranking_rounds",
   "suggested_work_sets",
   "work_opportunities",

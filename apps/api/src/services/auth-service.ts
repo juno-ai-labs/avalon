@@ -1,13 +1,15 @@
+import { openEmailLoginSecret } from "./email-login-service";
 import { isConfiguredRegion } from "@rally/contracts/regions";
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 import { newId, nowIso } from "@rally/db";
-import { asUserId, asWorkspaceId, type Region, type Session } from "@rally/contracts";
+import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema, type Region, type Session } from "@rally/contracts";
 import { isDesktopDeepLinkProtocol } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
 import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
+import { persistVerifiedGoogleIdentity } from "./login-identity-service";
 
 const encoder = new TextEncoder();
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -21,10 +23,27 @@ const ACCESS_TTL_SECONDS = 15 * 60;
  * renewal. The ceiling is absolute: ninety days from the session's creation a
  * fresh sign-in is required whatever happened in between, which bounds how
  * long a leaked refresh token can keep itself alive. Both numbers were named
- * by the team (2026-09-02); `refresh` is the one place they are applied.
+ * by the team (2026-09-02); `sessionRenewalPolicy` applies them to both credential transports.
  */
-const SESSION_RENEWAL_WINDOW_SECONDS = 30 * 24 * 60 * 60;
-const SESSION_MAX_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+export const SESSION_RENEWAL_WINDOW_SECONDS = 30 * 24 * 60 * 60;
+export const SESSION_MAX_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+/** Fixed SQL fragments for renewal of the ordinary sessions table. */
+export function sessionRenewalPolicy(region: Region, now = nowIso()) {
+  const ceiling = `+${SESSION_MAX_LIFETIME_SECONDS} seconds`;
+  return {
+    expirySql: "MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?))",
+    expiryValues: [new Date(Date.parse(now) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(), ceiling],
+    eligibilitySql: `region = ? AND revoked_at IS NULL AND expires_at > ?
+      AND strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?) > ?
+      AND (workspace_id IS NULL OR EXISTS (
+        SELECT 1 FROM workspace_members member JOIN workspaces workspace ON workspace.id = member.workspace_id
+        WHERE member.workspace_id = sessions.workspace_id AND member.user_id = sessions.user_id
+          AND member.status = 'active' AND member.incarnation = sessions.workspace_incarnation
+          AND workspace.abandoned_at IS NULL
+      ))`,
+    eligibilityValues: [region, now, ceiling, now],
+  };
+}
 export const DEVELOPMENT_USER_ID = "00000000-0000-7000-8000-000000000001";
 export const DEVELOPMENT_WORKSPACE_ID = "00000000-0000-7000-8000-000000000002";
 
@@ -49,6 +68,7 @@ interface OAuthStateRow {
 }
 
 interface IdentityRow {
+  access_class: "member" | "guest" | null;
   user_id: string;
   email: string;
   user_name: string;
@@ -72,7 +92,7 @@ function secretKey(env: Env): Uint8Array {
   throw new ApiError(503, "auth_not_configured", "Authentication is not configured");
 }
 
-async function issueAccessToken(env: Env, context: Omit<IdentityAuthContext, "role">): Promise<string> {
+export async function issueAccessToken(env: Env, context: Omit<IdentityAuthContext, "role">): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     sid: context.sessionId,
@@ -400,39 +420,27 @@ export class AuthService {
     const newHash = await sha256(newRefreshToken);
     const rotatedAt = nowIso();
     const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
-    const renewedExpiry = new Date(Date.now() + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString();
-    // The ceiling is computed beside the row it bounds, in the same statement
-    // that rotates the token, so a renewal can never extend a session past it
-    // and a session already past it is refused rather than handed a token the
-    // bearer check would reject a moment later. `strftime` is given the exact
-    // shape `toISOString` writes, so the dates compared are one format and
-    // order as text the way they order in time.
-    const ceilingModifier = `+${SESSION_MAX_LIFETIME_SECONDS} seconds`;
+    const renewal = sessionRenewalPolicy(this.env.AVALON_REGION, rotatedAt);
     const row = await this.env.DB.prepare(
       `UPDATE sessions
        SET previous_refresh_token_hash = refresh_token_hash,
            refresh_token_hash = ?, refresh_rotated_at = ?,
-           expires_at = MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?))
+           expires_at = ${renewal.expirySql}
        WHERE (
            refresh_token_hash = ?
            OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
          )
-         AND region = ? AND revoked_at IS NULL AND expires_at > ?
-         AND strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?) > ?
+         AND ${renewal.eligibilitySql}
        RETURNING id, user_id, workspace_id`,
     )
       .bind(
         newHash,
         rotatedAt,
-        renewedExpiry,
-        ceilingModifier,
+        ...renewal.expiryValues,
         oldHash,
         oldHash,
         replayGraceStart,
-        this.env.AVALON_REGION,
-        rotatedAt,
-        ceilingModifier,
-        rotatedAt,
+        ...renewal.eligibilityValues,
       )
       .first<{ id: string; user_id: string; workspace_id: string | null }>();
     if (!row) throw new ApiError(401, "invalid_refresh_token", "The refresh token is invalid or expired");
@@ -524,19 +532,7 @@ export class AuthService {
     avatarUrl: string | null;
   }): Promise<IdentityRow> {
     const at = nowIso();
-    const userId = newId();
-    await this.env.DB.prepare(
-      `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(google_subject) DO UPDATE SET
-         email = excluded.email, name = COALESCE(json_extract(users.presentation_json, '$.displayName'), excluded.name), avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
-    )
-      .bind(userId, input.subject, input.email, input.name, input.avatarUrl, at, at)
-      .run();
-    const user = await this.env.DB.prepare("SELECT id FROM users WHERE google_subject = ?")
-      .bind(input.subject)
-      .first<{ id: string }>();
-    if (!user) throw new ApiError(500, "identity_persistence_failed", "Could not persist the user identity");
+    const user = { id: await persistVerifiedGoogleIdentity(this.env.DB, input) };
     const platformLink = await this.env.DB.prepare(
       `UPDATE users SET platform_user_id = ?, updated_at = ?
        WHERE id = ? AND (platform_user_id IS NULL OR platform_user_id = ?)`,
@@ -566,6 +562,7 @@ export class AuthService {
         workspace_timezone: null,
         workspace_created_at: null,
         role: null,
+        access_class: null,
       };
     }
     const row = await this.env.DB.prepare(
@@ -573,7 +570,7 @@ export class AuthService {
          u.timezone AS user_timezone,
          u.created_at AS user_created_at, w.id AS workspace_id, w.name AS workspace_name,
          w.slug AS workspace_slug, w.region AS workspace_region, w.timezone AS workspace_timezone,
-         w.created_at AS workspace_created_at, m.role
+         w.created_at AS workspace_created_at, m.role, m.access_class
        FROM users u JOIN workspace_members m ON m.user_id = u.id
        JOIN workspaces w ON w.id = m.workspace_id
        WHERE u.id = ? AND w.id = ? AND m.status = 'active'
@@ -587,20 +584,49 @@ export class AuthService {
     return row;
   }
 
+  /** Workspace discovery for provider-independent, region-local identities. */
+  async listRegionalWorkspaces(userId: string) {
+    const rows = await this.env.DB.prepare(`SELECT w.id,w.name,w.slug,w.region,w.timezone,w.created_at,
+      m.role,m.access_class FROM workspace_members m JOIN workspaces w ON w.id=m.workspace_id
+      WHERE m.user_id=? AND m.status='active' AND w.region=? AND w.abandoned_at IS NULL
+      ORDER BY m.joined_at,w.created_at,w.id`).bind(userId,this.env.AVALON_REGION).all<{
+        id:string;name:string;slug:string;region:Region;timezone:string;created_at:string;
+        role:"owner"|"admin"|"member"|null;access_class:"member"|"guest";
+      }>();
+    return rows.results.map((row) => WorkspaceSchema.parse({
+      id:row.id,name:row.name,slug:row.slug,region:row.region,timezone:row.timezone,createdAt:row.created_at,
+      role:row.role,...(row.access_class === "guest" ? { accessClass:"guest" } : {}),
+    }));
+  }
+
   /** Issues a normal region-local session after the Global control plane has
    * authenticated and selected a regional membership. */
   async createRegionalSession(userId: string, workspaceId: string): Promise<Session> {
     return this.createSession(await this.loadIdentity(userId, workspaceId));
   }
 
-  private async createSession(identity: IdentityRow): Promise<Session> {
-    const sessionId = newId();
-    const refreshToken = randomToken(48);
-    const at = nowIso();
+  /** Only a successfully consumed mailbox challenge can resume this session. */
+  async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }): Promise<Session> {
+    const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at
+      FROM email_login_challenges WHERE id=? AND redemption_id=? AND redeemed_at IS NOT NULL`)
+      .bind(IdSchema.parse(receipt.challengeId),IdSchema.parse(receipt.redemptionId))
+      .first<{ user_id:string;session_id:string;session_secret_encrypted:string;redeemed_at:number }>();
+    if (!row) throw new ApiError(401,"email_login_invalid","This sign-in attempt is invalid");
+    const secret = await openEmailLoginSecret(this.env,receipt.challengeId,row.session_secret_encrypted);
+    const refreshToken = RefreshTokenSchema.parse(secret && typeof secret === "object" && "refreshToken" in secret ? secret.refreshToken : null);
+    return this.createSession(await this.loadIdentity(row.user_id,null),{
+      sessionId:row.session_id,refreshToken,createdAt:new Date(row.redeemed_at).toISOString(),
+    });
+  }
+
+  private async createSession(identity: IdentityRow, prepared?: { sessionId:string;refreshToken:string;createdAt:string }): Promise<Session> {
+    const sessionId = prepared?.sessionId ?? newId();
+    const refreshToken = prepared?.refreshToken ?? randomToken(48);
+    const at = prepared?.createdAt ?? nowIso();
     await this.env.DB.prepare(
       `INSERT INTO sessions
        (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
     )
       .bind(
         sessionId,
@@ -608,10 +634,17 @@ export class AuthService {
         identity.workspace_id,
         this.env.AVALON_REGION,
         await sha256(refreshToken),
-        new Date(Date.now() + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+        new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
         at,
       )
       .run();
+    if (prepared) {
+      const session = await this.env.DB.prepare(`SELECT 1 AS present FROM sessions
+        WHERE id=? AND user_id=? AND workspace_id IS NULL AND refresh_token_hash=?
+          AND region=? AND revoked_at IS NULL AND expires_at>?`)
+        .bind(sessionId,identity.user_id,await sha256(refreshToken),this.env.AVALON_REGION,nowIso()).first();
+      if (!session) throw new ApiError(401,"email_login_session_unavailable","Start a new sign-in request");
+    }
     const accessToken = await issueAccessToken(this.env, {
       sessionId,
       userId: asUserId(identity.user_id),
@@ -635,13 +668,15 @@ export class AuthService {
         createdAt: identity.user_created_at,
       },
       workspace: identity.workspace_id && identity.workspace_name && identity.workspace_slug
-        && identity.workspace_region && identity.workspace_timezone && identity.role && identity.workspace_created_at
+        && identity.workspace_region && identity.workspace_timezone && identity.workspace_created_at
+        && (identity.role || identity.access_class === "guest")
         ? {
             id: identity.workspace_id,
             name: identity.workspace_name,
             slug: identity.workspace_slug,
             region: identity.workspace_region,
             role: identity.role,
+            ...(identity.access_class === "guest" ? { accessClass: "guest" as const } : {}),
             timezone: identity.workspace_timezone,
             createdAt: identity.workspace_created_at,
           }
