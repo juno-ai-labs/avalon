@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
-import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { databaseThroughMigration } from "./helpers/migrated-schema";
 import { persistVerifiedGoogleIdentity, resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
 
 const databases: DatabaseSync[] = [];
 function database() {
-  const db = migratedObservabilityFixture();
+  const db = migratedSqliteDatabase();
   databases.push(db);
   return db;
 }

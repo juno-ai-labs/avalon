@@ -203,13 +203,17 @@ describe("Global telemetry delivery", () => {
       throw new Error("the regional API must not call PostHog directly");
     }));
 
+    insertAcceptedException(database, exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af"), now);
+    identity.prepare(`INSERT INTO telemetry_ingest_rate_buckets
+      (surface, subject_hash, bucket_start, count, delete_at)
+      VALUES ('telemetry_bootstrap', ?, ?, 1, ?)`).run("a".repeat(43), now, now);
     await expect(processTelemetryOutbox(env)).resolves.toEqual({
       selected: 1,
       delivered: 1,
       retried: 0,
       terminal: 0,
       suppressed: 0,
-      expired: 0,
+      expired: 2,
     });
     expect(database.prepare(
       "SELECT delivery_state, delivered_at, attempt_count FROM telemetry_accepted_events",
@@ -224,6 +228,8 @@ describe("Global telemetry delivery", () => {
       })],
     }));
     expect(identity.prepare("SELECT name FROM sqlite_schema WHERE name = 'telemetry_accepted_events'").get()).toBeUndefined();
+    expect(database.prepare("SELECT event_id FROM telemetry_accepted_events WHERE event_id = ?").get("018f22f2-4c22-7abc-8def-0123456789af")).toBeUndefined();
+    expect(identity.prepare("SELECT * FROM telemetry_ingest_rate_buckets").all()).toEqual([]);
     identity.close();
     database.close();
   });
