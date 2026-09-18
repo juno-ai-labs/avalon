@@ -159,7 +159,10 @@ pre-provider wait into `initial_authority_ms`, `context_tools_ms`, and
 or the lakehouse, and it introduces no promise or await. The preparation blocks
 intentionally overlap independent reads, so the fields name elapsed
 critical-path regions rather than claiming that their individual operations
-add up serially.
+add up serially. Like the inference-start row, it emits only for the first
+durable attempt. `request_clock_skewed` is true, and
+`request_to_prepared_ms` is omitted, when the request timestamp is later than
+the preparation timestamp.
 
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
