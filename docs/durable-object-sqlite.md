@@ -257,11 +257,12 @@ category cannot recur through a different branch of the same lifecycle.
   for diagnostics and cost reasoning, not as a domain API.
 
 The one intentional raw-SQL exception is the Access-protected engineering MCP.
-Inspectable scheduling authorities inherit `runInspectionSql` from a shared
-internal base so an admitted operator can reproduce Cloudflare's database
-console. Product callers must never use that RPC; routing, cross-region handling,
-logging exclusions, and destructive-tool semantics live in
-[`engineering-mcp.md`](engineering-mcp.md).
+Inspectable objects inherit `runInspectionSql` from a shared internal base so an
+admitted operator can reproduce Cloudflare's database console: every scheduling
+authority picks it up beneath the scheduler, and `ArtifactHostDO` names that
+base directly because it is not one. Product callers must never use that RPC;
+routing, cross-region handling, logging exclusions, and destructive-tool
+semantics live in [`engineering-mcp.md`](engineering-mcp.md).
 
 ## Alarms and background work
 

@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
-import { asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asArtifactId, asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
 import type { AccessPrincipal } from "../src/access";
@@ -29,6 +29,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     listSidekicks: vi.fn<EngineeringInspectionRpcBinding["listSidekicks"]>(
       async () => ({ found: false }),
     ),
+    listArtifacts: vi.fn<EngineeringInspectionRpcBinding["listArtifacts"]>(
+      async () => ({ found: false }),
+    ),
     resolveWorkspace: vi.fn<EngineeringInspectionRpcBinding["resolveWorkspace"]>(
       async () => ({ found: false }),
     ),
@@ -41,6 +44,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     resolveSidekick: vi.fn<EngineeringInspectionRpcBinding["resolveSidekick"]>(
       async () => ({ found: false }),
     ),
+    resolveArtifact: vi.fn<EngineeringInspectionRpcBinding["resolveArtifact"]>(
+      async () => ({ found: false }),
+    ),
     runWorkspaceSql: vi.fn<EngineeringInspectionRpcBinding["runWorkspaceSql"]>(
       async () => ({ found: false }),
     ),
@@ -51,6 +57,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
       async () => ({ found: false }),
     ),
     runSidekickSql: vi.fn<EngineeringInspectionRpcBinding["runSidekickSql"]>(
+      async () => ({ found: false }),
+    ),
+    runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
       async () => ({ found: false }),
     ),
   };
@@ -103,10 +112,12 @@ describe("Rally engineering MCP tools", () => {
       "list_workstreams",
       "list_substreams",
       "list_sidekicks",
+      "list_artifacts",
       "run_workspace_sql",
       "run_workstream_sql",
       "run_substream_sql",
       "run_sidekick_sql",
+      "run_artifact_sql",
     ]);
     for (const tool of result.tools.filter((item) => item.name.startsWith("run_"))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -180,6 +191,7 @@ describe("Rally engineering MCP tools", () => {
         workstreamId,
         substreamId,
         sidekickId: null,
+        artifactId: null,
         result: {
           columns: ["answer"],
           rows: [{ answer: 42 }],
@@ -236,6 +248,7 @@ describe("Rally engineering MCP tools", () => {
         workstreamId: null,
         substreamId: null,
         sidekickId,
+        artifactId: null,
         result: {
           columns: ["lifecycle"],
           rows: [{ lifecycle: "paused" }],
@@ -266,6 +279,56 @@ describe("Rally engineering MCP tools", () => {
       query: { sql: "SELECT lifecycle FROM automation", bindings: [] },
     });
     expect(enterprise.runSidekickSql).not.toHaveBeenCalled();
+  });
+
+  it("routes bound artifact SQL to the supervisor in exactly one regional authority", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb9");
+    const artifactId = asArtifactId("00000000-0000-7000-8000-000000000eba");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(enterprise.resolveArtifact).mockResolvedValue({
+      found: true,
+      value: { region: "enterprise", workspaceId, artifactId, authorityGeneration: 9 },
+    });
+    vi.mocked(enterprise.runArtifactSql).mockResolvedValue({
+      found: true,
+      value: {
+        region: "enterprise",
+        workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        sidekickId: null,
+        artifactId,
+        result: {
+          columns: ["current_version"],
+          rows: [{ current_version: 3 }],
+          rowsRead: 1,
+          rowsWritten: 0,
+        },
+      },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      {
+        name: "run_artifact_sql",
+        arguments: { workspaceId, artifactId, sql: "SELECT current_version FROM artifact_state" },
+      },
+    );
+    const result = response.result as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      region: "enterprise",
+      artifactId,
+      result: { rows: [{ current_version: 3 }] },
+    });
+    expect(enterprise.runArtifactSql).toHaveBeenCalledWith({
+      workspaceId,
+      artifactId,
+      authorityGeneration: 9,
+      query: { sql: "SELECT current_version FROM artifact_state", bindings: [] },
+    });
+    expect(global.runArtifactSql).not.toHaveBeenCalled();
   });
 
   it("does not execute SQL when both regions resolve the target", async () => {

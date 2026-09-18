@@ -173,6 +173,13 @@ Begin with inventory. Do not guess a region or Durable Object name:
    `run_substream_sql`.
 4. Inspect the schema before querying application rows.
 
+For a live web artifact, start from `list_artifacts` with the `workspaceId`.
+`run_artifact_sql` opens the supervisor, which holds `artifact_state` (the
+current version), `viewer_sessions`, and `error_log` — the last being what a
+broken artifact page is usually diagnosed from. A stateful artifact's *own*
+tables are in a separate facet database this tool does not reach; use the
+product's Data view for those.
+
 For a Sidekick, start from `list_sidekicks` with the `workspaceId` instead. Its
 `sidekickId` reaches two different objects: `run_sidekick_sql` opens the
 Sidekick itself — definition revisions, schedules, run history — while the same
@@ -215,10 +222,12 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
 | `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from WorkstreamDO. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
+| `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO. |
 | `run_workstream_sql` | `workstreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkstreamDO. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
 | `run_sidekick_sql` | `workspaceId`, `sidekickId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SidekickDO — the Sidekick itself, not its conversation. |
+| `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
