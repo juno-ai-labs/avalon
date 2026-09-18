@@ -766,6 +766,8 @@ a serial partition, and may exceed their enclosing region when work starts in
 one region and is consumed in another. Dashboards must group them independently
 and use the two boolean fields when comparing warm and fresh runs.
 
+Shipped in #833.
+
 ### 2026-09-18 — Attribute and overlap pre-provider preparation
 
 The harness now starts independent identity, run, Sidekick, terminal-outcome,
