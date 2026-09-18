@@ -561,12 +561,12 @@ then-current generation across human think-time. Provisioning remains in
 confirmation because it creates product state from the opening message and
 model choice.
 
-**Consequences:** A cancelled preparation may leave an empty, unpublished
-Durable Object in preparing mode, just as it already leaves a durable parent
-receipt. It has no directory or participant visibility. Wake failure is logged
-but does not fail preparation; confirmation remains the retryable authority
-fence and still owns bootstrap, provisioning, context installation, opening
-admission, and publication.
+**Consequences:** A cancelled preparation may leave an empty, unpublished,
+schema-ready Durable Object whose authority mode is still `unclaimed`, just as
+it already leaves a durable parent receipt. It has no directory or participant
+visibility. Wake failure is logged but does not fail preparation; confirmation
+remains the retryable authority fence and still owns bootstrap, provisioning,
+context installation, opening admission, and publication.
 
 ### 2026-09-15 — Share prepared conversation file ownership
 
