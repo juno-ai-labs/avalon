@@ -29,7 +29,11 @@ function acceptedResult(input: ScopeInvitationResult) {
   if (result.status !== "denied") return result;
   const status = result.reason === "configuration_required" ? 503
     : result.reason === "operation_conflict" || result.reason === "revision_conflict" || result.reason === "migration_pending" || result.reason === "scope_changed" ? 409 : 403;
-  throw new ApiError(status, `scope_${result.reason}`, "This invitation operation is unavailable. Refresh and try again.");
+  const message = result.reason === "sharing_required" ? "You cannot share this conversation. It may be archived or your access may have changed."
+    : result.reason === "relationship_required" ? "Your workspace access has changed. Sign in again to continue."
+    : result.reason === "migration_pending" ? "Sharing is being prepared. Try again shortly."
+    : "This invitation operation is unavailable. Refresh and try again.";
+  throw new ApiError(status, `scope_${result.reason}`, message);
 }
 
 function parent(env: Env, workspaceId: string, parentId: string) {

@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
-import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
 import { ConversationService } from "../services/conversation-service";
@@ -79,7 +79,7 @@ resourceRoutes.use("*",workspaceRealtimeInvalidation);
 
 resourceRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(ResourcePageSchema.parse(await new ResourceService(c.env, getAuth(c)).list({
+  return c.json(ResourcePageSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).list({
     ...(query.q ? { query: query.q } : {}),
     ...(query.cursor ? { cursor: query.cursor } : {}),
     limit: query.limit,
@@ -97,7 +97,7 @@ resourceRoutes.post("/upload", async (c) => {
     await new ResourceService(c.env, getWorkspaceAuth(c)).upload(file, title, draftId.data)), 201);
 });
 resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
-  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).resolve(c.req.valid("json"))), 201),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).resolve(c.req.valid("json"))), 201),
 );
 resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).get(c.req.valid("param").id))),

@@ -1148,7 +1148,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,
         archived: current?.archived_at != null || child?.archived_at != null,
         childStatus: child?.status ?? null,
-        membershipVersion: this.scopeGrants(request).participantProjection(substreamId,request.userId)?.revision ?? 0 });
+        membershipVersion: substreamId === "0" && access.allowed && access.workspaceMemberAccess && !access.grantIds.length
+          ? 0 : this.scopeGrants(request).participantProjection(substreamId,request.userId)?.revision ?? 0 });
     }
     if (request.requireGrantAuthority) {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized:false,archived:row.archived_at !== null });
@@ -1291,16 +1292,16 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   /** Cut over only addressed legacy scopes; invitation creation rechecks grants afterwards. */
-  private async prepareInvitationTargets(request: z.infer<typeof CreateScopeInvitationsSchema>): Promise<boolean> {
+  private async prepareInvitationTargets(request: z.infer<typeof CreateScopeInvitationsSchema>): Promise<Extract<ScopeInvitationResult, { status: "denied" }> | null> {
     const inherited = request.targets.some((target) => target.kind === "workstream")
       ? this.parentSql.exec<{ substream_id: string }>("SELECT substream_id FROM conversation_children WHERE kind='child' AND status='ready' AND audience='inherits_workstream'")
         .toArray().map((child) => child.substream_id) : [];
     const substreamIds = [...new Set([...request.targets.map((target) =>
       target.kind === "workstream" ? "0" : target.substreamId), ...inherited])];
     const legacy = substreamIds.filter((id) => this.participantMigrationPhase(id) !== "complete");
-    if (!legacy.length) return true;
+    if (!legacy.length) return null;
     const actor = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.actorUserId);
-    if (actor?.status !== "active") return false;
+    if (actor?.status !== "active") return { status: "denied", reason: "relationship_required" };
     // Main's directory projection is not authorization evidence. Consult its
     // canonical roster before transferring authority; workspace-public reading
     // alone must not let an arbitrary member initiate sharing.
@@ -1310,7 +1311,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (legacy.includes("0")) {
       const main = await createIdentityObjectPort(this.env, request.workspaceId, request.parentId)
         .readAuthorizationFacts({ userId: request.actorUserId });
-      if (!main.exists || !main.participant || main.archived) return false;
+      if (!main.exists || !main.participant || main.archived) return { status: "denied", reason: "sharing_required" };
       // Older parents list Main implicitly. Register only after the real source
       // confirms its existence and the sharer's participation; never fabricate
       // source authority from a directory row or workspace-public visibility.
@@ -1321,20 +1322,20 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (substreamId !== "0" && !(sharesInherited && inherited.includes(substreamId)) && !this.parentSql.exec(
         "SELECT 1 FROM private_child_memberships WHERE substream_id=? AND user_id=? AND active=1",
         substreamId, request.actorUserId,
-      ).toArray().length) return false;
+      ).toArray().length) return { status: "denied", reason: "sharing_required" };
     }
     for (const substreamId of legacy) {
       const address = { workspaceId: request.workspaceId, parentId: request.parentId };
       const migration = substreamId === "0"
         ? await this.beginMainParticipantMigration(address)
         : await this.beginChildParticipantMigration({ ...address, substreamId });
-      if (migration.status === "conflict") return false;
+      if (migration.status === "conflict") return { status: "denied", reason: "migration_pending" };
       // Foreground progress avoids a polling-only first-share experience. The
       // persisted alarm and transfer token recover any interrupted boundary.
       if (substreamId === "0") await this.runMainParticipantMigration();
       else await this.runChildParticipantMigration(asSubstreamId(substreamId));
     }
-    return true;
+    return null;
   }
 
   async listManagedScopeGrants(input: z.infer<typeof ScopeGrantManagementRequestSchema>) {
@@ -1376,7 +1377,8 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = parseRpcInput(CreateScopeInvitationsSchema, input, "create_scope_invitations");
     this.assertParent(request.workspaceId, request.parentId);
-    if (!await this.prepareInvitationTargets(request)) return { status: "denied", reason: "migration_pending" };
+    const denied = await this.prepareInvitationTargets(request);
+    if (denied) return denied;
     const result = await this.scopeInvitations().create(request);
     await this.armNextAlarm();
     return ScopeInvitationResultSchema.parse(result);
@@ -1456,7 +1458,15 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   async mutateScopeGrant(input: ScopeGrantMutation): Promise<ScopeGrantMutationResult> {
     await this.initialized;
     const request = parseRpcInput(ScopeGrantMutationSchema, input, "scope_grant_mutation");
-    return this.authorizedGrantMutation(request,false);
+    const result = await this.authorizedGrantMutation(request,false);
+    if (result.status === "committed") {
+      const targets = request.target.kind === "conversation" ? [request.target.substreamId]
+        : this.parentSql.exec<{ substream_id: string }>(
+          "SELECT substream_id FROM participant_projection_targets",
+        ).toArray().map((row) => row.substream_id);
+      await Promise.all(targets.map((substreamId) => this.deliverParticipantProjection(substreamId, request.userId)));
+    }
+    return result;
   }
 
   async mutateParticipantGrant(input: ParticipantGrantMutation): Promise<ScopeGrantMutationResult> {
@@ -1554,9 +1564,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
   }
 
   private async authorizedGrantMutation(request: ScopeGrantMutation, useCurrentRevision: boolean): Promise<ScopeGrantMutationResult> {
-    const [actor, recipient] = await Promise.all([
+    const [actor, recipient, activeIncarnations] = await Promise.all([
       readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.actorUserId),
       readWorkspaceRelationship(this.env.DB, request.target.workspaceId, request.userId),
+      !request.active ? this.membershipIncarnations(request.target.workspaceId) : Promise.resolve(null),
     ]);
     if (this.parentSql.exec("SELECT 1 FROM main_participant_migration WHERE singleton=1 AND phase='pending'").toArray().length) {
       return { status: "denied", reason: "migration_pending" };
@@ -1587,7 +1598,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       }
     }
     if (!request.active && !store.hasOperation(request.operationId)
-      && !store.hasParticipantAfterRemoval(request.userId,request.target)) {
+      && !store.hasParticipantAfterRemoval(request.userId,request.target, activeIncarnations ?? {})) {
       return { status:"denied",reason:"participant_required" };
     }
     const result = ScopeGrantMutationResultSchema.parse(useCurrentRevision

@@ -325,6 +325,6 @@ INSERT INTO user_login_identities (provider, subject, user_id, verified_at)
 SELECT 'google', google_subject, id, created_at FROM users WHERE google_subject IS NOT NULL;
 
 INSERT INTO user_verified_emails (email, user_id, verified_at)
-SELECT email, id, created_at FROM users;
+SELECT email, id, created_at FROM users WHERE google_subject IS NOT NULL;
 
 PRAGMA defer_foreign_keys = OFF;

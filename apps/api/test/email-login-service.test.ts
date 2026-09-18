@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { createApp } from "../src/app";
 import { AuthService, verifyAccessToken } from "../src/services/auth-service";
-import { startEmailLogin, redeemEmailLogin, openEmailLoginSecret, deliverEmailLogin } from "../src/services/email-login-service";
+import { configuredEmailLoginPolicy, startEmailLogin, redeemEmailLogin, openEmailLoginSecret, deliverEmailLogin } from "../src/services/email-login-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -118,4 +118,21 @@ describe("passwordless email login", () => {
     expect(sent[0]).toEqual(sent[1]);
     expect(db.prepare("SELECT delivery_sent_at FROM email_login_challenges WHERE id=?").get(challengeId)?.delivery_sent_at).toEqual(expect.any(Number));
   });
+});
+
+
+it("keeps email login disabled without explicit policy and bounds both public transports", async () => {
+  const env = bindings();
+  delete env.EMAIL_LOGIN_POLICY_JSON;
+  expect(() => configuredEmailLoginPolicy(env)).toThrow("Email sign-in is not configured");
+  const app = createApp();
+  for (const prefix of ["/auth", "/browser"]) {
+    for (const endpoint of ["start", "redeem"]) {
+      const response = await app.request(`${prefix}/email/${endpoint}`, { method: "POST",
+        headers: { "Content-Type": "application/json", origin: "https://app.example.test" },
+        body: JSON.stringify({ data: "x".repeat(4096) }),
+      }, env);
+      expect(response.status).toBe(413);
+    }
+  }
 });
