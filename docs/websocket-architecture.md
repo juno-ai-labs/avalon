@@ -87,13 +87,13 @@ routing, or the Worker-to-object hop.
 
 The WorkspaceDO socket stays in Chromium because there is exactly one for the
 active workspace and therefore no swarm to serialize. It supplies the sidebar's
-authoritative directory and the command queue used to send messages. A
-WorkstreamDO control socket supplies complete work-stream metadata. The
-matching SubstreamAgent socket for substream `0` supplies the
-canonical feed snapshot, ordered live events, replay, and older-page responses.
-Neither member of the pair carries message creation: the composer submits a
-command through WorkspaceDO. WorkspaceDO's explicit foreground signal is the
-sole source for current-client viewer presence; socket warmth is not attention.
+authoritative directory and presence. A WorkstreamDO control socket supplies
+complete work-stream metadata. The matching SubstreamAgent socket for the
+addressed conversation supplies the canonical feed snapshot, ordered live
+events, replay, older-page responses, and the private receipts for message and
+conversation commands sent directly by the composer. WorkspaceDO's explicit
+foreground signal is the sole source for current-client viewer presence; socket
+warmth is not attention.
 
 An automation's conversation rides the same broker and the same route kind as
 a work stream's feed, addressed by the automation id as the parent, but not the
@@ -239,6 +239,14 @@ oversized UTF-8 reasons are rejected before IPC and a native close exception
 terminates and forgets the affected socket.
 Server access revocation remains terminal and prevents the affected state
 machine from reconnecting.
+
+Application foreground is also a recovery edge for an unresolved conversation
+command. The renderer listens to main's application-focus signal rather than
+document visibility alone, because a visible window can lose application focus
+without becoming hidden. An already-closed feed bypasses its throttled reconnect
+timer immediately. An open feed replays the unresolved operation IDs once more,
+requests a single-flight canonical snapshot, and probes liveness without
+replacing an older pong deadline. Feeds with no pending command do nothing.
 
 ### Best practices for extending proactive coverage
 
@@ -498,6 +506,35 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-17 — Foreground recovery reconciles unresolved commands
+
+**What changed:** When Electron returns to the foreground with a substream
+command still awaiting its private receipt, that feed replays the command with
+the same operation ID, requests one canonical snapshot, and immediately probes
+the current socket with the existing heartbeat deadline. Feeds without an
+unresolved command do no foreground reconciliation work.
+
+**Why:** Production timing probes proved that messages and assistant replies
+could be durably committed while a background-throttled renderer remained on
+`Sending message`. The socket was owned by Electron main, but protocol receipts
+and transcript cache updates were processed in the renderer, so a delayed or
+lost renderer turn could strand the optimistic message until the window was
+raised even though the server path had completed normally.
+
+**Considered and rejected:** Disabling Electron background throttling globally
+would keep every hidden renderer running and pay a continuous CPU and power cost
+for a recovery needed only while a command is unresolved. Replaying under a new
+operation ID was also rejected because it would turn recovery into a duplicate
+mutation rather than reuse the room's existing idempotency boundary.
+
+**Consequences:** Foreground recovery is bounded to the affected feed and uses
+the same command, snapshot, and heartbeat primitives as reconnect recovery. A
+healthy socket settles from its replayed private receipt; an unresponsive socket
+closes after the existing pong deadline and reconnects through the normal
+cursor-based path.
+
+Shipped in [#818](https://github.com/juno-ai-labs/avalon/pull/818).
 
 ### 2026-09-15 — Socket ticket acquisition cannot strand reconnect loops
 

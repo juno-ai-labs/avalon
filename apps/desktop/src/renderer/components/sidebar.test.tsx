@@ -2822,6 +2822,7 @@ describe('pinned work streams', () => {
   // fifteen-second poll and fire whenever the state happened to match, moving
   // the sidebar under somebody who pinned something a minute ago.
   it('gives up on a reveal the list never honours', async () => {
+    const revealTimers = vi.spyOn(window, 'setTimeout');
     const row = workstream('ws-slow', 'Quarterly planning', 'completed');
     function Slow(): React.JSX.Element {
       const [streams, setStreams] = useState([row]);
@@ -2847,11 +2848,16 @@ describe('pinned work streams', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Pin' })).not.toBeInTheDocument());
 
-    // Real time rather than fake: this asserts on a `setTimeout` the component
-    // owns, and driving the clock out from under React's effects here made the
-    // deadline appear to fire without the state having settled.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, REVEAL_DEADLINE_MS + 200));
+    // Invoke the deadline the component actually armed. Sleeping from the
+    // click races React committing the reveal effect under a loaded shard, so
+    // its 2.2 seconds can end before the component's later 2-second timer.
+    const revealTimer = await waitFor(() => {
+      const timer = revealTimers.mock.calls.find(([, delay]) => delay === REVEAL_DEADLINE_MS)?.[0];
+      expect(timer).toEqual(expect.any(Function));
+      return timer;
+    });
+    act(() => {
+      if (typeof revealTimer === 'function') revealTimer();
     });
 
     // The state arriving late is not a reason to scroll: the action that asked
