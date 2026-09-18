@@ -171,7 +171,7 @@ export class TerminalSandboxCoordinator {
     if (!row) {
       const [policy, repositoryAuthority] = await Promise.all([
         this.loadOrCreatePolicy(context.workspaceId, nowIso),
-        this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
+        this.loadRepositoryAuthority(context.workspaceId, context.workstreamId, context.substreamId ?? "0"),
       ]);
       const authorityFingerprint = await sha256(JSON.stringify({
         principal: executionPrincipalKey(context.executionPrincipal),
@@ -209,7 +209,7 @@ export class TerminalSandboxCoordinator {
     const nowIso = clockNow.toISOString();
     const [policy, repositoryAuthority] = await Promise.all([
       this.loadOrCreatePolicy(context.workspaceId, nowIso),
-      this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
+      this.loadRepositoryAuthority(context.workspaceId, context.workstreamId, context.substreamId ?? "0"),
     ]);
     if (policy.verificationState !== "verified") {
       throw new TerminalToolError(
@@ -347,7 +347,7 @@ export class TerminalSandboxCoordinator {
   }
 
   private terminal(context: HarnessToolContext): TerminalObjectPort {
-    return this.terminalPort(context.workspaceId, context.workstreamId);
+    return this.terminalPort(context.workspaceId, context.workstreamId, context.substreamId ?? "0");
   }
 
   private async claimOperation(
@@ -513,8 +513,9 @@ export class TerminalSandboxCoordinator {
   private async loadRepositoryAuthority(
     workspaceId: string,
     workstreamId: string,
+    substreamId: string,
   ): Promise<RepositoryAuthorityRow | null> {
-    const repository = await this.terminalPort(workspaceId, workstreamId).selectedRepository();
+    const repository = await this.terminalPort(workspaceId, workstreamId, substreamId).selectedRepository();
     if (!repository) return null;
     const connection = await this.env.DB.prepare(
       `SELECT id FROM connector_connections
@@ -559,7 +560,7 @@ export class TerminalSandboxCoordinator {
     networkRevision: number,
     now: number,
   ): Promise<TerminalSandboxRecord> {
-    const stableHash = await sha256(`${context.workspaceId}:${context.workstreamId}`);
+    const stableHash = await sha256(`${context.workspaceId}:${context.workstreamId}:${context.substreamId ?? "0"}`);
     const stableName = `avalon-${stableHash.replace(/[^a-zA-Z0-9]/gu, "").slice(0, 24).toLowerCase()}`;
     return this.terminal(context).reserveFirstGeneration({
       stableName,
@@ -584,6 +585,7 @@ export class TerminalSandboxCoordinator {
         stableName: requireStableName(row),
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
+        substreamId: context.substreamId ?? "0",
         generation: row.generation,
         domainAllowList: domains,
         environment: { AVALON_RESOURCE_DIR: TERMINAL_OUTPUT_ROOT },

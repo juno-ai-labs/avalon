@@ -18,6 +18,7 @@ import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespac
 export type TerminalPortFactory = (
   workspaceId: string,
   workstreamId: string,
+  substreamId?: string,
 ) => TerminalObjectPort;
 
 /** Execute one operation without crossing a Durable Object request boundary. */
@@ -59,8 +60,8 @@ export function createTerminalPortFactory(
   env: Env,
   local?: WorkstreamTerminalStorage | TerminalOperationExecutor,
 ): TerminalPortFactory {
-  return (workspaceId, workstreamId) =>
-    createTerminalObjectPort(env, workspaceId, workstreamId, local);
+  return (workspaceId, workstreamId, substreamId = "0") =>
+    createTerminalObjectPort(env, workspaceId, workstreamId, local, substreamId);
 }
 
 /**

@@ -915,7 +915,7 @@ export function createDaytonaTerminalRuntime(
       const cwd = input.cwd ? await resolveInsideRoot(context, sandbox, input.cwd) : ROOT;
       const taskName = `avalon-task-${effectIntentId}`;
       const commandHash = await sha256Hex(JSON.stringify({ command: input.command, cwd, timeoutMs: input.timeoutMs }));
-      const terminal = terminalPort(context.workspaceId, context.workstreamId);
+      const terminal = terminalPort(context.workspaceId, context.workstreamId, context.substreamId ?? "0");
       const existing = await terminal.taskByEffect(effectIntentId);
       const replay = existing && commandOutputFromTask(existing);
       if (replay) {

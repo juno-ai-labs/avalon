@@ -2,9 +2,11 @@
 
 Terminal is Rally's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
-work stream one private Daytona sandbox without turning Rally into an
+substream one private Daytona sandbox without turning Rally into an
 interactive coding harness: the model receives nine typed tools, not a PTY or a
 provider API, and a sandbox is allocated only when one of those tools executes.
+The main feed is the explicit substream `"0"`; sibling child substreams never
+share its filesystem, repository workspace, command tasks, or mutation lease.
 
 ## Where the code lives
 
@@ -12,7 +14,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | --- | --- |
 | `apps/api/src/services/terminal/contract.ts` | Canonical plugin prompt, nine tool descriptors and strict argument schemas, and regional configuration contract. |
 | `apps/api/src/services/terminal/plugin.ts` | Regional composition boundary and allocation-free deferred plugin registration. |
-| `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-work-stream acquisition, authority fencing, exclusive mutation leases, and recovery after ambiguous provider calls. |
+| `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-substream acquisition, authority fencing, exclusive mutation leases, and recovery after ambiguous provider calls. |
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
 | `apps/api/src/services/terminal/resource-bridge.ts` | Authorized regional R2 import and generated-resource publication. |
@@ -39,9 +41,10 @@ the model, so the sandbox is built while the model does work that needs no
 sandbox. The first Terminal tool awaits that same promise, collecting the work
 in flight rather than starting it, and it — not activation — is where a
 provider failure reaches the model, with the coordinator's own guidance. The
-acquisition asks `TerminalSandboxCoordinator` for the work stream's exclusive
-Terminal mutation lease. It creates, starts, or restores the stable private
-sandbox and records the provider result in the owning SubstreamAgent. That
+acquisition asks `TerminalSandboxCoordinator` for the owning substream's
+exclusive Terminal mutation lease. It creates, starts, or restores that
+substream's stable private sandbox and records the provider result in its own
+SubstreamAgent. That
 successful acquisition, authority/policy decision, and
 repository preparation are reused for later tools in the same harness run.
 Repository checkout explicitly invalidates the run-local acquisition because it
@@ -771,6 +774,36 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-18 — Terminal sandboxes follow substreams
+
+**What changed:** Terminal now passes the owning substream ID from the persistent
+Bind loop into its tool context and through the Terminal object port. The main
+feed is explicit as `"0"`; a child substream routes to its own `SubstreamAgent`
+Terminal authority. New sandbox stable names include workspace, parent work
+stream, and substream IDs. Command-task and imported-resource operations use
+that same port, so sibling substreams do not share a filesystem, command receipt,
+or mutation lease.
+
+**Why:** The port factory accepted a substream ID but its ordinary callers
+silently discarded it, which routed every Terminal operation in a work stream to
+main `"0"`. A delegated child could therefore observe or change its parent's
+Terminal workspace despite having a distinct conversation and execution loop.
+Sandbox ownership must follow the same substream boundary as those loops.
+
+**Considered and rejected:** Keeping a work-stream-shared sandbox with a
+substream-specific name only. That leaves command tasks, imports, and the
+exclusive lease in main's object, so independently named sandboxes would still
+be governed by shared state. The simple direct route uses the child object that
+already owns its own Terminal tables. No compatibility migration is retained:
+the workspace has no existing users, so changing the main feed's new stable-name
+derivation is preferable to retaining a second identity rule.
+
+**What a future change has to respect:** Every new Terminal path must accept the
+substream ID and route through it; omitting it defaults to main `"0"` only for
+legacy callers. Workspace-wide policy and lifecycle work that enumerates active
+sandboxes must enumerate child substreams as well before those paths are exposed
+as management controls for child Terminal workspaces.
 
 ### 2026-09-18 — Terminal's tools take the names the model already knows
 
