@@ -139,6 +139,13 @@ Add focused tests for:
 6. migration behavior proving a current occurrence does not emit both a legacy
    and replacement contract, or both a custom and reserved destination event.
 
+When an API producer is observational, use `runtimeDeferral` from
+`apps/api/src/lib/defer.ts` or an owning request deferral instead of awaiting the
+analytics path or floating its promise. Worker deferral extends the invocation;
+Durable Objects already stay active for pending asynchronous I/O. This is still
+best effort until D1, R2, or Queue accepts a durable hand-off, so a deferral must
+guard synchronous registration failure and observe rejection.
+
 Run the focused telemetry suites documented in [`telemetry.md`](telemetry.md#testing),
 then run:
 

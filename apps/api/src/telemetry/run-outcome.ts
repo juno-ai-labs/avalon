@@ -1,5 +1,7 @@
 import { asUserId, type AutomationRunReferenceV1, type UserId, type WorkspaceId } from '@rally/contracts';
 import type { Env, IdentityAuthContext } from '../env';
+import { runtimeDeferral, type WorkDeferral } from '../lib/defer';
+import { diagnosticErrorCode, logStructuredEvent } from '../observability/logger';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitter';
 import {
   emitProductUsageTelemetry,
@@ -120,9 +122,10 @@ function timeToFirstOutput(row: RunRow, startedMs: number): TelemetryJourneyDura
 }
 
 /** Durable, idempotent authoritative counterpart to a renderer run intent. */
-export async function emitCorrelatedRunOutcome(
+async function acceptCorrelatedRunOutcome(
   env: Env,
   input: CorrelatedRunInput,
+  defer: WorkDeferral,
 ): Promise<void> {
   const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId)
     .runOutcomeTelemetry({ runId: input.harnessRunId });
@@ -141,7 +144,7 @@ export async function emitCorrelatedRunOutcome(
   const operationId = input.telemetryOperationId ?? input.harnessRunId;
   const subjectUserId = userIdForRun(run, input.telemetrySubjectUserId);
 
-  await emitProductUsageTelemetry(env, {
+  emitProductUsageTelemetry(env, {
     workspaceId: input.workspaceId,
     ...(subjectUserId ? { userId: subjectUserId } : {}),
     name: 'run_terminal',
@@ -164,7 +167,7 @@ export async function emitCorrelatedRunOutcome(
     },
     operationId,
     eventId: resourceTelemetryEventId(input.harnessRunId, 2),
-  });
+  }, defer);
 
   // Keep the established coarse outcome for existing dashboards while the
   // richer terminal event becomes the canonical lifecycle measurement.
@@ -189,4 +192,19 @@ export async function emitCorrelatedRunOutcome(
     input.harnessRunId,
   );
   await emitAuthenticatedApiTelemetry(env, auth, event);
+}
+
+export function emitCorrelatedRunOutcome(
+  env: Env,
+  input: CorrelatedRunInput,
+  defer: WorkDeferral = runtimeDeferral,
+): void {
+  defer(acceptCorrelatedRunOutcome(env, input, defer).catch((error: unknown) => {
+    logStructuredEvent(env, 'warn', 'run_outcome_telemetry_failed', {
+      workspace_id: input.workspaceId,
+      parent_id: input.parentId,
+      harness_run_id: input.harnessRunId,
+      error_code: diagnosticErrorCode(error, 'run_outcome_telemetry_failed'),
+    });
+  }));
 }

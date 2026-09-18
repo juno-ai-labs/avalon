@@ -335,7 +335,7 @@ export class TerminalSettingsService {
     const telemetryMode = (mode: TerminalNetworkMode, domains: string[]) => mode === "full_internet"
       ? "unrestricted" as const
       : domains.length > 0 ? "custom" as const : "restricted" as const;
-    await emitProductUsageTelemetry(this.env, {
+    emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       name: "terminal_policy_changed",
@@ -348,7 +348,7 @@ export class TerminalSettingsService {
       },
       operationId: input.mutationId,
       eventId: input.mutationId,
-    }).catch(() => undefined);
+    });
     return this.get();
   }
 
