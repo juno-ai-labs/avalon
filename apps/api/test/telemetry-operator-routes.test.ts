@@ -5,7 +5,7 @@ import type { HonoAppEnv } from '../src/env';
 import { errorHandler } from '../src/middleware/errors';
 import { telemetryOperatorRoutes } from '../src/routes/telemetry-operations';
 import { createCloudflareTestBinding, createTestEnv } from './helpers/cloudflare-test';
-import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
 
 const securityToken = 'security-token-with-at-least-32-bytes';
 const supportToken = 'support-token-with-at-least-32-bytes-';
@@ -69,7 +69,7 @@ describe('regional telemetry operator routes', () => {
   });
 
   it('derives the security principal from configuration and replays only a regional terminal row', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO telemetry_accepted_events
       (event_id, payload_hash, envelope_json, route, routing_basis, analytics_subject_id,
        accepted_at, normalized_timestamp, delete_at, delivery_state)
@@ -110,7 +110,7 @@ describe('regional telemetry operator routes', () => {
   });
 
   it('streams an authorized raw dump while auditing only its opaque crash ID', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO telemetry_crash_reports
       (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
        content_sha256, release, build_id, platform, architecture, process_role,

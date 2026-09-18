@@ -5,7 +5,7 @@ import {
   recordDestinationOutcome,
 } from '../src/telemetry/operations';
 import { createTestEnv } from './helpers/cloudflare-test';
-import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
 
 const now = new Date('2026-08-12T20:00:00.000Z');
 
@@ -16,7 +16,7 @@ describe('telemetry operations', () => {
   });
 
   it('opens a content-free destination circuit after repeated transient failures and recovers it', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global' });
 
     await expect(destinationCircuitAllows(env, 'posthog_capture', now)).resolves.toBe(true);
@@ -42,7 +42,7 @@ describe('telemetry operations', () => {
   });
 
   it('reports only fixed counts and oldest ages for regional operations', async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.exec(`
       INSERT INTO telemetry_accepted_events
         (event_id, payload_hash, envelope_json, route, routing_basis, analytics_subject_id,
