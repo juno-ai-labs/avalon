@@ -4,7 +4,7 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
 /**
  * The one way a run reaches the room that owns its automation.
  *
- * `sidekick_post_result` is a tool the run holds, offered only to a run of a
+ * `post_result` is a tool the run holds, offered only to a run of a
  * room's automation. It asks the room's parent whether the room still stands,
  * then appends the result into the room's main conversation as an activation:
  * loop input the room wakes on, keyed by the run so a retry lands once. The
@@ -137,7 +137,7 @@ const provider = useOpenRouterDouble(async (call) => {
       await env.DB.prepare("UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?")
         .bind(WORKSPACE_ID, AUTHOR_ID).run();
     }
-    const list = call.toolNames.find((name) => name === "agents_sidekicks_list");
+    const list = call.toolNames.find((name) => name === "sidekicks_list");
     if (!list) throw new Error("agent_directory_not_preloaded");
     return { callTool: { name: list, arguments: {} } };
   }
@@ -172,7 +172,7 @@ const provider = useOpenRouterDouble(async (call) => {
   if (String(latestInput?.content).includes("EXPLICIT_REPLY")) {
     return explicitReply(call, "Here are the requested findings.");
   }
-  const tool = call.toolNames.find((name) => name.endsWith("sidekick_post_result"));
+  const tool = call.toolNames.find((name) => name.endsWith("post_result"));
   const toolAnswered = call.messages.some((message) => message.role === "tool");
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { text: RESULT_TEXT } } };
   return { say: tool ? "Posted the count." : "Acknowledged." };
@@ -362,7 +362,7 @@ beforeEach(async () => {
   await seedRoomAutomation();
 });
 
-describe("sidekick_post_result", () => {
+describe("post_result", () => {
   it.each([false, true])("reuses command membership for directory reads but refuses revocation before execution (%s)", async (revoked) => {
     await runInDurableObject(workspaceStub(), (instance) => {
       const target = instance as unknown as {
@@ -385,7 +385,7 @@ describe("sidekick_post_result", () => {
     if (revoked) {
       expect(await runInDurableObject(roomConversation(), (_instance, state) =>
         state.storage.sql.exec<{ n: number }>(
-          "SELECT COUNT(*) AS n FROM tool_effects WHERE tool_name = 'agents_sidekicks_list'",
+          "SELECT COUNT(*) AS n FROM tool_effects WHERE tool_name = 'sidekicks_list'",
         ).one().n)).toBe(0);
     } else expect(provider.calls.some((call) => call.messages.some((message) =>
       message.role === "tool" && JSON.stringify(message.content).includes("sidekicks")))).toBe(true);
@@ -407,7 +407,7 @@ describe("sidekick_post_result", () => {
       expect(response.status).toBe(200);
       expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed", error_json: null });
       const initialCall = provider.calls.find((call) => JSON.stringify(call.messages).includes("DELEGATE_FROM_MODEL"));
-      expect(initialCall?.toolNames).toContain("agents_start_agent");
+      expect(initialCall?.toolNames).toContain("start_agent");
 
       const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
         parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
@@ -1363,7 +1363,7 @@ describe("sidekick_post_result", () => {
     // Prompt and tool setup share the execution definition. Assert on the
     // resulting offered tool rather than a definition-read count: recovery may
     // idempotently provision the run again under loaded alarm scheduling.
-    const offered = provider.calls.filter((call) => call.toolNames.some((name) => name.endsWith("sidekick_post_result")));
+    const offered = provider.calls.filter((call) => call.toolNames.some((name) => name.endsWith("post_result")));
     expect(offered.length).toBeGreaterThanOrEqual(2);
     expect(offered[1]!.messages.some((message) => message.role === "tool")).toBe(true);
 
@@ -1378,7 +1378,7 @@ describe("sidekick_post_result", () => {
     expect(await runInDurableObject(roomConversation(), (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count,
     )).toBe(0);
-    const acknowledged = provider.calls.filter((call) => !call.toolNames.some((name) => name.endsWith("sidekick_post_result")));
+    const acknowledged = provider.calls.filter((call) => !call.toolNames.some((name) => name.endsWith("post_result")));
     expect(acknowledged.length).toBeGreaterThanOrEqual(1);
     // What the room's model was asked carries the posted result, labelled as
     // an automation's untrusted output, and nothing about the tool.

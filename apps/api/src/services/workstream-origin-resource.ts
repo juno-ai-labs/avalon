@@ -30,7 +30,7 @@ export interface OriginResourceDescriptor extends ConnectorOriginResource {
 
 /**
  * `origin` rather than `attachment`, and the distinction is load-bearing in two
- * places: the `workstream_list_resources` tool hands the relationship to the model, which
+ * places: the `list_resources` tool hands the relationship to the model, which
  * is how it can tell the channel it was summoned from apart from a document
  * somebody attached afterwards, and a future detach path must not treat the two
  * alike — removing the origin loses the only record of where the work stream
@@ -88,7 +88,7 @@ export async function describeWorkstreamOrigin(env: Env, input: {
     connectionId: input.connectionId,
     provider: input.provider,
     // An origin never carries content. `payload_ref` on an activity addresses
-    // the raw verified webhook body in R2, and `workstream_read_resource` serves
+    // the raw verified webhook body in R2, and `read_resource` serves
     // whatever `content_ref` points at to the model with no connector
     // authorization of its own — so copying it here would turn "record where
     // this came from" into "publish the provider payload to the run", against

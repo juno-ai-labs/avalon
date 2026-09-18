@@ -5074,20 +5074,33 @@ async function loadHarnessTools(
   const paginationSources = new WeakMap<HarnessTool, HarnessTool>();
   const priorPaginationTools = (tools: readonly HarnessTool[]) => [...new Set(tools.map((tool) => paginationSources.get(tool) ?? tool))]
     .map(prePaginationTool);
-  const expandPages = (tool: HarnessTool, prefix: string, connectionId: string | null): HarnessTool[] => {
+  // `prefix` namespaces the minted page IDs; `wirePrefix` is what the page
+  // tools' descriptions call their own family by. They are the same string for
+  // a connector, and differ for a plugin that advertises no wire prefix.
+  const expandPages = (
+    tool: HarnessTool,
+    prefix: string,
+    connectionId: string | null,
+    wirePrefix = prefix,
+  ): HarnessTool[] => {
     if (!tool.definition.pagination) return [tool];
     const expanded = withToolPagination(tool, { receipts: pageReceipts,
       fence: () => {
         if (!paginationLease) throw new Error("pagination_attempt_lease_missing");
         return { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner };
       },
-      prefix, connectionId,
+      prefix, wirePrefix, connectionId,
     });
     for (const pageTool of expanded) paginationSources.set(pageTool, tool);
     return expanded;
   };
-  const coreTools = createAvalonTools(env, input).flatMap((tool) => expandPages(tool,
-    tool.definition.capability.startsWith("table.") ? "table" : "workstream", null)).filter((tool) =>
+  // The page-ID namespaces stay `table_` and `workstream_`: they name where a
+  // page came from, are stored on issued rows, and are validated on the way
+  // back in. Only `rally:workstream`'s model-facing prefix went away.
+  const coreTools = createAvalonTools(env, input).flatMap((tool) => {
+    const tableTool = tool.definition.capability.startsWith("table.");
+    return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
+  }).filter((tool) =>
     !routesAnswersToAgent || tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name);
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
@@ -6185,11 +6198,14 @@ function createAutomationPostResultPlugin(
   return {
     canonicalId: SIDEKICK_RESULT_PLUGIN_ID,
     modelId: "rally_sidekick_result",
-    shortWireName: "sidekick",
+    // No wire prefix: this plugin is preloaded only on a run of a room's
+    // Sidekick, where there is exactly one result to post and nothing to
+    // namespace it against.
+    shortWireName: "",
     displayName: "Sidekick result",
     searchAliases: [],
     description: "Post this run's result into the work stream that owns the Sidekick.",
-    systemMessage: "When the instructions say the work stream should hear the result, post it with sidekick_post_result, once, in full.",
+    systemMessage: "When the instructions say the work stream should hear the result, post it with post_result, once, in full.",
     tools: [tool],
     preload: true,
     explicit: false,
@@ -6886,15 +6902,19 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
   return {
     canonicalId: AVALON_WORKSTREAM_PLUGIN_ID,
     modelId: "rally_workstream",
-    shortWireName: "workstream",
+    // No wire prefix. This plugin is always active and every tool here names
+    // its own object — `list_resources`, `schedule_wakeup`, `run_subagent` —
+    // so `workstream_` repeated the one context the run never leaves. Page IDs
+    // keep the `workstream_` namespace; see `expandPages`.
+    shortWireName: "",
     displayName: "Workstream",
     searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
     description: "Read and update the current workstream, its resources, and execution lifecycle, including waking it up later to act on a prompt.",
     systemMessage: [
       "Use these tools only for the current authorized workstream and its attached resources.",
-      "Use workstream_schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
+      "Use schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
       "Write a wake-up prompt for a run that cannot see this conversation: state the task, its target, and what finishing looks like.",
-      "Check workstream_list_wakeups before scheduling another wake-up so you do not duplicate one, and cancel a wake-up that a later turn made unnecessary.",
+      "Check list_wakeups before scheduling another wake-up so you do not duplicate one, and cancel a wake-up that a later turn made unnecessary.",
     ].join(" "),
     tools: workstreamTools,
     preload: true,
@@ -7094,7 +7114,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       execute: async (raw, context) => {
         const args = ScheduleWakeupInputSchema.parse(raw);
         const providerIdempotencyKey = requireProviderIdempotencyKey(
-          "workstream_schedule_wakeup",
+          "schedule_wakeup",
           context.providerIdempotencyKey,
         );
         const zones = await runLocalTimezones(env, input);
@@ -7149,7 +7169,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           throw new WakeupInputError(
             "wakeup_limit_reached",
             `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}. Cancel one before scheduling another.`,
-            "Call workstream_list_wakeups, then cancel one pending wake-up before retrying.",
+            "Call list_wakeups, then cancel one pending wake-up before retrying.",
             pendingWakeups.map((wakeup) => wakeup.wakeupId),
           );
         }
@@ -7222,7 +7242,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     {
       definition: {
         name: "cancel_wakeup",
-        description: "Cancel one pending wake-up in this work stream. Use the wakeupId returned by workstream_schedule_wakeup or workstream_list_wakeups.",
+        description: "Cancel one pending wake-up in this work stream. Use the wakeupId returned by schedule_wakeup or list_wakeups.",
         capability: "workstream.wakeup.write",
         mode: "write",
         idempotency: "provider_key",
@@ -7233,7 +7253,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             wakeupId: {
               type: "string",
               format: "uuid",
-              description: "The wake-up to cancel, as returned by workstream_list_wakeups.",
+              description: "The wake-up to cancel, as returned by list_wakeups.",
             },
           },
           required: ["wakeupId"],
@@ -7247,8 +7267,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           const pending = await listPendingWorkstreamWakeups(scheduling);
           throw new WakeupInputError(
             "wakeup_not_found",
-            "No pending wake-up with that ID is available in this work stream. Call workstream_list_wakeups and retry with one of its IDs.",
-            "Call workstream_list_wakeups and use one of the pending wake-up IDs.",
+            "No pending wake-up with that ID is available in this work stream. Call list_wakeups and retry with one of its IDs.",
+            "Call list_wakeups and use one of the pending wake-up IDs.",
             pending.map((wakeup) => wakeup.wakeupId),
           );
         }
@@ -7262,7 +7282,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           throw new WakeupInputError(
             "wakeup_not_pending",
             `That wake-up is already ${row?.status ?? "resolved"}. Only a pending wake-up can be cancelled.`,
-            "Call workstream_list_wakeups and use one of the IDs that is still pending.",
+            "Call list_wakeups and use one of the IDs that is still pending.",
           );
         }
         await refreshAgentTimerAlarm(
@@ -7997,6 +8017,7 @@ export const __integrationTesting = {
   transcriptPluginPresentation,
   installDynamicPluginTools,
   createWorkstreamCorePlugins,
+  createAutomationPostResultPlugin,
   loadHarnessTools,
   validateDynamicConnectorTools,
   loadToolInvocation,

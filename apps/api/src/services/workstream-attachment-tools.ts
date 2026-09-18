@@ -684,7 +684,7 @@ function readSuggestion(
 ): SuggestedAttachmentToolCall {
   return modelToolPrefix === "sidekick"
     ? { tool: "sidekick_read_resource", arguments: { resourceId } }
-    : { tool: "workstream_read_resource", arguments: { resourceId } };
+    : { tool: "read_resource", arguments: { resourceId } };
 }
 
 function skippedViewItem(
@@ -802,7 +802,7 @@ function assertReadableKind(
       attachmentKind: kind,
       suggestedCall: modelToolPrefix === "sidekick"
         ? { tool: "sidekick_view_resource", arguments: { resourceIds: [row.id] } }
-        : { tool: "workstream_view_resource", arguments: { resourceIds: [row.id] } },
+        : { tool: "view_resource", arguments: { resourceIds: [row.id] } },
     },
   );
 }

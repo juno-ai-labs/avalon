@@ -71,7 +71,7 @@ summary, then `# Authoritative work-stream resource inventory`. The appendix is
 pure host-rendered data: an `asOf` time, total visible resources, total message
 attachments, and non-empty `image`, `markdown`, `pdf`, `document`, `spreadsheet`,
 `presentation`, `text`, and `other` groups in that order. It names every allowed
-kind and the cursor continuation for `workstream_list_resources`, but no
+kind and the cursor continuation for `list_resources`, but no
 filename, resource ID, MIME value, or file content. The live token counts reset
 to zero, which also stops the auto-check from firing before a fresh provider
 count exists.

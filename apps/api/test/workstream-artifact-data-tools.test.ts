@@ -221,7 +221,7 @@ describe("what a content read on a site does instead of dead-ending", () => {
     // A site's stored content is a manifest, not a page, so there is nothing
     // single-bodied for a content tool to return. The failure is where the
     // connection between "the artifact" and "its source" gets taught.
-    const failure = siteReadRemediation(ARTIFACT, SITE_MANIFEST_MIME_TYPE, "workstream_read_resource", "workstream");
+    const failure = siteReadRemediation(ARTIFACT, SITE_MANIFEST_MIME_TYPE, "read_resource", "workstream");
     expect(failure.code).toBe("resource_tool_mismatch");
     expect(failure.details).toMatchObject({
       attachmentKind: "site",
@@ -243,7 +243,7 @@ describe("what a content read on a site does instead of dead-ending", () => {
   it("survives the structured-failure sanitizer, which is what reaches the model", async () => {
     // A member the sanitizer drops is a remediation the model never sees, so
     // the round trip is the assertion rather than the shape alone.
-    const failure = siteReadRemediation(ARTIFACT, SITE_MANIFEST_MIME_TYPE, "workstream_read_resource", "workstream");
+    const failure = siteReadRemediation(ARTIFACT, SITE_MANIFEST_MIME_TYPE, "read_resource", "workstream");
     const forwarded = readStructuredFailure(failure);
     expect(forwarded?.code).toBe("resource_tool_mismatch");
     expect(forwarded?.details).toMatchObject({

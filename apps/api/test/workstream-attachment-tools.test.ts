@@ -564,7 +564,7 @@ describe("work-stream attachment tools", () => {
           resourceId: textId,
           status: "skipped",
           reasonCode: "resource_tool_mismatch",
-          suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } },
+          suggestedCall: { tool: "read_resource", arguments: { resourceId: textId } },
         },
         { resourceId: secondImageId, status: "included", visualPartIndex: 1 },
       ],
@@ -587,7 +587,7 @@ describe("work-stream attachment tools", () => {
 
     await expect(view.execute({ resourceIds: [textId] }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
-      details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } } },
+      details: { suggestedCall: { tool: "read_resource", arguments: { resourceId: textId } } },
     });
   });
 
@@ -608,7 +608,7 @@ describe("work-stream attachment tools", () => {
       id: invocationId,
       runId: HARNESS_RUN_ID,
       toolCallId: "view-call",
-      toolName: "workstream_view_resource",
+      toolName: "view_resource",
       status: "completed",
       inputJson: JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
       outputRef,
@@ -693,7 +693,7 @@ describe("work-stream attachment tools", () => {
     const imageId = insertReadyImage(database, objectStore, bucket, 8);
     await expect(summarize.execute({ resourceId: imageId }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
-      details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+      details: { suggestedCall: { tool: "view_resource", arguments: { resourceIds: [imageId] } } },
     });
   });
 
@@ -743,13 +743,13 @@ describe("work-stream attachment tools", () => {
       const args = tool === search ? { resourceId: imageId, query: "diagram" } : { resourceId: imageId };
       await expect(tool.execute(args, context())).rejects.toMatchObject({
         code: "resource_tool_mismatch",
-        details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+        details: { suggestedCall: { tool: "view_resource", arguments: { resourceIds: [imageId] } } },
       });
     }
     for (const resourceId of readable) {
       await expect(view.execute({ resourceIds: [resourceId] }, context())).rejects.toMatchObject({
         code: "resource_tool_mismatch",
-        details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId } } },
+        details: { suggestedCall: { tool: "read_resource", arguments: { resourceId } } },
       });
     }
     await expect(view.execute({ resourceIds: [unsupportedId] }, context())).resolves.toMatchObject({
