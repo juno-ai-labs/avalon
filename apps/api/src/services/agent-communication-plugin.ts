@@ -25,11 +25,12 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationServic
   return {
     canonicalId: "avalon:agents", modelId: "rally_agents",
     // No wire prefix. `start_agent`, `list_agents` and `stop_agent` carry their
-    // own subject, and the prefix was a second copy of it. `send_message` and
-    // `reply` do not: bare, they read as messaging a person rather than an
-    // agent, which is why the instructions below name the addressee in every
-    // sentence that reaches for one. See the changelog entry in
-    // `docs/agent-communication.md`.
+    // own subject, and the prefix was a second copy of it. `reply_to_message`
+    // is named for the thing it answers rather than the bare `reply` it was,
+    // which left the object to the prefix. `send_message` still has that
+    // problem — bare, it reads as messaging a person rather than an agent —
+    // which is why the instructions below name the addressee in every sentence
+    // that reaches for one. See the changelog in `docs/agent-communication.md`.
     shortWireName: "",
     displayName: "Background agents", description: "Delegate work to background agents and communicate with teammates.",
     searchAliases: ["background", "delegate", "teammate", "send message", "reply", "subagent"],
@@ -41,7 +42,7 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationServic
       tool("start_agent", "Delegate work to a new background agent. Returns agentId after accepting the assignment; does not wait for completion. Include the full assignment and needed context.", StartAgentInputSchema, (input, context) => service.start(input, context)),
       tool("list_agents", "Find teammates and their agentId, name, description, and execution status. Message an agent to ask for details.", ListAgentsInputSchema, () => service.list()),
       tool("send_message", "Send instructions or an update to a teammate using agentId. Resumes idle or stopped agents; does not wait for a response.", SendAgentMessageInputSchema, (input, context) => service.send(input, context)),
-      tool("reply", "Send a response to the sender of a received message. Use that messageId, not an agentId. Does not wait for a response.", ReplyToAgentMessageInputSchema, (input, context) => service.send(input, context)),
+      tool("reply_to_message", "Send a response to the sender of a received message. Use that messageId, not an agentId. Does not wait for a response.", ReplyToAgentMessageInputSchema, (input, context) => service.send(input, context)),
       tool("stop_agent", "Stop an agent you own and all agents it owns. Completed actions are not undone. A later message can resume the stopped agent.", StopAgentInputSchema, (input) => service.stop(input.agentId)),
     ],
   };

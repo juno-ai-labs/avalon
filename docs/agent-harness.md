@@ -1321,7 +1321,7 @@ advertise their canonical names unchanged: `rally:core` (`current_time`,
 `request_elicitation`, `get_connector_connection_state`,
 `show_connector_connection`), `rally:workstream` (`list_resources`,
 `read_resource`, `schedule_wakeup`, `run_subagent` and the rest),
-`avalon:agents` (`start_agent`, `send_message`, `reply`, …),
+`avalon:agents` (`start_agent`, `send_message`, `reply_to_message`, …),
 `rally:sidekick-result` (`post_result`), `rally:multimodal-generation`
 (`generate_image`, `edit_image`, `generate_audio`), and `rally:terminal`, whose
 own entry is in [`terminal-workspaces.md`](terminal-workspaces.md).

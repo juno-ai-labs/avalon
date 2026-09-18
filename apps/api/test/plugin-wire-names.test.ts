@@ -152,7 +152,7 @@ describe("plugin wire names", () => {
       "query_artifact_data",
       "read_file",
       "read_resource",
-      "reply",
+      "reply_to_message",
       "request_elicitation",
       "run_command",
       "schedule_wakeup",

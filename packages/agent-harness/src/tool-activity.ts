@@ -64,14 +64,14 @@ const AGENT_PROSE: Record<string, ToolProse> = {
     settled: "Looked for teammates",
     failed: "Could not look for teammates",
   },
-  // These two name the addressee, because the bare tool names do not: a row
-  // reading "Sent a message" beside a Slack icon would be the wrong account.
+  // These name the addressee, because the bare tool names do not: a row reading
+  // "Sent a message" beside a Slack icon would be the wrong account.
   send_message: {
     started: "Messaging a teammate",
     settled: "Messaged a teammate",
     failed: "Could not message a teammate",
   },
-  reply: {
+  reply_to_message: {
     started: "Replying to a teammate",
     settled: "Replied to a teammate",
     failed: "Could not reply to a teammate",
@@ -350,6 +350,11 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   ...AGENT_PROSE,
   ...Object.fromEntries(Object.entries(AGENT_PROSE)
     .map(([toolName, prose]) => [`agents_${toolName}`, prose])),
+  // `reply_to_message` was called `reply`, so the rows it wrote say
+  // `agents_reply` — not the `agents_reply_to_message` the line above derives.
+  agents_reply: AGENT_PROSE.reply_to_message!,
+  // `reply_to_message` was called `reply`, so the rows it wrote say
+  // `agents_reply` — not the `agents_reply_to_message` the line above derives.
   post_result: SIDEKICK_POST_RESULT_PROSE,
   sidekick_post_result: SIDEKICK_POST_RESULT_PROSE,
 };
