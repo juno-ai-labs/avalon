@@ -178,15 +178,14 @@ Sidekick authoring and setup are outside this lite surface. Guests use the scope
 recommendation summaries for eligible owned Sidekicks as well; they do not fetch
 the member-only owned Sidekick authoring directory.
 
-The conversation header opens the shared email invitation panel. It sends through
-the scoped invitation API, retains operation identity on retry and supports
-revoking pending invitations. Direct accepted shares are listed by selected scope
-and removed using their current grant revisions; other overlapping grants remain
-intact. Profile labels come from the scope-authorized management endpoint. Independent scope checkboxes and a complete-workstream option use owner-provided
-sharing choices. Complete sharing includes explicit restricted children and asks
-the server to verify that coverage at creation. Future restricted children remain
-excluded as described in the interface. No setup or onboarding capability is
-required.
+The conversation header opens the shared email invitation panel. It accepts
+multiple email addresses separated by whitespace, commas, or semicolons, and
+sends through the existing scoped invitation API with operation identity retained
+on retry. The selected conversation is the only target: Main uses conversation
+`0`, never a workstream grant, so other substreams gain no access. The panel has
+no access picker, invitation list, direct-share management, or related reads.
+The server remains responsible for sharing authorization. No setup or onboarding
+capability is required.
 
 The lite header also opens the selected conversation's participant controls and
 lists its attached resources. Resource selection uses the shared preview/lightbox
@@ -237,9 +236,8 @@ is no separate browser permission model or arbitrary forwarding destination.
 
 The mobile navigation uses the existing Radix dialog primitive for focus trapping,
 Escape and outside dismissal, including landing and archived states. Archive and
-guest promotion use the shared confirmation modal. Sharing selections are derived
-from current canonical options; losing complete coverage re-enables individual
-choices. Denied invitation and grant lists show a visible refreshable error.
+guest promotion use the shared confirmation modal. Sharing fixes its target to
+the clicked conversation and shows only email input and submission feedback.
 
 ## Invariants
 
@@ -325,7 +323,7 @@ Equivalent session refreshes update the stable RallyApi with `setSession`; they
 must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 Responsive navigation uses shell state, closes on navigation and supplies the
-shared dismissal scrim. Sharing reads distinguish loading, empty and error states. The header uses the shared
+shared dismissal scrim. The header uses the shared
 icon button with Tabler `share-2`; its open state stays highlighted. Work-stream
 and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
