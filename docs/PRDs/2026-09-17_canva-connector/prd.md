@@ -3,7 +3,7 @@
 > Created 2026-09-17.
 >
 > A Rally member connects their own Canva account and gets Canva's live design
-> tools in any work stream. One connection scope, personal, over Canva's hosted
+> tools in authorized work streams. One connection scope, personal, over Canva's hosted
 > MCP server. Companions: [`design.md`](design.md) for the authorization
 > mechanics, the tool surface and its limits; [`research.md`](research.md) for
 > what Canva's platform offers, what was measured against it live, and why the
@@ -13,7 +13,7 @@
 ## Summary
 
 A member connects their own Canva account from Settings and, from then on, can
-ask Rally to do design work in any work stream: find a deck, read what is on it,
+ask Rally to do design work in a work stream with an authorized audience: find a deck, read what is on it,
 generate one from a brief, edit it, comment on it, export it, upload an asset.
 The tools come from Canva's hosted MCP server and are never copied into Rally —
 the same pass-through shape Fireflies, Granola, Slack and Notion personal
@@ -102,18 +102,17 @@ still.
    learn that *something happened somewhere* in a member's Canva.
 
    What is **in** scope, and what makes this a narrowing rather than a
-   subtraction, is watching a design somebody named. `search-designs` accepts
-   `sort_by: modified_descending`, `get-design-content` returns a monotonic
-   `revision_id`, and `list-comments` pages a design's threads by id — all
-   confirmed live. So a polled watch can report that a watched design changed,
-   and that a watched design has a new comment, which is the pair people actually
-   ask for. It follows the polling pattern agreed on 2026-09-17: a server-side
-   poller no faster than every ten minutes, a high-water line on a provider id,
-   paging until it reaches the waterline, new events onto the Cloudflare queue.
+   subtraction, is explicitly opting into a watch on a named design. Live tests
+   on 2026-09-18 observed `get-design.updated_at` advancing for title, text and
+   layout changes; thread and reply listing worked with real pagination. A watch
+   reports eventually observed, coalesced changes, not every revision or an exact
+   latency. Replies require independent scans of existing threads. The previously
+   agreed polling floor is ten minutes; it is not a provider latency guarantee.
+   There is no observed `revision_id` or safe top-design-ID stopping rule.
 
-   What stays out is **discovery** — nothing tells Rally about a design nobody
-   was watching. Deferred, and the shape of it is in
-   [`design.md`](design.md#watching-a-design-without-webhooks).
+   Discovery remains out of scope. See
+   [`design.md`](design.md#watching-a-design-without-webhooks) for the watch contract.
+
 3. **The Connect REST APIs, in their entirety.** Designs, folders, comments,
    brand templates, autofill, exports, assets, analytics, imports, resizes and
    merges are all reachable through the MCP server for a personal connection.
@@ -166,13 +165,13 @@ card honest. Any display work here waits on a mockup being signed off first.
 
 ### Using it
 
-In any work stream, the member can ask for design work and the model holds
+In an authorized work stream, the member can ask for design work and the model holds
 Canva's live tools. Around thirty of them, covering discovery, generation,
 editing transactions, comments, folders, asset upload, export and resize.
 
-- **Plan-gated tools fail at the provider, honestly.** Autofill and brand
-  template datasets are Enterprise-only; brand templates, brand kits and resize
-  are Pro and above. Rally does not pre-screen for plan — it has no field that
+- **Plan-gated tools fail at the provider, honestly.** The current overview
+  places resize on Pro+ and brand capabilities on Enterprise, differing from
+  earlier documentation. Rally does not pre-screen for plan — it has no field that
   reports one reliably, and the provider decides per call. A refusal carries
   Canva's own reason, which is accurate in a way a cached plan check could never
   be. This is the judgement the X connector's balance check already settled.
@@ -181,7 +180,8 @@ editing transactions, comments, folders, asset upload, export and resize.
 - **Editing is transactional.** Canva's editing tools open a transaction, apply
   operations, and commit or cancel. A run that opens one and fails must not leave
   it open, so a cancelled or abandoned transaction is cleaned up rather than
-  left dangling.
+  left dangling. An uncertain commit is reconciled before any cancellation or
+  replay; lack of a response is not proof of failure.
 
 ### Sidekicks
 
@@ -191,7 +191,8 @@ So a Sidekick triggered by a Linear project shipping, or by a schedule, can buil
 and export the assets for it.
 
 **The connector offers exactly two triggers, both of which require a design to
-have been named**: that design changed, and that design has a new comment. It
+have been named**: that design changed, and that design has new discussion
+activity (proposed to include replies; finalize the label before implementation). It
 offers nothing else, because it can deliver nothing else — and a connector that
 advertises a trigger it cannot deliver is how Granola and Fireflies personal
 connections once produced Sidekicks that were silent forever, indistinguishable
@@ -207,6 +208,11 @@ already describes: tools under existing authorization, available only to their
 owner, with no new surface, no channel, no global inbox, and no tool-confirmation
 step.
 
+The shared-work-stream audience question is unresolved: Canva's current policy
+requires each recipient's own authentication for Canva-derived outputs. Obtain
+clarification and implement an enforceable audience contract before claiming
+compatibility with every existing shared surface.
+
 ## Decision log
 
 None yet.
@@ -220,15 +226,17 @@ None yet.
 2. **Apply for the waitlist and build against a server redirect; treat loopback
    as the fallback, not the plan.** Canva enforces its allowlist on the redirect
    URI's *host* at `/authorize`, returning a bare `400 Invalid redirect URI.`
-   Loopback (`localhost`, `127.0.0.1`) is unconditionally accepted, so a
-   desktop-driven authorization would work today with no approval at all. It is
+   Loopback (`localhost`, `127.0.0.1`) was accepted in the probe and local
+   Inspector authorization completed without waitlist approval. It is
    the fallback rather than the plan because it only works where Rally runs a
    local process: the iOS client could never use it, and neither could a browser
    session. *Rejected:* shipping loopback-only, which would build the connector's
    authorization on the one client it cannot generalize from.
-3. **Two triggers, both requiring a named design, and nothing else.** Watching
-   is polled, following the pattern agreed 2026-09-17: server-side, no faster
-   than ten minutes, a high-water line on a provider id. *Rejected:* a general
+3. **Two triggers, both requiring explicit opt-in to a named design.** Watching
+   uses design timestamps and complete thread/reply scans with durable ID
+   deduplication; the previously agreed ten-minute floor is retained. Pause and
+   remove controls are required; connecting never enables background retrieval.
+   *Rejected:* a general
    activity feed synthesized by polling every design a member owns, which is a
    replica of Canva's own home page built out of rate limit, and which nobody
    asked for.
@@ -238,19 +246,17 @@ None yet.
    execution, receipts and read-only child authority; the hint is bounded
    metadata. *Rejected:* trusting the provider's classification, which here
    would hand a read-only inline child a design generator.
-5. **`user_intent` is sent minimally and disclosed.** Canva requires a
-   model-authored sentence describing the user's goal on **every** tool call.
-   It is work-stream context leaving Rally, so the model is instructed to state
-   the operation and not the surrounding conversation, and the connect card says
-   it happens. *Rejected:* passing through whatever the model would write
-   unprompted, and rejected equally: sending a constant string, which would be
-   lying to the provider in a field it requires.
-6. **A Canva share URL is treated as a credential.** `get-design` accepts a full
-   share URL and forwards any collaboration token embedded in it. Such a URL is
-   therefore bearer authority, and it never becomes a stored resource URL, a log
-   line, or anything else a non-secret field holds. *Rejected:* storing the
-   pasted link as the resource's canonical URL, which is the obvious
-   implementation and puts a credential in a column nobody guards.
+5. **`user_intent` is minimal and disclosed.** All 35 descriptions call it
+   mandatory, but none of their schemas marks it required. Enforcement without
+   it is untested. Supply an accurate minimal operation description, including
+   deterministic wording when appropriate, without unrelated conversation.
+6. **Potentially access-bearing URLs are protected.** `get-design` describes
+   forwarding collaboration tokens in shared links. Keep design identity
+   separate from necessary access material; neither pasted links nor returned
+   `view_url` are assumed credential-free. *Rejected:* blindly saving any
+   provider URL into ordinary resource metadata or stripping tokens required
+   for subsequent access.
+
 7. **The consent breadth is disclosed before the click, not after.** Canva grants
    sixteen scopes whatever Rally requests. *Rejected:* requesting fewer scopes to
    make the card read better, which changes nothing about what is granted and
@@ -258,24 +264,24 @@ None yet.
 8. **No pre-screening on Canva plan.** The provider's per-call refusal is the
    accurate answer. *Rejected:* reading a plan at activation, which is the X
    connector's balance mistake in a different costume.
-9. **Refresh is expected to work, so the connection is not designed around
-   reconnection.** Canva's authorization server publishes `refresh_token` among
-   its grant types and does not publish `offline_access`, so refresh is granted
-   by default rather than scope-requested — measured live. Unlike Fireflies, this
-   connection should renew itself. It still reports reconnect-required if refresh
-   fails, because a measurement is not a guarantee.
+9. **Use normal credential renewal, and prove it.** A published refresh grant
+   is not proof of token issuance or successful renewal. Exercise expiry,
+   refresh, revocation and disconnect in Rally; attempt credential recovery on
+   `401` before asking for reconnection.
 
 ## Data model
 
-One resource type, `canva_design`, and the polling checkpoint behind a watch.
-Everything else — the connection, its encrypted tokens, its activation row — uses
-the existing connector tables. No ingress receipts, no payload storage, no
-routing directory, no migration beyond registering the type.
+One resource type, `canva_design`, plus per-owner watch observations. Reuse the
+existing encrypted connection and polling machinery; confirm its persistence
+shape supports complete-scan baselines, deduplication and atomic event/checkpoint
+progress before claiming no migration is needed.
 
-A `canva_design` row holds the design id, its title, and `view_url` as its
-canonical URL. **Never the pasted share URL**, which may carry a collaboration
-token; see the trust model. The checkpoint holds the last seen `revision_id` and
-the last seen comment thread id per watched design.
+Canonical identity is the design ID. Validate any stored navigation URL as
+credential-free; treat returned `view_url` as potentially sensitive too. Preserve
+necessary collaboration tokens through a protected access-material path. The
+checkpoint records observed design timestamps and known thread/reply IDs, not
+an invented revision or an order-dependent single thread cursor. Do not store
+design bodies or discussion text merely to deduplicate.
 
 ## Regional impact
 
@@ -299,9 +305,9 @@ desktop.
 - **Canva's allowlist is partner identification, not a security boundary.** It
   matches host with any path, and Canva uses it to tag clients by name. Rally
   should not reason about it as protection for anything.
-- **An unknown or revoked client ID returns `500`**, not a 400-class error, so a
-  revoked Rally registration surfaces as an opaque server error unless it is
-  handled deliberately. Measured live.
+- **An unknown client ID returned `500`**, not a 400-class error, so a
+  unknown Rally registration can surface as an opaque server error. Revoked
+  client behavior is untested.
 - **If loopback is used**, the local listener binds to a loopback address on an
   ephemeral port, accepts exactly one code for one attempt with PKCE, and closes.
   It is never a general local HTTP surface.
@@ -311,25 +317,26 @@ desktop.
   carry imperative prompt-steering at the model ("🚫 NEVER use this tool…"), and
   they enter the run's context through the pass-through like any other remote
   text.
-- **A Canva share URL can be a credential.** `get-design` accepts a full share
-  URL and forwards any collaboration token embedded in it, which is how a design
-  shared by link is reached at all. Such a URL is bearer authority: it is never
-  stored as a resource URL, never logged, and never returned to a surface that
-  treats URLs as public. The stored canonical URL is `view_url`.
-- **`user_intent` leaves Rally on every call.** Canva requires a model-authored
-  sentence describing what the user is trying to accomplish, on all 35 tools.
-  That is work-stream context crossing to a third party, so the model is
-  instructed to describe the operation rather than the conversation, and the
-  connect card discloses it.
-- **Provider safety hints are read and never obeyed.** Canva annotates
-  `generate-design` and `export-design` `readOnlyHint: true` although both create
-  things and consume quota. Rally's classification governs serial execution,
-  receipts and read-only inline-child authority —
-  [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md) already requires
-  this, and Canva is the concrete case it was written for.
-- **No tool declares an `outputSchema`.** Responses are undeclared, so they are
-  bounded and truncation-flagged rather than validated against a contract, and a
-  rejection still names the field it rejected.
+- **Links may contain access material.** Protect both pasted and returned URLs;
+  use design IDs for identity and a protected path for necessary collaboration
+  tokens. Link-only access and revocation semantics still need testing.
+- **`user_intent` is provider-bound data when supplied.** Minimize its content
+  and disclose the transfer. Schema-requiredness and enforcement are distinct;
+  neither model authorship nor a telemetry purpose is established.
+- **Provider hints never lower Rally's policy.** Read-only hints do not guarantee
+  no quota consumption. Commit/cancel destructive hints are not inherently wrong.
+- **No `outputSchema` does not remove validation.** Validate fields consumed by
+  resources, watch checkpoints, transaction recovery and entitlement notices;
+  generic results remain bounded, truncation-flagged and untrusted.
+- **Provider policy is a launch requirement.** Background access needs explicit
+  opt-in and controls. Shared agents cannot use another user's token, and Canva
+  requires each user to authenticate before accessing derived outputs. Clarify
+  shared work-stream and digest compatibility with Canva; membership alone does
+  not settle it. No cross-user cache or assumed delegation exception.
+- Canva content must not be used for external-model training, evaluation or
+  improvement; Brand Kits remain in Canva design workflows. Surface returned
+  credit/trial consumption and retain data only for operational need. See
+  [Canva usage policy](https://www.canva.dev/docs/mcp/usage-policy/).
 
 ## Agent behavior
 
@@ -348,11 +355,14 @@ that starts an editing transaction owns closing it.
 1. **Apply to Canva's MCP waitlist** with the redirect URI Rally will use. This
    is the blocking item, it is a reviewed application, and it needs someone who
    can speak for Juno Labs. Nothing about a server-side redirect works until it
-   is granted — confirmed live, not inferred.
+   is granted. On 2026-09-18 the application is drafted, not submitted. Proposed
+   callbacks are `https://api.rallywith.ai/connections/canva/callback` and
+   `https://eu.api.rallywith.ai/connections/canva/callback`; neither is implemented
+   or approved. Local authorization does not establish production eligibility.
 2. **Decide the client identity**: CIMD, which means publishing a client metadata
    document at an HTTPS URL and holding no client secret, or DCR, which Canva
    documents as deprecated but still serves. CIMD is the recommendation.
-3. **No Developer Portal integration, no client secret, no scopes to tick, and no
+3. **No Developer Portal integration, no scopes to tick, and no
    webhook URL** — all of that belonged to the workspace scope and is gone with
    it.
 
@@ -385,41 +395,48 @@ Turning it off is unsetting the variable.
 5. The connection survives access-token expiry without the member reconnecting.
 6. Sidekick drafting offers exactly two Canva triggers, both requiring a named
    design, and a rule naming any other Canva event is refused naming the scope.
-7. A design edited in Canva is reported to the work stream watching it within one
-   polling interval, and a comment added to it likewise; a design nobody watches
-   produces nothing.
+7. An opted-in design watch eventually reports title, text and layout-only
+   changes after provider convergence; it does not claim every edit or bounded
+   propagation latency. Comments and replies to old threads are found through
+   complete pagination, including a final empty page. Historical activity is
+   baselined, repeated scans/restarts deduplicate, and partial failures do not
+   advance checkpoints. An unwatched design produces nothing.
 8. A Sidekick owned by that member exports a design inside a run.
 9. A Canva share URL carrying a collaboration token is usable to read a design
-   and is not written to the resource row, any log, or any client response.
+   through subsequent calls; revocation removes that link-only access. No access
+   token reaches ordinary
+   resource metadata, logs or public navigation links. Test returned URLs too.
 10. With `CANVA_CONNECTOR_ENABLED` unset, the connector is absent from the
     catalog and creation is refused.
+11. Watches are off by default, have pause/remove controls, and stop after
+    disconnect. Shared output and digest audiences satisfy the clarified Canva
+    policy; another member's token never substitutes for the caller's authority.
+12. Refresh, remote revocation and uncertain commit recovery are exercised;
+    malformed provider fields cannot corrupt resource or polling state.
 
 ## Open questions
 
 - **Who submits the waitlist application, and when?** It is the only blocking
-  item for the primary path, it cannot be done from inside this repository, and
+  authorization approval for the primary path; the draft has not been submitted,
+  and
   the review has no published turnaround.
 - **Does the desktop OAuth handoff already support a loopback listener**, or is
   that new work? Decides whether the fallback is cheap or is a project of its
   own.
-- **Does CIMD bypass the redirect-host allowlist?** Inconclusive from the live
-  probe — it could not be tested without hosting a client metadata document on a
-  domain we control, and an unfetchable one returns the same opaque `500` as a
-  nonexistent client. If it does bypass it, the waitlist stops being blocking and
-  decision 2 changes entirely. **Worth testing before anyone fills in the form.**
-- **Are Canva's rate limits per user or per client?** Still undocumented after
-  the live probe. Matters only if many members connect and their limits turn out
-  to share a bucket — and it decides the polling fan-out, since every watch
-  spends calls.
-- **What do `list-comments` and `list-replies` actually return?** The input
-  schemas are confirmed and the response shapes are not — the probe did not
-  exercise them. A stable thread id and deterministic paging are what the comment
-  watch rests on. Cheap to settle: the Inspector session that produced the
-  schemas is still the way to do it.
+- **How do shared work streams and digests satisfy Canva's output-access rule?**
+  Seek provider clarification; do not invent an exception for personal tokens.
+- **Does the discussion trigger include replies?** Proposed yes, with an optional
+  reply ID; confirm the product label and acceptance scope before implementation.
+- **What consistency remains untested?** Same-timestamp edits, comment/reply
+  edits and deletions, mentions, other-user actions, reopening and larger designs.
+  Tested ordering is observational; full scans must not depend on it.
+- **Does the actual Rally OAuth lifecycle work?** Production callback approval,
+  client identity, refresh issuance/rotation and revocation remain acceptance work.
+
 - **How many designs may one work stream watch, and how many watches may a member
   hold?** A polling ceiling is a defensive limit and its number is the team's.
 - **Flag or regional variable?** Recorded above as the regional variable by
   precedent; the product owner's answer replaces this line either way.
 - **The numbers in [`design.md`](design.md#limits-to-be-set-not-guessed)** — MCP
-  call timeout, response caps, editing-transaction cleanup delay. Each guard is
+  call timeout, response caps, retry bounds, editing-transaction cleanup delay. Each guard is
   written open and each number is the team's.
