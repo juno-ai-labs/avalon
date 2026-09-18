@@ -1295,25 +1295,37 @@ export function WorkspaceSettingsScreen({
                     <div className="settings-member-row" key={member.id}>
                       <Avatar member={member} size="medium" />
                       <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                      <Badge className="role-badge">{member.role ?? 'member'}</Badge>
-                      {/*
-                        * The owner has no control beside them: their role is the
-                        * one the server refuses to reassign, so drawing a button
-                        * that can only fail is worse than drawing none. Everybody
-                        * else an administrator is looking at can be handed the
-                        * same powers the viewer is using right now.
-                        */}
-                      {isAdmin && member.role !== 'owner' && member.status !== 'invited' && (
-                        <Button
-                          disabled={setMemberRole.isPending}
-                          onClick={() => setMemberRole.mutate({
-                            userId: member.id,
-                            role: member.role === 'admin' ? 'member' : 'admin',
-                          })}
-                        >
-                          {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
-                        </Button>
-                      )}
+                      <span className="settings-member-actions">
+                        <Badge className="role-badge">{member.role ?? 'member'}</Badge>
+                        {/*
+                          * The owner has no control beside them: their role is the
+                          * one the server refuses to reassign, so drawing a button
+                          * that can only fail is worse than drawing none. Everybody
+                          * else an administrator is looking at can be handed the
+                          * same powers the viewer is using right now.
+                          */}
+                        {isAdmin && member.role !== 'owner' && member.status !== 'invited' && (
+                          <Button
+                            // The visible label is the same on every row, which is
+                            // all a sighted reader needs — the row it sits in says
+                            // who it acts on. A screen reader announces the button
+                            // alone, so the accessible name carries the person.
+                            // The email is in it because two people can share a
+                            // display name, and the roster is exactly where that
+                            // collision shows up.
+                            aria-label={member.role === 'admin'
+                              ? `Remove administrator access from ${member.name} (${member.email})`
+                              : `Make ${member.name} (${member.email}) an administrator`}
+                            disabled={setMemberRole.isPending}
+                            onClick={() => setMemberRole.mutate({
+                              userId: member.id,
+                              role: member.role === 'admin' ? 'member' : 'admin',
+                            })}
+                          >
+                            {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                          </Button>
+                        )}
+                      </span>
                     </div>
                   ))}
                 </div>

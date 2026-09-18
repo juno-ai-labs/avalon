@@ -58,6 +58,16 @@ workspace sync log. The first refreshes every administrator's roster; the second
 refreshes `GET /workspace`, which is where a person's own role — and therefore
 whether their window draws the administrator controls at all — comes from.
 
+**That publish is post-commit and best effort.** The role has already changed by
+the time it runs, so a failure to announce it is logged as
+`workspace_member_role_sync_publish_failed` and the request still succeeds.
+Reporting it as a failed role change would tell the caller the opposite of what
+happened, and on a self-demotion the caller's next request no longer carries the
+standing to retry — while the no-op return above means a retry could not
+republish anyway. The cost of a lost publish is a stale roster in other open
+windows until something else invalidates it; nothing is mis-authorized by it,
+because `auth.role` is read per request.
+
 ## Invariants
 
 - **"Administrator" is `owner` or `admin`, everywhere.** Every gate in the tree
@@ -78,7 +88,12 @@ whether their window draws the administrator controls at all — comes from.
   their role, and reissuing one is how it changes.
 - **The role the desktop holds decides what is *drawn*, never what is
   *allowed*.** Every control it draws is refused server-side for a member, so a
-  stale role costs a redraw and nothing else.
+  stale role costs a redraw and nothing else. This is also what makes a lost
+  sync publish survivable rather than a correctness problem.
+- **A committed role change is never reported as a failure.** Anything after
+  the `UPDATE` — today only the sync publish — is best effort. A caller told
+  that a write failed when it committed will retry, and on a self-demotion the
+  retry is refused for a change that already happened.
 
 ## Boundary
 
@@ -110,6 +125,7 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | `member_not_active` | 409 | The target has not accepted their invitation. |
 | `last_workspace_administrator` | 409 | The demotion would leave the workspace with no administrator. |
 | `membership_changed` | 409 | The conditional write lost a race; nothing was written. |
+| — (logged only) | 200 | The role changed but `publishWorkspaceSync` failed. Logged as `workspace_member_role_sync_publish_failed` with the reason from `diagnosticErrorCode`; other windows keep a stale roster until something else invalidates it. |
 | `member_role_invalid:…` | 400 | The role is not one an administrator may assign. The code carries the failing path and Zod issue code, from `zodDiagnosticCode` — see [`naming-a-schema-failure.md`](naming-a-schema-failure.md). |
 
 Assigning the role somebody already holds is a no-op: it returns without a write
@@ -124,11 +140,16 @@ asked for, and inventing a ceiling here would be
 - `apps/api/test/workspace-member-roles.test.ts` — the whole write against the
   checked-in migrations through `migratedSqliteDatabase()`, so the column's
   `CHECK` and the conditional `WHERE` are the production ones. The sync publish
-  is doubled, because it addresses a WorkspaceDO and the Node suite runs none.
+  is doubled, because it addresses a WorkspaceDO and the Node suite runs none —
+  and it is *asserted on*, both for the two topics a committed change publishes
+  and for the silence a no-op or a refusal owes. A double nobody asserts on lets
+  the call be deleted with the suite still green.
 - `apps/api/test/workspace-and-invitations.test.ts` — the invitation role gate.
-- `apps/desktop/src/renderer/screens/workspace-settings.test.tsx` — that an
-  administrator is offered the control beside every row but the owner's, and an
-  ordinary member is offered none.
+- `apps/desktop/src/renderer/screens/workspace-settings.test.tsx` — the viewer
+  that matters is an administrator who is **not** the owner: rendering the owner
+  there would stay green against a renderer regressed to owner-only, which is
+  the behaviour under test. The roster it renders holds two people with the same
+  display name, so the controls' accessible names have to be distinct.
 
 The last-administrator guard is exercised by deleting the owner row first. That
 state is artificial but not illegitimate: nothing in the schema declares that an
@@ -164,6 +185,14 @@ and the first bug in it would have been the two disagreeing. Also rejected:
 keeping administrator invitations owner-only. An administrator who can promote
 an existing member can reach the same end state in two steps, so the gate
 stopped anything except the convenient path.
+
+Review raised one correctness bug, fixed here: the sync publish originally ran
+inside the endpoint's contract, so a WorkspaceDO that could not be reached made
+a *committed* role change answer as a failure. It is now post-commit and best
+effort, logged by name. Review also asked for the row controls' accessible
+names to carry the person — every row's visible label is identical, so a screen
+reader announced four indistinguishable buttons — and they now carry name and
+email.
 
 **Consequences:** A workspace can now reach a state with several administrators
 and one owner, and code that assumed the administrator was the owner is wrong

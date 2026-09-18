@@ -24,12 +24,25 @@ import type { Workspace } from './types';
  * - **The server stays authoritative.** `role` in particular is a presentation
  *   input here (it decides which admin controls are *drawn*), never an
  *   authorization one — every one of those controls is refused by the API for a
- *   member, so a role the session has not caught up on costs a redraw and
- *   nothing else.
+ *   member, so a stale role can never grant anything.
+ *
+ * **Do not gate a control on the `role` this returns.** It says what the
+ * session was issued with, and a role can now change while somebody is signed
+ * in: an administrator can promote or demote them from Workspace settings. The
+ * session's copy is replaced only by `bridge.refreshSession()`, a minute before
+ * an access token expires, so this can be a whole token window out of date —
+ * long enough that somebody promoted in order to connect a workspace account
+ * went on being told they could not. Gates read the `['workspace']` query
+ * through `use-workspace.ts`, which the `workspace_profile` sync topic
+ * invalidates; this stays what the first paint is drawn from while that read is
+ * in flight.
  */
 export function workspaceFromSession(session: DesktopSession | null): Workspace | null {
   const workspace = session?.workspace;
-  if (!session || !workspace) return null;
+  // `user` is checked rather than assumed: this is reached from more than the
+  // one caller that built the session now, and all-or-nothing has to mean a
+  // `null` rather than a throw for a session that cannot describe the person.
+  if (!session?.user || !workspace) return null;
   const { timezone: workspaceTimezone } = workspace;
   const { timezone: userTimezone } = session.user;
   if (!workspaceTimezone || !userTimezone) return null;
