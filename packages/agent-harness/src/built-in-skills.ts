@@ -351,8 +351,8 @@ with only that trigger is never started by anything. Watch the source through
 its own declared events, or poll.
 
 Poll only when inspection shows no event type that fits. When you propose the
-Sidekick, say in one line that it checks on a timer because that connection has
-nothing to announce this — otherwise the person reads the delay as a bug.
+Sidekick, say in one line that it checks on a timer because that connection does
+not announce this — otherwise the person reads the delay as a bug.
 
 ## 2. Choose the cadence, no faster than every ten minutes
 
