@@ -132,3 +132,34 @@ it('removes only the displayed direct grant and preserves its operation identity
   expect(attempts[0]).toMatchObject({ target, userId: grant.userId, expectedRevision: 3 });
   client.clear();
 });
+
+it('drops a hidden unauthorized initial scope and recovers when complete coverage disappears', async () => {
+  const allowed = { ...target, substreamId: '00000000-0000-4000-8000-000000000005' };
+  let complete = true;
+  let sent: unknown;
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith('/options')) return Response.json({ scopes: [{ target: allowed, title: 'Allowed child' }], completeWorkstreamTargets: complete ? [allowed] : null });
+    if (path.endsWith('/grants/list')) return Response.json({ status: 'denied', reason: 'sharing_required' });
+    if (path.endsWith('/list')) return Response.json({ status: 'denied', reason: 'sharing_required' });
+    sent = JSON.parse(String(init?.body));
+    return Response.json({ status: 'created', invitations: [] });
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><ScopeSharingPanel api={new RallyApi('https://api.test', null)}
+    workspaceId={workspaceId} parentId={parentId} substreamId={substreamId} /></QueryClientProvider>);
+  const allowedCheckbox = await screen.findByRole('checkbox', { name: 'Allowed child' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email addresses' }), { target: { value: 'guest@example.test' } });
+  expect(screen.getByRole('button', { name: 'Send invitations' })).toBeDisabled();
+  fireEvent.click(allowedCheckbox);
+  await screen.findByText('Unable to load direct shares.');
+  await screen.findByText('Unable to load invitations.');
+  fireEvent.click(screen.getByRole('checkbox', { name: /Complete workstream/ }));
+  complete = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh shares' }));
+  await waitFor(() => expect(screen.queryByRole('checkbox', { name: /Complete workstream/ })).toBeNull());
+  expect(allowedCheckbox).not.toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Send invitations' }));
+  await waitFor(() => expect(sent).toMatchObject({ targets: [allowed], completeWorkstream: false }));
+  client.clear();
+});

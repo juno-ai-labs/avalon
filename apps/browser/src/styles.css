@@ -2,7 +2,8 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 a { color: inherit; }
-.entry { max-width: 480px; margin: 0 auto; padding: 10vh 24px 48px; }
+.entry { width: 100%; height: 100dvh; overflow-y: auto; padding: 10vh max(24px, calc((100vw - 432px) / 2)) 48px; }
+.entry .wordmark, .entry .workspace-link { color: inherit; }
 .wordmark { font-size: 30px; font-weight: 650; letter-spacing: -1.5px; text-decoration: none; display: flex; align-items: center; gap: 8px; width: fit-content; margin-bottom: 50px; }
 .entry h1 { font-size: 28px; line-height: 1.2; font-weight: 550; letter-spacing: -.7px; margin: 0 0 12px; }
 .entry p { color: var(--av-sys-color-text-muted); line-height: 1.6; margin: 0 0 28px; overflow-wrap: anywhere; }
@@ -21,3 +22,7 @@ a { color: inherit; }
 .browser-feed > * { flex: 1; min-width: 0; }
 .browser-empty { padding: 32px; }
 .browser-workspace { --av-cmp-sidebar-width: 280px; --screen-drag-strip-height: 0px; }
+
+.browser-navigation-dialog.browser-workspace { position: fixed; inset: 0 auto 0 0; width: min(300px, 100vw); flex: none; z-index: 100; --av-cmp-sidebar-width: 280px; }
+
+.browser-navigation-scrim { background: var(--av-sys-color-scrim-default); position: fixed; inset: 0; z-index: 99; }

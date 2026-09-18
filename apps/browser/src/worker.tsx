@@ -26,7 +26,14 @@ export default {
         forwarded.headers.delete("Cookie");
         forwarded.headers.delete("Authorization");
       }
-      return env.GLOBAL_API.fetch(forwarded);
+      const upstreamResponse = await env.GLOBAL_API.fetch(forwarded);
+      if (socket) return upstreamResponse;
+      // Resource bytes can also be opened as a document on this cookie origin.
+      // Sandbox that document without altering streamed XHR/blob consumers.
+      const response = new Response(upstreamResponse.body, upstreamResponse);
+      response.headers.set("Content-Security-Policy", "sandbox; default-src 'none'");
+      response.headers.set("X-Content-Type-Options", "nosniff");
+      return response;
     }
     if (url.pathname.startsWith("/assets/")) return env.ASSETS.fetch(request);
     if (!["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
@@ -41,7 +48,7 @@ export default {
     const socketOrigin = `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
     // Shared dialogs inject scroll-lock CSS and components use dynamic styles,
     // matching the desktop renderer's style policy. Scripts remain self-only.
-    response.headers.set("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+    response.headers.set("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
     return response;
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

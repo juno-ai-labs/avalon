@@ -1,5 +1,5 @@
 import { configuredRegions, regions } from "./regions.mjs";
-import { workerEnvValue } from "./worker-env-value.mjs";
+import { parseWorkerEnvValue, workerEnvValue } from "./worker-env-value.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
@@ -197,11 +197,7 @@ function parseEnv(source) {
     const equals = line.indexOf("=");
     if (equals < 1) continue;
     const key = line.slice(0, equals).trim();
-    let value = line.slice(equals + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    values[key] = value;
+    values[key] = parseWorkerEnvValue(key, line.slice(equals + 1).trim());
   }
   // A developer's `.env.local` is not in the repository, so the rename from
   // Avalon cannot reach it. Read the superseded name where the current one is

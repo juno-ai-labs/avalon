@@ -206,6 +206,41 @@ Public artifact content retains its existing anonymous serving rules; the guest
 grant controls Rally resource access and attributed viewer sessions.
 
 
+### Browser host lifecycle and content boundaries
+
+Chrome cookie-changing requests (renewal, email redemption and logout) use one
+regional Web Lock across same-origin tabs. This orders actual `Set-Cookie`
+responses; React generation checks alone cannot order browser cookie writes.
+Ordinary product requests and sockets never enter that lock. A renewal requested
+while restoration is in flight is replayed afterward. Workspace lists and
+invitation completions retain the session generation fence.
+
+Login replacement, logout and observed account changes reuse the existing draft
+cache wipe, including attachment bytes and its pending-write epoch fence. Focus
+refreshes for the same account preserve drafts and the live feed. Pending magic
+proofs stay visible until explicitly redeemed, even if focus discovers an older
+cookie session. Legacy unaddressed links restore the root workspace picker.
+
+The entry scrolls independently of the shared application's fixed viewport.
+Collaboration code loads after authentication through one explicit lazy boundary;
+this is the browser-only exception to static imports. The browser declares its
+desktop dependency because it consumes the existing collaboration implementation;
+`@rally/ui` remains presentation-only. Cross-host renderer tests stay in the
+existing desktop jsdom harness rather than creating another test runner.
+
+Forwarded HTTP responses retain their streaming bodies but add document sandbox
+CSP and `nosniff`: an uploaded HTML or SVG navigated on the cookie origin must
+never execute as the application. Socket upgrades remain untouched. The shell
+allows HTTPS remote images for existing avatars and Markdown images. Socket
+routing still relies on the existing ticket and source-object admission; there
+is no separate browser permission model or arbitrary forwarding destination.
+
+The mobile navigation uses the existing Radix dialog primitive for focus trapping,
+Escape and outside dismissal, including landing and archived states. Archive and
+guest promotion use the shared confirmation modal. Sharing selections are derived
+from current canonical options; losing complete coverage re-enables individual
+choices. Denied invitation and grant lists show a visible refreshable error.
+
 ## Invariants
 
 - HTML is private and no-store; shared cached HTML must never acquire user data.
@@ -222,13 +257,13 @@ grant controls Rally resource access and attributed viewer sessions.
 ## Boundary
 
 The Worker owns the web entry and transport, not product authority or sockets.
-The planned persistent collaboration core must reuse existing conversation
-behavior and own direct subscriptions above routes. The host is separate from
+The collaboration host reuses the existing conversation surface and its direct
+subscriptions. The host is separate from
 the public marketing site. Its production hostname is not configured or deployed
 by this change; API `BROWSER_APP_ORIGIN` must match its eventual exact origin.
 
 For local work, start the API according to [dev-environment.md](dev-environment.md)
-and run `pnpm dev:browser`. The Global service binding discovers the local
+and run `pnpm dev:browser` on port 8794. Client assets rebuild on source edits. The Global service binding discovers the local
 `avalon-api-global` Worker. Configure the API's browser origin and explicit email
 policy before testing real authentication. Development does not send emails.
 
@@ -295,6 +330,11 @@ shared dismissal scrim. Sharing reads distinguish loading, empty and error state
 ## Changelog
 
 ### 2026-09-17 — Add a browser entry over ordinary regional sessions
+
+The browser-only loading boundary and session cookie ordering keep email entry
+small without introducing a second collaboration or authentication implementation.
+Forwarded resource documents are sandboxed because this host makes their URLs
+navigable with same-origin cookies, unlike native bearer-only reads.
 
 The collaboration header includes scoped rename with retryable draft state and
 shared-directory refresh, because API-only mutations left browser guests unable

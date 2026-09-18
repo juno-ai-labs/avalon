@@ -1,6 +1,6 @@
 import { Share2 } from 'lucide-react';
 import { Button } from '@rally/ui/components/primitives';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import { CreateScopeInvitationsSchema, type ScopeGrantTarget, type ScopeGrant } from '@rally/contracts/scope-grants';
@@ -20,13 +20,18 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
   const [selected, setSelected] = useState<ScopeGrantTarget[]>([initial]);
   const options = useQuery({ queryKey: ['scope-sharing-options', parentId],
     queryFn: ({ signal }) => api.getScopeSharingOptions(parentId, signal) });
-  const targets = completeWorkstream ? options.data?.completeWorkstreamTargets ?? [] : selected;
+  useEffect(() => {
+    if (options.data && !options.data.completeWorkstreamTargets) setCompleteWorkstream(false);
+  }, [options.data]);
   const scopeKey = (target: ScopeGrantTarget) => target.kind === 'workstream' ? 'workstream' : target.substreamId;
-  const invitationQueries = useQueries({ queries: (targets.length ? targets : [initial]).map((target) => ({
+  const complete = completeWorkstream && Boolean(options.data?.completeWorkstreamTargets);
+  const targets = complete ? options.data!.completeWorkstreamTargets! : selected.filter((target) =>
+    options.data?.scopes.some((scope) => scopeKey(scope.target) === scopeKey(target)));
+  const invitationQueries = useQueries({ queries: targets.map((target) => ({
     queryKey: ['scope-invitations', parentId, scopeKey(target)],
     queryFn: ({ signal }: { signal: AbortSignal }) => api.listScopeInvitations(target, signal),
   })) });
-  const grantQueries = useQueries({ queries: (targets.length ? targets : [initial]).map((target) => ({
+  const grantQueries = useQueries({ queries: targets.map((target) => ({
     queryKey: ['managed-scope-grants', parentId, scopeKey(target)],
     queryFn: ({ signal }: { signal: AbortSignal }) => api.listManagedScopeGrants(target, signal),
   })) });
@@ -45,10 +50,10 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
     if (!parsedEmails.success) throw new Error('Enter valid email addresses, separated by commas or spaces.');
     const recipients = [...new Set(parsedEmails.data)].sort();
     if (!targets.length) throw new Error('Choose at least one scope to share.');
-    const key = JSON.stringify({ recipients, targets, completeWorkstream });
+    const key = JSON.stringify({ recipients, targets, completeWorkstream: complete });
     if (operation.current?.key !== key) operation.current = { key, id: crypto.randomUUID() };
     const result = await api.createScopeInvitations({ operationId: operation.current.id, parentId,
-      emails: recipients, targets, completeWorkstream, expiresAt: null });
+      emails: recipients, targets, completeWorkstream: complete, expiresAt: null });
     if (result.status !== 'created') throw new Error('The invitation could not be created. Refresh and try again.');
     return result;
   }, onSuccess: async (result) => {
@@ -83,11 +88,11 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
         <legend>Access</legend>
         {options.isPending && <p role="status">Loading sharing options…</p>}
         {options.data?.completeWorkstreamTargets ? <label className="scope-sharing-choice">
-          <input type="checkbox" checked={completeWorkstream} onChange={(event) => setCompleteWorkstream(event.target.checked)} />
+          <input type="checkbox" checked={complete} onChange={(event) => setCompleteWorkstream(event.target.checked)} />
           Complete workstream, including existing restricted substreams
         </label> : null}
         {options.data?.scopes.map((scope) => <label className="scope-sharing-choice" key={scopeKey(scope.target)}>
-          <input type="checkbox" disabled={completeWorkstream} checked={completeWorkstream || targets.some((target) => scopeKey(target) === scopeKey(scope.target))}
+          <input type="checkbox" disabled={complete} checked={complete || targets.some((target) => scopeKey(target) === scopeKey(scope.target))}
             onChange={(event) => setSelected((previous) => event.target.checked ? [...previous, scope.target]
               : previous.filter((target) => scopeKey(target) !== scopeKey(scope.target)))} />
           {scope.title}
@@ -95,7 +100,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
       </fieldset>
       {options.isError ? <p role="alert">Unable to load sharing options. <Button type="button" onClick={() => { void options.refetch(); }}>Retry</Button></p> : null}
       {options.data?.scopes.length === 0 ? <p>You do not have sharing access here.</p> : null}
-      <p>{completeWorkstream ? 'Includes every existing substream and its resources. Future restricted substreams need their own share.'
+      <p>{complete ? 'Includes every existing substream and its resources. Future restricted substreams need their own share.'
         : 'Shares the selected conversations and their resources. Sharing Main does not include private substreams unless selected separately.'}</p>
       <Button type="submit" className="button-primary" disabled={pending || !emails.trim() || !targets.length || !options.data?.scopes.length}>{invite.isPending ? 'Inviting…' : 'Send invitations'}</Button>
     </form>
@@ -104,7 +109,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
     <h3>Invitations</h3>
     {loadingInvitations && <p role="status">Loading invitations…</p>}
     {!loadingInvitations && invitationQueries.every((query) => query.isSuccess && query.data.status === 'ready') && invitations.length === 0 && <p>No invitations for the selected conversations.</p>}
-    {invitationQueries.some((query) => query.isError) ? <p role="alert">Unable to load invitations. <Button type="button" onClick={() => { void refresh(); }}>Retry</Button></p> : null}
+    {invitationQueries.some((query) => query.isError || query.data?.status === 'denied') ? <p role="alert">Unable to load invitations. <Button type="button" onClick={() => { void refresh(); }}>Retry</Button></p> : null}
     {invitations.length > 0 ? <ul aria-label="Invitations">
       {invitations.map((invitation) => <li key={invitation.id}>
         <span>{invitation.email} — {invitation.status === 'pending' && invitation.expiresAt !== null && invitation.expiresAt <= Date.now() ? 'expired' : invitation.status}</span>
@@ -115,7 +120,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
     <p>Removing one share leaves access from other shares intact.</p>
     {loadingGrants && <p role="status">Loading direct shares…</p>}
     {!loadingGrants && grantQueries.every((query) => query.isSuccess && query.data.status === 'ready') && grants.length === 0 && <p>No direct shares for the selected conversations.</p>}
-    {grantQueries.some((query) => query.isError) ? <p role="alert">Unable to load direct shares.</p> : null}
+    {grantQueries.some((query) => query.isError || query.data?.status === 'denied') ? <p role="alert">Unable to load direct shares.</p> : null}
     <Button type="button" disabled={pending || refreshing} onClick={() => { void refresh(); }}>Refresh shares</Button>
     {grants.length > 0 ? <ul aria-label="Direct shares">{grants.map((entry) => {
       const label = options.data?.scopes.find((scope) => scopeKey(scope.target) === scopeKey(entry.grant.target))?.title ?? 'Selected conversation';

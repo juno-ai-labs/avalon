@@ -194,6 +194,15 @@ Expect `"ok": true` with D1, R2, Durable Objects, Queues, and Workflows
 available. The provider checks report `not configured` until you supply keys;
 that is expected and does not block local work.
 
+## Lite browser development
+
+`pnpm dev:browser` builds the client, then watches source changes while Wrangler
+serves port 8794. Set the API's `BROWSER_APP_ORIGIN` to the exact local browser
+origin (for example `http://localhost:8794`) and use that same hostname in Chrome.
+The host uses the local Global service binding; the regional API must be running.
+JSON settings from older generated double-quoted `.dev.vars` files are decoded
+before `env:sync` rewrites them into single-quoted dotenv values.
+
 ## 4. Run the desktop client headlessly
 
 The Electron client runs under Xvfb. Two flags matter: the agent shell runs as

@@ -1,6 +1,6 @@
 # Guest access and the Rally browser application
 
-Design report · Updated September 16, 2026 · Guest/browser proposal, not implemented
+Design report · Updated September 16, 2026 · Design basis for the guest/browser implementation stack (#822–#825)
 
 ## Recommendation
 
@@ -402,7 +402,7 @@ Required acceptance cases:
 | External sharing authority | A dedicated manage-sharing capability plus workspace policy; reading alone does not authorize invitation. |
 | Revocation wording | Show committed versus applied accurately; only report fully removed once enforcement owners acknowledge. |
 | Guest onboarding | Verify identity, accept, land in the shared conversation; no connector or workspace-creation requirement. |
-| Browser collaboration | Hybrid entry plus persistent SPA; direct sockets selected by visible UI. |
+| Browser collaboration | Static HTML shell plus persistent SPA; direct sockets selected by visible UI. |
 
 ## Conclusion
 

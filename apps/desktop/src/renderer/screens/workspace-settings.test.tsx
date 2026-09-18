@@ -415,6 +415,8 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Workspace');
     fireEvent.click(await screen.findByRole('button', { name: 'Make Guest Sam a member' }));
+    expect(api.promoteWorkspaceGuest).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Make member' }));
     await waitFor(() => expect(api.promoteWorkspaceGuest).toHaveBeenCalledWith(guest.id, { incarnation: 'membership', expectedRevision: 3 }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Make Guest Sam a member' })).not.toBeInTheDocument());
     expect(screen.getByText('Guest Sam')).toBeVisible();
