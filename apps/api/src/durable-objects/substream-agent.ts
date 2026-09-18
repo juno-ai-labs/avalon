@@ -1423,7 +1423,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (this.objectStore.identity()?.parentKind !== "workstream") return true;
     // Zero is issued by parent authorization for implicit workspace-member
     // access to Main. Explicit guests always carry a positive grant revision.
-    if (this.externalSubstreamId() === "0" && requiredVersion === 0) return true;
+    if (requiredVersion === 0 && this.externalSubstreamId() === "0") return true;
     const transfer = new ParticipantAuthorityTransferStorage(this.state.storage);
     if (transfer.currentTransferId() !== null) {
       const projection = transfer.projectionForUser(userId);
