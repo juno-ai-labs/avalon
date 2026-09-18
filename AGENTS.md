@@ -13,6 +13,8 @@ still appears throughout the tree; what it is coupled to, and what is
 deliberately not being renamed, is in
 [`docs/rally-rebrand-inventory.md`](docs/rally-rebrand-inventory.md).
 
+We re-branded **Automatons** into **Sidekicks**.
+
 ## How we build
 
 **We design using a platform mindset**. We build simple & generic re-usable building blocks that are combined into complex and emergent behavior. For example: Lego Blocks are simple in that they have a set number of modular sizes but these simple shapes can be combined to build anything as they are modular.
@@ -193,7 +195,7 @@ what that cost and holds the catalogue.
   had the reason in hand are each a bug to fix in the change that finds one —
   the same standing as a flaky test.
 - **An adapter that returns a failure owes its reason too.** A `{ ok: false,
-  message }` is not exempt because it did not throw; Granola's health check
+message }` is not exempt because it did not throw; Granola's health check
   computed "webhook endpoint identity is missing" and the log said `unhealthy`.
 
 ## Capturing command output
