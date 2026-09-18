@@ -24,6 +24,7 @@ on:
       - 'config/regions.json'
       - 'apps/desktop/**'
       - 'packages/contracts/**'
+      - 'packages/ui/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
