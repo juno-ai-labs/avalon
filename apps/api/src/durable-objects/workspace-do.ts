@@ -1,3 +1,6 @@
+import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
+import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
+import { ConversationEffectEnvelopeSchema, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import {
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
@@ -114,7 +117,7 @@ import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import {
-  revocationClosesSocket,
+  revocationClosesSession,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
@@ -818,6 +821,7 @@ import {
 } from "./workspace-transcription-storage";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "scope_grant_directory",
   "connector_installations", "connector_installation_steps",
   ...AUTHORIZATION_STORAGE_TABLES,
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
@@ -3274,7 +3278,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   "CREATE TRIGGER connector_oauth_attempts_workspace_identity_update\n      BEFORE UPDATE OF workspace_id ON connector_oauth_attempts\n      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)\n      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END",
   "PRAGMA defer_foreign_keys = OFF"
 ]
-}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }];
+}, MEETING_NOTES_RETIREMENT_MIGRATION, MEETING_NOTES_FINALIZATION_MIGRATION, { version: 59, description: "implicit agent teams and message reply routes", statements: [...AGENT_TEAM_SCHEMA] }, { version: 60, description: "index explicit scope grants for guest discovery", statements: [...SCOPE_GRANT_DIRECTORY_SCHEMA] }];
 
 interface AutomationDirectoryRow extends Record<string, SqlStorageValue> {
   loadable: number | null;
@@ -4760,10 +4764,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       // A revoked session closes only the windows that presented it; an ended
-      // membership carries no session and closes all of them. The rule lives in
+      // membership closes only sessions bound to that incarnation. The rule lives in
       // one place because the four socket roles disagree about their own
-      // attachments — see `revocationClosesSocket`.
-      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
+      // attachments — see `revocationClosesSession`.
+      if (!attachment || !(await revocationClosesSession(this.env, request, attachment))) continue;
       const wasPresent = contributesPresence(attachment);
       presenceChanged ||= wasPresent;
       if (wasPresent) {
@@ -6635,6 +6639,38 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /**
+   * Publish accepted upload reservations independently of the parent directory.
+   * The Queue consumer calls this after parent admission; child resource state
+   * must reach this owner even when the child's private directory does not.
+   */
+  async publishConversationAttachments(input: ConversationEffectEnvelope): Promise<void> {
+    await this.initialized;
+    const envelope = ConversationEffectEnvelopeSchema.parse(input);
+    this.assertWorkspace(envelope.workspaceId);
+    if (envelope.region !== this.env.AVALON_REGION) throw new Error("attachment_publication_region_mismatch");
+    if (envelope.effect.kind !== "directory_common") return;
+    const effect = envelope.effect;
+    const linked = new Set((effect.resourceLinks ?? []).map((link) => link.resourceId));
+    this.state.storage.transactionSync(() => {
+      for (const release of effect.attachmentReservationReleases ?? []) {
+        if (!linked.has(release.resourceId)) throw new Error("attachment_reservation_release_missing_resource_link");
+        // A committed message owns this exact reservation. Replays after its
+        // release cannot publish a different draft or consume another hold.
+        this.state.storage.sql.exec(`UPDATE resources SET attachment_status = 'attached', updated_at = ?
+          WHERE workspace_id = ? AND id = ? AND provider = 'avalon_upload' AND attachment_status = 'draft'
+            AND EXISTS (SELECT 1 FROM pending_attachment_reservations
+              WHERE workspace_id = ? AND workstream_id = ? AND input_id = ? AND resource_id = ?)`,
+        new Date().toISOString(),envelope.workspaceId,release.resourceId,
+        envelope.workspaceId,envelope.parentId,release.inputId,release.resourceId);
+        this.state.storage.sql.exec(`DELETE FROM pending_attachment_reservations
+          WHERE workspace_id = ? AND workstream_id = ? AND input_id = ? AND resource_id = ?`,
+        envelope.workspaceId,envelope.parentId,release.inputId,release.resourceId);
+      }
+    });
+    await this.refreshScheduleKinds(envelope.workspaceId,["maintenance"]);
+  }
+
   /** Idempotently release one failed or discarded Product preparation. */
   async releaseDraftAttachments(
     input: WorkspaceReleaseDraftAttachmentsRequest,
@@ -7041,6 +7077,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       outcome: result.reapedIntentIds.length > 0 ? "deleted" : "empty",
     });
     return result;
+  }
+
+  async applyScopeGrantDirectory(input: unknown): Promise<{ applied: boolean }> {
+    await this.initialized;
+    const envelope = ParentEffectEnvelopeSchema.parse(input);
+    this.assertWorkspace(envelope.workspaceId);
+    if (envelope.region !== this.env.AVALON_REGION) throw new Error("scope_grant_directory_region_mismatch");
+    return { applied: applyScopeGrantDirectory(this.state.storage, envelope) };
+  }
+
+  async listScopeGrantCandidates(input: unknown): Promise<string[]> {
+    await this.initialized;
+    const request = ScopeGrantCandidatesRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return scopeGrantCandidates(this.state.storage, request.userId, request.membershipIncarnation);
   }
 
   async listWorkstreams(input: WorkspaceDirectoryListRequest): Promise<WorkspaceDirectoryPage> {
@@ -9488,7 +9539,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0] : null;
 
       const owned = row.uploaded_by_user_id === request.userId;
-      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at,
+      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at, owned,
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
         noteAllowed: row.provider !== 'avalon_note',
@@ -10407,7 +10458,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
-            AND member.user_id = session.user_id
+            AND member.user_id = session.user_id AND member.incarnation = session.workspace_incarnation
             AND member.status = 'active'
            JOIN workspaces workspace ON workspace.id = session.workspace_id
           WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?

@@ -67,6 +67,8 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
   databases.push(database);
   database.exec(`
     ALTER TABLE workspaces ADD COLUMN abandoned_at TEXT;
+    ALTER TABLE workspace_members ADD COLUMN incarnation TEXT DEFAULT 'existing-member';
+    ALTER TABLE sessions ADD COLUMN workspace_incarnation TEXT DEFAULT 'existing-member';
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${PARTICIPANT}', 'g-1', 'one@example.com', 'One', '${at}', '${at}'),
            ('${MEMBER}', 'g-2', 'two@example.com', 'Two', '${at}', '${at}'),

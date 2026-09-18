@@ -135,6 +135,8 @@ describe("automatic memory recall at run admission", () => {
     const context = await loadRunPromptContext(seededEnv(), workflowInput(reason), lease, workstream);
 
     expect(context.memoryContextHash).toBeNull();
+    expect(context.memoryRecallRequired).toBe(false);
+    expect(context.memoryContextMs).toBe(0);
     expect(context.additionalMessages).not.toContainEqual(expect.objectContaining({
       provenance: expect.objectContaining({ sourceKind: "memory_context" }),
     }));
@@ -144,5 +146,6 @@ describe("automatic memory recall at run admission", () => {
     const context = await loadRunPromptContext(seededEnv(), workflowInput("manual_retry"), lease, workstream);
 
     expect(context.memoryContextHash).toBe("cached-memory-context-hash");
+    expect(context.memoryRecallRequired).toBe(true);
   });
 });

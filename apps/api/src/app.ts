@@ -1,3 +1,5 @@
+import { sharingRoutes } from "./routes/sharing";
+import { createBrowserRoutes } from "./routes/browser";
 import { daytonaWebhookRoutes } from "./routes/daytona";
 import { Hono } from "hono";
 import type { HonoAppEnv } from "./env";
@@ -125,6 +127,11 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/health", healthRoutes);
   app.route("/access", privateAccessRoutes);
   app.route("/auth", authRoutes);
+  app.route("/browser",createBrowserRoutes((request,c) => {
+    let executionContext;
+    try { executionContext = c.executionCtx; } catch { /* Route tests have no Worker context. */ }
+    return app.fetch(request,c.env,executionContext);
+  }));
   // Development tooling; every handler re-checks the dev gate itself.
   app.route("/dev", devRoutes);
   app.route("/connections", connectionCallbackRoutes);
@@ -145,6 +152,11 @@ export function createApp(): Hono<HonoAppEnv> {
   // order for protected routes, so `requireAuth` reuses this identity result.
   identityApi.use("*", requireIdentityAuth);
   identityApi.route("/onboarding", onboardingRoutes);
+  identityApi.route("/conversations", conversationRoutes);
+  identityApi.route("/sharing", sharingRoutes);
+  identityApi.route("/resources", resourceRoutes);
+  identityApi.route("/automations", automationRoutes);
+  identityApi.route("/sidekicks", sidekickRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
   identityApi.route("/telemetry", authenticatedTelemetryRoutes);
   app.route("/", identityApi);
@@ -159,11 +171,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/push-devices", pushDeviceRoutes);
-  protectedApi.route("/automations", automationRoutes);
-  protectedApi.route("/sidekicks", sidekickRoutes);
-  protectedApi.route("/conversations", conversationRoutes);
   protectedApi.route("/connections", connectionRoutes);
-  protectedApi.route("/resources", resourceRoutes);
   protectedApi.route("/favicons", faviconRoutes);
   protectedApi.route("/search", searchRoutes);
   protectedApi.route("/speech", speechRoutes);

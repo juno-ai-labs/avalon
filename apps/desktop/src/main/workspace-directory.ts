@@ -57,6 +57,7 @@ export function storedWorkspaceSummaries(
       slug: workspace.slug,
       region: workspace.region,
       role: workspace.role,
+      ...(workspace.accessClass ? { accessClass: workspace.accessClass } : {}),
       createdAt: workspace.createdAt,
       credentialStored: true,
     }];

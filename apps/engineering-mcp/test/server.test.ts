@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asArtifactId, asAutomationId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
 import type { AccessPrincipal } from "../src/access";
@@ -26,6 +26,12 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     listSubstreams: vi.fn<EngineeringInspectionRpcBinding["listSubstreams"]>(
       async () => ({ found: false }),
     ),
+    listSidekicks: vi.fn<EngineeringInspectionRpcBinding["listSidekicks"]>(
+      async () => ({ found: false }),
+    ),
+    listArtifacts: vi.fn<EngineeringInspectionRpcBinding["listArtifacts"]>(
+      async () => ({ found: false }),
+    ),
     resolveWorkspace: vi.fn<EngineeringInspectionRpcBinding["resolveWorkspace"]>(
       async () => ({ found: false }),
     ),
@@ -35,6 +41,12 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     resolveSubstream: vi.fn<EngineeringInspectionRpcBinding["resolveSubstream"]>(
       async () => ({ found: false }),
     ),
+    resolveSidekick: vi.fn<EngineeringInspectionRpcBinding["resolveSidekick"]>(
+      async () => ({ found: false }),
+    ),
+    resolveArtifact: vi.fn<EngineeringInspectionRpcBinding["resolveArtifact"]>(
+      async () => ({ found: false }),
+    ),
     runWorkspaceSql: vi.fn<EngineeringInspectionRpcBinding["runWorkspaceSql"]>(
       async () => ({ found: false }),
     ),
@@ -42,6 +54,12 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
       async () => ({ found: false }),
     ),
     runSubstreamSql: vi.fn<EngineeringInspectionRpcBinding["runSubstreamSql"]>(
+      async () => ({ found: false }),
+    ),
+    runSidekickSql: vi.fn<EngineeringInspectionRpcBinding["runSidekickSql"]>(
+      async () => ({ found: false }),
+    ),
+    runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
       async () => ({ found: false }),
     ),
   };
@@ -81,7 +99,7 @@ describe("Rally engineering MCP tools", () => {
     expect(response.result).toMatchObject({ tools: expect.any(Array) });
   });
 
-  it("publishes the six initial tools with mutation annotations on SQL", async () => {
+  it("publishes every inventory and SQL tool with mutation annotations on SQL", async () => {
     const env: Env = {
       GLOBAL_INSPECTION: regionalBinding("global"),
       ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
@@ -93,9 +111,13 @@ describe("Rally engineering MCP tools", () => {
       "list_workspaces",
       "list_workstreams",
       "list_substreams",
+      "list_sidekicks",
+      "list_artifacts",
       "run_workspace_sql",
       "run_workstream_sql",
       "run_substream_sql",
+      "run_sidekick_sql",
+      "run_artifact_sql",
     ]);
     for (const tool of result.tools.filter((item) => item.name.startsWith("run_"))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -139,6 +161,91 @@ describe("Rally engineering MCP tools", () => {
       { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
       "tools/call",
       { name: "list_workstreams", arguments: { workspaceId } },
+    );
+    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("exists in multiple Rally regions");
+  });
+
+  it("serves each inventory tool from the one region that resolves it", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ebb");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ebc");
+    const artifactId = asArtifactId("00000000-0000-7000-8000-000000000ebd");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000ebe");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.listSidekicks).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        items: [{
+          workspaceId,
+          sidekickId,
+          region: "global",
+          lifecycle: "paused",
+          scope: "personal",
+          owningWorkstreamId: null,
+          title: "Standup digest",
+          nextRunAt: null,
+          projectedAt: 1_700_000_000_000,
+        }],
+      },
+    });
+    vi.mocked(global.listArtifacts).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        items: [{
+          workspaceId,
+          artifactId,
+          region: "global",
+          workstreamId,
+          resourceId: "resource-1",
+          mode: "active",
+          stateful: true,
+          currentVersion: 2,
+          hostnameStub: "quiet-amber-fox-run",
+          updatedAt: 1_700_000_000_000,
+        }],
+      },
+    });
+    const env: Env = { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise };
+
+    const sidekicks = await rpc(env, "tools/call", {
+      name: "list_sidekicks",
+      arguments: { workspaceId },
+    });
+    expect(JSON.parse((sidekicks.result as { content: Array<{ text: string }> }).content[0]!.text))
+      .toMatchObject({ region: "global", items: [{ sidekickId, lifecycle: "paused" }] });
+    expect(global.listSidekicks).toHaveBeenCalledWith({ workspaceId });
+    expect(enterprise.listSidekicks).toHaveBeenCalledWith({ workspaceId });
+
+    const artifacts = await rpc(env, "tools/call", {
+      name: "list_artifacts",
+      arguments: { workspaceId },
+    });
+    expect(JSON.parse((artifacts.result as { content: Array<{ text: string }> }).content[0]!.text))
+      .toMatchObject({ region: "global", items: [{ artifactId, stateful: true, currentVersion: 2 }] });
+    expect(global.listArtifacts).toHaveBeenCalledWith({ workspaceId });
+  });
+
+  it("refuses an inventory target that resolves in more than one region", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ebf");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const value = { region: "global" as const, workspaceId, items: [] };
+    vi.mocked(global.listArtifacts).mockResolvedValue({ found: true, value });
+    vi.mocked(enterprise.listArtifacts).mockResolvedValue({
+      found: true,
+      value: { ...value, region: "enterprise" },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      { name: "list_artifacts", arguments: { workspaceId } },
     );
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
@@ -205,6 +312,104 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(global.runSubstreamSql).not.toHaveBeenCalled();
     expect(enterprise.runSubstreamSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes bound Sidekick SQL to the SidekickDO in exactly one regional authority", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb7");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000eb8");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveSidekick).mockResolvedValue({
+      found: true,
+      value: { region: "global", workspaceId, sidekickId, authorityGeneration: 4 },
+    });
+    vi.mocked(global.runSidekickSql).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        sidekickId,
+        result: {
+          columns: ["lifecycle"],
+          rows: [{ lifecycle: "paused" }],
+          rowsRead: 1,
+          rowsWritten: 0,
+        },
+      },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      {
+        name: "run_sidekick_sql",
+        arguments: { workspaceId, sidekickId, sql: "SELECT lifecycle FROM automation" },
+      },
+    );
+    const result = response.result as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      region: "global",
+      sidekickId,
+      result: { rows: [{ lifecycle: "paused" }] },
+    });
+    expect(global.runSidekickSql).toHaveBeenCalledWith({
+      workspaceId,
+      sidekickId,
+      authorityGeneration: 4,
+      query: { sql: "SELECT lifecycle FROM automation", bindings: [] },
+    });
+    expect(enterprise.runSidekickSql).not.toHaveBeenCalled();
+  });
+
+  it("routes bound artifact SQL to the supervisor in exactly one regional authority", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb9");
+    const artifactId = asArtifactId("00000000-0000-7000-8000-000000000eba");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(enterprise.resolveArtifact).mockResolvedValue({
+      found: true,
+      value: { region: "enterprise", workspaceId, artifactId, authorityGeneration: 9 },
+    });
+    vi.mocked(enterprise.runArtifactSql).mockResolvedValue({
+      found: true,
+      value: {
+        region: "enterprise",
+        workspaceId,
+        workstreamId: null,
+        substreamId: null,
+        artifactId,
+        result: {
+          columns: ["current_version"],
+          rows: [{ current_version: 3 }],
+          rowsRead: 1,
+          rowsWritten: 0,
+        },
+      },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      {
+        name: "run_artifact_sql",
+        arguments: { workspaceId, artifactId, sql: "SELECT current_version FROM artifact_state" },
+      },
+    );
+    const result = response.result as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      region: "enterprise",
+      artifactId,
+      result: { rows: [{ current_version: 3 }] },
+    });
+    expect(enterprise.runArtifactSql).toHaveBeenCalledWith({
+      workspaceId,
+      artifactId,
+      authorityGeneration: 9,
+      query: { sql: "SELECT current_version FROM artifact_state", bindings: [] },
+    });
+    expect(global.runArtifactSql).not.toHaveBeenCalled();
   });
 
   it("does not execute SQL when both regions resolve the target", async () => {

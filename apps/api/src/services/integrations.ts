@@ -159,7 +159,11 @@ import {
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
-import { createAgentInferenceLogger } from "./agent-inference-logging";
+import {
+  createAgentInferenceLogger,
+  logAgentInferencePrepared,
+  type AgentInferencePreparationBreakdown,
+} from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -1760,7 +1764,7 @@ function createAvalonAutomationsPlugin(
   const attachmentAuth = async () => {
     if (!authorUserId) throw new Error("sidekick_attachment_principal_required");
     const membership = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`)
-      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
+      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" | null }>();
     if (!membership) throw new Error("sidekick_attachment_membership_required");
     return { sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId), workspaceId: input.workspaceId,
       region: input.region, role: membership.role, analyticsWorkspaceId: null };
@@ -1996,23 +2000,19 @@ function createAvalonAutomationsPlugin(
       listAutomations: async () => {
         if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
         const workspaceId = asWorkspaceId(input.workspaceId);
-        const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: true };
+        const options = input.parentKind === "workstream"
+          ? await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
+            input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0")
+          : null;
+        const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: input.parentKind === "automation" || options?.canManage === true };
         const ids: string[] = [];
         if (input.parentKind === "automation") {
           ids.push(authoredAutomationId);
-        } else {
-          const workspace = await durableObjectStubForWorkspace(
-            env,
-            env.WORKSPACE_DOS,
-            workspaceId,
-            workspaceDOName(env.AVALON_REGION, workspaceId),
-          );
-          const owned = await workspace.listWorkstreamAutomations({
-            workspaceId,
-            workstreamId: input.parentId,
-            userId: asUserId(authorUserId),
-          });
-          ids.push(...owned.items.map((item) => item.id));
+        } else if (options?.canManage) {
+          const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+            workspaceDOName(env.AVALON_REGION, workspaceId));
+          const owned = await workspace.automationIdsOwnedByWorkstream({ workspaceId, workstreamId: input.parentId });
+          ids.push(...owned.automationIds);
         }
         const sidekicks = await Promise.all(ids.map(async (automationId) => {
           const detail = AutomationDetailSchema.parse(await (await durableObjectStubForWorkspace(
@@ -2036,15 +2036,9 @@ function createAvalonAutomationsPlugin(
           };
         }));
         if (input.parentKind !== "workstream") return { sidekicks };
-        const auth = await attachmentAuth();
-        const [directory, recommendations] = await Promise.all([
-          new AutomationService(env, auth).listSidekicks(),
-          new WorkstreamService(env, auth).recommendedSidekicks(input.parentId),
-        ]);
-        const attached = new Set(recommendations.items.map((item) => item.id));
-        return { sidekicks, workspaceSidekicks: directory.items.filter((item) => item.scope === "workspace").map((item) => ({
-          sidekickId: item.id, name: item.name, description: item.description, lifecycle: item.status,
-          canEdit: false, canAttach: true, attached: attached.has(item.id),
+        return { sidekicks, workspaceSidekicks: (options?.items ?? []).map((item) => ({
+          sidekickId: item.id, name: item.name, description: item.description, available: item.available,
+          canEdit: false, canAttach: options?.canManage === true, attached: item.attached,
         })) };
       },
     },
@@ -2636,18 +2630,60 @@ export async function runWorkstreamHarness(
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
   // names — `description` is what the retired view called `objective`.
-  const identity = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId)
-    .identity();
+  const identityPreparation = new Preparation(() => createIdentityObjectPort(
+    env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+  ).identity());
+  const initialRunPreparation = new Preparation(() => createHarnessRunObjectPort(
+    env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+  ).run({ runId: input.harnessRunId }));
+  // These two reads gate every later branch and grant no authority. Observe
+  // both through the reusable preparation primitive so they overlap without
+  // creating floating rejections.
+  identityPreparation.get();
+  initialRunPreparation.get();
+  const identity = await identityPreparation.get();
   const workstream = identity && identity.archived_at === null
     ? { title: identity.title, objective: identity.description }
     : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId)
-    .run({ runId: input.harnessRunId });
+  const initialRun = await initialRunPreparation.get();
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
+  const authorityPreparation = new Preparation(async () => {
+    const authority = await readRunAuthority(env, input);
+    return { ...authority, readyAtMs: Date.now() };
+  });
+  const persistedHostOutcomePreparation = new Preparation(() =>
+    loadPersistedHarnessHostOutcome(
+      createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+      input,
+    ));
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  const currentSidekickSources = await resolveSidekickSkills(env, input, storedSidekickSkills?.sources.map((source) => source.id));
+  const recommendationState: { preparation: Preparation<string[]> | null } = { preparation: null };
+  const readRecommendations = () => (
+    recommendationState.preparation ??= new Preparation(() => recommendedSidekickRefs(env, input))
+  ).get();
+  const sidekickSourcesPreparation = new Preparation(async () => {
+    const { principalIsGuest } = await authorityPreparation.get();
+    return resolveSidekickSkills(env, input, principalIsGuest,
+      storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null, readRecommendations);
+  });
+  // These are read-only preparations. Keep the healthy turn's independent work
+  // overlapped; the stored outcome still wins without replaying execution.
+  persistedHostOutcomePreparation.get();
+  sidekickSourcesPreparation.get();
+  const persistedHostOutcome = await persistedHostOutcomePreparation.get();
+  if (persistedHostOutcome) {
+    return {
+      status: persistedHostOutcome.status,
+      ...(persistedHostOutcome.finalTurnId
+        ? { finalTurnId: persistedHostOutcome.finalTurnId }
+        : {}),
+      ...(persistedHostOutcome.error ? { error: persistedHostOutcome.error } : {}),
+    };
+  }
+  const { principalIsGuest, readyAtMs: initialAuthorityReadyAtMs, ...runAuthoritySnapshot } = await authorityPreparation.get();
+  const currentSidekickSources = await sidekickSourcesPreparation.get();
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
   }
@@ -2655,7 +2691,7 @@ export async function runWorkstreamHarness(
   // No eligible sources means no recommendation can enter this snapshot. Avoid
   // waking parent authorities for executions that cannot use any Sidekick.
   const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
-    : currentSidekickSources.length > 0 ? await recommendedSidekickRefs(env, input) : [];
+    : currentSidekickSources.length > 0 ? await readRecommendations() : [];
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
@@ -2667,31 +2703,44 @@ export async function runWorkstreamHarness(
   const assertSidekickAuthority = async (): Promise<void> => {
     const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
     if (active.length === 0) return;
-    const authorized = await resolveSidekickSkills(env, input, active.map((source) => source.id));
+    const authorized = await resolveSidekickSkills(env, input, principalIsGuest, active.map((source) => source.id));
     if (active.some((source) => !authorized.some((current) => current.id === source.id))) {
       throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
     }
   };
   const streamId = input.harnessRunId;
-  const persistedHostOutcome = await loadPersistedHarnessHostOutcome(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    input,
-  );
-  if (persistedHostOutcome) {
-    return {
-      status: persistedHostOutcome.status,
-      ...(persistedHostOutcome.finalTurnId
-        ? { finalTurnId: persistedHostOutcome.finalTurnId }
-        : {}),
-      ...(persistedHostOutcome.error ? { error: persistedHostOutcome.error } : {}),
-    };
-  }
-  const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
   if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
     code: "run_ownership_lost",
   });
   const attemptLease = runtime.lease;
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId);
+  const modelRoutingPreparation = new Preparation(() => resolveWorkstreamModelRouting(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.parentId,
+  }));
+  const attachmentGroundingPreparation = new Preparation(async () => {
+    const guard = new AttachmentGroundingGuard();
+    const receipts = await createToolReceiptObjectPort(
+      env,
+      input.workspaceId,
+      input.parentId,
+      undefined,
+      conversationSubstreamId,
+    ).receiptsForRun({
+      runId: input.harnessRunId,
+      capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
+    });
+    const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
+    await guard.restoreReceipts(
+      receipts,
+      async (receipt) => receipt.outputRef
+        ? loadToolReplayOutput(env, receipt.outputRef, replayDeadline)
+        : null,
+    );
+    return guard;
+  });
+  modelRoutingPreparation.get();
+  attachmentGroundingPreparation.get();
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
@@ -2706,7 +2755,9 @@ export async function runWorkstreamHarness(
   const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
   runDefinitionPreparation.get();
   inventoryPreparation.get();
+  const leaseHeartbeatStartedAtMs = Date.now();
   await liveness.pulse("run_start", true);
+  const leaseHeartbeatMs = Date.now() - leaseHeartbeatStartedAtMs;
   const promptPreparation = new Preparation(() => loadRunPromptContext(
     env, input, attemptLease, workstream, runDefinitionPreparation,
   ));
@@ -2718,6 +2769,7 @@ export async function runWorkstreamHarness(
   toolsPreparation.get();
   const requiresCanonicalBootstrap = !runtime.persistentLoop
     || runtime.persistentLoop.projection === null;
+  const transcriptBootstrapStartedAtMs = Date.now();
   const orderedTranscript = createTranscriptObjectPort(
     env,
     input.workspaceId,
@@ -2739,9 +2791,6 @@ export async function runWorkstreamHarness(
   // A seed belongs only beneath a fresh canonical projection. Once Bind has a
   // projection, or a compaction checkpoint replaces its prefix, replaying the
   // seed here would duplicate inherited instructions and history.
-  const initialContext = requiresCanonicalBootstrap && priorCompaction === null
-    ? await orderedTranscript.initialContext()
-    : null;
   const transcript = createMessageObjectPort(
     env,
     input.workspaceId,
@@ -2749,24 +2798,30 @@ export async function runWorkstreamHarness(
     undefined,
     input.substreamId ?? "0",
   );
-  const storedMessages = requiresCanonicalBootstrap
-    ? await loadTriggerFencedTranscriptMessages(
-      transcript,
-      input,
-      // The transcript comes from the object rather than from a routed reader
-      // whose four-table join was rewritten onto three compatibility views. The
-      // paging contract is unchanged, which is what lets this stay an injected
-      // lister: the loader's fence walk is the same walk.
-      transcriptLister(
+  const [initialContext, storedMessages] = await Promise.all([
+    requiresCanonicalBootstrap && priorCompaction === null
+      ? orderedTranscript.initialContext()
+      : Promise.resolve(null),
+    requiresCanonicalBootstrap
+      ? loadTriggerFencedTranscriptMessages(
         transcript,
-        { workspaceId: input.workspaceId, workstreamId: input.parentId },
-      ),
-      priorCompaction?.compactedThroughSequence ?? -1,
-    )
-    : [];
+        input,
+        // The transcript comes from the object rather than from a routed reader
+        // whose four-table join was rewritten onto three compatibility views. The
+        // paging contract is unchanged, which is what lets this stay an injected
+        // lister: the loader's fence walk is the same walk.
+        transcriptLister(
+          transcript,
+          { workspaceId: input.workspaceId, workstreamId: input.parentId },
+        ),
+        priorCompaction?.compactedThroughSequence ?? -1,
+      )
+      : Promise.resolve([]),
+  ]);
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
+  const transcriptBootstrapMs = Date.now() - transcriptBootstrapStartedAtMs;
   const rawModelMessages = [
     ...renderSubstreamInitialContext(initialContext),
     ...(priorCompaction?.messages ?? []),
@@ -2802,6 +2857,11 @@ export async function runWorkstreamHarness(
   let streamStarted = false;
   let suppressCurrentStreamPreview = false;
   const harnessTools = await toolsPreparation.get();
+  const priorHintsPreparation = new Preparation(() => loadAuthorizedActivationHints(
+    createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+    new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
+  ));
+  priorHintsPreparation.get();
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   const activeCredentialPluginIds = new Set<string>();
@@ -2869,24 +2929,8 @@ export async function runWorkstreamHarness(
       occurredAtUtc: new Date().toISOString(),
     });
   };
-  const attachmentGrounding = new AttachmentGroundingGuard();
-  const attachmentGroundingReceipts = await createToolReceiptObjectPort(
-    env,
-    input.workspaceId,
-    input.parentId,
-    undefined,
-    conversationSubstreamId,
-  ).receiptsForRun({
-    runId: input.harnessRunId,
-    capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
-  });
-  const attachmentGroundingReplayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
-  await attachmentGrounding.restoreReceipts(
-    attachmentGroundingReceipts,
-    async (receipt) => receipt.outputRef
-      ? loadToolReplayOutput(env, receipt.outputRef, attachmentGroundingReplayDeadline)
-      : null,
-  );
+  const attachmentGrounding = await attachmentGroundingPreparation.get();
+  const harnessInputsReadyAtMs = Date.now();
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
@@ -2923,10 +2967,7 @@ export async function runWorkstreamHarness(
     memoryContextHash: promptContext.memoryContextHash,
     limits: runScopeLimits,
   });
-  const priorHints = await loadAuthorizedActivationHints(
-    createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
-  );
+  const priorHints = await priorHintsPreparation.get();
   const requestedActivations = [
     ...priorHints,
     ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
@@ -3023,10 +3064,7 @@ export async function runWorkstreamHarness(
     }
   };
 
-  const modelRouting = await resolveWorkstreamModelRouting(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.parentId,
-  });
+  const modelRouting = await modelRoutingPreparation.get();
   // A seeded run is routed where the seam is: the OpenRouter client, an
   // unbound model, no fallbacks, no Azure transport. See `demoSeedModelRoute`.
   const seedRoute = seedProvider ? demoSeedModelRoute(modelRouting) : null;
@@ -3034,6 +3072,45 @@ export async function runWorkstreamHarness(
   if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
     stopController.abort("stopped_by_user");
   }
+
+  const inferencePreparationFinishedAtMs = Date.now();
+  const inferenceStartEligible = (runtime?.lease.attemptNumber ?? 1) === 1;
+  logAgentInferencePrepared(env, {
+    workspaceId: input.workspaceId,
+    requestId: input.harnessRunId,
+    source: "workstream",
+    workstreamId: input.parentId,
+    substreamId: input.substreamId ?? "0",
+    ...(input.telemetryOperationId ? { operationId: input.telemetryOperationId } : {}),
+    ...(input.telemetryJourney ? { journey: input.telemetryJourney } : {}),
+    ...(input.telemetryRequestReceivedAt !== undefined
+      ? { requestReceivedAt: input.telemetryRequestReceivedAt }
+      : {}),
+    inferenceStartEligible,
+  }, {
+    runStartedAtMs,
+    initialAuthorityReadyAtMs,
+    harnessInputsReadyAtMs,
+    preparationFinishedAtMs: inferencePreparationFinishedAtMs,
+    breakdown: {
+      initialIdentityRunMs: Math.max(identityPreparation.elapsedMs ?? 0, initialRunPreparation.elapsedMs ?? 0),
+      persistedOutcomeMs: persistedHostOutcomePreparation.elapsedMs ?? 0,
+      initialRunAuthorityMs: authorityPreparation.elapsedMs ?? 0,
+      sidekickAuthorityMs: sidekickSourcesPreparation.elapsedMs ?? 0,
+      sidekickRecommendationsMs: recommendationState.preparation?.elapsedMs ?? 0,
+      leaseHeartbeatMs,
+      runContextMs: promptPreparation.elapsedMs ?? 0,
+      memoryContextMs: promptContext.memoryContextMs,
+      transcriptBootstrapMs,
+      toolInventoryMs: inventoryPreparation.elapsedMs ?? 0,
+      toolConstructionMs: toolsPreparation.elapsedMs ?? 0,
+      attachmentReplayMs: attachmentGroundingPreparation.elapsedMs ?? 0,
+      transcriptBootstrapRequired: requiresCanonicalBootstrap,
+      sidekickSnapshotReused: storedSidekickSkills !== null,
+      sidekickRecommendationsRead: recommendationState.preparation !== null,
+      memoryRecallRequired: promptContext.memoryRecallRequired,
+    } satisfies AgentInferencePreparationBreakdown,
+  });
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
   // recurring monitor only once every setup step that can throw has finished,
@@ -3055,7 +3132,7 @@ export async function runWorkstreamHarness(
     ...(input.telemetryRequestReceivedAt !== undefined
       ? { requestReceivedAt: input.telemetryRequestReceivedAt }
       : {}),
-    inferenceStartEligible: (runtime?.lease.attemptNumber ?? 1) === 1,
+    inferenceStartEligible,
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;
@@ -3283,7 +3360,7 @@ export async function runWorkstreamHarness(
         const source = entry?.source;
         const ref = entry?.durableRef ?? loadedRef;
         if (source && !sidekickSnapshot.activeRefs.includes(ref)) {
-          const allowed = await resolveSidekickSkills(env, input, [source.id], false);
+          const allowed = await resolveSidekickSkills(env, input, principalIsGuest, [source.id], false);
           if (!allowed.some((entry) => entry.id === source.id)) throw new ApiError(403, "sidekick_access_changed", "This Sidekick is no longer available");
         }
         if (!sidekickSnapshot.activeRefs.includes(ref)) sidekickSnapshot.activeRefs.push(ref);
@@ -4469,6 +4546,8 @@ async function loadRunPromptContext(
   systemPrompt: string;
   additionalMessages: ModelMessage[];
   memoryContextHash: string | null;
+  memoryContextMs: number;
+  memoryRecallRequired: boolean;
 }> {
   // An automation the room does not own sends its own result outward, so its
   // result is read wherever it sent it, not in Rally, and nothing sends its
@@ -4648,14 +4727,15 @@ async function loadRunPromptContext(
       eventCount: digestWindow.eventCount,
     }), "digest_delivery", input.digestDeliveryId);
   }
-  const frozenMemory = recallsMemoryAtAdmission
-    ? await freezeRunMemoryContext(
+  const memoryContextPreparation = recallsMemoryAtAdmission
+    ? new Preparation(() => freezeRunMemoryContext(
         env,
         input,
         lease,
         memoryQueryParts.filter(Boolean).join("\n\n"),
-      )
+      ))
     : null;
+  const frozenMemory = memoryContextPreparation ? await memoryContextPreparation.get() : null;
   if (frozenMemory && frozenMemory.results.length > 0) {
     additionalMessages.push(modelDerivative({
       role: "user",
@@ -4694,6 +4774,8 @@ async function loadRunPromptContext(
       : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
+    memoryContextMs: memoryContextPreparation?.elapsedMs ?? 0,
+    memoryRecallRequired: recallsMemoryAtAdmission,
   };
 }
 
@@ -6016,21 +6098,22 @@ async function assertExecutionPrincipalAuthorized(
   db: D1Database,
   workspaceId: string,
   principal: WorkstreamWorkflowInput["executionPrincipal"],
-): Promise<void> {
+): Promise<boolean> {
   if (principal.type === "workspace") {
     if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Workspace principal mismatch");
     const workspace = await db.prepare("SELECT id FROM workspaces WHERE id = ?")
       .bind(workspaceId).first<{ id: string }>();
     if (!workspace) throw new ConnectorError("unauthorized", "Workspace is unavailable");
-    return;
+    return false;
   }
   const member = await db.prepare(
-    `SELECT wm.status
+    `SELECT wm.status, wm.access_class
        FROM workspace_members wm
        JOIN users u ON u.id = wm.user_id
       WHERE wm.workspace_id = ? AND wm.user_id = ?`,
-  ).bind(workspaceId, principal.userId).first<{ status: string }>();
+  ).bind(workspaceId, principal.userId).first<{ status: string; access_class?: string }>();
   if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active workspace member");
+  return member.access_class === "guest";
 }
 
 async function assertRunAuthorityStillValid(
@@ -6038,15 +6121,34 @@ async function assertRunAuthorityStillValid(
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
 ): Promise<RunAuthoritySnapshot> {
+  const authority = await readRunAuthority(env, input, expected);
+  return { automationRunId: authority.automationRunId,
+    automationTemplateVersionId: authority.automationTemplateVersionId, triggerType: authority.triggerType };
+}
+
+async function readRunAuthority(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  expected?: RunAuthoritySnapshot,
+): Promise<RunAuthoritySnapshot & { principalIsGuest: boolean }> {
   const db: D1Database = env.DB;
-  await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
+  const guest = await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
   const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
-  if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
+  if (guest && input.executionPrincipal.type === "user" && !input.automationRun) {
+    // Use the same conversation admission as the transport. It also reports
+    // parent/child archive state, so a second parent authority read is redundant.
+    const parent = await conversationParentStub(env, input);
+    const access = await parent.authorizeViewer({ workspaceId: input.workspaceId, parentId: input.parentId,
+      userId: input.executionPrincipal.userId, substreamId: asSubstreamId(input.substreamId ?? "0"),
+      requireGrantAuthority: true });
+    if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
+    if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
+  } else if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
     if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
@@ -6063,7 +6165,7 @@ async function assertRunAuthorityStillValid(
       expected.automationTemplateVersionId !== snapshot.automationTemplateVersionId ||
       expected.triggerType !== snapshot.triggerType
     )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
-    return snapshot;
+    return { ...snapshot, principalIsGuest: guest };
   }
 
   // The loop input proves what this run was authorized to do; it cannot prove
@@ -6094,7 +6196,7 @@ async function assertRunAuthorityStillValid(
     expected.automationTemplateVersionId !== snapshot.automationTemplateVersionId ||
     expected.triggerType !== snapshot.triggerType
   )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
-  return snapshot;
+  return { ...snapshot, principalIsGuest: guest };
 }
 
 /** A run's definition, read from its parent by revision; one call per loop start. */
@@ -8003,6 +8105,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  executeAuthorizedConnectorTool,
   prePaginationTool,
   connectorToolSurfaceHash,
   createToolEffectIntents,

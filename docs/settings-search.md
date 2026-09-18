@@ -13,7 +13,7 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/settings/setting-toggle.tsx` | Registry-backed switch presentation with existing state and mutation bindings. |
 | `apps/desktop/src/renderer/settings/choices.ts` | Digest choices and value-keyed permission labels shared by controls and search. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `SegmentedControl`, the one exclusive-choice strip the appearance preference and the connections filter both draw. |
-| `apps/desktop/src/renderer/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
+| `packages/ui/src/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
 | `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
 | `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |
@@ -89,12 +89,11 @@ searches for either label filter by the available scope. API-key searches reveal
 Workspace setup has no event selection: Rally manages Ashby subscriptions
 automatically, while automations choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
-Ashby, Fireflies and Granola installations through **Manage events**. The main view shows
+Ashby and Granola installations through **Manage events**. The main view shows
 plain status, the last event and explained **Test**, with **Get help** when needed.
 **Advanced** contains saved-status refresh, API-key replacement and technical
 recovery; subscription diagnostics are collapsed separately. Cleanup retry is
-shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. Rotation
-guidance is local information and does not change installation state. The
+shown only when provider removal is incomplete. A legacy Granola connection offers Test before adoption. The
 workspace connection notification refreshes both list and installation queries,
 so open details do not retain a pre-repair snapshot. Management is unavailable
 offline; [installation lifecycle](connector-installation-lifecycle.md) owns its

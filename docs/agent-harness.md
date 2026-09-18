@@ -79,6 +79,15 @@ the rendered provider messages and counterbalances provider order while keeping
 provider fallback disabled. Provider pins in the runtime are explicit per model,
 so a configured candidate cannot silently escape to an unmeasured endpoint.
 
+Host recovery reads the persisted outcome before current principal admission and
+Sidekick setup. Returning that immutable result to the durable host starts no new
+provider or tool work. Fresh execution still validates its principal and reuses
+that observation when filtering guest Sidekick candidates, avoiding a second
+membership read for each skill resolution. Guest execution boundaries reuse
+the conversation parent's `authorizeViewer` admission for access and archive state,
+rather than invoking general resource authorization and then re-reading parent
+lifecycle.
+
 ## Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction
@@ -1300,6 +1309,10 @@ inventory reads start while the initial lease heartbeat completes. Prompt and
 tool setup start after that heartbeat, alongside canonical transcript loading.
 Each consumer awaits only its dependency's existing promise. Rejections are
 observed immediately and failed preparations can be retried by later demand.
+Each `Preparation` exposes the settled attempt's I/O-visible `elapsedMs`, or
+`null` before it settles; retry clears the failed attempt's measurement before
+the replacement starts. This lets diagnostics measure the reusable dependency
+itself instead of placing clocks around whichever control-flow path consumes it.
 No model or tool execution is started by preparation; Bind's live authority,
 lease, transcript, and command checks remain in their ordinary path.
 
@@ -1451,6 +1464,15 @@ accuracy.
 The addressing Flagship role and Worker model variable were removed in the same
 change because an editable fallback would let production depart from the
 evaluated cascade without review or fresh evidence.
+
+### 2026-09-17 — Reuse execution admission for guest skill selection
+
+Guest skill discovery uses the principal observation already required by the
+host. Adding another membership query to every skill resolution would delay
+ordinary assistant and tool attempts. Persisted-outcome recovery precedes that
+admission and skill setup: retrying an already settled attempt must recover its
+receipt without adding current-membership dependencies or starting new work.
+Fresh execution retains its normal admission and boundary checks.
 
 ### 2026-09-15 — Share independent preparation promises
 

@@ -1,3 +1,4 @@
+import { revocationClosesSession } from "../services/access-revocation";
 import { RegionSchema } from "@rally/contracts/regions";
 /**
  * One supervisor object per live web artifact.
@@ -26,10 +27,9 @@ import { RegionSchema } from "@rally/contracts/regions";
  *   fan-out at the **workspace** hop, because `artifact_registry` lives beside
  *   the resource authority in `WorkspaceDO` and only the object holding a list
  *   can name its children.
- * - *Work-stream visibility is not a D1 fact* — it lives in `WorkstreamDO`'s
- *   own SQL — so this object resolves each viewer against that object and
- *   caches the answer for a bounded interval rather than putting a Durable
- *   Object hop in front of every asset byte.
+ * - Resource visibility is resolved by the canonical authorization service,
+ *   including current membership, conversation grants and resource exposure.
+ *   The serving Worker requests fresh admission for authenticated traffic.
  *
  * See `docs/live-web-artifacts.md`.
  */
@@ -39,7 +39,6 @@ import {
   artifactIsolateId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
   type ArtifactManifest,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -47,10 +46,9 @@ import { z } from "zod";
 import type { Env } from "../env";
 import {
   assertDurableObjectJurisdiction,
-  durableObjectStubForWorkspace,
 } from "../lib/durable-object-namespace";
 import { sha256Hex } from "../lib/crypto";
-import { workstreamDOName } from "./names";
+import { AuthorizationService, requireAuthorizedRead } from "../services/authorization-service";
 import {
   FACET_HOST_CLASS,
   FACET_HOST_MODULE,
@@ -63,10 +61,8 @@ import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
-import {
-  MigratableDurableObject,
-  type DurableObjectMigrationPlan,
-} from "./migratable-durable-object";
+import { InternallyInspectableDurableObject } from "./internally-inspectable-durable-object";
+import { type DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -300,7 +296,17 @@ export interface ArtifactSessionCheck {
   manifest?: ArtifactManifest;
 }
 
-export class ArtifactHostDO extends MigratableDurableObject<Env> {
+/**
+ * Inspectable rather than merely migratable, which is the one thing about this
+ * declaration that is not obvious. The base above `MigratableDurableObject`
+ * adds `runInspectionSql`, the unrestricted operator SQL RPC the engineering
+ * MCP reaches through the private regional bridge — this object is not a
+ * scheduled authority, so it does not pick the RPC up from the scheduler the
+ * way WorkspaceDO and its siblings do, and inheriting it is deliberate.
+ * `docs/engineering-mcp.md` owns what that RPC admits; it reaches this
+ * supervisor's own database and never the facet's.
+ */
+export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
   /**
@@ -449,7 +455,7 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
    *
    * Called by the serving Worker before anything reaches model-authored code,
    * so this is where the two revocation questions are actually answered — the
-   * queue having dropped rows for the first, and `WorkstreamDO` being asked for
+   * queue having dropped rows for the first, and canonical resource access answering
    * the second when the cached answer has aged out.
    */
   async checkSession(sessionValue: string, visibilityCacheMs: number): Promise<ArtifactSessionCheck> {
@@ -583,20 +589,20 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<Record<string, never>> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
-    if (request.sessionId === null) {
-      // The membership is gone, so nothing this person holds is admissible.
-      this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE user_id = ?`, request.userId);
-    } else {
-      // One session ended; the person's other windows keep working. An unknown
-      // `app_session_id` is dropped rather than spared, matching
-      // `revocationClosesSocket`: that costs a re-open, where sparing it keeps
-      // a dead session reading.
-      this.state.storage.sql.exec(
-        `DELETE FROM viewer_sessions
-          WHERE user_id = ? AND (app_session_id IS NULL OR app_session_id = ?)`,
-        request.userId,
-        request.sessionId,
-      );
+    const sessions = this.state.storage.sql.exec<{ app_session_id: string | null }>(
+      "SELECT DISTINCT app_session_id FROM viewer_sessions WHERE user_id = ?", request.userId,
+    ).toArray();
+    for (const session of sessions) {
+      if (await revocationClosesSession(this.env, request, {
+        userId: request.userId, sessionId: session.app_session_id ?? undefined,
+      })) {
+        // Redemption rotates the viewer digest while the D1 check is awaiting.
+        // Its immutable app-session binding remains the revocation target.
+        this.state.storage.sql.exec(
+          "DELETE FROM viewer_sessions WHERE user_id = ? AND app_session_id IS ?",
+          request.userId, session.app_session_id,
+        );
+      }
     }
     return {};
   }
@@ -770,12 +776,9 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
   }
 
   /**
-   * Ask the authority that owns the scope, and cache what it says.
-   *
-   * Work-stream visibility is not a D1 fact — it lives in `WorkstreamDO`'s own
-   * SQL — so it cannot arrive on the revocation queue, and this object must not
-   * infer it from the session's own existence. That inference is precisely the
-   * regression `access-revocation.md` records.
+   * Recheck the artifact resource, not its legacy owning-parent visibility.
+   * An unavailable authority propagates to the serving Worker's error path;
+   * it never extends a previously allowed session.
    */
   private async confirmVisibility(
     sessionDigest: string,
@@ -784,19 +787,7 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
   ): Promise<boolean> {
     const state = this.stateRow();
     if (!state) return false;
-    let visible: boolean;
-    try {
-      visible = await this.resolveWorkstreamVisibility(state, userId);
-    } catch {
-      // A failed hop is not evidence of a lost scope. Keep the previous answer
-      // rather than either admitting or refusing on a transport fault; the
-      // cache is stale for one interval and the next request asks again.
-      const previous = this.state.storage.sql.exec<{ visible: number }>(
-        `SELECT visible FROM viewer_sessions WHERE session_sha256 = ?`,
-        sessionDigest,
-      ).toArray()[0];
-      return previous?.visible === 1;
-    }
+    const visible = await this.resolveResourceVisibility(state, userId);
     this.state.storage.sql.exec(
       `UPDATE viewer_sessions SET visibility_checked_at = ?, visible = ? WHERE session_sha256 = ?`,
       now,
@@ -806,18 +797,17 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
     return visible;
   }
 
-  private async resolveWorkstreamVisibility(
+  private async resolveResourceVisibility(
     state: z.infer<typeof ARTIFACT_STATE_ROW>,
     userId: string,
   ): Promise<boolean> {
     const workspaceId = asWorkspaceId(state.workspace_id);
-    const workstreamId = asWorkstreamId(state.workstream_id);
-    const workstream = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSTREAM_DOS,
-      workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, workspaceId, workstreamId),
-    );
-    return await workstream.canReadWorkstream(asUserId(userId));
+    const [decision] = await new AuthorizationService(this.env).checkMany({
+      workspaceId, userId: asUserId(userId), delegation: null,
+    }, [{ kind: "resource", workspaceId, resourceId: state.resource_id }]);
+    if (!decision) throw new Error("artifact_authorization_missing");
+    // An unavailable authority must not reuse a previously allowed answer.
+    if (decision.status === "unavailable") requireAuthorizedRead(decision);
+    return decision.status === "allowed";
   }
 }
