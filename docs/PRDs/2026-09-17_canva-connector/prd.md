@@ -223,15 +223,16 @@ None yet.
    authority on what Canva offers. Canva's published tool list was read during
    research and is deliberately not enshrined; it had already changed between two
    of its own documentation pages while this PRD was being written.
-2. **Apply for the waitlist and build against a server redirect; treat loopback
-   as the fallback, not the plan.** Canva enforces its allowlist on the redirect
-   URI's *host* at `/authorize`, returning a bare `400 Invalid redirect URI.`
-   Loopback (`localhost`, `127.0.0.1`) was accepted in the probe and local
-   Inspector authorization completed without waitlist approval. It is
-   the fallback rather than the plan because it only works where Rally runs a
-   local process: the iOS client could never use it, and neither could a browser
-   session. *Rejected:* shipping loopback-only, which would build the connector's
-   authorization on the one client it cannot generalize from.
+2. **Use loopback as the interim desktop fallback until the server callback is
+   approved.** The waitlist application is submitted. The isolated live probe
+   verified loopback code receipt, authenticated forwarding to a separate backend,
+   backend token exchange, an MCP read and immediate refresh-token rotation.
+   Electron/Rally implementation remains to be built: the shared OAuth helper
+   currently requires HTTPS callbacks. Tokens stay on the backend in both paths.
+   After approval and acceptance testing, new connections use the server callback.
+   Canva's permission to ship the interim flow remains unconfirmed; protocol
+   success is not production authorization. *Rejected:* a permanent loopback-only
+   design, which cannot support browser-only or iOS-only connection setup.
 3. **Two triggers, both requiring explicit opt-in to a named design.** Watching
    uses design timestamps and complete thread/reply scans with durable ID
    deduplication; the previously agreed ten-minute floor is retained. Pause and
@@ -264,9 +265,9 @@ None yet.
 8. **No pre-screening on Canva plan.** The provider's per-call refusal is the
    accurate answer. *Rejected:* reading a plan at activation, which is the X
    connector's balance mistake in a different costume.
-9. **Use normal credential renewal, and prove it.** A published refresh grant
-   is not proof of token issuance or successful renewal. Exercise expiry,
-   refresh, revocation and disconnect in Rally; attempt credential recovery on
+9. **Use normal credential renewal, and prove it in Rally.** The isolated probe
+   verified issuance and immediate refresh-token rotation. Exercise renewal after
+   expiry, concurrent refresh, durable rotation, revocation and disconnect in Rally; attempt credential recovery on
    `401` before asking for reconnection.
 
 ## Data model
@@ -421,9 +422,8 @@ Turning it off is unsetting the variable.
 - **When will Canva approve the submitted callbacks?** The application was
   submitted on 2026-09-18; production approval remains outstanding and the
   review has no published turnaround.
-- **Does the desktop OAuth handoff already support a loopback listener**, or is
-  that new work? Decides whether the fallback is cheap or is a project of its
-  own.
+- **Does Canva permit the interim loopback-to-backend flow in production?**
+  Technical compatibility is verified; provider permission remains unconfirmed.
 - **How do shared work streams and digests satisfy Canva's output-access rule?**
   Seek provider clarification; do not invent an exception for personal tokens.
 - **Does the discussion trigger include replies?** Proposed yes, with an optional
@@ -432,7 +432,8 @@ Turning it off is unsetting the variable.
   edits and deletions, mentions, other-user actions, reopening and larger designs.
   Tested ordering is observational; full scans must not depend on it.
 - **Does the actual Rally OAuth lifecycle work?** Production callback approval,
-  client identity, refresh issuance/rotation and revocation remain acceptance work.
+  client identity, actual Electron/backend handoff, encrypted token storage,
+  renewal after expiry, durable refresh rotation and revocation remain acceptance work.
 
 - **How many designs may one work stream watch, and how many watches may a member
   hold?** A polling ceiling is a defensive limit and its number is the team's.
