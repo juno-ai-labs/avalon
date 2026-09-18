@@ -82,7 +82,10 @@ export function everyAuthoredToolSchema(): AuthoredToolSchema[] {
   // `FIRECRAWL_API_KEY` is set because `createFirecrawlWebTools` returns `[]`
   // without one, so an empty environment silently drops `web_search`/`web_fetch`
   // from a walk that claims to cover everything.
-  const env = createTestEnv({ FIRECRAWL_API_KEY: "test-firecrawl-key" });
+  const env = createTestEnv({
+    FIRECRAWL_API_KEY: "test-firecrawl-key",
+    CANVA_CONNECTOR_ENABLED: "true",
+  });
   // Labelled `capability:name`, because neither alone is unique: the memory and
   // web plugins both export a tool called `search`, and `memory.write` covers
   // three. A failure has to name one tool unambiguously to be worth reading.

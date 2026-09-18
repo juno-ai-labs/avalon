@@ -676,7 +676,7 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
@@ -773,8 +773,8 @@ export function WorkspaceSettingsScreen({
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
-      const provider = ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
-        ? connection.connectorType as 'google' | 'github' | 'linear' | 'notion' | 'slack'
+      const provider = ['canva', 'google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
+        ? connection.connectorType as 'canva' | 'google' | 'github' | 'linear' | 'notion' | 'slack'
         : undefined;
       const authorization: ConnectorOAuthStart = await api!.reconnectConnection(
         connection.id,
@@ -1005,6 +1005,8 @@ export function WorkspaceSettingsScreen({
   const healthyConnections = installedConnections.filter((connection) => connection.status === 'healthy');
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
+    const available = connectorCatalog.data?.includes(provider.provider) ?? false;
+    if (!connected && !available && !connectorCatalog.isLoading) return false;
     if (connectionFilter === 'connected') return connected;
     if (connectionFilter === 'not_connected') {
       return providerHasAvailableUnconnectedScope(provider, connections.data ?? [], isAdmin);
