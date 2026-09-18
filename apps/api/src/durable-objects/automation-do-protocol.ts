@@ -109,13 +109,64 @@ export const AutomationOwningRoomArchivedRequestSchema = z.strictObject({
 });
 export type AutomationOwningRoomArchivedRequest = z.infer<typeof AutomationOwningRoomArchivedRequestSchema>;
 
+/**
+ * What the caller judged a `semantic_activity` trigger's written condition to be.
+ *
+ * The verdict crosses the boundary because the model call belongs outside the
+ * object: every other model call in this tree runs in a Worker, and an object
+ * that blocked on a provider would serialize every other request to the same
+ * Sidekick behind it. The object still decides, though — it knows which of its
+ * triggers are gated, so a delivery that arrives without a verdict for a gated
+ * event is refused rather than admitted.
+ *
+ * `code` is an enum and not the free text the classifier could have produced: it
+ * reaches an outcome code that a runbook greps for, and a caller must not be
+ * able to write arbitrary strings into one.
+ */
+export const AutomationSemanticConditionVerdictSchema = z.strictObject({
+  admit: z.boolean(),
+  code: z.enum([
+    "condition_met",
+    "condition_not_met",
+    "condition_not_judgeable",
+    "confidence_below_threshold",
+    "classifier_unavailable",
+  ]),
+  confidence: z.number().min(0).max(1).nullable(),
+  model: z.string().min(1).max(200).nullable(),
+});
+export type AutomationSemanticConditionVerdict = z.infer<typeof AutomationSemanticConditionVerdictSchema>;
+
 export const AutomationExternalEventAdmissionSchema = z.strictObject({
   ...Addressed,
   registrationId: IdSchema,
   event: WorkspaceExternalEventSchema,
   payloadHash: z.string().min(1),
+  /**
+   * Required in effect, not in schema: a gated event without one is refused.
+   * Optional here so an ungated delivery — every `connector_activity` and
+   * `webhook` trigger, which is nearly all of them — carries nothing extra.
+   */
+  conditionVerdict: AutomationSemanticConditionVerdictSchema.optional(),
 });
 export type AutomationExternalEventAdmission = z.infer<typeof AutomationExternalEventAdmissionSchema>;
+
+/**
+ * What a delivery has to do before it may admit an event.
+ *
+ * `judge` carries the conditions to test and the connector they came from, so
+ * the caller needs no second read to build the classifier's state.
+ */
+export const AutomationExternalEventPlanSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("refuse"), outcomeCode: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("admit") }),
+  z.strictObject({
+    kind: z.literal("judge"),
+    conditions: z.array(z.string().min(1)),
+    connectorType: z.string().min(1).nullable(),
+  }),
+]);
+export type AutomationExternalEventPlan = z.infer<typeof AutomationExternalEventPlanSchema>;
 
 export const AutomationInboundEmailAdmissionSchema = z.strictObject({
   ...Addressed,

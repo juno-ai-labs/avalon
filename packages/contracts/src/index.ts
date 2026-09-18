@@ -1133,6 +1133,41 @@ export function isExternalEventTrigger(
     || trigger.type === "webhook";
 }
 
+/**
+ * The written conditions that gate one event type, and the connector they watch.
+ *
+ * A `semantic_activity` trigger's `deterministicPrefilter.eventType` is the one
+ * event type a ready trigger must name, which makes it the join between a stored
+ * condition and an arriving event. Until the condition was evaluated at all that
+ * field had no runtime reader either: the readiness refinement demanded it and
+ * nothing consulted it.
+ *
+ * A trigger that names no event type gates every event reaching it. That is the
+ * fail-closed direction, and it is reachable only for a definition accepted
+ * without the refinement that forbids it — where the alternative would be to
+ * apply no condition, which is the behavior this whole mechanism exists to end.
+ *
+ * Several conditions are an OR: several triggers are several independent reasons
+ * to start one Sidekick, the same reading an evaluator rule set already gets.
+ */
+export function semanticConditionsForEventType(
+  definition: { triggers: ReadonlyArray<z.infer<typeof TriggerDefinitionSchema>> } | null,
+  eventType: string,
+): { conditions: string[]; connectorType: string | null } {
+  const matching = (definition?.triggers ?? []).filter((trigger) => {
+    if (trigger.type !== "semantic_activity") return false;
+    const declared = trigger.deterministicPrefilter["eventType"];
+    return typeof declared !== "string" || declared.trim().length === 0 || declared === eventType;
+  });
+  return {
+    conditions: matching.map((trigger) => (trigger as { condition: string }).condition),
+    connectorType: matching.reduce<string | null>(
+      (found, trigger) => found ?? (trigger as { connectorType: string | null }).connectorType,
+      null,
+    ),
+  };
+}
+
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
