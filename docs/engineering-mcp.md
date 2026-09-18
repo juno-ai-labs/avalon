@@ -107,6 +107,16 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
   creation or import initializes that object. Child substreams still require a
   directory membership row before their stub is obtained, and so does every
   Sidekick and every artifact.
+- **A tool never materializes an object that does not exist, with one stated
+  exception.** A Sidekick's object is created before anything records it, so a
+  directory row implies it. An artifact's registry row is written *before*
+  `pointArtifactAtVersion` initializes its supervisor, so between those two
+  calls — and permanently if the second never returns — `run_artifact_sql`
+  against that artifact creates an empty supervisor. Closing it needs a
+  readiness fact written after the supervisor exists, which is a WorkspaceDO
+  migration and a product write; until then the empty supervisor an operator
+  finds, with schema and no `artifact_state` row, is itself the diagnosis of the
+  half-finished publish.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
 - The Access application is separate from Ace and has its own audience, while
