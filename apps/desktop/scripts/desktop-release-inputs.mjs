@@ -11,6 +11,7 @@ const contractDirectory = join(repositoryDirectory, 'packages/contracts');
 // from the production desktop import graph below instead of copied by hand.
 export const FIXED_DESKTOP_RELEASE_INPUTS = Object.freeze([
   'apps/desktop/**',
+  'packages/ui/**',
   'packages/contracts/package.json',
   'package.json',
   'pnpm-lock.yaml',
@@ -102,7 +103,11 @@ export async function desktopContractSourceClosure() {
   const packageJson = JSON.parse(await readFile(join(contractDirectory, 'package.json'), 'utf8'));
   const entryPoints = new Set();
 
-  for (const path of await filesBelow(desktopDirectory, ignoredDesktopDirectories)) {
+  const sourceFiles = [
+    ...await filesBelow(desktopDirectory, ignoredDesktopDirectories),
+    ...await filesBelow(join(repositoryDirectory, 'packages/ui/src')),
+  ];
+  for (const path of sourceFiles) {
     if (!/\.[cm]?[jt]sx?$/u.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue;
     for (const specifier of await moduleSpecifiers(path)) {
       const entryPoint = resolveContractPackageImport(packageJson, specifier);
