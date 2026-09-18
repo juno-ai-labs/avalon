@@ -6,7 +6,7 @@ import {
 } from '@rally/contracts';
 import { Check, AlertTriangle, LoaderCircle, Minus } from 'lucide-react';
 import { createContext, useContext, useEffect } from 'react';
-import { useAppSession } from '../lib/app-session';
+import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
 import {
   connectorProviderById,
   isOAuthConnectorProvider,
@@ -22,7 +22,6 @@ import {
 } from '../lib/connector-presentation';
 import type { PluginBrandMark } from '../lib/plugin-marks';
 import type { WorkstreamConnection } from '../lib/types';
-import { desktopBridge } from '../lib/platform';
 import { Button, ConnectorMark, InlineError } from './primitives';
 
 const ConnectorConnectionsContext = createContext<readonly WorkstreamConnection[] | undefined>([]);
@@ -90,25 +89,31 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
   onConnected?: (selectionKey: string) => void;
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
+  const collaboration = useOptionalCollaborationSession();
   const provider = connectorConnectionCardProvider(request);
-  if (!provider) return null;
+  if (!provider || !collaboration?.connectorSetup) return null;
   return (
     <ResolvedConnectorConnectionCard
       latchedConnected={latchedConnected}
       onConnected={onConnected}
       provider={provider}
       request={request}
+      collaboration={collaboration}
+      setup={collaboration.connectorSetup}
     />
   );
 }
 
-function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provider, request }: {
+function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provider, request, collaboration, setup }: {
   latchedConnected: boolean;
   onConnected?: (selectionKey: string) => void;
   provider: OAuthConnectorProviderCatalogEntry;
   request: ConnectorConnectionCardInput;
+  collaboration: CollaborationSessionValue;
+  setup: ConnectorSetupCapability;
 }): React.JSX.Element | null {
-  const { api, pendingConnectorOAuth, session, setPendingConnectorOAuth } = useAppSession();
+  const { api, session } = collaboration;
+  const { pendingConnectorOAuth, setPendingConnectorOAuth, openExternal } = setup;
   const connections = useConnectorConnections();
 
   const scope = request.scope === 'personal' ? 'you' : 'workspace';
@@ -177,11 +182,11 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
           reconnect.capabilities?.length ?? capabilities.length,
         );
         const attempt = await api.getConnectorOAuthAttempt(authorization.attemptId);
-        await desktopBridge().openExternal(authorization.url);
+        await openExternal(authorization.url);
         return { authorization, provider: attempt.provider };
       }
       const authorization = await api.startProviderConnection(provider.provider, scope, capabilities);
-      await desktopBridge().openExternal(authorization.url);
+      await openExternal(authorization.url);
       return { authorization, provider: provider.provider };
     },
     onSuccess: ({ authorization, provider: oauthProvider }) => {

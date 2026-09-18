@@ -62,6 +62,7 @@ const sessionState = vi.hoisted(() => ({
   surrenderActiveWorkspace: vi.fn(),
 }));
 
+vi.mock('./lib/collaboration-session', () => ({ useCollaborationSession: () => sessionState }));
 vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,

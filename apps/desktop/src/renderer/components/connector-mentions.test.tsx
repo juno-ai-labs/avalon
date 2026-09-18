@@ -12,6 +12,7 @@ import {
 } from './connector-mentions';
 
 const mocks = vi.hoisted(() => ({
+  setupEnabled: true,
   getAvailableConnectorTypes: vi.fn(),
   getConnectorOAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
@@ -22,17 +23,17 @@ const mocks = vi.hoisted(() => ({
   startProviderConnection: vi.fn(),
 }));
 
-vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({
+vi.mock('../lib/collaboration-session', () => ({
+  useOptionalCollaborationSession: () => ({
     api: {
       getAvailableConnectorTypes: mocks.getAvailableConnectorTypes,
       getConnectorOAuthAttempt: mocks.getConnectorOAuthAttempt,
       reconnectConnection: mocks.reconnectConnection,
       startProviderConnection: mocks.startProviderConnection,
     },
-    pendingConnectorOAuth: mocks.pendingConnectorOAuth,
     session: mocks.session,
-    setPendingConnectorOAuth: mocks.setPendingConnectorOAuth,
+    connectorSetup: mocks.setupEnabled ? { pendingConnectorOAuth: mocks.pendingConnectorOAuth,
+      setPendingConnectorOAuth: mocks.setPendingConnectorOAuth, openExternal: mocks.openExternal } : null,
   }),
 }));
 vi.mock('../lib/platform', () => ({
@@ -43,6 +44,7 @@ vi.mock('../lib/platform', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.pendingConnectorOAuth = null;
+  mocks.setupEnabled = true;
   mocks.session.workspace.role = 'owner';
   mocks.getAvailableConnectorTypes.mockResolvedValue(['google', 'github', 'granola', 'linear', 'notion', 'slack']);
   mocks.getConnectorOAuthAttempt.mockResolvedValue({ status: 'pending' });
@@ -54,6 +56,14 @@ beforeEach(() => {
 });
 
 describe('connector connection resolution', () => {
+  it('omits connector setup and its discovery request in a lite collaboration host', () => {
+    mocks.setupEnabled = false;
+    const { container } = render(<ConnectorConnectionCard request={{ connectorId: 'slack', scope: 'personal' }} />);
+    expect(container).toBeEmptyDOMElement();
+    expect(mocks.getAvailableConnectorTypes).not.toHaveBeenCalled();
+    expect(mocks.startProviderConnection).not.toHaveBeenCalled();
+  });
+
   it('restores a completed card from its durable result or legacy exact summary', () => {
     expect(connectorConnectionCardInput({
       toolEvent: {
