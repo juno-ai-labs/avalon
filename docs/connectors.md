@@ -1514,10 +1514,15 @@ holding the route connecting a scope the product has withdrawn.
 and `connectableScopes` answers "what will it still take a credential for", and
 a surface that offers a connection has to read the second. Hiding a button is
 not the boundary — the four service paths are, which is why a replacement API
-key is refused there rather than only in the window that used to offer one. An existing Fireflies workspace
-connection keeps its tools, its ingress and its activity, and its row keeps
-**Delete**; it has no **Manage events** and no **Refresh**, so removing it is
-the only management left. Reopening the scope is one line in
+key is refused there rather than only in the window that used to offer one. An
+existing Fireflies workspace connection keeps its tools, its ingress and its
+activity, and its row keeps **Delete**; it has no **Manage events** and no
+**Refresh**. **It therefore keeps working until its key changes, and no
+further**: rotating the key in Fireflies leaves a connection that reports
+`needs_reconnect` with deletion as the only action, because giving it a new key
+is the grant this closed. That is the decision, not a gap — a workspace whose
+key must change is a workspace connecting Fireflies afresh, which is what is
+being withheld. Reopening the scope is one line in
 `fireflies.ts` plus the desktop catalog's `scopes`.
 
 ### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
