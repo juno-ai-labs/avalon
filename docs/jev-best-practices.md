@@ -70,6 +70,22 @@ not merely a degree of “agent work”: human coordination, social reactions,
 genuine ambiguity, and independently assigned human-plus-agent work are
 different policies.
 
+**A boolean-looking decision is not automatically a Noul, and the threshold curve
+is a reason on its own.** The semantic trigger gate asks whether one event
+satisfies one written condition, which is a yes-or-no question underneath, so it
+was measured both ways over 274 cases. The best Noul tied the winning Choice on
+the product objective and lost on three counts: worse calibration on the fire
+decision, eight points less three-class accuracy because one scalar cannot say "no
+event of this kind could settle this", and the shape of its threshold curve. For a
+Choice the label carries the decision and the curve is flat from `0` to `0.5`; for
+a Noul the scalar *is* the decision, so the curve has a peak and then a cliff —
+0.860 at `0.5`, 0.787 at `0.7`, 0.613 at `0.8`. A later well-meaning edit towards
+safety costs a third of the recall on the Noul and nothing on the Choice. Prefer
+the primitive whose failure you will notice. A **hybrid** that keeps the scalar and
+adds a second Choice for judgeability is available and cost-free at runtime — both
+questions answer in one round trip — but it did not recover the third class here:
+its second question claimed events that could in fact settle their condition.
+
 Do not decompose one mutually dependent decision into independent questions
 without evidence. Rally's two-question decomposition — whether Rally should act
 and whether people should act — scored 25.93% four-class accuracy on the
@@ -203,6 +219,17 @@ identical classifications on a second holdout run.
 | Untouched holdout | 126 | 91.27% | 92.86% |
 | Identical holdout repeat | 126 | 91.27% | 92.86% |
 
+**Do not assume that repeat is free.** Addressing's holdout repeat reproduced its
+classifications exactly; the semantic trigger's did not. Repeating six candidates
+three times there moved three-class accuracy by 1.4 points at the median and 4.1
+at worst, which is larger than most of the differences a generation produces. So
+measure the floor first, on repeats of the candidates you already have, and then
+read every later comparison against it: **a difference smaller than a candidate's
+own spread across its repeats is not a difference.** One run of eleven candidates
+is a story about that run, and the cheapest way to find out which of the two
+regimes a decision is in is to repeat the baseline before ranking anything
+against it.
+
 ## Build ground truth that can disagree with production
 
 Historical production output is a regression label, not automatically the
@@ -262,6 +289,33 @@ false invocation and a missed invocation have different costs, and fallback
 coverage adds latency. The selected Rally threshold routes 20 of 153 measured
 cases to fallback. Raising it may improve primary precision while making more
 messages pay the fallback's multi-second latency.
+
+**Score the decision, not the label, and write the price list down before
+ranking anything.** A candidate that answers correctly at a confidence the gate
+rejects is a miss in production, and accuracy cannot see that: on the semantic
+trigger corpus the accuracy winner had fifteen unwanted fires and the accuracy
+loser shipped. Two rules came out of getting this wrong twice.
+
+- **The direction of the asymmetry is the product's, not a tuning knob.** That
+  gate's first objective charged a false fire double a miss, reasoning that an
+  unwanted fire starts an agent run. What it missed is what the run *does*: it
+  opens with a capable model that decides for itself whether there is anything to
+  act on, so the unwanted fire costs one session and the miss costs the request.
+  The whole ranking was backwards. Ask what is behind the gate before pricing its
+  errors, and keep the weights in one named place so the ranking can be
+  re-derived rather than re-run.
+- **Sweep the threshold through one implementation of the gate's own rule.** The
+  same sweep read that rule twice, once for the fires and once for the misses, and
+  the second copy applied the Choice rule to a Noul — which pinned its missed
+  count to a fixed verdict and printed its recall as flat across the whole sweep.
+  A threshold recommendation nearly came out of that table. The number a
+  classifier's gate is set to is exactly as trustworthy as the code that drew the
+  curve.
+
+The per-case answers are worth keeping for the same reason: a stored run can be
+re-scored under a new price list without calling the provider, which is what makes
+"what would this have ranked under the corrected objective" a minute's work rather
+than a re-run with fresh sampling noise on top.
 
 ## Measure latency end to end
 

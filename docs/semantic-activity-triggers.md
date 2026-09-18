@@ -91,6 +91,15 @@ the retired router — "a constant compared against a number the model made up
 about its own answer" — and rejected raising that constant for exactly this
 reason.
 
+The optimization qualified that argument rather than overturning it. On this
+question the label carries almost the whole decision and the threshold is a
+nearly flat lever between `0` and `0.5`, because the provider's confidence on a
+Choice turns out to be a cliff at 0.5 rather than a gradient above it. The same
+question asked as a Noul — a single scalar, no label — makes the threshold the
+whole decision and scores no better, while turning a flat curve into one with a
+cliff at 0.7. A provider-computed confidence is still the right thing to threshold
+on; it is just not where this decision is made.
+
 ## Invariants
 
 - **A gated event without an admitting verdict does not start a run.** Breaking
@@ -160,13 +169,27 @@ selected, and TypeSafe.
 
 Two numbers, and only one of them is chosen:
 
-- **`SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD` is an open placeholder at `0`**, per
-  [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
-  The mechanism is named, wired, enforced and tested; the number that decides
-  which real automation gets cut off on a bad day is the team's. The comparison
-  is `>`, matching the addressing cascade, so a confidence exactly equal to the
-  threshold refuses. An earlier, never-shipped prompt for this decision proposed
-  `0.8`; nothing measured it.
+- **`SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD` is `0.5`**, which is measured rather
+  than chosen. Pooled over the whole 274-case corpus the utility of this question
+  is flat from `0` to `0.5` — 0.844, 0.843, 0.834 — and falls above it, 0.822 at
+  `0.6` and 0.787 at `0.7`, while recall on cases nothing was tuned against goes
+  96.8% with no gate, 87.1% at `0.5` and 75.8% at `0.7`. So the lever is nearly
+  dead at the bottom of the band and buys precision at the cost of recall above
+  it, and `0.5` is the bottom of the band the team set. The comparison is `>`,
+  matching the addressing cascade, so a confidence exactly equal to the threshold
+  refuses.
+
+  The earlier note here floated `0.8` as a starting point on the argument that a
+  false run costs more than a quiet automation. That argument was backwards, and
+  it is worth keeping the correction visible: the run opens with a
+  state-of-the-art model that decides for itself whether the event is worth acting
+  on, so an unwanted fire costs one session that finds nothing to do, while a
+  refusal is silent and the member asked to be told. At `0.8` this question would
+  have dropped a third of the runs somebody asked for.
+  [`objective.md`](../packages/agent-harness/evals/semantic-trigger/objective.md)
+  carries the full price list;
+  [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
+  is why the number waited for a measurement instead of a guess.
 - **`SEMANTIC_TRIGGER_JEV_TIMEOUT_MS` is one second**, three times the measured
   JEV p95 of about 350 ms recorded in
   [`jev-best-practices.md`](jev-best-practices.md#measure-latency-end-to-end),
@@ -194,23 +217,18 @@ fails the two refusal cases, and the delivery's by treating a `judge` plan as an
 
 ## Open questions
 
-- **The confidence threshold has no number.** It is open at `0`, so today the
-  choice alone gates and a low-confidence `condition_met` still admits. Setting it
-  needs the team to weigh a false run against a quiet automation; the arithmetic
-  is in [Failure modes and limits](#failure-modes-and-limits).
-- **There is no evaluation of this request.**
+- **The corpus is synthetic.**
+  The request that ships was selected by an optimization over 274 cases with a
+  split made before tuning and an independent adjudication layer, which is what
   [`jev-best-practices.md`](jev-best-practices.md#optimize-by-ablation-not-prompt-accumulation)
-  asks for a production-shaped corpus, a development and holdout split made before
-  tuning, and an independent adjudication layer, and none exists: the feature has
-  never run, so there is no production behavior to replay. What can be built
-  without an authorized export is a corpus of (event, condition, adjudicated
+  asks for — but the cases were authored rather than replayed, because the feature
+  had never run. So the criteria are measured against a distribution somebody
+  imagined. What replaces it is a corpus of (event, condition, adjudicated
   verdict) triples assembled from retained connector events — bodies are kept for
-  396 days — and conditions of the shape the authoring agent writes. The class
-  that decides the question is near-miss negatives: the right connector, the right
-  event type, the wrong subject. A corpus of obvious matches and obvious
-  non-matches will score in the nineties and prove nothing. Until that exists, the
-  three criteria here are reasoned from the guide rather than measured, and the
-  first evaluation may well move them.
+  396 days — and conditions of the shape the authoring agent writes.
+  [`evals/semantic-trigger/README.md`](../packages/agent-harness/evals/semantic-trigger/README.md)
+  records what the synthetic corpus can and cannot prove, and the first authorized
+  export may well move the criteria.
 - **Whether `condition_not_judgeable` should reach its author.** It means the
   condition cannot be settled by an event of that kind, which is an authoring
   defect rather than a run that should not start. Today it is a refusal and a log
@@ -232,6 +250,17 @@ first — the JEV request, the confidence cascade, the Choice question shape —
 a shared classifier diagnostic sink in the API; addressing runs on all four and
 its behavior is unchanged. The unused `prompts/semantic-trigger.ts` renderer and
 its three prompt tests are gone.
+
+The question and the threshold are the optimization's output rather than its
+starting point. A GEPA search over 274 cases, split before tuning and
+independently adjudicated, selected a request that is 133 words against the 227 it
+started with and scores 0.813 in band utility on the held-out split against 0.701
+— 87.1% recall where the first request managed 71.0%. Almost all of the difference
+is subtraction: an empty `decision` string, no include list on `condition_met`,
+one include on `condition_not_met` instead of three, and an assertive
+`condition_not_judgeable` that every other compact candidate had quietly dropped.
+`SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD` is `0.5`, from the swept curve, and
+`shipped.test.ts` now pins the number as well as the prose.
 
 **Why:** the condition was required by the draft schema, stored on the accepted
 revision, and returned verbatim by the desktop client as the trigger's one-line
@@ -266,10 +295,36 @@ that evidence does not cover the weeks before this change. *An OpenRouter fallba
 existed, rejected because a fallback is chosen after the primary is frozen and
 measured on the subset it will receive, and neither has happened.
 
+**Considered and rejected, on the classifier itself:** *asking the question as a
+Noul*, a single scalar with no label, which is the primitive the decision's
+boolean shape suggests. It ties on the objective and loses on calibration, on
+three-class accuracy — one scalar cannot say "no event of this kind could settle
+this" — and, decisively, on the shape of its threshold curve: the Choice's is flat
+between `0` and `0.5` while the Noul's has a cliff at `0.7`, so a later
+well-meaning edit towards safety costs a third of the recall on one and nothing on
+the other. *A hybrid* that adds a second question settling judgeability in the same
+round trip, rejected because its three-class accuracy went down, not up: the second
+question claimed events that could in fact settle their condition. *A further
+generation aimed at recall*, rejected on evidence — three teachers were given that
+mandate on three different parents, all three raised recall, and all three paid for
+it almost exactly proportionally in false fires. The prose is not the lever that
+trades those two; the threshold is.
+
 **What a future change has to respect:** the object is the authority. A delivery
 path may compute a verdict, but `admitExternalEvent` decides, and a gated event
 without an admitting verdict must never start a run — that is the whole defect,
 and it is reachable again by moving the enforcement into the caller. The
 condition and the event stay separate named fields of the JEV state. And the
-confidence threshold is still an open placeholder: the first change to set it owes
-the arithmetic, not a guess.
+shipped question is now evidence rather than prose: it is pinned byte-for-byte to
+the candidate that was measured, so a clarification or a typo fix to a criterion
+has to come with a rerun that moves the winner file, or it does not happen.
+
+**Which error is expensive, because this was written down backwards first.** The
+original note on the threshold argued that a false `condition_met` costs more than
+a false refusal, "which argues for a floor well above zero". That reads the agent
+run as the cost. It is not: the run opens with a state-of-the-art model that
+decides for itself whether the event is worth acting on, so an unwanted fire buys
+one session that concludes there is nothing to do, while a refusal is silent and
+the member asked to be told. The optimization's objective prices a miss at three
+times a false fire for that reason, and every ranking produced before that
+correction favoured the quiet candidate and has been re-derived.
