@@ -260,7 +260,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     ...(["attach", "detach"] as const).filter(() => input.attachmentPort !== undefined).map((operation): HarnessTool => ({
       definition: {
         name: operation,
-        description: `${operation === "attach" ? "Attach" : "Detach"} a workspace Sidekick ${operation === "attach" ? "as a recommendation for" : "from"} this workstream. Use an ID returned by sidekicks_list.`,
+        description: `${operation === "attach" ? "Attach" : "Detach"} a workspace Sidekick ${operation === "attach" ? "as a recommendation for" : "from"} this workstream. Use an ID returned by sidekick_sidekicks_list.`,
         capability: `rally.sidekick.${operation}`,
         mode: "write",
         idempotency: "record_before_execute",

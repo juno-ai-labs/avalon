@@ -3531,7 +3531,7 @@ Bind projection, appends its answer tool result, and promotes the participant
 turn only to canonical UI history under the same loop/execution/head fence.
 
 **Why:** Promoting only the participant message left the prior assistant's
-`request_elicitation` call unanswered. Bind refused that invalid protocol
+`core_request_elicitation` call unanswered. Bind refused that invalid protocol
 history, stranding an accepted answer outside the persistent loop.
 
 **Considered and rejected:** Rebuilding or replacing the complete model history
