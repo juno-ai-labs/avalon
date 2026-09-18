@@ -33,13 +33,7 @@ A connector mention strongly favors agent_action. addressesRally only reports th
 Active-task state is context, not permission to act. Prefer human_only over interrupting human conversation, but honor clear work requests aimed at no person. Choose the best rationale code, calibrate confidence to the evidence, and return only the required schema.`;
 
 export function renderAddressingMessages(input: AddressingPromptInput): PromptMessage[] {
-  const recentMessages = (input.recentMessages ?? [])
-    .slice(-MAX_RECENT_MESSAGES)
-    .map((message) => ({
-      authorType: message.authorType,
-      authorName: message.authorName,
-      message: truncateCharacters(message.message, MAX_RECENT_MESSAGE_CHARACTERS),
-    }));
+  const recentMessages = limitAddressingRecentMessages(input.recentMessages ?? []);
   return [
     { role: "system", content: SYSTEM_PROMPT },
     {
@@ -56,7 +50,24 @@ export function renderAddressingMessages(input: AddressingPromptInput): PromptMe
   ];
 }
 
-function truncateCharacters(value: string, maximum: number): string {
-  if (value.length <= maximum) return value;
-  return Array.from(value).slice(0, maximum).join("");
+export function limitAddressingRecentMessages(
+  messages: AddressingContextMessage[],
+): AddressingContextMessage[] {
+  return messages
+    .slice(-MAX_RECENT_MESSAGES)
+    .map((message) => ({
+      authorType: message.authorType,
+      authorName: message.authorName,
+      message: centerTruncateRecentMessage(message.message),
+    }));
+}
+
+function centerTruncateRecentMessage(value: string): string {
+  const characters = Array.from(value);
+  if (characters.length <= MAX_RECENT_MESSAGE_CHARACTERS) return value;
+
+  const retainedCharacters = MAX_RECENT_MESSAGE_CHARACTERS - 1;
+  const prefixLength = Math.ceil(retainedCharacters / 2);
+  const suffixLength = retainedCharacters - prefixLength;
+  return `${characters.slice(0, prefixLength).join("")}…${characters.slice(characters.length - suffixLength).join("")}`;
 }

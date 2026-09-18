@@ -24,6 +24,7 @@ import {
   rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
+  type AddressingContextMessage,
   type AzureModelPricing,
   type BindLoopTransition,
   type BindLoopProjectionState,
@@ -435,6 +436,63 @@ describe("agent harness", () => {
       expect.objectContaining({ provider: "typesafe", success: true }),
       expect.objectContaining({ success: true }),
     ]));
+  });
+
+  it("sends the same center-truncated boundary history to JEV and Terra", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const exactLimitMessage = "e".repeat(1_000);
+    const overLimitMessage = `A${"🧭".repeat(999)}Z`;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (requestBodies.length === 1) {
+        return Response.json({
+          model: "jev-1.13.0",
+          answers: {
+            addressing: {
+              type: "choice",
+              choice: "people_only",
+              confidence: 0.5,
+            },
+          },
+        });
+      }
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "agent_action", confidence: 0.82, rationaleCode: "imperative",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "openai/gpt-5.6-terra",
+      message: "Please review the launch plan",
+      activeTask: false,
+      recentMessages: [
+        { authorType: "human", authorName: "Morgan", message: exactLimitMessage },
+        { authorType: "human", authorName: "Morgan", message: overLimitMessage },
+      ],
+      fetch: fetcher,
+    });
+
+    const jevRecentMessages = ((requestBodies[0]!.state as {
+      conversation_context: { recent_messages: AddressingContextMessage[] };
+    }).conversation_context.recent_messages);
+    const fallbackMessages = requestBodies[1]!.messages as Array<{ role: string; content: string }>;
+    const fallbackInput = fallbackMessages[1]!.content.split("\n\nExpected structured output JSON Schema", 1)[0]!;
+    const fallbackRecentMessages = (JSON.parse(fallbackInput) as {
+      recentMessages: AddressingContextMessage[];
+    }).recentMessages;
+    expect(jevRecentMessages).toEqual(fallbackRecentMessages);
+    expect(jevRecentMessages[0]!.message).toBe(exactLimitMessage);
+    const boundedCharacters = Array.from(jevRecentMessages[1]!.message);
+    const sourceCharacters = Array.from(overLimitMessage);
+    expect(sourceCharacters).toHaveLength(1_001);
+    expect(boundedCharacters).toHaveLength(1_000);
+    expect(boundedCharacters.slice(0, 500)).toEqual(sourceCharacters.slice(0, 500));
+    expect(boundedCharacters[500]).toBe("…");
+    expect(boundedCharacters.slice(501)).toEqual(sourceCharacters.slice(-499));
   });
 
   it("bounds JEV latency and starts the OpenRouter fallback after the owned deadline", async () => {
