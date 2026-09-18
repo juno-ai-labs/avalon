@@ -150,6 +150,10 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   owner/admin/member administrative role. A guest's role is null. Incarnation
   identifies one membership lifetime; revision orders admission changes within
   it. Promotion changes the existing row without replacing its user or sessions.
+  One row per person per workspace, so a workspace may hold any number of
+  administrators; [`workspace-member-roles.md`](workspace-member-roles.md) owns
+  what each role means, the one write that assigns one, why a guest has none,
+  and the guard against demoting a workspace's last administrator.
 
 - WorkspaceDO's `scope_grant_directory` is a typed-RPC-only candidate projection
   keyed by parent, user and exact scope. It retains generation/version tombstones

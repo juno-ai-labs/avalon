@@ -601,13 +601,23 @@ describe("workspace invitation lifecycle", () => {
     expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
   });
 
-  it("limits administrator invitations to workspace owners", async () => {
-    const database = new StubDatabase(() => undefined);
+  it("lets any administrator invite another administrator, and no ordinary member invite at all", async () => {
+    // The owner-only gate this used to assert was the other half of the
+    // single-administrator problem: an administrator could not grow the set
+    // they were part of. It is gone, and what remains is the admin gate —
+    // proved by an administrator reaching the roster check behind it.
+    const seated = new StubDatabase(({ sql }) =>
+      sql.includes("SELECT 1 AS present FROM workspace_members") ? { present: 1 } : undefined);
     const admin = { ...ownerAuth, role: "admin" as const };
-    await expect(new WorkspaceService(environment(database), admin)
+    await expect(new WorkspaceService(environment(seated), admin)
       .createInvitation("admin@example.com", "admin"))
-      .rejects.toMatchObject({ status: 403, code: "workspace_owner_required" });
-    expect(database.batches).toHaveLength(0);
+      .rejects.toMatchObject({ status: 409, code: "already_workspace_member" });
+
+    const refused = new StubDatabase(() => undefined);
+    await expect(new WorkspaceService(environment(refused), { ...ownerAuth, role: "member" })
+      .createInvitation("admin@example.com", "admin"))
+      .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
+    expect(refused.batches).toHaveLength(0);
   });
 
   it("rejects expired previews without exposing workspace details", async () => {

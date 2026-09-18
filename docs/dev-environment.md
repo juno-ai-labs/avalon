@@ -151,6 +151,22 @@ its children.
 
 Local mode passes `--enable-containers=false`; building the crash symbolicator
 otherwise needs Docker. Use `pnpm dev:api` when testing that container itself.
+
+**That flag is ignored once more than one `--config` is passed**, which is every
+invocation the runner makes (wrangler 4.126.0). `dev:api:local` therefore still
+reaches for Docker and dies before any Worker binds:
+
+```
+✘ [ERROR] The Docker CLI is needed to build the configured image before running dev
+```
+
+`"dev": { "enable_containers": false }` in the config does not suppress it
+either — only the absence of the `containers` block does. Until the runner has a
+way to say this that wrangler honours, a session that needs the whole regional
+stack and has no Docker daemon runs the same command against a scratch copy of
+`wrangler.global.jsonc` with that block removed, and deletes the copy
+afterwards. Nothing in a member-facing screen reaches the symbolicator.
+
 For an API-only session, the equivalent command is:
 
 ```bash
@@ -162,6 +178,11 @@ pnpm --filter @rally/api exec -- wrangler dev --local \
 
 The `--` matters: without it pnpm 11.13.0 takes `--env-file` as its own option,
 swallows the path, and fails before Wrangler sees it.
+
+That single-config session serves `GET /health` and little else a client needs:
+`POST /auth/dev/session` answers **503** without the document, Terminal and
+telemetry services bound alongside it, so the desktop client cannot sign in
+against it. Use it to inspect the Worker, not to drive the app.
 
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
@@ -219,6 +240,26 @@ Set `RALLY_RENDERER_PORT` and choose a matching non-default debugging port when
 another visual exploration is already running. For example,
 `RALLY_RENDERER_PORT=54731 ... --remoteDebuggingPort=59422` keeps both listeners
 isolated without changing the checked-in defaults.
+
+Two more things have to move with that renderer port, and both fail in ways that
+do not mention it:
+
+- **Add the port to `ALLOWED_ORIGINS` in `.env.local`** and re-run
+  `pnpm env:sync`. The example file lists 5173 and 5174 only, so a renderer on
+  any other port is refused by CORS and the client paints **Rally cannot reach
+  this region** — the Worker is running, is reachable by `curl`, and logs no
+  failure, because the preflight is what it refuses.
+- **Give the second client its own `XDG_CONFIG_HOME`.** The app takes a
+  single-instance lock keyed on its Electron userData directory, which is
+  `$XDG_CONFIG_HOME/Rally Development`. A second checkout launched with the
+  default hands its window to the app that is already running and exits **0**,
+  so `electron-vite` reports nothing and the only symptom is a debugging port
+  that stops answering.
+
+Both of those matter more than they look on a shared container, where another
+agent's session may already hold 5173, 9222, 8787 and 9230. The API's port moves
+the same way: `--port`, plus `VITE_API_GLOBAL_URL` in `.env.local` and
+`PUBLIC_API_BASE_URL` in the synced `.dev.vars.<region>`.
 
 `--noSandbox` and `--remoteDebuggingPort` are **electron-vite's** CLI options,
 not Chromium's, which is why they are camelCase here. electron-vite turns them

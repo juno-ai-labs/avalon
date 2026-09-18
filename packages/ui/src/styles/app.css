@@ -2471,8 +2471,12 @@ pre {
   min-height: 58px;
   padding: 8px 13px;
 }
+/* The badge and the role control share the third track rather than taking one
+   each: an explicit track is never collapsed, so a row that draws no control —
+   the owner's, an invited member's, every row for a member — still paid the
+   column gap and sat its badge 11px inside the others. */
+.settings-member-actions { align-items: center; display: flex; gap: 11px; }
 .settings-member-row:last-child { border-bottom: 0; }
-.settings-member-actions { display: flex; align-items: center; gap: 11px; }
 
 .settings-diagnostics { margin: 0; padding: 0 14px; }
 .settings-diagnostics div {
