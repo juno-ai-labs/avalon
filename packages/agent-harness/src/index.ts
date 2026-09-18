@@ -22,6 +22,13 @@ import {
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
+import {
+  askJev,
+  jevChoiceQuestion,
+  jevSingleChoiceAnswers,
+  runConfidenceCascade,
+  JEV_LATEST_MODEL,
+} from "./jev";
 import { createInferenceDelayObserver, INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import { createInferenceStreamWatchdog } from "./inference-stream-watchdog";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
@@ -40,7 +47,6 @@ import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
 import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
-import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 // Cycle: `bind-runtime` imports back from this module. Sound because every
 // value it takes is read inside a function body — see `runHarness` below.
 import { runHarnessWithBind } from "./bind-runtime";
@@ -1977,8 +1983,7 @@ const addressingJsonSchema = {
   required: ["classification", "confidence", "rationaleCode"]
 };
 
-const TYPESAFE_SYSTEMONE_URL = "https://api.typesafe.ai/v1/systemone";
-export const TYPESAFE_ADDRESSING_MODEL = "jev-latest";
+export const TYPESAFE_ADDRESSING_MODEL = JEV_LATEST_MODEL;
 export const TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD = 0.5;
 // The measured JEV p95 is about 350 ms. Three times that tail keeps ordinary
 // variation on the primary while bounding message admission tightly enough for
@@ -1991,30 +1996,18 @@ export const ADDRESSING_FALLBACK_TIMEOUT_MS = 15_000;
 export const ADDRESSING_FALLBACK_MODEL = "deepseek/deepseek-v4-flash-0731";
 export const ADDRESSING_FALLBACK_PROVIDER = "wafer/fast";
 
-const TypeSafeAddressingResponseSchema = z.object({
-  model: z.string().min(1),
-  answers: z.object({
-    addressing: z.object({
-      type: z.literal("choice"),
-      choice: z.enum([
-        "rally_should_act",
-        "people_only",
-        "rally_and_people_should_act",
-        "no_clear_request",
-      ]),
-      confidence: z.number().min(0).max(1),
-      probabilities: z.record(z.string(), z.number()).optional(),
-    }),
-  }),
-  usage: z.object({
-    input_tokens: z.number().nonnegative(),
-    output_tokens: z.number().nonnegative(),
-  }).optional(),
-});
+const ADDRESSING_CHOICES = [
+  "rally_should_act",
+  "people_only",
+  "rally_and_people_should_act",
+  "no_clear_request",
+] as const;
+type AddressingChoice = (typeof ADDRESSING_CHOICES)[number];
+
+const AddressingAnswersSchema = jevSingleChoiceAnswers("addressing", ADDRESSING_CHOICES);
 
 const typesafeAddressingQuestions = {
-  addressing: {
-    type: "choice",
+  addressing: jevChoiceQuestion<AddressingChoice>({
     instructions: {
       question: "Who is expected to act on `current_message.text` now?",
       focus: "Judge the current message. Use `conversation_context.recent_messages` only to resolve references, implied addressee, or continuation.",
@@ -2058,7 +2051,7 @@ const typesafeAddressingQuestions = {
         exclude: ["Ordinary uncertainty", "FYIs or reactions, which are people_only"],
       },
     },
-  },
+  }),
 } as const;
 
 /**
@@ -2128,50 +2121,41 @@ export async function classifyAddressing(input: {
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   traceContext?: OpenRouterTraceContext;
 }): Promise<AddressingClassification> {
-  if (input.typesafeApiKey) {
-    let typesafe: AddressingClassification | null = null;
-    try {
-      typesafe = await classifyAddressingWithTypeSafe({
-        ...input,
-        typesafeApiKey: input.typesafeApiKey,
-      });
-    } catch (error) {
-      // Cancellation belongs to the caller. It must stop the cascade rather
-      // than masquerading as a provider failure and starting another request.
-      if (input.signal?.aborted) throw error;
-    }
-    if (typesafe && typesafe.confidence > TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD) {
-      return typesafe;
-    }
-    const fallbackDeadline = new AbortController();
-    const fallbackTimer = setTimeout(() => {
-      fallbackDeadline.abort(new DOMException("addressing fallback timed out", "TimeoutError"));
-    }, ADDRESSING_FALLBACK_TIMEOUT_MS);
-    const fallbackSignal = input.signal
-      ? AbortSignal.any([input.signal, fallbackDeadline.signal])
-      : fallbackDeadline.signal;
-    try {
-      return await classifyAddressingWithModel({
-        ...input,
-        fallbackModels: [],
-        reasoningEffort: "low",
-        signal: fallbackSignal,
-      });
-    } catch (error) {
-      if (input.signal?.aborted) throw error;
-      // Addressing is admission policy, not message durability. If both remote
-      // stages are unavailable, retain the user's message and use the existing
-      // conservative deterministic classifier as the terminal floor.
-      return classifyAddressingHeuristically(input);
-    } finally {
-      clearTimeout(fallbackTimer);
-    }
+  const typesafeApiKey = input.typesafeApiKey;
+  if (typesafeApiKey) {
+    // Three stages, one shape, in `jev/cascade.ts`: JEV, then the pinned
+    // OpenRouter route, then the deterministic floor. Addressing is admission
+    // policy and not message durability, so the floor exists to keep two
+    // unavailable providers from deciding whether Rally retains the message.
+    const { answer } = await runConfidenceCascade<AddressingClassification>({
+      primary: () => classifyAddressingWithTypeSafe({ ...input, typesafeApiKey }),
+      accept: (answer) => answer.confidence > TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD,
+      fallback: {
+        timeoutMs: ADDRESSING_FALLBACK_TIMEOUT_MS,
+        run: (signal) => classifyAddressingWithModel({
+          ...input,
+          fallbackModels: [],
+          reasoningEffort: "low",
+          signal,
+        }),
+      },
+      floor: () => classifyAddressingHeuristically(input),
+      signal: input.signal,
+    });
+    return answer;
   }
   const deterministic = classifyAddressingHeuristically(input);
   if (deterministic.confidence >= 0.9) return deterministic;
   return classifyAddressingWithModel(input);
 }
 
+/**
+ * Addressing's JEV stage: the state, the questions and the mapping, and no transport.
+ *
+ * What is left here after the extraction is exactly the decision — which fields
+ * of a message JEV is shown, under which names, and what each of the four
+ * choices means for the product. `jev/client.ts` owns the request.
+ */
 export async function classifyAddressingWithTypeSafe(input: {
   typesafeApiKey: string;
   message: string;
@@ -2185,13 +2169,11 @@ export async function classifyAddressingWithTypeSafe(input: {
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   traceContext?: OpenRouterTraceContext;
 }): Promise<AddressingClassification> {
-  const fetcher = input.fetch ?? globalThis.fetch;
-  const traceId = input.traceContext?.requestId
-    ?? input.traceContext?.harnessRunId
-    ?? crypto.randomUUID();
-  const inferenceRequestId = crypto.randomUUID();
-  const startedAt = Date.now();
-  const requestPayload = {
+  const result = await askJev({
+    apiKey: input.typesafeApiKey,
+    model: TYPESAFE_ADDRESSING_MODEL,
+    schemaName: "message_addressing",
+    timeoutMs: TYPESAFE_ADDRESSING_TIMEOUT_MS,
     state: {
       current_message: {
         text: input.message,
@@ -2203,117 +2185,18 @@ export async function classifyAddressingWithTypeSafe(input: {
       conversation_context: { recent_messages: limitAddressingRecentMessages(input.recentMessages ?? []) },
     },
     questions: typesafeAddressingQuestions,
-    model: TYPESAFE_ADDRESSING_MODEL,
-  };
-  const diagnosticBase = {
-    provider: "typesafe" as const,
-    schemaName: "message_addressing",
-    model: TYPESAFE_ADDRESSING_MODEL,
-    attempt: 0,
-    fallbackAttempt: 0,
-    repairAttempt: 0,
-    inferenceRequestId,
-    traceId,
-  };
-  await input.onDiagnostic?.({
-    ...diagnosticBase,
-    stage: "model_request",
-    requestPayload,
+    answers: AddressingAnswersSchema,
+    signal: input.signal,
+    fetch: input.fetch,
+    onDiagnostic: input.onDiagnostic,
+    traceContext: input.traceContext,
   });
-
-  const deadline = new AbortController();
-  const deadlineTimer = setTimeout(() => deadline.abort(), TYPESAFE_ADDRESSING_TIMEOUT_MS);
-  const signal = input.signal
-    ? AbortSignal.any([input.signal, deadline.signal])
-    : deadline.signal;
-  let failureResponseBytes: number | undefined;
-  let failureResponsePayload: Record<string, unknown> | undefined;
-  try {
-    const response = await fetcher(TYPESAFE_SYSTEMONE_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${input.typesafeApiKey}`,
-        accept: "application/json",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(requestPayload),
-      signal,
-    });
-    const raw = await response.text();
-    failureResponseBytes = new TextEncoder().encode(raw).byteLength;
-
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(raw);
-    } catch {
-      if (!response.ok) throw new Error(`typesafe_http_${response.status}`);
-      throw new Error("typesafe_response_invalid_json");
-    }
-    if (typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)) {
-      failureResponsePayload = decoded as Record<string, unknown>;
-    }
-    if (!response.ok) throw new Error(`typesafe_http_${response.status}`);
-    const parsed = TypeSafeAddressingResponseSchema.safeParse(decoded);
-    if (!parsed.success) {
-      await input.onDiagnostic?.({
-        ...diagnosticBase,
-        stage: "complete",
-        latencyMs: Date.now() - startedAt,
-        responseBytes: new TextEncoder().encode(raw).byteLength,
-        success: false,
-        failureKind: zodDiagnosticCode(parsed.error, "typesafe_response") ?? "typesafe_response_invalid",
-        responsePayload: decoded as Record<string, unknown>,
-        validationIssues: parsed.error.issues.map((issue) => ({
-          path: issue.path.length === 0 ? "-root-" : issue.path.join("."),
-          code: issue.code,
-        })),
-      });
-      throw parsed.error;
-    }
-    const answer = parsed.data.answers.addressing;
-    const classification = mapTypeSafeAddressingChoice(answer.choice, answer.confidence, input);
-    await input.onDiagnostic?.({
-      ...diagnosticBase,
-      stage: "complete",
-      model: parsed.data.model,
-      latencyMs: Date.now() - startedAt,
-      responseBytes: new TextEncoder().encode(raw).byteLength,
-      ...(parsed.data.usage ? {
-        inputTokens: parsed.data.usage.input_tokens,
-        outputTokens: parsed.data.usage.output_tokens,
-      } : {}),
-      success: true,
-      responsePayload: decoded as Record<string, unknown>,
-    });
-    return classification;
-  } catch (error) {
-    if (error instanceof z.ZodError) throw error;
-    await input.onDiagnostic?.({
-      ...diagnosticBase,
-      stage: "complete",
-      latencyMs: Date.now() - startedAt,
-      ...(failureResponseBytes !== undefined ? { responseBytes: failureResponseBytes } : {}),
-      ...(failureResponsePayload ? { responsePayload: failureResponsePayload } : {}),
-      success: false,
-      failureKind: typeSafeFailureKind(error, input.signal, deadline.signal),
-    });
-    throw error;
-  } finally {
-    clearTimeout(deadlineTimer);
-  }
-}
-
-function typeSafeFailureKind(error: unknown, callerSignal?: AbortSignal, deadlineSignal?: AbortSignal): string {
-  if (callerSignal?.aborted) return "typesafe_request_aborted";
-  if (deadlineSignal?.aborted) return "typesafe_request_timed_out";
-  if (error instanceof Error && /^typesafe_(?:http_\d{3}|response_invalid_json)$/u.test(error.message)) {
-    return error.message;
-  }
-  return "typesafe_request_failed";
+  const answer = result.answers.addressing;
+  return mapTypeSafeAddressingChoice(answer.choice, answer.confidence, input);
 }
 
 function mapTypeSafeAddressingChoice(
-  choice: z.infer<typeof TypeSafeAddressingResponseSchema>["answers"]["addressing"]["choice"],
+  choice: AddressingChoice,
   confidence: number,
   input: {
     message: string;
@@ -4204,3 +4087,5 @@ export const __testing = {
 };
 
 export * from "./prepared-content";
+export * from "./jev";
+export * from "./semantic-trigger-gate";
