@@ -1,3 +1,4 @@
+import { runtimeDeferral } from "../lib/defer";
 import { refreshTerminalProviderObservation } from "./terminal/observation";
 /**
  * What a workspace's alarm actually runs.
@@ -486,11 +487,11 @@ export async function recordWorkspaceScheduleFailure(
   error: unknown,
 ): Promise<void> {
   if (target.kind === "schedule") {
-    await recordScheduleFailure(ctx, target.id, error);
+    runtimeDeferral(recordScheduleFailure(ctx, target.id, error));
     return;
   }
   if (target.kind === "watch") {
-    await recordWatchFailure(ctx, target.id, error);
+    runtimeDeferral(recordWatchFailure(ctx, target.id, error));
     return;
   }
   logStructuredEvent(ctx.env, "warn", "workspace_schedule_target_failed", {
@@ -733,7 +734,7 @@ async function recordScheduleFailure(
   error: unknown,
 ): Promise<void> {
   const message = error instanceof Error ? error.message : "unknown scheduler error";
-  await ctx.env.DB.prepare(
+  await ctx.env.AUDIT_DB.prepare(
     `INSERT INTO audit_events (
        id, workspace_id, actor_type, actor_user_id, workstream_id, action,
        target_type, target_id, metadata_json, created_at
@@ -755,7 +756,7 @@ async function recordWatchFailure(
   error: unknown,
 ): Promise<void> {
   const message = error instanceof Error ? error.message : "unknown resource watch error";
-  await ctx.env.DB.prepare(
+  await ctx.env.AUDIT_DB.prepare(
     `INSERT INTO audit_events (
        id, workspace_id, actor_type, actor_user_id, workstream_id, action,
        target_type, target_id, metadata_json, created_at

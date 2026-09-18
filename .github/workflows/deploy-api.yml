@@ -415,6 +415,10 @@ jobs:
         if: env.APPLY_MIGRATIONS == 'true'
         run: pnpm --filter @rally/api db:platform:migrate:remote
 
+      - name: Apply telemetry and audit D1 migrations
+        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api db:observability:migrate:remote
+
       - name: Apply the remote D1 migrations to Global
         if: >-
           env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true' && steps.pending_global.outputs.worker_first != 'true'

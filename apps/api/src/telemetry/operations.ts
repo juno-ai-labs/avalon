@@ -128,7 +128,7 @@ export async function readTelemetryOperationalSnapshot(
   now = new Date(),
 ): Promise<TelemetryOperationalSnapshot> {
   const [accepted, crashes, profiles, rejection, circuits] = await Promise.all([
-    env.DB.prepare(
+    env.TELEMETRY_DB.prepare(
       `SELECT
          SUM(CASE WHEN delivery_state IN ('pending', 'retrying') THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN delivery_state = 'terminal' THEN 1 ELSE 0 END) AS terminal,
