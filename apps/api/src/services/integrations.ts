@@ -1760,7 +1760,7 @@ function createAvalonAutomationsPlugin(
   const attachmentAuth = async () => {
     if (!authorUserId) throw new Error("sidekick_attachment_principal_required");
     const membership = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`)
-      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
+      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" | null }>();
     if (!membership) throw new Error("sidekick_attachment_membership_required");
     return { sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId), workspaceId: input.workspaceId,
       region: input.region, role: membership.role, analyticsWorkspaceId: null };
@@ -1996,23 +1996,19 @@ function createAvalonAutomationsPlugin(
       listAutomations: async () => {
         if (!authorUserId) throw new Error("sidekick_draft_author_unavailable");
         const workspaceId = asWorkspaceId(input.workspaceId);
-        const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: true };
+        const options = input.parentKind === "workstream"
+          ? await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
+            input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0")
+          : null;
+        const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: input.parentKind === "automation" || options?.canManage === true };
         const ids: string[] = [];
         if (input.parentKind === "automation") {
           ids.push(authoredAutomationId);
-        } else {
-          const workspace = await durableObjectStubForWorkspace(
-            env,
-            env.WORKSPACE_DOS,
-            workspaceId,
-            workspaceDOName(env.AVALON_REGION, workspaceId),
-          );
-          const owned = await workspace.listWorkstreamAutomations({
-            workspaceId,
-            workstreamId: input.parentId,
-            userId: asUserId(authorUserId),
-          });
-          ids.push(...owned.items.map((item) => item.id));
+        } else if (options?.canManage) {
+          const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+            workspaceDOName(env.AVALON_REGION, workspaceId));
+          const owned = await workspace.automationIdsOwnedByWorkstream({ workspaceId, workstreamId: input.parentId });
+          ids.push(...owned.automationIds);
         }
         const sidekicks = await Promise.all(ids.map(async (automationId) => {
           const detail = AutomationDetailSchema.parse(await (await durableObjectStubForWorkspace(
@@ -2036,15 +2032,9 @@ function createAvalonAutomationsPlugin(
           };
         }));
         if (input.parentKind !== "workstream") return { sidekicks };
-        const auth = await attachmentAuth();
-        const [directory, recommendations] = await Promise.all([
-          new AutomationService(env, auth).listSidekicks(),
-          new WorkstreamService(env, auth).recommendedSidekicks(input.parentId),
-        ]);
-        const attached = new Set(recommendations.items.map((item) => item.id));
-        return { sidekicks, workspaceSidekicks: directory.items.filter((item) => item.scope === "workspace").map((item) => ({
-          sidekickId: item.id, name: item.name, description: item.description, lifecycle: item.status,
-          canEdit: false, canAttach: true, attached: attached.has(item.id),
+        return { sidekicks, workspaceSidekicks: (options?.items ?? []).map((item) => ({
+          sidekickId: item.id, name: item.name, description: item.description, available: item.available,
+          canEdit: false, canAttach: options?.canManage === true, attached: item.attached,
         })) };
       },
     },
@@ -2655,18 +2645,37 @@ export async function runWorkstreamHarness(
   const initialRun = await initialRunPreparation.get();
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
-  const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  const sidekickSourcesPreparation = new Preparation(() => resolveSidekickSkills(
-    env,
-    input,
-    storedSidekickSkills?.sources.map((source) => source.id),
-  ));
+  const authorityPreparation = new Preparation(async () => {
+    const authority = await readRunAuthority(env, input);
+    return { ...authority, readyAtMs: Date.now() };
+  });
   const persistedHostOutcomePreparation = new Preparation(() => loadPersistedHarnessHostOutcome(
     createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
     input,
   ));
-  sidekickSourcesPreparation.get();
+  const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
+  let recommendationRead: Promise<string[]> | undefined;
+  const readRecommendations = () => recommendationRead ??= recommendedSidekickRefs(env, input);
+  const sidekickSourcesPreparation = new Preparation(async () => {
+    const { principalIsGuest } = await authorityPreparation.get();
+    return resolveSidekickSkills(env, input, principalIsGuest,
+      storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null, readRecommendations);
+  });
+  // These are read-only preparations. Keep the healthy turn's independent work
+  // overlapped; the stored outcome still wins without replaying execution.
   persistedHostOutcomePreparation.get();
+  sidekickSourcesPreparation.get();
+  const persistedHostOutcome = await persistedHostOutcomePreparation.get();
+  if (persistedHostOutcome) {
+    return {
+      status: persistedHostOutcome.status,
+      ...(persistedHostOutcome.finalTurnId
+        ? { finalTurnId: persistedHostOutcome.finalTurnId }
+        : {}),
+      ...(persistedHostOutcome.error ? { error: persistedHostOutcome.error } : {}),
+    };
+  }
+  const { principalIsGuest, readyAtMs: initialAuthorityReadyAtMs, ...runAuthoritySnapshot } = await authorityPreparation.get();
   const currentSidekickSources = await sidekickSourcesPreparation.get();
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
@@ -2675,7 +2684,7 @@ export async function runWorkstreamHarness(
   // No eligible sources means no recommendation can enter this snapshot. Avoid
   // waking parent authorities for executions that cannot use any Sidekick.
   const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
-    : currentSidekickSources.length > 0 ? await recommendedSidekickRefs(env, input) : [];
+    : currentSidekickSources.length > 0 ? await readRecommendations() : [];
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
@@ -2687,24 +2696,12 @@ export async function runWorkstreamHarness(
   const assertSidekickAuthority = async (): Promise<void> => {
     const active = sidekickSnapshot.sources.filter((source) => sidekickSnapshot.activeRefs.includes(sidekickSkillRef(source.id)));
     if (active.length === 0) return;
-    const authorized = await resolveSidekickSkills(env, input, active.map((source) => source.id));
+    const authorized = await resolveSidekickSkills(env, input, principalIsGuest, active.map((source) => source.id));
     if (active.some((source) => !authorized.some((current) => current.id === source.id))) {
       throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
     }
   };
   const streamId = input.harnessRunId;
-  const persistedHostOutcome = await persistedHostOutcomePreparation.get();
-  if (persistedHostOutcome) {
-    return {
-      status: persistedHostOutcome.status,
-      ...(persistedHostOutcome.finalTurnId
-        ? { finalTurnId: persistedHostOutcome.finalTurnId }
-        : {}),
-      ...(persistedHostOutcome.error ? { error: persistedHostOutcome.error } : {}),
-    };
-  }
-  const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
-  const initialAuthorityReadyAtMs = Date.now();
   if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
     code: "run_ownership_lost",
   });
@@ -3334,7 +3331,7 @@ export async function runWorkstreamHarness(
         const source = entry?.source;
         const ref = entry?.durableRef ?? loadedRef;
         if (source && !sidekickSnapshot.activeRefs.includes(ref)) {
-          const allowed = await resolveSidekickSkills(env, input, [source.id], false);
+          const allowed = await resolveSidekickSkills(env, input, principalIsGuest, [source.id], false);
           if (!allowed.some((entry) => entry.id === source.id)) throw new ApiError(403, "sidekick_access_changed", "This Sidekick is no longer available");
         }
         if (!sidekickSnapshot.activeRefs.includes(ref)) sidekickSnapshot.activeRefs.push(ref);
@@ -6067,21 +6064,22 @@ async function assertExecutionPrincipalAuthorized(
   db: D1Database,
   workspaceId: string,
   principal: WorkstreamWorkflowInput["executionPrincipal"],
-): Promise<void> {
+): Promise<boolean> {
   if (principal.type === "workspace") {
     if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Workspace principal mismatch");
     const workspace = await db.prepare("SELECT id FROM workspaces WHERE id = ?")
       .bind(workspaceId).first<{ id: string }>();
     if (!workspace) throw new ConnectorError("unauthorized", "Workspace is unavailable");
-    return;
+    return false;
   }
   const member = await db.prepare(
-    `SELECT wm.status
+    `SELECT wm.status, wm.access_class
        FROM workspace_members wm
        JOIN users u ON u.id = wm.user_id
       WHERE wm.workspace_id = ? AND wm.user_id = ?`,
-  ).bind(workspaceId, principal.userId).first<{ status: string }>();
+  ).bind(workspaceId, principal.userId).first<{ status: string; access_class?: string }>();
   if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active workspace member");
+  return member.access_class === "guest";
 }
 
 async function assertRunAuthorityStillValid(
@@ -6089,15 +6087,34 @@ async function assertRunAuthorityStillValid(
   input: WorkstreamWorkflowInput,
   expected?: RunAuthoritySnapshot,
 ): Promise<RunAuthoritySnapshot> {
+  const authority = await readRunAuthority(env, input, expected);
+  return { automationRunId: authority.automationRunId,
+    automationTemplateVersionId: authority.automationTemplateVersionId, triggerType: authority.triggerType };
+}
+
+async function readRunAuthority(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  expected?: RunAuthoritySnapshot,
+): Promise<RunAuthoritySnapshot & { principalIsGuest: boolean }> {
   const db: D1Database = env.DB;
-  await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
+  const guest = await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
   const workstream = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
     .identity();
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
-  if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
+  if (guest && input.executionPrincipal.type === "user" && !input.automationRun) {
+    // Use the same conversation admission as the transport. It also reports
+    // parent/child archive state, so a second parent authority read is redundant.
+    const parent = await conversationParentStub(env, input);
+    const access = await parent.authorizeViewer({ workspaceId: input.workspaceId, parentId: input.parentId,
+      userId: input.executionPrincipal.userId, substreamId: asSubstreamId(input.substreamId ?? "0"),
+      requireGrantAuthority: true });
+    if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
+    if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
+  } else if (input.substreamId && input.substreamId !== "0" && !input.automationRun) {
     const parent = await conversationParentStub(env, input);
     const authority = await parent.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
     if (!authority.exists || authority.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");
@@ -6114,7 +6131,7 @@ async function assertRunAuthorityStillValid(
       expected.automationTemplateVersionId !== snapshot.automationTemplateVersionId ||
       expected.triggerType !== snapshot.triggerType
     )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
-    return snapshot;
+    return { ...snapshot, principalIsGuest: guest };
   }
 
   // The loop input proves what this run was authorized to do; it cannot prove
@@ -6145,7 +6162,7 @@ async function assertRunAuthorityStillValid(
     expected.automationTemplateVersionId !== snapshot.automationTemplateVersionId ||
     expected.triggerType !== snapshot.triggerType
   )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
-  return snapshot;
+  return { ...snapshot, principalIsGuest: guest };
 }
 
 /** A run's definition, read from its parent by revision; one call per loop start. */
@@ -8054,6 +8071,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  executeAuthorizedConnectorTool,
   prePaginationTool,
   connectorToolSurfaceHash,
   createToolEffectIntents,

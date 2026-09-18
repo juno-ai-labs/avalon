@@ -242,6 +242,7 @@ export interface PendingInputAttachmentDescriptor {
 
 export interface PendingInputDeliveryEffectInput {
   inputId: string;
+  attachmentResourceIds?: string[];
   turnId: string;
   transcriptSequence: number;
   attentionOrdinal: number;
@@ -4488,6 +4489,7 @@ export class WorkstreamTranscriptStorage {
       attentionOrdinal,
       deliveryEffect: {
         inputId: pending.input_id,
+        attachmentResourceIds: prepared.attachments.map((attachment) => attachment.resourceId),
         turnId: pending.prepared_turn_id,
         transcriptSequence,
         attentionOrdinal,
@@ -4522,8 +4524,9 @@ export class WorkstreamTranscriptStorage {
     const authorUserId = pending.author_user_id;
     const root = this.sql.exec<{
       unread_tracking_start_ordinal: number;
+      authority_transferred: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT unread_tracking_start_ordinal FROM workstream WHERE id = 1`,
+      `SELECT unread_tracking_start_ordinal, EXISTS(SELECT 1 FROM participant_authority_transfer WHERE singleton=1) AS authority_transferred FROM workstream WHERE id = 1`,
     ).one();
     const confirmedAtAdmission = prepared.authorization.confirmedParticipantUserIds
       .filter((userId) => userId !== authorUserId);
@@ -4541,13 +4544,19 @@ export class WorkstreamTranscriptStorage {
     // undo a later participant removal. Epoch equality distinguishes a row
     // that is still the admission-time identity from one explicitly revoked or
     // re-added while the input waited for a safe boundary.
+    const authorityTransferred = root.authority_transferred !== 0;
     const participantUserIds = admittedParticipantUserIds.filter((userId) => {
       const expectedEpoch = prepared.authorization.participantEpochs[userId];
       const currentEpoch = previous.get(userId)?.participant_epoch ?? null;
-      return currentEpoch === expectedEpoch;
+      return currentEpoch === expectedEpoch && (!authorityTransferred || previous.get(userId)?.status === "active");
     });
     const confirmed = participantUserIds.filter((userId) => userId !== authorUserId);
-    if (participantUserIds.includes(authorUserId)) this.sql.exec(
+    if (participantUserIds.includes(authorUserId) && previous.get(authorUserId)?.status === "active") {
+      // Opening metadata is local; an already active participant must not be
+      // re-granted by message delivery after its roster authority has moved.
+      this.sql.exec(`UPDATE participants SET first_opened_at = COALESCE(first_opened_at, ?), updated_at = ?
+        WHERE user_id = ? AND status = 'active'`,now,now,authorUserId);
+    } else if (participantUserIds.includes(authorUserId)) this.sql.exec(
       `INSERT INTO participants
          (user_id, participation_reason, added_by_user_id, status, participant_epoch,
           added_at, removed_at, first_opened_at, updated_at)
@@ -4571,6 +4580,7 @@ export class WorkstreamTranscriptStorage {
       now,
     );
     for (const userId of confirmed) {
+      if (previous.get(userId)?.status === "active") continue;
       this.sql.exec(
         `INSERT INTO participants
            (user_id, participation_reason, added_by_user_id, status, participant_epoch,

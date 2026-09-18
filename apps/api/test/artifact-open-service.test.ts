@@ -2,6 +2,7 @@ import { ARTIFACT_RESERVED_PREFIX, asUserId, asWorkspaceId } from "@rally/contra
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/lib/api-error";
+import { AuthorizationService } from "../src/services/authorization-service";
 import { ArtifactOpenService } from "../src/services/artifact-open-service";
 import type { AuthContext, Env } from "../src/env";
 import {
@@ -26,17 +27,18 @@ interface Fixture {
 }
 
 /**
- * D1, the work stream, and the artifact object all stand in.
- *
- * What is under test is the *authorization shape* — which authority answers
- * which question, and what a refusal looks like — not the storage beneath it.
- * The visibility answer this service depends on is proven against a real
- * `WorkstreamDO` in the workers suite.
+ * Unit coverage for URL, profile and inspection orchestration. Canonical
+ * authorization is a controlled boundary here; the guest pipeline workerd
+ * test proves actual attachment/grant admission and artifact session revocation.
  */
 function fixture(input: Fixture = {}) {
   const readProfile = vi.fn();
   const openForViewer = vi.fn(async () => ({ code: "c".repeat(64) }));
-  const canReadWorkstream = vi.fn(async () => input.canRead ?? true);
+  const checkAccess = vi.spyOn(AuthorizationService.prototype, "checkMany").mockResolvedValue([
+    input.canRead === false
+      ? { status: "denied", reason: "resource_not_shared", evidence: [] }
+      : { status: "allowed", evidence: [{ owner: "resource:test", revision: "1", validatedAt: 0 }] },
+  ]);
   const other = vi.fn(async (): Promise<unknown> => null);
   const database = createTestD1Database({
     prepare: (sql: string) => ({
@@ -62,12 +64,6 @@ function fixture(input: Fixture = {}) {
       }),
     }),
   });
-  const workstreamStub = { canReadWorkstream };
-  const workstreams: Env["WORKSTREAM_DOS"] = createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
-    idFromName: (name: string) => createTestDurableObjectId(name),
-    get: () => workstreamStub,
-    jurisdiction: (): Env["WORKSTREAM_DOS"] => workstreams,
-  });
   const hostStub = {
     openForViewer,
     readErrors: async () => [],
@@ -86,7 +82,6 @@ function fixture(input: Fixture = {}) {
     AVALON_REGION: "global",
     APP_ENV: "test",
     ARTIFACT_SERVING_DOMAIN: "rallyusercontent.test",
-    WORKSTREAM_DOS: workstreams,
     ARTIFACT_HOSTS: hosts,
   });
   const auth: AuthContext = {
@@ -97,7 +92,7 @@ function fixture(input: Fixture = {}) {
     role: "member",
     analyticsWorkspaceId: null,
   };
-  return { service: new ArtifactOpenService(env, auth), openForViewer, canReadWorkstream, readProfile };
+  return { service: new ArtifactOpenService(env, auth), openForViewer, checkAccess, readProfile };
 }
 
 async function refusal(run: () => Promise<unknown>): Promise<ApiError> {
@@ -151,15 +146,15 @@ describe("minting access to a live artifact", () => {
 });
 
 describe("who is refused, and how indistinguishably", () => {
-  it("asks the work stream rather than inferring visibility", async () => {
-    // Work-stream visibility is not a D1 fact — it lives in that object's own
-    // SQL — so no query here could answer it.
-    const { service, canReadWorkstream } = fixture();
+  it("asks canonical resource authorization rather than legacy parent visibility", async () => {
+    // The resource check composes identity, grants and attachment exposure.
+    const { service, checkAccess } = fixture();
     await service.open(RESOURCE);
-    expect(canReadWorkstream).toHaveBeenCalledWith(USER);
+    expect(checkAccess).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER, delegation: null },
+      [{ kind: "resource", workspaceId: WORKSPACE, resourceId: RESOURCE }]);
   });
 
-  it("refuses, and mints nothing, when the work stream says no", async () => {
+  it("refuses, and mints nothing, when resource access is denied", async () => {
     const { service, openForViewer } = fixture({ canRead: false });
     const error = await refusal(() => service.open(RESOURCE));
     expect(error.status).toBe(404);
@@ -241,11 +236,11 @@ describe("the CSV an export hands somebody", () => {
 
 describe("artifact inspection does not create browser sessions", () => {
   it("authorizes every inspection without minting unused navigation grants", async () => {
-    const { service, openForViewer, canReadWorkstream, readProfile } = fixture();
+    const { service, openForViewer, checkAccess, readProfile } = fixture();
     await service.describeData(RESOURCE);
     await service.pageData(RESOURCE, "votes", 0);
     await service.errors(RESOURCE);
-    expect(canReadWorkstream).toHaveBeenCalledTimes(3);
+    expect(checkAccess).toHaveBeenCalledTimes(3);
     expect(openForViewer).not.toHaveBeenCalled();
     expect(readProfile).not.toHaveBeenCalled();
   });

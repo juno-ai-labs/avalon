@@ -20,20 +20,35 @@
  */
 
 import { env } from "cloudflare:workers";
+import { SignJWT } from "jose";
+import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
+import { createApp } from "../src/app";
+import { ArtifactOpenService } from "../src/services/artifact-open-service";
+import { __integrationTesting, runWorkstreamHarness } from "../src/services/integrations";
+import { encryptString } from "../src/lib/crypto";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
+import { AutomationService } from "../src/services/automation-service";
+import { consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
 import {
   evictDurableObject,
+  createExecutionContext,
+  createMessageBatch,
+  getQueueResult,
   reset,
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
+import { consumeEffectBodies, deliverChildEffects, deliverParentEffectsInOrder, deliverEffectsToWorkspaceInOrder, pendingParentEffects } from "./helpers/conversation-effects";
 
 import {
+  AutomationDraftSchema,
+  asAutomationId,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
   WorkstreamWorkflowInputSchema,
+  asArtifactId,
   asHarnessRunId,
   asSubstreamId,
   asUserId,
@@ -52,9 +67,12 @@ import {
 } from "./helpers/scripted-provider";
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {
+  artifactHostDOName,
+  automationDOName,
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
+  workstreamDOName,
 } from "../src/durable-objects/names";
 import {
   LOOP_EXECUTION_LEASE_MS,
@@ -62,6 +80,9 @@ import {
 } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
+import { resolveSidekickSkills } from "../src/services/sidekick-skills";
+import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
@@ -185,15 +206,15 @@ beforeEach(async () => {
       metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE workspace_members (
+    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
-      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      role TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, USER_ID),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, OTHER_USER_ID),
-    env.DB.prepare(`CREATE TABLE sessions (
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
     )`),
@@ -447,14 +468,16 @@ async function openSubscribedSocket(
   stub: DurableObjectStub,
   ticketId: string,
   substreamId = "0",
+  membershipVersion = substreamId === "0" ? 0 : 1,
+  upgradedResponse?: Response,
 ): Promise<{ socket: WebSocket; initial: SocketFrame }> {
-  const response = await stub.fetch("https://substream.test/socket", {
+  const response = upgradedResponse ?? await stub.fetch("https://substream.test/socket", {
     headers: {
       Upgrade: "websocket",
       "x-rally-workspace-id": WORKSPACE_ID,
       "x-rally-workstream-id": WORKSTREAM_ID,
       "x-rally-substream-id": substreamId,
-      ...(substreamId !== "0" ? { "x-rally-socket-admission-membership-version": "1" } : {}),
+      "x-rally-socket-admission-membership-version": String(membershipVersion),
       "x-rally-user-id": USER_ID,
       "x-rally-session-id": SESSION_ID,
       "x-rally-socket-ticket-id": ticketId,
@@ -705,6 +728,23 @@ describe("a member's message travels the whole pipeline", () => {
     // The bounded wait above ends well inside the suite's 30s budget, so a
     // drain that never releases its row reports as the assertion that names
     // it rather than as a timeout.
+  });
+
+  it("recovers a persisted host outcome without re-admitting the execution principal", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "recover this attempt");
+    const runId = opened.body.harnessRunId as string;
+    const settled = await settledRun(stub, runId);
+    const input = await runInDurableObject(stub, (_instance, state) => {
+      const row = state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs WHERE run_id=?", runId).one();
+      return WorkstreamWorkflowInputSchema.parse(JSON.parse(row.execution_context_json));
+    });
+    // The completed result remains recoverable after membership ends. No new
+    // provider/tool work is authorized by returning this durable receipt.
+    await env.DB.prepare("DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?")
+      .bind(WORKSPACE_ID, USER_ID).run();
+    expect(await runWorkstreamHarness(TEST_ENV, input)).toMatchObject({ status: settled.status });
   });
 
   it("delivers a scheduled activation into an existing Bind projection exactly once across eviction and replay", async () => {
@@ -2478,6 +2518,1107 @@ describe("a member's message travels the whole pipeline", () => {
       // authority invariant is one logical turn across both states, not which
       // side of that asynchronous boundary happens to be observed here.
       expect(canonicalCopies.n + pendingCopies.n).toBe(1);
+    });
+  });
+
+  describe("participant projection delivery", () => {
+    useHeldEffectQueue();
+    it("migrates authoritative private-child membership and keeps Main mutations independently scoped", async () => {
+      const main = agentStub();
+      const opened = await initializeWorkstream(main,"first message");
+      await settledRun(main,opened.body.harnessRunId as string);
+      await env.DB.batch([
+        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
+      ]);
+      const substreamId = asSubstreamId(crypto.randomUUID());
+      const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global",WORKSPACE_ID,WORKSTREAM_ID,substreamId));
+      expect((await child.bootstrapRuntime({ workspaceId:WORKSPACE_ID,parentKind:"workstream",parentId:WORKSTREAM_ID,
+        substreamId,generation:1 })).status).toBe(200);
+      expect((await child.executeIdentityOperation({ workspaceId:WORKSPACE_ID,workstreamId:WORKSTREAM_ID,substreamId,
+        operation:"provision",args:[{ title:"Private child",objective:"Migration test",scope:"personal",
+          originType:"ad_hoc",createdByUserId:USER_ID,participantUserIds:[USER_ID],harnessStatus:"idle",emailAddress:null,
+          emailRouteStatus:null,systemKind:null,automationRunId:null,plannedFor:null,modelOverride:null,now:Date.now() }] })).status).toBe(200);
+      const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global",WORKSPACE_ID,WORKSTREAM_ID));
+      await parent.authority({ workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID });
+      await runInDurableObject(parent, (_instance,state) => {
+        state.storage.sql.exec(`INSERT OR IGNORE INTO workstream_metadata
+          (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+          VALUES (1,?,?,'global',1,'Child migration','','','personal','idle',0,0,0)`,WORKSPACE_ID,WORKSTREAM_ID);
+        state.storage.sql.exec("INSERT OR IGNORE INTO conversation_children(substream_id,kind,created_by_user_id,created_at) VALUES (?,'child',?,0)",substreamId,USER_ID);
+        state.storage.sql.exec(`INSERT INTO private_child_memberships
+          (substream_id,user_id,active,version,added_by_user_id,added_at,updated_at) VALUES (?,?,1,2,?,10,10)`,
+        substreamId,OTHER_USER_ID,USER_ID);
+        state.storage.sql.exec(`INSERT INTO private_child_memberships
+          (substream_id,user_id,active,version,added_by_user_id,added_at,removed_at,updated_at) VALUES (?,?,0,3,?,10,20,20)`,
+        substreamId,USER_ID,USER_ID);
+        state.storage.sql.exec(`INSERT INTO private_child_membership_effects
+          (operation_id,substream_id,user_id,actor_user_id,active,membership_version,state,attempts,not_before,created_at)
+          VALUES (?,?,?,?,0,3,'pending',0,0,20)`,crypto.randomUUID(),substreamId,USER_ID,USER_ID);
+      });
+      const address = { workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID,substreamId };
+      const invitation = { workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID,actorUserId:USER_ID,
+        operationId:crypto.randomUUID(),emails:["guest@example.test"],expiresAt:null,
+        targets:[{ kind:"conversation" as const,...address }] };
+      expect(await parent.createScopeInvitations(invitation)).toMatchObject({ status:"denied" });
+      await runInDurableObject(parent, (_instance,state) => {
+        expect(state.storage.sql.exec("SELECT 1 FROM child_participant_migrations").toArray()).toEqual([]);
+      });
+      expect(await parent.createScopeInvitations({ ...invitation,actorUserId:OTHER_USER_ID }))
+        .toMatchObject({ status:"created" });
+      const migration = await parent.beginChildParticipantMigration(address);
+      expect(migration.status).toBe("complete");
+      await runDurableObjectAlarm(parent);
+      await expect.poll(() => parent.beginChildParticipantMigration(address), { timeout:30_000 })
+        .toEqual({ status:"complete",transferId:migration.transferId });
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](address).forUser(USER_ID)).toEqual([]);
+      });
+      await runDurableObjectAlarm(parent);
+      await expect.poll(() => runInDurableObject(child, (_instance,state) =>
+        state.storage.sql.exec("SELECT user_id FROM participants WHERE status='active' ORDER BY user_id").toArray()),
+      { timeout:30_000 }).toEqual([{ user_id:OTHER_USER_ID }]);
+      await runInDurableObject(parent, (_instance,state) => {
+        const store = _instance['scopeGrants'](address);
+        expect(store.forUser(OTHER_USER_ID)).toMatchObject([{ target:{ kind:"conversation",substreamId },active:true }]);
+        expect(store.forUser(USER_ID)).toEqual([]);
+        expect(store.read(OTHER_USER_ID,{ kind:"workstream",workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID })).toBeNull();
+        expect(() => state.storage.sql.exec("UPDATE private_child_memberships SET active=0 WHERE substream_id=?",substreamId))
+          .toThrow("participant_authority_transferred");
+        expect(state.storage.sql.exec("SELECT state,attempts FROM private_child_membership_effects WHERE substream_id=?",substreamId).one())
+          .toEqual({ state:"pending",attempts:0 });
+      });
+      await runInDurableObject(main, (_instance,state) => {
+        expect(new ParticipantAuthorityTransferStorage(state.storage).currentTransferId()).toBeNull();
+      });
+      const participantRequest = { ...address,actorUserId:OTHER_USER_ID,userId:USER_ID,operationId:"child-participant-add" };
+      const added = await parent.addPrivateChildParticipant(participantRequest);
+      expect(added.outcome).toBe("added");
+      await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE workspace_id=? AND user_id=?")
+        .bind(WORKSPACE_ID,USER_ID).run();
+      const renamed = await product(child,{ operation:"update",auth:{ ...AUTH,role:null },input:{ title:"Guest collaboration" } });
+      expect(renamed.status).toBe(200);
+      expect(renamed.body).toMatchObject({ title:"Guest collaboration" });
+      // Workspace-public legacy visibility must not become implicit guest access.
+      await runInDurableObject(parent,(_instance,state) => {
+        state.storage.sql.exec("UPDATE workstream_metadata SET scope='workspace'");
+      });
+      await env.DB.prepare("ALTER TABLE users ADD COLUMN analytics_person_id TEXT").run();
+      const signingKey = "guest-route-signing-key-for-workerd-test";
+      const apiEnv = { ...TEST_ENV,SESSION_SIGNING_KEY:signingKey,ALLOWED_ORIGINS:"https://app.example.test",
+        PUBLIC_API_BASE_URL:"https://api.example.test",RALLY_DEV_AUTH:"false" };
+      const token = await new SignJWT({ sid:SESSION_ID,wid:WORKSPACE_ID,region:"global" })
+        .setProtectedHeader({ alg:"HS256",typ:"JWT" }).setSubject(USER_ID).setIssuer("avalon-api")
+        .setAudience("avalon-desktop").setIssuedAt().setExpirationTime("15m").sign(new TextEncoder().encode(signingKey));
+      const app = createApp();
+      const headers = { authorization:`Bearer ${token}` };
+      const path = `/conversations/${WORKSTREAM_ID}/substreams/${substreamId}`;
+      expect((await app.request(path,{},apiEnv)).status).toBe(401);
+      const renameResponse = await app.request(path,{ method:"PATCH",headers:{ ...headers,"content-type":"application/json" },
+        body:JSON.stringify({ title:"Guest API collaboration" }) },apiEnv);
+      expect(renameResponse.status).toBe(204);
+      const guestBoot = await app.request(path,{ headers },apiEnv);
+      expect(guestBoot.status).toBe(200);
+      expect(await guestBoot.json()).toMatchObject({ title:"Guest API collaboration" });
+      expect((await app.request(`/conversations/${WORKSTREAM_ID}`,{ headers },apiEnv)).status).toBe(404);
+      expect((await app.request(`/conversations/${WORKSTREAM_ID}/substreams/${crypto.randomUUID()}`,{ headers },apiEnv)).status).toBe(404);
+      for (const archived of [true, false]) {
+        const archiveResponse = await app.request(path, { method: "PATCH",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({ archived }),
+        }, apiEnv);
+        expect(archiveResponse.status).toBe(204);
+        const directory = await parent.readSharedWorkstream({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+          userId: USER_ID, membershipIncarnation: "existing-member" });
+        expect(directory?.conversations.find((conversation) => conversation.substreamId === substreamId)?.archived).toBe(archived);
+        await runInDurableObject(parent, (_instance, state) => {
+          const row = state.storage.sql.exec<{ archived_at: number | null }>(
+            "SELECT archived_at FROM conversation_children WHERE substream_id=?", substreamId).one();
+          expect(row.archived_at !== null).toBe(archived);
+        });
+      }
+      // Child-only guests can manage this roster without acquiring Main access.
+      for (const active of [false, true]) {
+        const rosterResponse = await app.request(`${path}/participants${active ? "" : "/remove"}`, {
+          method: "POST", headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({ userId: OTHER_USER_ID, operationId: crypto.randomUUID() }),
+        }, apiEnv);
+        expect(rosterResponse.status).toBe(200);
+        expect(await rosterResponse.json()).toMatchObject({ outcome: active ? "added" : "removed" });
+        expect(await parent.readScopeAccess({ userId: OTHER_USER_ID,
+          target: { kind: "conversation", ...address } })).toMatchObject({ allowed: active });
+      }
+      const ticketResponse = await app.request(`${path}/socket`,{ headers },apiEnv);
+      expect(ticketResponse.status).toBe(200);
+      const issued = await ticketResponse.json() as { ticket:string;url:string };
+      expect(issued).toMatchObject({ ticket:expect.any(String) });
+      const upgrade = await app.request(issued.url.replace("wss:","https:"),{ headers:{
+        Origin:"https://app.example.test",Upgrade:"websocket",
+        "Sec-WebSocket-Protocol":socketTicketProtocols(issued.ticket).join(", "),
+      } },apiEnv);
+      const childAdmission = await parent.authorizeViewer({ ...address,userId:USER_ID });
+      expect(childAdmission.authorized).toBe(true);
+      expect(await parent.readScopeAccess({ userId:USER_ID,target:{ kind:"conversation",...address,substreamId:asSubstreamId("0") } }))
+        .toMatchObject({ allowed:false });
+      const childSocket = await openSubscribedSocket(child,crypto.randomUUID(),substreamId,childAdmission.membershipVersion,upgrade);
+      const childClosed = new Promise<CloseEvent>((resolve) => childSocket.socket.addEventListener("close",resolve,{ once:true }));
+      const uploadId = crypto.randomUUID();
+      const upload = async (id: string) => {
+        const body = new FormData();
+        body.set("file",new File(["Guest uploaded bytes"],"guest.txt",{ type:"text/plain" }));
+        return app.request("/resources/upload",{ method:"POST",headers:{ ...headers,"x-rally-draft-id":id },body },apiEnv);
+      };
+      const uploaded = await upload(uploadId);
+      expect(uploaded.status,await uploaded.clone().text()).toBe(201);
+      const draftBytes = await app.request(`/resources/${uploadId}/content`,{ headers },apiEnv);
+      expect(draftBytes.status).toBe(200);
+      expect(await draftBytes.text()).toBe("Guest uploaded bytes");
+      const attach = (resourceId: string) => app.request(`${path}/resources`,{
+        method:"POST",headers:{ ...headers,"content-type":"application/json" },body:JSON.stringify({ resourceId }),
+      },apiEnv);
+      expect((await attach(uploadId)).status).toBe(409);
+      const discardedId = crypto.randomUUID();
+      expect((await upload(discardedId)).status).toBe(201);
+      expect((await app.request(`/resources/${discardedId}`,{ method:"DELETE",headers },apiEnv)).status).toBe(204);
+      expect((await app.request(`/resources/${discardedId}/content`,{ headers },apiEnv)).status).toBe(404);
+      const receipt = nextSocketCommandOutcome(childSocket.socket);
+      childSocket.socket.send(JSON.stringify({ type:"create_message",operationId:crypto.randomUUID(),payload:{
+        text:"please summarize the risks",clientMessageId:crypto.randomUUID(),mentions:[],confirmedParticipantUserIds:[],attachmentIds:[uploadId],
+      } }));
+      const outcome = await receipt;
+      expect(outcome,JSON.stringify(outcome)).toMatchObject({ type:"client_command_succeeded",command:"create_message" });
+
+      expect((await app.request(`/resources/${uploadId}`,{ method:"DELETE",headers },apiEnv)).status).toBe(404);
+      expect((await app.request(`/resources/${uploadId}/content`,{ headers },apiEnv)).status).toBe(200);
+      await runDurableObjectAlarm(child);
+      await expect.poll(() => runInDurableObject(child,(_instance,state) => {
+        const attachments = state.storage.sql.exec("SELECT resource_id FROM participant_transcript_attachments WHERE resource_id=?",uploadId).toArray();
+        if (attachments.length) return "delivered";
+        return JSON.stringify({ pending:state.storage.sql.exec("SELECT * FROM pending_loop_input_mailbox").toArray(),
+          loops:state.storage.sql.exec("SELECT * FROM substream_loops").toArray(),runs:state.storage.sql.exec("SELECT status,error_json FROM runs").toArray() });
+      }), { timeout:RUN_SETTLE_TIMEOUT_MS }).toBe("delivered");
+      const deliveredEffects = await deliverChildEffects(TEST_ENV,child);
+      const uploadPublication = deliveredEffects.find((entry) => entry.effect.kind === "directory_common"
+        && entry.effect.attachmentReservationReleases?.some((release) => release.resourceId === uploadId));
+      expect(uploadPublication).toBeDefined();
+      expect(await consumeEffectBodies(TEST_ENV,[uploadPublication])).toEqual({ acked:1,retried:0 });
+      await runInDurableObject(env.WORKSPACE_DOS.getByName(workspaceDOName("global",WORKSPACE_ID)),(_instance,state) => {
+        expect(state.storage.sql.exec("SELECT attachment_status FROM resources WHERE id=?",uploadId).one()).toEqual({ attachment_status:"attached" });
+        expect(state.storage.sql.exec("SELECT resource_id FROM pending_attachment_reservations WHERE resource_id=?",uploadId).toArray()).toEqual([]);
+        expect(state.storage.sql.exec("SELECT resource_id FROM workspace_workstream_resource_links WHERE resource_id=?",uploadId).toArray()).toEqual([]);
+      });
+      const existingAttachment = await attach(uploadId);
+      expect(existingAttachment.status,await existingAttachment.clone().text()).toBe(201);
+      expect((await app.request(`${path}/resources/${uploadId}`,{ method:"DELETE",headers },apiEnv)).status).toBe(204);
+      expect((await attach(uploadId)).status).toBe(201);
+      const sharedResource = crypto.randomUUID();
+      const unrelatedResource = crypto.randomUUID();
+      const ownDraft = crypto.randomUUID();
+      const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global",WORKSPACE_ID));
+      await runInDurableObject(workspace,(_instance,state) => {
+        for (const id of [sharedResource,unrelatedResource,ownDraft]) {
+          state.storage.sql.exec(`INSERT INTO resources
+            (id,workspace_id,resource_type,provider,title,metadata_json,created_at,updated_at,uploaded_by_user_id)
+            VALUES (?,?,'file',?,'Guest resource','{}','2026-09-16T00:00:00Z','2026-09-16T00:00:00Z',?)`,
+          id,WORKSPACE_ID,id === ownDraft ? 'avalon_upload' : 'google_drive',id === ownDraft ? USER_ID : null);
+        }
+      });
+      await runInDurableObject(child,(_instance,state) => {
+        state.storage.sql.exec(`INSERT INTO workstream_resource_links
+          (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
+          VALUES (?,?,0,'attachment','{}',1,1)`,sharedResource,OTHER_USER_ID);
+      });
+      await workspace.applyAuthorizationLocations({ ...address,parentKind:"workstream",revision:1,validatedAt:Date.now(),resourceIds:[sharedResource] });
+      await runInDurableObject(main,(_instance,state) => {
+        state.storage.sql.exec(`INSERT INTO workstream_resource_links
+          (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
+          VALUES (?,?,0,'attachment','{}',1,1)`,unrelatedResource,OTHER_USER_ID);
+      });
+      await workspace.applyAuthorizationLocations({ ...address,substreamId:"0",parentKind:"workstream",revision:1,validatedAt:Date.now(),resourceIds:[unrelatedResource] });
+      const payloadKey = `guest-resource/${sharedResource}`;
+      await env.PAYLOADS.put(payloadKey,"Shared resource bytes",{ httpMetadata:{ contentType:"text/plain" } });
+      await env.PAYLOADS.put(`${payloadKey}/private`,"Unshared resource bytes",{ httpMetadata:{ contentType:"text/plain" } });
+      await env.PAYLOADS.put(`${payloadKey}/model`,"Shared extracted text",{ httpMetadata:{ contentType:"text/plain" } });
+      await runInDurableObject(workspace,(_instance,state) => {
+        state.storage.sql.exec("UPDATE resources SET content_ref=?,mime_type='text/plain',model_content_ref=?,model_mime_type='text/plain' WHERE id=?",payloadKey,`${payloadKey}/model`,sharedResource);
+        state.storage.sql.exec("UPDATE resources SET content_ref=?,mime_type='text/plain' WHERE id=?",`${payloadKey}/private`,unrelatedResource);
+      });
+      expect((await app.request(`/resources/${sharedResource}`,{ headers },apiEnv)).status).toBe(200);
+      const download = await app.request(`/resources/${sharedResource}/content`,{ headers },apiEnv);
+      expect(download.status).toBe(200);
+      expect(await download.text()).toBe("Shared resource bytes");
+      const inaccessibleDownload = await app.request(`/resources/${unrelatedResource}/content`,{ headers },apiEnv);
+      expect(inaccessibleDownload.status).not.toBe(200);
+      const versionPaths = ["/versions", "/versions/2", "/versions/2/content", "/versions/2/model-content"];
+      for (const suffix of versionPaths) {
+        const shared = await app.request(`/resources/${sharedResource}${suffix}`, { headers }, apiEnv);
+        expect(shared.status, suffix).toBe(200);
+        if (suffix.endsWith("/model-content")) expect(await shared.text()).toBe("Shared extracted text");
+        else if (suffix.endsWith("/content")) expect(await shared.text()).toBe("Shared resource bytes");
+        else if (suffix === "/versions/2") expect(await shared.json()).toMatchObject({ version: 2 });
+        else expect(await shared.json()).toEqual(expect.arrayContaining([expect.objectContaining({ version: 2 })]));
+        expect((await app.request(`/resources/${unrelatedResource}${suffix}`, { headers }, apiEnv)).status, suffix).toBe(404);
+      }
+
+
+      const artifactId = asArtifactId(crypto.randomUUID());
+      const artifactHost = env.ARTIFACT_HOSTS.getByName(artifactHostDOName("global", artifactId));
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO artifact_registry
+          (artifact_id,workspace_id,workstream_id,resource_id,mode,stateful,current_version,manifest_ref,created_at,updated_at,hostname_stub)
+          VALUES (?,?,?,?,'static',0,1,'test-manifest',0,0,'level-luminous-sequential-schrodinger')`,
+        artifactId, WORKSPACE_ID, WORKSTREAM_ID, sharedResource);
+      });
+      await artifactHost.recordPublish({ artifactId, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+        resourceId: sharedResource, region: "global", manifest: { version: 1, artifactId, artifactVersion: 1,
+          mode: "static", stateful: false, serverModuleSha256: null, assets: [], totalBytes: 0,
+          publishedAt: "2026-09-17T00:00:00.000Z" } });
+      const artifactService = new ArtifactOpenService(TEST_ENV, { ...AUTH, role: null });
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO artifact_registry
+          (artifact_id,workspace_id,workstream_id,resource_id,mode,stateful,current_version,manifest_ref,created_at,updated_at,hostname_stub)
+          VALUES (?,?,?,?,'static',0,1,'test-manifest',0,0,NULL)`,
+        crypto.randomUUID(), WORKSPACE_ID, WORKSTREAM_ID, unrelatedResource);
+      });
+      await runInDurableObject(parent, (_instance, state) => {
+        state.storage.sql.exec("UPDATE workstream_metadata SET scope='workspace' WHERE id=1");
+      });
+      expect(await parent.canReadWorkstream(USER_ID)).toBe(true); // Legacy public visibility must not authorize a guest.
+      await expect(artifactService.open(unrelatedResource)).rejects.toMatchObject({ status: 404, code: "artifact_not_found" });
+      await runInDurableObject(parent, (_instance, state) => {
+        state.storage.sql.exec("UPDATE workstream_metadata SET scope='personal' WHERE id=1");
+      });
+      const refreshResponse = await app.request(`/resources/${sharedResource}/hydrate`, { method: "POST", headers }, apiEnv);
+      expect(refreshResponse.status, await refreshResponse.clone().text()).toBe(200);
+      expect((await app.request(`/resources/${unrelatedResource}/hydrate`, { method: "POST", headers }, apiEnv)).status).toBe(404);
+      const artifactResponse = await app.request(`/resources/${sharedResource}/artifact/open`, { method: "POST", headers }, apiEnv);
+      expect(artifactResponse.status, await artifactResponse.clone().text()).toBe(200);
+      const artifactOpen = await artifactResponse.json() as { openUrl: string };
+      const artifactSession = await artifactHost.redeemCode(new URL(artifactOpen.openUrl).hash.slice(1));
+      expect(artifactSession).not.toBeNull();
+      expect(await artifactHost.checkSession(artifactSession!.session, 0)).toMatchObject({ ok: true, viewerId: USER_ID });
+
+      const attachmentChecks = vi.spyOn(AuthorizationService.prototype, "checkMany");
+      try {
+        const memberAttach = await product(child, { operation: "attach_resource",
+          auth: { ...AUTH, userId: OTHER_USER_ID, role: "member", principal: "connector" },
+          resourceId: sharedResource });
+        expect(memberAttach.status).toBe(200);
+        expect(attachmentChecks).not.toHaveBeenCalled();
+        const allowedAttach = await attach(sharedResource);
+        expect(allowedAttach.status, await allowedAttach.clone().text()).toBe(201);
+        expect(attachmentChecks.mock.calls.filter(([, resources]) => resources.some((resource) =>
+          resource.kind === "resource" && resource.resourceId === sharedResource))).toHaveLength(1);
+      } finally { attachmentChecks.mockRestore(); }
+      expect((await attach(unrelatedResource)).status).toBe(404);
+      await runInDurableObject(child,(_instance,state) => {
+        expect(state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links WHERE resource_id=?",unrelatedResource).toArray()).toEqual([]);
+      });
+      const authorizer = new AuthorizationService(TEST_ENV);
+      const subject = { workspaceId:WORKSPACE_ID,userId:USER_ID,delegation:null };
+      // A mixed legacy/shared batch must read the real parent once, without
+      // substituting Main's legacy decision for the independently shared child.
+      await runInDurableObject(parent, async (instance) => {
+        const reads = vi.spyOn(Object.getPrototypeOf(instance) as typeof instance, "readAuthorizationFacts");
+        try {
+          const decisions = await authorizer.checkMany(subject, ["0", substreamId].map((id) => ({
+            kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+            substreamId: asSubstreamId(id),
+          })));
+          expect(decisions.map((decision) => decision.status)).toEqual(["denied", "allowed"]);
+          expect(reads).toHaveBeenCalledTimes(1);
+        } finally { reads.mockRestore(); }
+      });
+      const resourceAccess = (resourceId:string) => ({ kind:"resource" as const,workspaceId:WORKSPACE_ID,resourceId });
+      const resourceDecisions = await authorizer.checkMany(subject,[resourceAccess(sharedResource),resourceAccess(unrelatedResource),resourceAccess(ownDraft)]);
+      expect(resourceDecisions[0]).toMatchObject({ status:"allowed" });
+      expect(resourceDecisions[1]?.status).not.toBe("allowed");
+      expect(resourceDecisions[2]).toMatchObject({ status:"allowed" });
+      const makeSidekick = async (scope: "workspace" | "workstream" | "personal",owningWorkstreamId: string | null = null) => {
+        const automationId = asAutomationId(crypto.randomUUID());
+        const sidekick = env.AUTOMATION_DOS.getByName(automationDOName("global",WORKSPACE_ID,automationId));
+        await sidekick.create({ workspaceId:WORKSPACE_ID,automationId,authorUserId:OTHER_USER_ID,
+          scope,owningWorkstreamId,authorityGeneration:1 });
+        await sidekick.saveDefinition({ workspaceId:WORKSPACE_ID,automationId,
+          actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:true },
+          submittedByRunId:null,evaluatorRules:null,
+          draft:AutomationDraftSchema.parse({ definitionVersion:2,name:`${scope} helper`,description:"Shared instructions",
+            overview:"A guest collaboration helper",instructions:"Use short sentences.",triggers:[],requiredCapabilities:[],
+            expectedOutputs:[],defaultBehavior:{},recommendedPlugins:[],memoryTables:[],suggestedScope:scope,
+            followUpQuestion:null,elicitation:null,ready:true }),
+        });
+        await deliverParentEffectsInOrder(TEST_ENV,sidekick);
+        return { automationId,sidekick };
+      };
+      const ownedSidekick = await makeSidekick("workstream",WORKSTREAM_ID);
+      const authoringAgent = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, ownedSidekick.automationId));
+      expect((await authoringAgent.bootstrapRuntime({ workspaceId: WORKSPACE_ID, parentKind: "automation",
+        parentId: ownedSidekick.automationId, substreamId: "0", generation: 1 })).status).toBe(200);
+      expect((await authoringAgent.executeIdentityOperation({ workspaceId: WORKSPACE_ID, workstreamId: ownedSidekick.automationId,
+        operation: "provision", args: [{ title: "Owned Sidekick", objective: "Author shared instructions", scope: "personal",
+          originType: "ad_hoc", createdByUserId: OTHER_USER_ID, participantUserIds: [OTHER_USER_ID],
+          harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null,
+          plannedFor: null, modelOverride: null, now: Date.now() }] })).status).toBe(200);
+      const authoringResource = crypto.randomUUID();
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO resources
+          (id,workspace_id,resource_type,provider,title,metadata_json,created_at,updated_at)
+          VALUES (?,?,'file','google_drive','Sidekick resource','{}','2026-09-17T00:00:00Z','2026-09-17T00:00:00Z')`, authoringResource, WORKSPACE_ID);
+      });
+      await runInDurableObject(authoringAgent, (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO workstream_resource_links
+          (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
+          VALUES (?,?,0,'attachment','{}',1,1)`, authoringResource, OTHER_USER_ID);
+      });
+      await workspace.applyAuthorizationLocations({ workspaceId: WORKSPACE_ID, parentId: ownedSidekick.automationId,
+        substreamId: "0", parentKind: "automation", revision: 1, validatedAt: Date.now(), resourceIds: [authoringResource] });
+      const readAuthoringResource = () => app.request(`/resources/${authoringResource}`, { headers }, apiEnv);
+      expect((await readAuthoringResource()).status).not.toBe(200);
+      const recommendedSidekick = await makeSidekick("workspace");
+      const privateSidekick = await makeSidekick("personal");
+      const otherRoomSidekick = await makeSidekick("workstream",crypto.randomUUID());
+      const unselectedSidekick = await makeSidekick("workspace");
+      await runInDurableObject(parent,(_instance,state) => {
+        for (const id of [recommendedSidekick.automationId,privateSidekick.automationId,otherRoomSidekick.automationId]) {
+          state.storage.sql.exec("INSERT INTO workstream_sidekick_attachments(sidekick_id,attached_at) VALUES (?,?)",id,Date.now());
+        }
+      });
+      // Stale or corrupt discovery IDs never widen canonical source access.
+      const recommendationReads: { check?: () => void; restore?: () => void } = {};
+      await runInDurableObject(parent, (instance) => {
+        const authority = vi.spyOn(Object.getPrototypeOf(instance), "authority");
+        // One resolution at admission and one at the final access recheck.
+        recommendationReads.check = () => expect(authority).toHaveBeenCalledTimes(2);
+        recommendationReads.restore = () => authority.mockRestore();
+      });
+      let recommendations: Response;
+      try {
+        recommendations = await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv);
+        await runInDurableObject(parent, () => recommendationReads.check!());
+      } finally {
+        await runInDurableObject(parent, () => recommendationReads.restore!());
+      }
+      expect(recommendations.status,await recommendations.clone().text()).toBe(200);
+      const recommendationsBody = await recommendations.json() as { items: Array<{ id:string;available:boolean }> };
+      expect(recommendationsBody.items.map((item) => item.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
+      expect(recommendationsBody.items.every((item) => item.available)).toBe(true);
+      for (const item of recommendationsBody.items) expect(Object.keys(item).sort()).toEqual(["available","description","id","name"]);
+      expect(recommendationsBody.items.some((item) => item.id === unselectedSidekick.automationId)).toBe(false);
+      const guestExecution = WorkstreamWorkflowInputSchema.parse({ region:"global",workspaceId:WORKSPACE_ID,
+        parentKind:"workstream",parentId:WORKSTREAM_ID,substreamId,loopId:substreamLoopId(WORKSTREAM_ID,substreamId),
+        harnessRunId:crypto.randomUUID(),triggerMessageId:null,activityId:null,
+        executionPrincipal:{ type:"user",userId:USER_ID },reason:"guest_sidekick_test" });
+      const sources = await resolveSidekickSkills(TEST_ENV,guestExecution,true,
+        [ownedSidekick.automationId,recommendedSidekick.automationId,privateSidekick.automationId,otherRoomSidekick.automationId]);
+      expect(sources.map((source) => source.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
+      expect(sources.every((source) => source.instructions === "Use short sentences.")).toBe(true);
+      const freshSources = await resolveSidekickSkills(TEST_ENV,guestExecution,true);
+      expect(freshSources.map((source) => source.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
+      await recommendedSidekick.sidekick.pause({ workspaceId:WORKSPACE_ID,automationId:recommendedSidekick.automationId,
+        actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:false } });
+      const pausedRecommendations = await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv);
+      expect(await pausedRecommendations.json()).toMatchObject({ items:expect.arrayContaining([{ id:recommendedSidekick.automationId,
+        name:"workspace helper",description:"Shared instructions",available:false }]) });
+      expect(await resolveSidekickSkills(TEST_ENV,guestExecution,true,[recommendedSidekick.automationId],false)).toEqual([]);
+
+      expect((await app.request(`/conversations/${ownedSidekick.automationId}`,{ headers },apiEnv)).status).not.toBe(200);
+      expect((await app.request(`/conversations/${WORKSTREAM_ID}/substreams/0/recommended-sidekicks`,{ headers },apiEnv)).status).toBe(404);
+      await waitForLoopRelease(child);
+      try {
+        await installScriptedProvider(child,[
+          [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-sidekick-plugin",type:"function",
+            function:{ name:"load_plugin",arguments:JSON.stringify({ pluginId:"rally_sidekicks" }) } }] },finish_reason:"tool_calls" }] }],
+          [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-sidekick-list",type:"function",
+            function:{ name:"sidekick_sidekicks_list",arguments:"{}" } }] },finish_reason:"tool_calls" }] }],
+          [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-load-sidekick",type:"function",
+            function:{ name:"load_skill",arguments:JSON.stringify({ name:"sidekick-workstream-helper" }) } }] },finish_reason:"tool_calls" }] }],
+          [{ choices:[{ delta:{ content:"I will use short sentences." },finish_reason:"stop" }] }],
+        ],{ primaryModel:"guest-sidekick/primary",fallbackModels:[] });
+        const parentCalls: { check?: () => void; restore?: () => void } = {};
+        await runInDurableObject(parent, (instance) => {
+          const prototype = Object.getPrototypeOf(instance) as typeof instance;
+          const joins = vi.spyOn(prototype, "joinConversation");
+          const grants = vi.spyOn(prototype, "mutateParticipantGrant");
+          parentCalls.check = () => {
+            expect(joins).not.toHaveBeenCalled();
+            expect(grants).not.toHaveBeenCalled();
+          };
+          parentCalls.restore = () => { joins.mockRestore(); grants.mockRestore(); };
+        });
+        const loadedReceipt = nextSocketCommandOutcome(childSocket.socket);
+        let loadedOutcome: SocketFrame;
+        try {
+          childSocket.socket.send(JSON.stringify({ type:"create_message",operationId:crypto.randomUUID(),payload:{
+            text:"please summarize the risks",clientMessageId:crypto.randomUUID(),mentions:[],confirmedParticipantUserIds:[],attachmentIds:[],
+          } }));
+          loadedOutcome = await loadedReceipt;
+          await runInDurableObject(parent, () => parentCalls.check!());
+        } finally {
+          await runInDurableObject(parent, () => parentCalls.restore!());
+        }
+        expect(loadedOutcome).toMatchObject({ type:"client_command_succeeded" });
+        const loadedTurn = loadedOutcome.turn as { turnId:string };
+        const loadedRun = await settledRunForTrigger(child,loadedTurn.turnId);
+        expect(loadedRun.status,loadedRun.error_json ?? "").toBe("completed");
+        const catalogResults = (await capturedProviderRequests(child)).flatMap((request) =>
+          request.body.messages as Array<{ role?: string; tool_call_id?: string; content?: string }>)
+          .filter((message) => message.role === "tool" && message.tool_call_id === "guest-sidekick-list");
+        expect(catalogResults.length).toBeGreaterThan(0);
+        for (const result of catalogResults) {
+          expect(JSON.parse(result.content ?? "null")).toMatchObject({ success: true, data: {
+            sidekicks: [], workspaceSidekicks: [{ sidekickId: recommendedSidekick.automationId,
+              canAttach: false, attached: true }],
+          } });
+        }
+        await waitForLoopRelease(child);
+      } finally {
+        await restoreProviderFetch(child);
+      }
+      expect(await runInDurableObject(main,(_instance,state) => state.storage.sql.exec("SELECT sidekick_id FROM sidekick_attachments").toArray())).toEqual([]);
+      await runInDurableObject(main,(_instance,state) => {
+        state.storage.sql.exec("INSERT INTO sidekick_attachments(sidekick_id,attached_at) VALUES (?,?)",ownedSidekick.automationId,Date.now());
+      });
+      const localSidekicks = await app.request(`${path}/sidekicks`,{ headers },apiEnv);
+      expect(localSidekicks.status,await localSidekicks.clone().text()).toBe(200);
+      expect(await localSidekicks.json()).toMatchObject({ items:[{ id:ownedSidekick.automationId,available:true }] });
+      const removedSidekick = await app.request(`${path}/sidekicks/${ownedSidekick.automationId}`,{ method:"DELETE",headers },apiEnv);
+      expect(removedSidekick.status,await removedSidekick.clone().text()).toBe(200);
+      expect(await removedSidekick.json()).toEqual({ items:[] });
+      expect(await runInDurableObject(main,(_instance,state) => state.storage.sql.exec<{ sidekick_id:string }>("SELECT sidekick_id FROM sidekick_attachments").toArray().map((row) => row.sidekick_id))).toEqual([ownedSidekick.automationId]);
+      expect(await parent.recommendedSidekickIds({ workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID })).toContain(recommendedSidekick.automationId);
+      const recommendationMutation = (sidekickId: string, method: "PUT" | "DELETE") =>
+        app.request(`${path}/recommended-sidekicks/${sidekickId}`, { method, headers }, apiEnv);
+      expect((await recommendationMutation(recommendedSidekick.automationId, "PUT")).status).toBe(403);
+      const readOptions = async () => {
+        const response = await app.request(`${path}/sidekick-recommendation-options`, { headers }, apiEnv);
+        expect(response.status).toBe(200);
+        return response.json() as Promise<{ canManage: boolean; items: Array<{ id: string; attached: boolean }> }>;
+      };
+      const childOptions = await readOptions();
+      expect(childOptions.canManage).toBe(false);
+      expect(childOptions.items.map((item) => item.id)).toEqual([recommendedSidekick.automationId]);
+      const changeSidekickAppearance = (color: string) => app.request(`/sidekicks/${ownedSidekick.automationId}/appearance`, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ color }),
+      }, apiEnv);
+      expect((await changeSidekickAppearance("blue")).status).toBe(403);
+      const parentTarget = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(),
+          actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: 0 }, "existing-member"))
+          .toMatchObject({ status: "committed" });
+      });
+      const ownedManagement = new AutomationService(TEST_ENV, { ...AUTH,role:null });
+      expect((await ownedManagement.actorRequest(ownedSidekick.automationId)).actor.participantOfOwningWorkstream).toBe(true);
+      const changedAppearance = await changeSidekickAppearance("blue");
+      expect(changedAppearance.status, await changedAppearance.clone().text()).toBe(200);
+      expect(await changedAppearance.json()).toMatchObject({ appearance: { color: "blue" } });
+      for (const action of ["pause", "resume"]) {
+        const response = await app.request(`/sidekicks/${ownedSidekick.automationId}/${action}`, { method: "POST", headers }, apiEnv);
+        expect(response.status, await response.clone().text()).toBe(204);
+      }
+      for (const suffix of ["", "/runs"]) {
+        const response = await app.request(`/sidekicks/${ownedSidekick.automationId}${suffix}`, { headers }, apiEnv);
+        expect(response.status, await response.clone().text()).toBe(200);
+        expect((await app.request(`/sidekicks/${recommendedSidekick.automationId}${suffix}`, { headers }, apiEnv)).status).toBe(404);
+      }
+      const authoringResourceResponse = await readAuthoringResource();
+      expect(authoringResourceResponse.status, await authoringResourceResponse.clone().text()).toBe(200);
+      expect(await authoringResourceResponse.json()).toMatchObject({ id: authoringResource, title: "Sidekick resource" });
+      const authoringTicket = await app.request(`/conversations/${ownedSidekick.automationId}/substreams/0/socket`, { headers }, apiEnv);
+      expect(authoringTicket.status, await authoringTicket.clone().text()).toBe(200);
+      const authoringIssued = await authoringTicket.json() as { ticket: string; url: string };
+      const authoringUpgrade = await app.request(authoringIssued.url.replace("wss:", "https:"), { headers: {
+        Origin: "https://app.example.test", Upgrade: "websocket",
+        "Sec-WebSocket-Protocol": socketTicketProtocols(authoringIssued.ticket).join(", "),
+      } }, apiEnv);
+      const authoringSocket = await openSubscribedSocket(authoringAgent, crypto.randomUUID(), "0", 0, authoringUpgrade);
+      let authoringClosed = false;
+      authoringSocket.socket.addEventListener("close", () => { authoringClosed = true; }, { once: true });
+      const parentOptions = await readOptions();
+      expect(parentOptions.canManage).toBe(true);
+      expect(parentOptions.items.map((item) => item.id)).toEqual([recommendedSidekick.automationId]);
+      // Parent management does not grant discovery of unrelated workspace skills.
+      expect((await recommendationMutation(unselectedSidekick.automationId, "PUT")).status).toBe(403);
+      expect((await recommendationMutation(recommendedSidekick.automationId, "PUT")).status).toBe(200);
+      expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(200);
+      await runInDurableObject(parent, (_instance) => {
+        const store = _instance['scopeGrants'](address);
+        expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID, userId: USER_ID,
+          target: parentTarget, active: false, expectedRevision: store.read(USER_ID, parentTarget)!.revision }, "existing-member"))
+          .toMatchObject({ status: "committed" });
+      });
+      expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(403);
+      expect((await ownedManagement.actorRequest(ownedSidekick.automationId)).actor.participantOfOwningWorkstream).toBe(false);
+      expect((await changeSidekickAppearance("red")).status).toBe(403);
+      expect((await readAuthoringResource()).status).not.toBe(200);
+      expect((await app.request(`/sidekicks/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
+      expect((await app.request(`/conversations/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
+      await runInDurableObject(ownedSidekick.sidekick,(_instance,state) => {
+        expect(JSON.parse(state.storage.sql.exec<{ appearance_json:string }>("SELECT appearance_json FROM automation WHERE id=1").one().appearance_json).color).toBe("blue");
+      });
+      expect((await readOptions()).canManage).toBe(false);
+      // The held queue has not delivered this legacy parent's directory yet.
+      // Materialize its common row before the alarm directly delivers the
+      // version-one viewer rows, which reference that directory row.
+      await deliverChildEffects(TEST_ENV, main);
+      const commonDirectory = (await pendingParentEffects(parent))
+        .filter((entry) => entry.effect.kind === "directory_common");
+      expect(commonDirectory.length).toBeGreaterThan(0);
+      expect(await consumeEffectBodies(TEST_ENV, commonDirectory))
+        .toEqual({ acked: commonDirectory.length, retried: 0 });
+      await expect.poll(async () => {
+        await runDurableObjectAlarm(parent);
+        return (await pendingParentEffects(parent)).some((entry) => entry.effect.kind === "scope_grant_directory"
+          && !entry.effect.grant.active && entry.effect.grant.target.kind === "workstream");
+      }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+      const revokedParent = (await pendingParentEffects(parent)).find((entry) => entry.effect.kind === "scope_grant_directory"
+        && !entry.effect.grant.active && entry.effect.grant.target.kind === "workstream")!;
+      const revocationSend = vi.spyOn(TEST_ENV.ACCESS_REVOCATION_QUEUE, "send");
+      const revocationBatch = vi.spyOn(TEST_ENV.ACCESS_REVOCATION_QUEUE, "sendBatch");
+      try {
+        revocationSend.mockRejectedValueOnce(new Error("revocation_queue_unavailable"));
+        expect(await consumeEffectBodies(TEST_ENV, [revokedParent])).toEqual({ acked: 0, retried: 1 });
+        expect(await consumeEffectBodies(TEST_ENV, [revokedParent])).toEqual({ acked: 1, retried: 0 });
+        const pending: unknown[] = [revocationSend.mock.calls.at(-1)![0]];
+        let batchOffset = 0;
+        while (pending.length) {
+          const batch = createMessageBatch("avalon-do-runtime-test-access-revocations", pending.splice(0).map((body) => ({
+            id: crypto.randomUUID(), body, timestamp: new Date(), attempts: 1,
+          })));
+          await consumeAccessRevocationQueue(batch, TEST_ENV);
+          expect((await getQueueResult(batch, createExecutionContext())).retryMessages).toEqual([]);
+          for (const [messages] of revocationBatch.mock.calls.slice(batchOffset)) {
+            for (const message of messages) pending.push(message.body);
+          }
+          batchOffset = revocationBatch.mock.calls.length;
+        }
+        await expect.poll(() => authoringClosed, { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS }).toBe(true);
+      } finally {
+        revocationSend.mockRestore();
+        revocationBatch.mockRestore();
+        authoringSocket.socket.close(1000, "done");
+      }
+      // The same resource may remain shared through another conversation.
+      const secondChildId = asSubstreamId("ffffffff-ffff-4fff-8fff-ffffffffffff");
+      const secondAddress = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: secondChildId };
+      const secondChild = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, secondChildId));
+      await secondChild.bootstrapRuntime({ ...secondAddress, parentKind: "workstream", generation: 1 });
+      expect((await secondChild.executeIdentityOperation({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+        substreamId: secondChildId, operation: "provision", args: [{ title: "Other shared child", objective: "Overlap test",
+          scope: "personal", originType: "ad_hoc", createdByUserId: OTHER_USER_ID, participantUserIds: [OTHER_USER_ID],
+          harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null,
+          plannedFor: null, modelOverride: null, now: Date.now() }] })).status).toBe(200);
+      await runInDurableObject(secondChild, (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO workstream_resource_links
+          (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
+          VALUES (?,?,0,'attachment','{}',1,1)`, sharedResource, OTHER_USER_ID);
+      });
+      await runInDurableObject(parent, (_instance, state) => {
+        state.storage.sql.exec("INSERT INTO conversation_children(substream_id,kind,created_at) VALUES (?,'child',0)", secondChildId);
+        state.storage.sql.exec("INSERT INTO child_participant_migrations(substream_id,transfer_id,phase) VALUES (?,?,'complete')", secondChildId, crypto.randomUUID());
+        expect(_instance['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(),
+          actorUserId: OTHER_USER_ID, userId: USER_ID, target: { kind: "conversation", ...secondAddress },
+          active: true, expectedRevision: 0 }, "existing-member")).toMatchObject({ status: "committed" });
+      });
+      await workspace.applyAuthorizationLocations({ ...secondAddress, parentKind: "workstream", revision: 1,
+        validatedAt: Date.now(), resourceIds: [sharedResource] });
+      const guestToolInput = guestExecution;
+      await runInDurableObject(parent, async (instance) => {
+        const prototype = Object.getPrototypeOf(instance) as typeof instance;
+        const admission = vi.spyOn(prototype, "authorizeViewer");
+        const lifecycle = vi.spyOn(prototype, "authority");
+        const resourceChecks = vi.spyOn(AuthorizationService.prototype, "checkMany");
+        try {
+          await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, guestToolInput))
+            .resolves.toMatchObject({ automationRunId: null });
+          expect(admission).toHaveBeenCalledTimes(1);
+          expect(lifecycle).not.toHaveBeenCalled();
+          expect(resourceChecks).not.toHaveBeenCalled();
+        } finally { admission.mockRestore(); lifecycle.mockRestore(); resourceChecks.mockRestore(); }
+      });
+      const connectorId = crypto.randomUUID();
+      const credentialKey = "guest-connector-fixture-encryption-key";
+      const freshCredentials = { accessToken: "fixture-access", refreshToken: "fixture-refresh", expiresAt: "2099-01-01T00:00:00.000Z" };
+      const credentials = await encryptString(JSON.stringify(freshCredentials), credentialKey, connectorId);
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec(`INSERT INTO connector_connections
+          (id,workspace_id,connector_type,scope,display_name,encrypted_credentials,credential_iv,credential_key_version,
+           granted_scopes_json,model_plugin_id,created_at,updated_at)
+          VALUES (?,?,'google','workspace','Shared Google',?,?,1,'["docs.write"]','guest_google','2026-09-17','2026-09-17')`,
+        connectorId, WORKSPACE_ID, credentials.ciphertext, credentials.iv);
+      });
+      // The existing watch protocol belongs to Main, independently of child grants.
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec("UPDATE resources SET connection_id=? WHERE id=?", connectorId, unrelatedResource);
+      });
+      const watchMain = () => app.request(`/resources/${unrelatedResource}/watch`, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ workstreamId: WORKSTREAM_ID }),
+      }, apiEnv);
+      const unwatchMain = () => app.request(`/resources/${unrelatedResource}/watch?workstreamId=${WORKSTREAM_ID}`, {
+        method: "DELETE", headers,
+      }, apiEnv);
+      expect((await watchMain()).status).toBe(404);
+      expect((await unwatchMain()).status).toBe(404);
+      const connectorEnv = withWorkspaceRuntimeDatabase({ ...TEST_ENV, CONNECTOR_CREDENTIALS_KEY: credentialKey,
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1", GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "fixture-client",
+        GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "fixture-secret", PUBLIC_API_BASE_URL: "https://api.example.test" }, WORKSPACE_ID);
+      const frozen = { pluginId: `connection:${connectorId}`, modelPluginId: "guest_google", connectionId: connectorId,
+        workspaceId: WORKSPACE_ID, connectorType: "google", scope: "workspace" as const, ownerUserId: null,
+        grantedScopes: ["docs.write"], toolCapabilities: ["docs.write"], shortWireName: "google" };
+      const providerCalls: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async (request) => {
+        const url = request instanceof Request ? request.url : String(request);
+        providerCalls.push(url);
+        if (url === "https://docs.googleapis.com/v1/documents") {
+          return Response.json({ documentId: "guest-created-document", title: "Shared draft" });
+        }
+        if (url === "https://oauth2.googleapis.com/token") {
+          // Revoke while credentials are being refreshed, after the initial
+          // connector check but before the provider's document write.
+          expect(await parent.removePrivateChildParticipant({ ...participantRequest, operationId: "child-participant-remove" }))
+            .toMatchObject({ outcome: "removed" });
+          return Response.json({ access_token: "refreshed-fixture-access", expires_in: 3600, token_type: "Bearer" });
+        }
+        throw new Error(`Unexpected guest provider call: ${url}`);
+      };
+      try {
+        const executeWrite = () => __integrationTesting.executeAuthorizedConnectorTool(connectorEnv, guestToolInput,
+          frozen, "docs.create_document", "docs.write", { title: "Shared draft" }, new AbortController().signal);
+        expect(await executeWrite()).toMatchObject({ output: { documentId: "guest-created-document" } });
+        expect(providerCalls).toEqual(["https://docs.googleapis.com/v1/documents"]);
+        const expired = await encryptString(JSON.stringify({ ...freshCredentials, expiresAt: "2000-01-01T00:00:00.000Z" }), credentialKey, connectorId);
+        await runInDurableObject(workspace, (_instance, state) => {
+          state.storage.sql.exec("UPDATE connector_connections SET encrypted_credentials=?,credential_iv=? WHERE id=?", expired.ciphertext, expired.iv, connectorId);
+        });
+        await expect(executeWrite()).rejects.toThrow("Shared conversation access has ended");
+        expect(providerCalls).toEqual(["https://docs.googleapis.com/v1/documents", "https://oauth2.googleapis.com/token"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      const removed = await parent.removePrivateChildParticipant({ ...participantRequest,operationId:"child-participant-remove" });
+      expect(removed.outcome).toBe("removed");
+      expect((await childClosed).code).toBe(1008);
+      await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, guestToolInput))
+        .rejects.toThrow("Shared conversation access has ended");
+      const overlappingDownload = await app.request(`/resources/${sharedResource}/versions/2/model-content`, { headers }, apiEnv);
+      expect(overlappingDownload.status).toBe(200);
+      expect(await overlappingDownload.text()).toBe("Shared extracted text");
+      expect(await artifactHost.checkSession(artifactSession!.session, 0)).toMatchObject({ ok: true });
+      await runInDurableObject(parent, (_instance) => {
+        const store = _instance['scopeGrants'](address);
+        const target = { kind: "conversation" as const, ...secondAddress };
+        expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID, userId: USER_ID,
+          target, active: false, expectedRevision: store.read(USER_ID, target)!.revision }, "existing-member"))
+          .toMatchObject({ status: "committed" });
+      });
+      expect((await authorizer.checkMany(subject,[resourceAccess(sharedResource)]))[0]?.status).not.toBe("allowed");
+      expect((await app.request(`/resources/${sharedResource}/content`,{ headers },apiEnv)).status).not.toBe(200);
+      // This fixture has no completed workspace-wide location inventory. Once
+      // its only positive source is revoked, reads fail closed as unavailable.
+      for (const suffix of versionPaths) {
+        const revoked = await app.request(`/resources/${sharedResource}${suffix}`, { headers }, apiEnv);
+        expect(revoked.status, suffix).toBe(503);
+        expect(await revoked.json()).toMatchObject({ error: { code: "authorization_unavailable" } });
+      }
+
+
+      await expect(artifactService.open(sharedResource)).rejects.toThrow("Authorization could not be established");
+      await expect(async () => await artifactHost.checkSession(artifactSession!.session, 0)).rejects.toThrow("Authorization could not be established");
+
+      expect((await app.request(path,{ headers },apiEnv)).status).toBe(404);
+      expect((await app.request(path, { method: "PATCH",
+        headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ archived: true }),
+      }, apiEnv)).status).toBe(404);
+      expect((await app.request(`${path}/participants/remove`, { method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ userId: OTHER_USER_ID, operationId: crypto.randomUUID() }),
+      }, apiEnv)).status).toBe(404);
+      await expect(async () => await parent.setPrivateChildArchived({ ...address,
+        actorUserId: USER_ID, archived: true })).rejects.toThrow("private_child_participant_required");
+      await runInDurableObject(parent, (_instance, state) => {
+        expect(state.storage.sql.exec<{ archived_at: number | null }>(
+          "SELECT archived_at FROM conversation_children WHERE substream_id=?", substreamId).one().archived_at).toBeNull();
+      });
+      expect((await app.request(`${path}/socket`,{ headers },apiEnv)).status).toBe(404);
+      expect((await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv)).status).toBe(404);
+      expect((await app.request(`${path}/sidekicks`,{ headers },apiEnv)).status).toBe(404);
+      expect((await attach(uploadId)).status).toBe(404);
+      childSocket.socket.close(1000,"done");
+      expect(await parent.addPrivateChildParticipant(participantRequest)).toEqual(added);
+      await runInDurableObject(parent, (_instance,state) => {
+        expect(_instance['scopeGrants'](address).read(USER_ID,{ kind:"conversation",...address }))
+          .toMatchObject({ active:false,revision:removed.membershipVersion });
+        // The legacy authority stays frozen at its pre-migration fact.
+        expect(state.storage.sql.exec("SELECT version,active FROM private_child_memberships WHERE substream_id=? AND user_id=?",substreamId,USER_ID).one())
+          .toEqual({ version:3,active:0 });
+      });
+      expect(await parent.mutateParticipantGrant({ operationId:crypto.randomUUID(),actorUserId:OTHER_USER_ID,userId:OTHER_USER_ID,
+        target:{ kind:"conversation",...address },active:false })).toEqual({ status:"denied",reason:"participant_required" });
+
+      const mainTarget = { kind: "conversation" as const, workspaceId: WORKSPACE_ID,
+        parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") };
+      await runInDurableObject(parent, (_instance, state) => {
+        state.storage.sql.exec("INSERT INTO main_participant_migration VALUES (1, ?, '{}', 'complete')", crypto.randomUUID());
+        state.storage.sql.exec("INSERT OR IGNORE INTO conversation_children (substream_id,kind,status,created_by_user_id,created_at) VALUES ('0','main','ready',?,0)", OTHER_USER_ID);
+        const store = _instance['scopeGrants'](address);
+        expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID,
+          userId: USER_ID, target: mainTarget, active: true, expectedRevision: 0 }, "existing-member"))
+          .toMatchObject({ status: "committed" });
+      });
+      const watched = await watchMain();
+      expect(watched.status, await watched.clone().text()).toBe(200);
+      expect(await watched.json()).toEqual({ watchEnabled: true });
+      expect(await runInDurableObject(main, (_instance, state) => state.storage.sql.exec(
+        "SELECT watch_enabled FROM workstream_resource_links WHERE resource_id=?", unrelatedResource).one()))
+        .toEqual({ watch_enabled: 1 });
+      expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
+        "SELECT enabled FROM resource_watches WHERE workstream_id=? AND resource_id=?", WORKSTREAM_ID, unrelatedResource).one()))
+        .toEqual({ enabled: 1 });
+      expect((await unwatchMain()).status).toBe(204);
+      expect(await runInDurableObject(main, (_instance, state) => state.storage.sql.exec(
+        "SELECT watch_enabled FROM workstream_resource_links WHERE resource_id=?", unrelatedResource).one()))
+        .toEqual({ watch_enabled: 0 });
+      expect(await runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec(
+        "SELECT enabled FROM resource_watches WHERE workstream_id=? AND resource_id=?", WORKSTREAM_ID, unrelatedResource).one()))
+        .toEqual({ enabled: 0 });
+    });
+
+    it("prepares inheriting child authority before accepting a whole-workstream invitation", async () => {
+      const main = agentStub();
+      const opened = await initializeWorkstream(main, "first message");
+      await settledRun(main, opened.body.harnessRunId as string);
+      await env.DB.batch([
+        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
+      ]);
+      const substreamId = asSubstreamId(crypto.randomUUID());
+      const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId));
+      expect((await child.bootstrapRuntime({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID,
+        substreamId, generation: 1 })).status).toBe(200);
+      expect((await child.executeIdentityOperation({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId,
+        operation: "provision", args: [{ title: "Inherited child", objective: "Sharing test", scope: "personal",
+          originType: "ad_hoc", createdByUserId: USER_ID, participantUserIds: [], harnessStatus: "idle", emailAddress: null,
+          emailRouteStatus: null, systemKind: null, automationRunId: null, plannedFor: null, modelOverride: null, now: Date.now() }] })).status).toBe(200);
+      const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID));
+      await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
+      await runInDurableObject(parent, (_instance, state) => {
+        state.storage.sql.exec(`INSERT OR IGNORE INTO workstream_metadata
+          (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+          VALUES (1,?,?,'global',1,'Inheritance sharing','','','personal','idle',0,0,0)`, WORKSPACE_ID, WORKSTREAM_ID);
+        state.storage.sql.exec("INSERT OR IGNORE INTO conversation_children(substream_id,kind,created_at) VALUES ('0','main',0)");
+        state.storage.sql.exec("INSERT INTO conversation_children(substream_id,kind,created_at,audience) VALUES (?,'child',0,'inherits_workstream')", substreamId);
+      });
+      expect(await parent.createScopeInvitations({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, actorUserId: USER_ID,
+        operationId: crypto.randomUUID(), emails: ["guest@example.test"], expiresAt: null,
+        targets: [{ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }] })).toMatchObject({ status: "created" });
+      await runInDurableObject(parent, (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT phase FROM child_participant_migrations WHERE substream_id=?", substreamId).one())
+          .toEqual({ phase: "complete" });
+        expect(_instance['scopeGrants']({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID })
+          .participantProjection(substreamId, USER_ID)?.active).toBe(true);
+      });
+      await runInDurableObject(child, (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT phase FROM participant_authority_transfer").one()).toEqual({ phase: "projection" });
+      });
+    });
+
+    it.each(["self", "mention", "queued", "controls"] as const)("prepares legacy Main sharing and handles %s participation through grants", async (participation) => {
+      const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
+      const opened = await initializeWorkstream(stub, "first message");
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await env.DB.batch([
+        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
+      ]);
+      const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID));
+      await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
+      await runInDurableObject(parent, (_instance, state) => {
+        state.storage.sql.exec(`INSERT OR IGNORE INTO workstream_metadata
+          (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+          VALUES (1,?,?,'global',1,'Sharing test','','','workspace','idle',0,0,0)`, WORKSPACE_ID, WORKSTREAM_ID);
+        if (participation !== "controls") state.storage.sql.exec("INSERT OR IGNORE INTO conversation_children(substream_id,kind,created_at) VALUES ('0','main',0)");
+      });
+      const request = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, actorUserId: OTHER_USER_ID,
+        operationId: crypto.randomUUID(), emails: ["guest@example.test"], expiresAt: null,
+        targets: [{ kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") }] };
+      expect(await parent.createScopeInvitations(request)).toMatchObject({ status: "denied" });
+      expect(await parent.scopeSharingOptions({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, actorUserId: OTHER_USER_ID }))
+        .toEqual({ scopes: [], completeWorkstreamTargets: null });
+      const options = await parent.scopeSharingOptions({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, actorUserId: USER_ID });
+      expect(options.completeWorkstreamTargets).toEqual([
+        { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID },
+      ]);
+      expect(options.scopes).toContainEqual({ target:request.targets[0],title:"Main" });
+      if (participation === "controls") await runInDurableObject(parent,(_instance,state) => {
+        expect(state.storage.sql.exec("SELECT 1 FROM conversation_children WHERE substream_id='0'").toArray()).toEqual([]);
+      });
+      await runInDurableObject(parent, (_instance, state) => {
+        // Discovering first-share choices never transfers the source authority.
+        expect(state.storage.sql.exec("SELECT 1 FROM main_participant_migration").toArray()).toEqual([]);
+      });
+      let queuedTurnId: string | null = null;
+      if (participation === "queued") {
+        await runInDurableObject(stub, (_instance, state) => holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) }));
+        const queued = await product(stub, { operation: "create_message", auth: AUTH, input: {
+          text: "Hello @Other Member", clientMessageId: "before-handoff-mention", forcedHarnessOrigin: "user_message",
+          attachmentIds: [], confirmedParticipantUserIds: [OTHER_USER_ID],
+          mentions: [{ type: "person", userId: OTHER_USER_ID, connectorType: null, startOffset: 6, endOffset: 19 }],
+        } });
+        expect(queued).toMatchObject({ status: 200, body: { deliveryState: "pending" } });
+        queuedTurnId = (queued.body.turn as { turnId: string }).turnId;
+      }
+      const created = await parent.createScopeInvitations({ ...request, actorUserId: USER_ID });
+      expect(created).toMatchObject({ status: "created", invitations: [{ email: "guest@example.test" }] });
+      expect(await parent.createScopeInvitations({ ...request, actorUserId: USER_ID })).toEqual(created);
+      expect(await parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+        .toMatchObject({ status: "complete" });
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT phase FROM participant_authority_transfer").one()).toEqual({ phase: "projection" });
+      });
+      expect(await parent.readScopeAccess({ userId: USER_ID, target: request.targets[0]! }))
+        .toMatchObject({ allowed: true, writable: true });
+      // Joining an already inherited audience must not create an independent
+      // grant that survives removal of the parent grant.
+      expect(await parent.joinConversation({ operationId: crypto.randomUUID(), actorUserId: USER_ID,
+        userId: USER_ID, target: request.targets[0]!, active: true })).toEqual({ status: "ready" });
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](request).forUser(USER_ID))
+          .toMatchObject([{ target: { kind: "workstream" } }]);
+      });
+      if (queuedTurnId !== null) {
+        await runInDurableObject(stub, (_instance, state) => releaseHeldLoop(state));
+        const run = await settledRunForTrigger(stub, queuedTurnId);
+        expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(run));
+        await runInDurableObject(stub, (_instance, state) => {
+          expect(state.storage.sql.exec("SELECT 1 FROM participants WHERE user_id=? AND status='active'", OTHER_USER_ID).toArray()).toEqual([]);
+        });
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](request).forUser(OTHER_USER_ID)).toEqual([]);
+        });
+        return;
+      }
+      if (participation === "self") {
+        expect(await product(stub, { operation: "update", auth: AUTH, input: { scope: "workspace" } }))
+          .toMatchObject({ status: 200 });
+      }
+      const otherSessionId = crypto.randomUUID();
+      await env.DB.prepare(`INSERT INTO sessions (id,user_id,workspace_id,region,expires_at)
+        VALUES (?,?,?,'global','2099-01-01T00:00:00.000Z')`).bind(otherSessionId,OTHER_USER_ID,WORKSPACE_ID).run();
+      if (participation === "controls") {
+        await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE user_id=?").bind(OTHER_USER_ID).run();
+        expect(await parent.mutateParticipantGrant({ operationId:crypto.randomUUID(),actorUserId:USER_ID,
+          userId:OTHER_USER_ID,target:request.targets[0]!,active:true })).toMatchObject({ status:"committed" });
+        const recipientId = asUserId(crypto.randomUUID());
+        await env.DB.batch([
+          env.DB.prepare("INSERT INTO users(id,email,name,timezone,created_at) VALUES (?,'recipient@example.test','Recipient','UTC','2026-01-01T00:00:00.000Z')").bind(recipientId),
+          env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,access_class,role) VALUES (?,?,'active','guest',NULL)")
+            .bind(WORKSPACE_ID,recipientId),
+        ]);
+        await env.DB.prepare("ALTER TABLE users ADD COLUMN analytics_person_id TEXT").run();
+        const signingKey = "guest-main-rename-signing-key";
+        const mainToken = await new SignJWT({ sid: otherSessionId, wid: WORKSPACE_ID, region: "global" })
+          .setProtectedHeader({ alg: "HS256", typ: "JWT" }).setSubject(OTHER_USER_ID).setIssuer("avalon-api")
+          .setAudience("avalon-desktop").setIssuedAt().setExpirationTime("15m").sign(new TextEncoder().encode(signingKey));
+        const apiEnv = { ...TEST_ENV, SESSION_SIGNING_KEY: signingKey, RALLY_DEV_AUTH: "false" };
+        const mainHeaders = { authorization: `Bearer ${mainToken}`, "content-type": "application/json" };
+        const app = createApp();
+        const mainPath = `/conversations/${WORKSTREAM_ID}/substreams/0`;
+        expect((await app.request(mainPath, { method: "PATCH", headers: mainHeaders,
+          body: JSON.stringify({ title: "Main renamed by a guest" }) }, apiEnv)).status).toBe(204);
+        await runInDurableObject(stub, (_instance, state) => {
+          expect(state.storage.sql.exec("SELECT title FROM workstream WHERE id=1").one().title).toBe("Main renamed by a guest");
+        });
+        const guestAuth = { ...AUTH,userId:OTHER_USER_ID,sessionId:otherSessionId,role:null };
+
+        const add = { operation:"add_participant",auth:guestAuth,userId:recipientId,operationId:crypto.randomUUID() };
+        expect(await product(stub,add)).toMatchObject({ status:200 });
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](request).forUser(recipientId))
+            .toMatchObject([{ active:true,target:{ kind:"conversation",substreamId:"0" } }]);
+        });
+        const parentTarget = { kind:"workstream" as const,workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID };
+        const inherited = await parent.mutateScopeGrant({ operationId:crypto.randomUUID(),actorUserId:USER_ID,
+          userId:recipientId,target:parentTarget,active:true,expectedRevision:0 });
+        if (inherited.status !== "committed") throw new Error("Expected parent grant");
+        const remove = { operation:"remove_participant",auth:guestAuth,userId:recipientId,operationId:crypto.randomUUID() };
+        expect(await product(stub,remove)).toMatchObject({ status:409,body:{ error:"participant_inherited_access" } });
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](request).forUser(recipientId).every((grant) => grant.active)).toBe(true);
+        });
+        expect(await parent.mutateScopeGrant({ operationId:crypto.randomUUID(),actorUserId:USER_ID,
+          userId:recipientId,target:parentTarget,active:false,expectedRevision:inherited.grant.revision }))
+          .toMatchObject({ status:"committed" });
+        expect(await product(stub,remove)).toMatchObject({ status:200 });
+        expect(await product(stub,remove)).toMatchObject({ status:200 });
+        expect(await product(stub,{ ...add,operationId:crypto.randomUUID() })).toMatchObject({ status:200 });
+        expect(await product(stub,remove)).toMatchObject({ status:409,body:{ error:"participant_change_superseded" } });
+        expect(await parent.readScopeAccess({ userId:recipientId,target:request.targets[0]! })).toMatchObject({ allowed:true });
+        expect(await parent.readScopeAccess({ userId:OTHER_USER_ID,target:parentTarget })).toMatchObject({ allowed:false });
+        return;
+      }
+      const message = { operation: "create_message", auth: participation === "self" ? { ...AUTH, userId: OTHER_USER_ID, sessionId: otherSessionId } : AUTH,
+        input: { text: participation === "self" ? "Joining the discussion" : "Hello @Other Member",
+          clientMessageId: `after-handoff-${participation}`, attachmentIds: [], forcedHarnessOrigin: "user_message",
+          mentions: participation === "self" ? [] : [{ type: "person", userId: OTHER_USER_ID,
+            connectorType: null, startOffset: 6, endOffset: 19 }],
+          confirmedParticipantUserIds: participation === "self" ? [] : [OTHER_USER_ID] } };
+      expect(await product(stub, message)).toMatchObject({ status: 200 });
+      expect(await product(stub, message)).toMatchObject({ status: 200 });
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](request).forUser(OTHER_USER_ID))
+          .toMatchObject([{ active: true, target: { kind: "conversation", substreamId: "0" } }]);
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id=?", OTHER_USER_ID).one())
+          .toEqual({ status: "active" });
+      });
+    });
+
+    it("delivers a canonical grant revocation through the parent alarm to the real feed socket", async () => {
+      const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
+      const opened = await initializeWorkstream(stub, "first message", null, [OTHER_USER_ID]);
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await env.DB.batch([
+        env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN revision INTEGER DEFAULT 1"),
+      ]);
+      const parent = env.WORKSTREAM_DOS.getByName(workstreamDOName("global",WORKSPACE_ID,WORKSTREAM_ID));
+      await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
+      const target = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };
+      await runInDurableObject(parent, (_instance,state) => {
+        state.storage.sql.exec(`INSERT OR IGNORE INTO workstream_metadata
+          (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+          VALUES (1,?,?,'global',1,'Projection test','','','personal','idle',0,0,0)`, WORKSPACE_ID,WORKSTREAM_ID);
+        state.storage.sql.exec("INSERT OR IGNORE INTO conversation_children(substream_id,kind,created_at) VALUES ('0','main',0)");
+        state.storage.sql.exec(`CREATE TRIGGER fail_migration_completion BEFORE UPDATE OF phase ON main_participant_migration
+          WHEN NEW.phase='complete' BEGIN SELECT RAISE(ABORT, 'migration completion unavailable'); END`);
+      });
+      const migration = await parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID,parentId: WORKSTREAM_ID });
+      expect(migration.status).toBe("pending");
+      if (!migration.transferId) throw new Error("Expected transfer token");
+      await runDurableObjectAlarm(parent);
+      await expect.poll(() => runInDurableObject(parent, (_instance,state) =>
+        state.storage.sql.exec<{ attempt: number }>(
+          "SELECT attempt FROM _internal_durable_alarms WHERE kind='main_participant_migration'",
+        ).toArray()[0]?.attempt ?? 0), { timeout: 30_000 }).toBeGreaterThan(0);
+      // Failure after source commit must retain the same token and frozen
+      // snapshot, and must not admit grant writes during the incomplete handoff.
+      expect(await parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID,parentId: WORKSTREAM_ID })).toEqual(migration);
+      expect(await parent.mutateScopeGrant({ operationId: crypto.randomUUID(),target,
+        actorUserId: OTHER_USER_ID,userId: USER_ID,active:false,expectedRevision: 0 }))
+        .toEqual({ status:"denied",reason:"migration_pending" });
+      await runInDurableObject(stub, (_instance,state) => {
+        expect(state.storage.sql.exec("SELECT transfer_id,phase FROM participant_authority_transfer").one())
+          .toEqual({ transfer_id: migration.transferId,phase:"projection" });
+      });
+      expect(await stub.transferParticipantAuthority({ workspaceId: asWorkspaceId(crypto.randomUUID()),
+        parentId: WORKSTREAM_ID,substreamId: asSubstreamId("0"),transferId: migration.transferId,phase:"prepare" })).toEqual({ status:"identity_mismatch" });
+      expect(await stub.transferParticipantAuthority({ workspaceId: WORKSPACE_ID,
+        parentId: WORKSTREAM_ID,substreamId: asSubstreamId("0"),transferId: crypto.randomUUID(),phase:"commit" })).toEqual({ status:"conflict" });
+      const priorRevision = await runInDurableObject(parent, async (_instance,state) => {
+        state.storage.sql.exec("DROP TRIGGER fail_migration_completion");
+        // Advance the failed entry's retry gate explicitly, without timing the
+        // test against the production scheduler's backoff interval.
+        state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at=0 WHERE kind='main_participant_migration'");
+        const revision = _instance['scopeGrants'](target).read(USER_ID,target)!.revision;
+        await state.storage.setAlarm(Date.now());
+        return revision;
+      });
+      await runDurableObjectAlarm(parent);
+      // setAlarm can start the real alarm before runDurableObjectAlarm sees it;
+      // wait for its durable completion, not the helper's observation window.
+      await expect.poll(() => parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID,parentId: WORKSTREAM_ID }),
+        { timeout: 30_000 }).toEqual({ status:"complete",transferId:migration.transferId });
+      await runDurableObjectAlarm(parent);
+      const admission = await parent.authorizeViewer({ workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID,userId:USER_ID,substreamId:asSubstreamId("0") });
+      expect(admission.authorized).toBe(true);
+      expect(admission.membershipVersion).toBeGreaterThan(0);
+      // A ticket issued against the old roster cannot bypass the new Main fence.
+      const stale = await stub.fetch("https://substream.test/socket",{ headers:{
+        Upgrade:"websocket","x-rally-workspace-id":WORKSPACE_ID,"x-rally-workstream-id":WORKSTREAM_ID,
+        "x-rally-substream-id":"0","x-rally-user-id":USER_ID,"x-rally-session-id":SESSION_ID,
+        "x-rally-socket-ticket-id":crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at":String(Math.floor(Date.now()/1000)+60),
+        "x-rally-socket-admission-membership-version":"0",
+      } });
+      if (stale.webSocket) { stale.webSocket.accept();stale.webSocket.close(1000,"unexpected admission"); }
+      expect(stale.status).toBe(403);
+      const { socket } = await openSubscribedSocket(stub,crypto.randomUUID(),"0",admission.membershipVersion);
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close",resolve,{ once:true }));
+      try {
+        const result = await parent.mutateScopeGrant({ operationId: crypto.randomUUID(), target,
+          actorUserId: OTHER_USER_ID, userId: USER_ID, active:false, expectedRevision: priorRevision });
+        expect(result.status).toBe("committed");
+        if (result.status !== "committed") throw new Error("Expected revocation");
+        await runDurableObjectAlarm(parent);
+        expect((await closed).code).toBe(1008);
+        await runInDurableObject(parent, (_instance) => {
+          expect(_instance['scopeGrants'](target).pendingParticipantProjection("0",USER_ID,result.grant.revision)).toBeNull();
+        });
+        await runInDurableObject(stub, (_instance,state) => {
+          expect(new ParticipantAuthorityTransferStorage(state.storage).projectionForUser(USER_ID))
+            .toMatchObject({ active:false, revision: result.grant.revision });
+        });
+      } finally { socket.close(1000,"done"); }
+      const otherSessionId = crypto.randomUUID();
+      await env.DB.prepare(`INSERT INTO sessions (id,user_id,workspace_id,region,revoked_at,expires_at)
+        VALUES (?,?,?,'global',NULL,'2099-01-01T00:00:00.000Z')`).bind(otherSessionId,OTHER_USER_ID,WORKSPACE_ID).run();
+      const add = { operation: "add_participant", auth: { ...AUTH, userId: OTHER_USER_ID, sessionId: otherSessionId },
+        userId: USER_ID, operationId: crypto.randomUUID() };
+      const added = await product(stub, add);
+      expect(added).toMatchObject({ status: 200 });
+      expect(added.body).toMatchObject({ user: { id: USER_ID } });
+      expect((await product(stub, add)).status).toBe(200);
+      const remove = { ...add, operation: "remove_participant", operationId: crypto.randomUUID() };
+      expect(await product(stub, remove)).toEqual({ status: 200, body: { ok: true } });
+      expect(await product(stub, remove)).toEqual({ status: 200, body: { ok: true } });
+      expect((await product(stub, add)).status).toBe(409);
+      await runInDurableObject(parent, (_instance) => {
+        expect(_instance['scopeGrants'](target).read(USER_ID,target)?.active).toBe(false);
+      });
+      await runInDurableObject(stub, (_instance,state) => {
+        expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id=?",USER_ID).one().status).toBe("removed");
+      });
+      expect((await product(stub, { ...remove, userId: OTHER_USER_ID, operationId: crypto.randomUUID() })).status).toBe(409);
+    });
+
+    it("applies a participant projection with durable effects and closes the removed reader socket", async () => {
+      const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
+      const opened = await initializeWorkstream(stub, "first message");
+      await settledRun(stub, opened.body.harnessRunId as string);
+      const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+      const transferId = crypto.randomUUID();
+      const before = await runInDurableObject(stub, (_instance, state) => {
+        const store = new ParticipantAuthorityTransferStorage(state.storage);
+        store.prepare(transferId);
+        store.commit(transferId);
+        return state.storage.sql.exec<{ version: number }>(
+          "SELECT COALESCE(MAX(source_version),0) AS version FROM durable_outbox WHERE partition_key=?", `user:${USER_ID}`,
+        ).one().version;
+      });
+      const request = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: "0",
+        projection: { transferId, userId: USER_ID, revision: 1, active: false,
+          reason: "explicit" as const, addedByUserId: OTHER_USER_ID, changedAt: Date.now() } };
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
+      try {
+        expect(await stub.applyParticipantProjection(request)).toEqual({ status: "applied" });
+        expect((await closed).code).toBe(1008);
+        expect(await stub.applyParticipantProjection(request)).toEqual({ status: "unchanged" });
+        await runInDurableObject(stub, (_instance, state) => {
+          expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id=?", USER_ID).one().status).toBe("removed");
+          expect(state.storage.sql.exec<{ version: number }>(
+            "SELECT MAX(source_version) AS version FROM durable_outbox WHERE partition_key=?", `user:${USER_ID}`,
+          ).one().version).toBe(before + 1);
+          expect(state.storage.sql.exec("SELECT revision FROM participant_projection_revisions WHERE user_id=?", USER_ID).one().revision).toBe(1);
+        });
+        expect(await stub.applyParticipantProjection({ ...request,
+          projection: { ...request.projection, revision: 3, active: true } })).toEqual({ status: "applied" });
+        const reopened = await openSubscribedSocket(stub, crypto.randomUUID(), "0", 3);
+        try {
+          expect(await stub.applyParticipantProjection({ ...request,
+            projection: { ...request.projection, revision: 2 } })).toEqual({ status: "stale" });
+          expect(await runInDurableObject(stub, (_instance, state) =>
+            state.getWebSockets().filter((server) => server.readyState === WebSocket.OPEN).length)).toBe(1);
+        } finally { reopened.socket.close(1000, "done"); }
+      } finally { socket.close(1000, "done"); }
     });
   });
 

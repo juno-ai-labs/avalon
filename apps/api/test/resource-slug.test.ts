@@ -33,8 +33,8 @@ afterEach(() => { for (const database of open.splice(0)) database.close(); });
 function fixture(resourceIds: string[]): { database: DatabaseSync; env: ReturnType<typeof createTestEnv> } {
   const regional = new DatabaseSync(":memory:");
   open.push(regional);
-  regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
-  regional.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')").run(workspaceId, "00000000-0000-7000-8000-0000000000d2");
+  regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT, access_class TEXT DEFAULT 'member')`);
+  regional.prepare("INSERT INTO workspace_members(workspace_id,user_id,status) VALUES (?, ?, 'active')").run(workspaceId, "00000000-0000-7000-8000-0000000000d2");
   const workspaceObject = createTestWorkspaceDO({
     workspaceId,
     regionalDatabase: regional,

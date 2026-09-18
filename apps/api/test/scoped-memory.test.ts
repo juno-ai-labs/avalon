@@ -1,4 +1,5 @@
 import { WorkspaceService } from '../src/services/workspace-service';
+import { readFileSync } from 'node:fs';
 import { pushSearchAuthorization } from '../src/services/search-authorization';
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
@@ -222,6 +223,9 @@ function fixture(): {
   withMethodRace: (method: (typeof MEMORY_OBJECT_METHODS)[number], mutate: () => void) => Env;
 } {
   const database = preRetirementProductSqliteDatabase();
+  // Product rows retain the legacy import dialect, but membership mutations
+  // exercise today's regional authority, including incarnation fences.
+  database.exec(readFileSync(new URL('../../../packages/db/migrations/0109_workspace_guest_relationships.sql', import.meta.url), 'utf8'));
   openDatabases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES

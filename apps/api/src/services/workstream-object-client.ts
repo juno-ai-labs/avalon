@@ -1,3 +1,4 @@
+import { uuidV7 } from "../lib/uuid-v7";
 import { SearchLinkSchema } from '../durable-objects/conversation-link-search';
 import {
   ElicitationSchema,
@@ -247,12 +248,12 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
-  async addParticipant(userId: string): Promise<WorkstreamDetail["participants"][number]> {
-    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId }));
+  async addParticipant(userId: string, operationId = uuidV7()): Promise<WorkstreamDetail["participants"][number]> {
+    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId, operationId }));
   }
 
-  async removeParticipant(userId: string): Promise<void> {
-    await this.request({ operation: "remove_participant", userId });
+  async removeParticipant(userId: string, operationId = uuidV7()): Promise<void> {
+    await this.request({ operation: "remove_participant", userId, operationId });
   }
 
   async attachResource(resourceId: string): Promise<WorkstreamResource> {

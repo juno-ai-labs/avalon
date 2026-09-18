@@ -37,7 +37,8 @@ function localDatabase(): DatabaseSync {
       workspace_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       role TEXT NOT NULL,
-      status TEXT NOT NULL
+      status TEXT NOT NULL,
+      access_class TEXT NOT NULL DEFAULT 'member'
     );
     CREATE TABLE connector_connections (
       id TEXT PRIMARY KEY,

@@ -1,3 +1,4 @@
+import { createAccessContext, requireAuthorizedRead } from "../services/authorization-service";
 import { stableUuid } from "../lib/stable-uuid";
 import { ConversationInitializationSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type WorkstreamAppearancePatch } from "@rally/contracts";
@@ -93,7 +94,8 @@ import {
   ensureStorageAlarmNoLaterThan,
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
-import { substreamLoopId, workspaceDOName } from "./names";
+import { substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
+import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
 import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
@@ -2555,10 +2557,11 @@ export class WorkstreamObjectProductService {
     }));
   }
 
-  async addParticipant(
-    auth: AuthContext,
-    userId: string,
-  ): Promise<WorkstreamDetail["participants"][number]> {
+  async participant(userId: string): Promise<WorkstreamDetail["participants"][number] | null> {
+    return (await this.participants()).find((entry) => entry.user.id === userId) ?? null;
+  }
+
+  async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<void> {
     await this.authorize(auth);
     const member = await this.env.DB.prepare(
       `SELECT 1 AS one FROM workspace_members
@@ -2574,6 +2577,38 @@ export class WorkstreamObjectProductService {
         userIds: [...audience.userIds, userId],
       });
     }
+  }
+
+  private async prepareMessageParticipants(auth: AuthContext, clientMessageId: string, missingUserIds: readonly string[]): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "workstream"
+      || new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return;
+    const target = { kind: "conversation" as const, workspaceId: identity.workspaceId,
+      parentId: identity.parentId, substreamId: this.externalSubstreamId() };
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, identity.workspaceId,
+      workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)));
+    for (const userId of missingUserIds) {
+      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true,
+        operationId: await stableUuid(["message-participant", target, auth.userId, clientMessageId, userId]) };
+      const result = userId === auth.userId
+        ? await parent.joinConversation(request)
+        : await parent.mutateParticipantGrant(request);
+      if (result.status !== "ready" && result.status !== "committed") {
+        throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
+      }
+      // A retried receipt must not restore a later revocation. The owner
+      // delivers its newest projection, so check the resulting local roster.
+      if (!this.isParticipant(userId)) {
+        throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
+      }
+    }
+  }
+
+  async addParticipant(
+    auth: AuthContext,
+    userId: string,
+  ): Promise<WorkstreamDetail["participants"][number]> {
+    await this.authorizeParticipantAddition(auth, userId);
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -2874,9 +2909,20 @@ export class WorkstreamObjectProductService {
         WHERE resource.id = ? AND resource.workspace_id = ?`,
     ).bind(resourceId, auth.workspaceId).first<Record<string, unknown>>();
     if (!resource) throw new ApiError(404, "resource_not_found", "Resource not found");
+    // Product dispatch has reloaded this relationship. Preserve the existing
+    // member attachment path; guests additionally need an existing shared
+    // exposure, established by the ordinary resource authorizer.
+    if (auth.role === null) {
+      const access = createAccessContext(this.env, auth);
+      requireAuthorizedRead(await access.check({ kind: "resource", workspaceId: auth.workspaceId, resourceId }));
+    }
     if (resource.connection_scope === "personal" && resource.owner_user_id !== auth.userId) {
       throw new ApiError(403, "resource_access_denied", "This personal resource is not available to the work stream");
     }
+    if (resource.provider === "avalon_upload" && resource.attachment_status !== "attached") {
+      throw new ApiError(409,"attachment_draft_requires_message","Send this upload with a message before attaching it as an existing resource");
+    }
+    this.locallyAuthorizedRoot(auth);
     const descriptor = {
       id: resourceId,
       connectionId: resource.connection_id == null ? null : String(resource.connection_id),
@@ -3334,8 +3380,20 @@ export class WorkstreamObjectProductService {
     const root = this.root();
     const affectedUserIds = [...new Set(deliveryEffects.flatMap((delivery) =>
       delivery.affectedUserIds))];
+    const common = this.commonEffect(root);
+    // Transcript promotion has consumed its preparation rows by this point.
+    // Carry its exact holds in the delivery result rather than reconstructing
+    // them from a mailbox that no longer exists (or conflating input and turn).
+    const attachmentReservationReleases = [
+      ...(common.attachmentReservationReleases ?? []),
+      ...deliveryEffects.flatMap((delivery) => (delivery.attachmentResourceIds ?? []).map((resourceId) => ({
+        inputId:delivery.inputId,resourceId,
+      }))),
+    ];
     const commands: RegionalEffectCommand[] = [
-      { partitionKey: "common", effect: this.commonEffect(root) },
+      { partitionKey: "common", effect: { ...common,
+        ...(attachmentReservationReleases.length ? { attachmentReservationReleases } : {}),
+      } },
       ...affectedUserIds.map((userId) => ({
         partitionKey: `user:${userId}`,
         effect: this.userEffect(root, userId),
@@ -4161,6 +4219,13 @@ export class WorkstreamObjectProductService {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
     }
+    // Most messages change no participation. Stay synchronous on that path,
+    // without reading identity/transfer state or contacting the grant owner.
+    const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
+      .filter((userId) => !this.isParticipant(userId));
+    if (missingParticipantUserIds.length > 0) {
+      await this.prepareMessageParticipants(auth, input.clientMessageId, missingParticipantUserIds);
+    }
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
@@ -4459,7 +4524,12 @@ export class WorkstreamObjectProductService {
         }
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
-        sql.exec(
+        const openedParticipant = first(sql.exec<{ user_id: string }>(
+          `UPDATE participants SET first_opened_at = COALESCE(first_opened_at, ?), updated_at = ?
+           WHERE user_id = ? AND status = 'active' RETURNING user_id`,
+          now, now, auth.userId,
+        ));
+        if (!openedParticipant) sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
               added_at, removed_at, first_opened_at, updated_at)
@@ -4480,6 +4550,7 @@ export class WorkstreamObjectProductService {
           auth.userId, auth.userId, now, now, now,
         );
         for (const userId of confirmedParticipantUserIds) {
+          if (this.isParticipant(userId)) continue;
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
