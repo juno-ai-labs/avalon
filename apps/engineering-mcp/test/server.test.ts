@@ -167,6 +167,91 @@ describe("Rally engineering MCP tools", () => {
     expect(result.content[0]!.text).toContain("exists in multiple Rally regions");
   });
 
+  it("serves each inventory tool from the one region that resolves it", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ebb");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ebc");
+    const artifactId = asArtifactId("00000000-0000-7000-8000-000000000ebd");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000ebe");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.listSidekicks).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        items: [{
+          workspaceId,
+          sidekickId,
+          region: "global",
+          lifecycle: "paused",
+          scope: "personal",
+          owningWorkstreamId: null,
+          title: "Standup digest",
+          nextRunAt: null,
+          projectedAt: 1_700_000_000_000,
+        }],
+      },
+    });
+    vi.mocked(global.listArtifacts).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        items: [{
+          workspaceId,
+          artifactId,
+          region: "global",
+          workstreamId,
+          resourceId: "resource-1",
+          mode: "active",
+          stateful: true,
+          currentVersion: 2,
+          hostnameStub: "quiet-amber-fox-run",
+          updatedAt: 1_700_000_000_000,
+        }],
+      },
+    });
+    const env: Env = { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise };
+
+    const sidekicks = await rpc(env, "tools/call", {
+      name: "list_sidekicks",
+      arguments: { workspaceId },
+    });
+    expect(JSON.parse((sidekicks.result as { content: Array<{ text: string }> }).content[0]!.text))
+      .toMatchObject({ region: "global", items: [{ sidekickId, lifecycle: "paused" }] });
+    expect(global.listSidekicks).toHaveBeenCalledWith({ workspaceId });
+    expect(enterprise.listSidekicks).toHaveBeenCalledWith({ workspaceId });
+
+    const artifacts = await rpc(env, "tools/call", {
+      name: "list_artifacts",
+      arguments: { workspaceId },
+    });
+    expect(JSON.parse((artifacts.result as { content: Array<{ text: string }> }).content[0]!.text))
+      .toMatchObject({ region: "global", items: [{ artifactId, stateful: true, currentVersion: 2 }] });
+    expect(global.listArtifacts).toHaveBeenCalledWith({ workspaceId });
+  });
+
+  it("refuses an inventory target that resolves in more than one region", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ebf");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const value = { region: "global" as const, workspaceId, items: [] };
+    vi.mocked(global.listArtifacts).mockResolvedValue({ found: true, value });
+    vi.mocked(enterprise.listArtifacts).mockResolvedValue({
+      found: true,
+      value: { ...value, region: "enterprise" },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise },
+      "tools/call",
+      { name: "list_artifacts", arguments: { workspaceId } },
+    );
+    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("exists in multiple Rally regions");
+  });
+
   it("routes bound substream SQL to exactly one regional authority", async () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb3");
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000eb4");
