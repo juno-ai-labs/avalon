@@ -78,3 +78,12 @@ test("Daytona Terminal configuration reaches each regional development Worker", 
     "Terminal configuration must support independent configured deployment values",
   );
 });
+
+test("email login configuration is optional and reaches regional development Workers", () => {
+  const regionalizable = new Set([...block("regionalizableKeys", "[", "]").matchAll(/"([^"]+)"/gu)].map((match) => match[1]));
+  for (const key of ["EMAIL_LOGIN_POLICY_JSON", "BROWSER_APP_ORIGIN"]) {
+    assert.ok(workerKeys.has(key), `${key} must be serialized`);
+    assert.ok(regionalizable.has(key), `${key} must allow deployment overrides`);
+    assert.ok(!block("safeDefaults", "{", "}").includes(key), `${key} must not silently enable email login`);
+  }
+});
