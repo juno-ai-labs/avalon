@@ -989,7 +989,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.transcript,
         this.loop,
         () => this.externalSubstreamId(),
-        (promise) => this.state.waitUntil(promise),
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);

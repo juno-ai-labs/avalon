@@ -7,12 +7,20 @@ export type WorkDeferral = (promise: Promise<unknown>) => void;
 /**
  * Keep background work alive from code that is not handed an execution context.
  *
- * Cloudflare's module-level waitUntil has the same lifetime semantics as
- * ExecutionContext.waitUntil and is available inside services shared by HTTP,
- * Queue, Workflow, and Durable Object entrypoints.
+ * In a Worker invocation, Cloudflare's module-level waitUntil has the same
+ * lifetime semantics as ExecutionContext.waitUntil. Durable Objects already
+ * remain active while asynchronous I/O is pending, so the runtime accepts this
+ * call there without adding a second lifetime mechanism.
  */
 export const runtimeDeferral: WorkDeferral = (promise) => {
-  waitUntil(promise);
+  try {
+    waitUntil(promise);
+  } catch {
+    // A Node host or a call made outside a Workers invocation has no runtime
+    // lifecycle to extend. The work has already started; observe its rejection
+    // so the fallback cannot create an unrelated unhandled-rejection failure.
+    void promise.catch(() => undefined);
+  }
 };
 
 /**
@@ -29,8 +37,9 @@ export function requestDeferral(c: Context<HonoAppEnv>): WorkDeferral {
       c.executionCtx.waitUntil(promise);
     } catch {
       // Node-based route tests do not provide a Workers ExecutionContext. The
-      // promise is already guarded by the service and may finish normally.
-      void promise;
+      // promise has already started; observe failure even when the service did
+      // not attach its own operational logger.
+      void promise.catch(() => undefined);
     }
   };
 }

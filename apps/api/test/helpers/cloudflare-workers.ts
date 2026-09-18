@@ -1,9 +1,21 @@
 /** Node-test stand-in for the runtime-only `cloudflare:workers` base class. */
+let nextWaitUntilError: Error | undefined;
+
 export function waitUntil(promise: Promise<unknown>): void {
+  if (nextWaitUntilError) {
+    const error = nextWaitUntilError;
+    nextWaitUntilError = undefined;
+    throw error;
+  }
   // Production keeps the invocation alive. Node already remains alive for its
   // own pending I/O; attach a rejection handler so a best-effort background
   // task cannot become an unrelated unhandled-rejection failure.
   void promise.catch(() => undefined);
+}
+
+/** Make the next Node-test waitUntil registration fail synchronously. */
+export function failNextWaitUntil(error: Error): void {
+  nextWaitUntilError = error;
 }
 
 export class DurableObject<Env = unknown> {
