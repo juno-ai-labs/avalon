@@ -1,4 +1,5 @@
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
+import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
 import { ServerCog } from 'lucide-react';
 import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
@@ -40,7 +41,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import { ConnectorInstallationProviders } from '@rally/contracts';
+import { ConnectorInstallationProviders, connectorApiKeyAcceptable } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -2446,7 +2447,7 @@ export function WorkspaceSettingsScreen({
               <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
               <Button
                 className="button-primary"
-                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending || granolaRecovery.isPending || granolaRecovery.isError}
+                disabled={!connectorApiKeyAcceptable('granola', granolaWorkspaceApiKey) || createGranolaWorkspaceConnection.isPending || granolaRecovery.isPending || granolaRecovery.isError}
                 onClick={() => createGranolaWorkspaceConnection.mutate()}
               >
                 {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
@@ -2470,30 +2471,19 @@ export function WorkspaceSettingsScreen({
               <li>Copy the new key, then paste it below.</li>
             </ol>
             <p>Workspace API keys require a Business or Enterprise plan. They can read public notes and spaces where Granola API access is enabled, but not other private notes.</p>
-            <button
-              className="granola-key-guide-link"
-              onClick={() => void bridge.openExternal('https://docs.granola.ai/help-center/sharing/integrations/granola-api')}
-              type="button"
-            >
-              Open Granola’s API key guide ↗
-            </button>
+            <ConnectorApiKeyIssuingLink provider="granola" />
           </section>
-          <label className="form-field" htmlFor="granola-workspace-api-key">
-            <span><SettingLabel setting={settings.granolaKey} /></span>
-            <input
-              aria-label="Workspace API key"
-              autoComplete="off"
-              autoFocus
-              className="granola-key-input"
-              id="granola-workspace-api-key"
-              onChange={(event) => setGranolaWorkspaceApiKey(event.currentTarget.value)}
-              placeholder="grn_…"
-              spellCheck={false}
-              type="password"
-              value={granolaWorkspaceApiKey}
-            />
-            <small>Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook.</small>
-          </label>
+          <ConnectorApiKeyField
+            autoFocus
+            help="Rally sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook."
+            id="granola-workspace-api-key"
+            inputClassName="connector-key-input"
+            inputLabel="Workspace API key"
+            label={<SettingLabel setting={settings.granolaKey} />}
+            onChange={setGranolaWorkspaceApiKey}
+            provider="granola"
+            value={granolaWorkspaceApiKey}
+          />
           {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
           {granolaRecovery.isPending && <p role="status">Checking for an existing workspace installation…</p>}
           {granolaRecovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={granolaRecovery.isPending} onClick={() => granolaRecovery.mutate()}>Find existing installation</Button></>}
