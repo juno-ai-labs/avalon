@@ -359,7 +359,7 @@ export function AddParticipantDialog({
   return (
     <Modal
       description={privateSubstream
-        ? 'Added participants can read this substream and its shared context.'
+        ? 'Added participants can read this substream and its shared context. This does not grant access to the parent work stream.'
         : 'Add people to the main conversation. Work stream sharing is managed separately.'}
       onOpenChange={onOpenChange}
       open={open}
