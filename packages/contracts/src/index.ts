@@ -3035,6 +3035,7 @@ export const ConnectorPollWorkflowInputSchema = z.object({
   workspaceId: IdSchema,
   connectionId: IdSchema,
   pollScheduleId: IdSchema,
+  targetKind: z.enum(["connection", "resource_watch"]).default("connection"),
 });
 
 export const AddressingClassificationSchema = z.object({
