@@ -51,6 +51,8 @@ const EVENT_ID = "00000000-0000-7000-8000-000000000ae6";
 const SECOND_EVENT_ID = "00000000-0000-7000-8000-000000000ae7";
 const THIRD_EVENT_ID = "00000000-0000-7000-8000-000000000ae8";
 const FOURTH_EVENT_ID = "00000000-0000-7000-8000-000000000ae9";
+const FIFTH_EVENT_ID = "00000000-0000-7000-8000-000000000aea";
+const SIXTH_EVENT_ID = "00000000-0000-7000-8000-000000000aeb";
 const EVENT_TYPE = "applicationSubmit";
 const CONDITION = "The application is for a design role.";
 const NOW = "2026-09-18T09:00:00.000Z";
@@ -373,6 +375,65 @@ describe("semantic trigger conditions", () => {
       ...request,
       conditionVerdict: { admit: true, code: "condition_met", confidence: 0.99, model: "jev-1.13.0" },
     })).toEqual({ admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
+    expect(await runCount()).toBe(0);
+  });
+
+  /**
+   * The fail-open direction, which is the one that reintroduces the defect.
+   *
+   * The join from a delivery to its conditions is by declared event type, so it
+   * comes up empty when a semantic trigger's `deterministicPrefilter.eventType`
+   * has drifted from the event type its evaluator rule actually registered. An
+   * empty join used to mean "nothing here is gated" and admitted — running the
+   * Sidekick with its written condition never applied, and with no outcome code
+   * distinguishing that from a clean admission. A definition that gates at all
+   * and resolves nothing is refused instead.
+   */
+  it("refuses rather than admits when a gated Sidekick's condition cannot be resolved for the event", async () => {
+    await activate({
+      ...SEMANTIC_DEFINITION,
+      triggers: [{
+        type: "semantic_activity",
+        connectorType: "ashby",
+        sourceBindingKey: "ashby_events",
+        suggestedSourcePluginId: "plugin_ashby",
+        // Registered for `applicationSubmit`, declared for something else: the
+        // drift this refusal exists for.
+        deterministicPrefilter: { eventType: "candidateHire" },
+        condition: CONDITION,
+      }],
+    });
+    await ingest(FIFTH_EVENT_ID, "event-unresolved");
+
+    const request = await admission(FIFTH_EVENT_ID);
+    expect(await automation().externalEventAdmissionPlan(request)).toEqual({
+      kind: "refuse",
+      outcomeCode: "sidekick_semantic_condition_unresolved",
+    });
+    expect(await automation().admitExternalEvent(request)).toEqual({
+      admitted: false,
+      outcomeCode: "sidekick_semantic_condition_unresolved",
+    });
+    expect(await runCount()).toBe(0);
+  });
+
+  /**
+   * The object decides, which means it checks the verdict against itself.
+   *
+   * `AutomationSemanticConditionVerdictSchema` lets `admit` and `code` disagree,
+   * and the delivery path that produces one derives both from a single decision —
+   * so this cannot happen today. It is pinned because the doc comments say the
+   * object is the authority, and before this the only thing it checked was that a
+   * verdict was present.
+   */
+  it("refuses a verdict whose admit flag disagrees with its code", async () => {
+    await activate(SEMANTIC_DEFINITION);
+    await ingest(SIXTH_EVENT_ID, "event-incoherent");
+
+    expect(await automation().admitExternalEvent({
+      ...await admission(SIXTH_EVENT_ID),
+      conditionVerdict: { admit: true, code: "classifier_unavailable", confidence: null, model: null },
+    })).toEqual({ admitted: false, outcomeCode: "sidekick_semantic_classifier_unavailable" });
     expect(await runCount()).toBe(0);
   });
 

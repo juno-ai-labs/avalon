@@ -1,8 +1,0 @@
-# Evaluation reports are machine output: one JSON document per run, holding the
-# provider's answer for every case. They are committed because this corpus is
-# synthetic and content-free, so a later change can re-derive a comparison from
-# them instead of paying for fresh provider calls — see
-# packages/agent-harness/evals/semantic-trigger/README.md. Nobody reads them as a
-# diff, and left unmarked they bury a pull request's real changes under hundreds
-# of thousands of lines, so GitHub is told to collapse them by default.
-packages/agent-harness/evals/*/reports/*.json linguist-generated=true

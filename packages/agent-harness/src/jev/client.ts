@@ -191,7 +191,7 @@ export async function askJev<Answers>(request: JevRequest<Answers>): Promise<Jev
           code: issue.code,
         })),
       });
-      throw error;
+      throw nameJevFailure(error, zodDiagnosticCode(error, "typesafe_response") ?? "typesafe_response_invalid");
     }
 
     const usage = parsed.data.usage
@@ -210,6 +210,7 @@ export async function askJev<Answers>(request: JevRequest<Answers>): Promise<Jev
     return { model: parsed.data.model, answers: parsed.data.answers, usage };
   } catch (error) {
     if (error instanceof z.ZodError) throw error;
+    const failureKind = jevFailureKind(error, request.signal, deadline.signal);
     await request.onDiagnostic?.({
       ...diagnosticBase,
       stage: "complete",
@@ -217,12 +218,41 @@ export async function askJev<Answers>(request: JevRequest<Answers>): Promise<Jev
       ...(failureResponseBytes !== undefined ? { responseBytes: failureResponseBytes } : {}),
       ...(failureResponsePayload ? { responsePayload: failureResponsePayload } : {}),
       success: false,
-      failureKind: jevFailureKind(error, request.signal, deadline.signal),
+      failureKind,
     });
-    throw error;
+    // The caller gets the error it would have got anyway, now carrying the name
+    // this frame computed: it is the only one holding the deadline signal.
+    throw nameJevFailure(error, failureKind);
   } finally {
     clearTimeout(deadlineTimer);
   }
+}
+
+/**
+ * The name `askJev` computed for a failure, carried on the error it threw.
+ *
+ * Not enumerable and keyed by a symbol, so it neither appears in a serialized
+ * error nor collides with a provider's own fields.
+ */
+const JEV_FAILURE_KIND = Symbol.for("rally.jev.failureKind");
+
+/**
+ * Name a failure at the point that knows what it was.
+ *
+ * `askJev` rethrows the error it caught rather than a wrapper — a caller with a
+ * `ZodError` in hand can read its issues, and a cascade distinguishes a caller's
+ * abort from a provider's — but only `askJev` holds the deadline signal and the
+ * schema's diagnostic code, so only `askJev` can name those two. Naming them
+ * there and reading the name back here is what keeps the vocabulary in one
+ * place: before this, a deadline and a rejected answers schema both reached a
+ * log line as `typesafe_request_failed`, which is the generic code
+ * `CLAUDE.md` calls a defect on a path that had the reason in hand.
+ */
+export function nameJevFailure<E>(error: E, kind: string): E {
+  if (typeof error === "object" && error !== null) {
+    Object.defineProperty(error, JEV_FAILURE_KIND, { value: kind, enumerable: false, configurable: true });
+  }
+  return error;
 }
 
 /**
@@ -230,7 +260,11 @@ export async function askJev<Answers>(request: JevRequest<Answers>): Promise<Jev
  *
  * Order matters: a caller's cancellation is reported as cancellation even when
  * the deadline fired in the same tick, because a cascade must not treat a
- * caller going away as permission to spend a second provider call.
+ * caller going away as permission to spend a second provider call. After that
+ * comes the name `askJev` attached, which is the only one that can distinguish
+ * a deadline or a rejected answers schema from an unclassified transport fault;
+ * the signal arguments stay because a caller that holds them is still entitled
+ * to ask without an error in hand.
  */
 export function jevFailureKind(
   error: unknown,
@@ -238,6 +272,10 @@ export function jevFailureKind(
   deadlineSignal?: AbortSignal,
 ): string {
   if (callerSignal?.aborted) return "typesafe_request_aborted";
+  const named = typeof error === "object" && error !== null
+    ? (error as Record<symbol, unknown>)[JEV_FAILURE_KIND]
+    : undefined;
+  if (typeof named === "string") return named;
   if (deadlineSignal?.aborted) return "typesafe_request_timed_out";
   if (error instanceof JevRequestFailed) return error.kind;
   return "typesafe_request_failed";

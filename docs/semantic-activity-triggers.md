@@ -187,8 +187,9 @@ Two numbers, and only one of them is chosen:
   on, so an unwanted fire costs one session that finds nothing to do, while a
   refusal is silent and the member asked to be told. At `0.8` this question would
   have dropped a third of the runs somebody asked for.
-  [`objective.md`](../packages/agent-harness/evals/semantic-trigger/objective.md)
-  carries the full price list;
+  The price list the optimization scored against was a correct decision at +1, a
+  false fire at 0 and a miss at −2, which makes firing the better bet whenever a
+  calibrated probability of a match exceeds 1/4;
   [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)
   is why the number waited for a measurement instead of a guess.
 - **`SEMANTIC_TRIGGER_JEV_TIMEOUT_MS` is one second**, three times the measured
@@ -253,14 +254,16 @@ is the fix, and the test named above is what will say so.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/semantic-trigger-gate.test.ts` | The object, against real workerd: a gated event refused with no verdict and with a refusing one, admitted with a met one, and a deterministic trigger left ungated. Its D1 starts with no schema, so the three tables creating a Sidekick writes through are declared in `beforeEach`, and the Sidekick's email address is reserved up front because minting one needs a signing key this Worker does not configure. It uses Ashby because the test Worker's connector registry has it and applying an event trigger validates against the registry. |
+| `apps/api/test-workers/semantic-trigger-gate.test.ts` | The object, against real workerd: a gated event refused with no verdict, with a refusing one and with an incoherent one, admitted with a met one, refused when a gated Sidekick's condition cannot be resolved for the event, refused when its condition was replaced after the plan was read, and a deterministic trigger left ungated. Its D1 starts with no schema, so the three tables creating a Sidekick writes through are declared in `beforeEach`, and the Sidekick's email address is reserved up front because minting one needs a signing key this Worker does not configure. It uses Ashby because the test Worker's connector registry has it and applying an event trigger validates against the registry. |
 | `apps/api/test/semantic-trigger-admission.test.ts` | The delivery's order: a refusing plan costs no model call, an ungated one carries no verdict, a gated one reaches the object with the verdict the classifier produced. |
-| `packages/agent-harness/src/jev/jev.test.ts` | The primitives and the classifier over a stubbed provider: the request bytes, the failure vocabulary, deadline versus cancellation, every cascade transition, the threshold's equality semantics, and that event text cannot reach the question. It also pins the key order of the addressing request, because the bytes an ablation compared are part of what the recorded baseline means. |
+| `packages/agent-harness/src/jev/jev.test.ts` | The primitives and the classifier over a stubbed provider: the request bytes, the failure vocabulary including one case per way of not getting an answer, deadline versus cancellation, every cascade transition, the threshold's equality semantics, that an outage on one OR branch outranks a later branch's clean refusal, and that event text cannot reach the question. It also pins the key order of the addressing request, because the bytes an ablation compared are part of what the recorded baseline means. |
 
-Both integration tests were checked against the break they exist to catch: the
-object's by removing the verdict enforcement from `admitExternalEvent`, which
-fails the two refusal cases, and the delivery's by treating a `judge` plan as an
-`admit`, which fails the three gated cases.
+Each was checked against the break it exists to catch: the object's by removing
+the verdict enforcement from `admitExternalEvent`, which fails the refusal cases;
+the delivery's by treating a `judge` plan as an `admit`, which fails the three
+gated cases; the stale-condition case by moving the semantic check above the
+activation-boundary check, which admits on the superseded verdict; and the OR
+aggregation by taking the last refusal rather than the first outage.
 
 ## Open questions
 
@@ -277,9 +280,13 @@ fails the two refusal cases, and the delivery's by treating a `judge` plan as an
   imagined. What replaces it is a corpus of (event, condition, adjudicated
   verdict) triples assembled from retained connector events — bodies are kept for
   396 days — and conditions of the shape the authoring agent writes.
-  [`evals/semantic-trigger/README.md`](../packages/agent-harness/evals/semantic-trigger/README.md)
-  records what the synthetic corpus can and cannot prove, and the first authorized
-  export may well move the criteria.
+  The first authorized export may well move the criteria.
+- **The optimization is not reproducible from this repository.** The harness, the
+  corpus, the candidate contracts and the per-run reports are not committed, so
+  the numbers below are a record of a measurement that was made rather than one a
+  later change can re-run and compare against. A change that rewrites the question
+  or moves the threshold is therefore working without the comparison this one had,
+  and rebuilding the harness is the first thing such a change should cost.
 - **Whether `condition_not_judgeable` should reach its author.** It means the
   condition cannot be settled by an event of that kind, which is an authoring
   defect rather than a run that should not start. Today it is a refusal and a log
@@ -310,8 +317,10 @@ started with and scores 0.813 in band utility on the held-out split against 0.70
 is subtraction: an empty `decision` string, no include list on `condition_met`,
 one include on `condition_not_met` instead of three, and an assertive
 `condition_not_judgeable` that every other compact candidate had quietly dropped.
-`SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD` is `0.5`, from the swept curve, and
-`shipped.test.ts` now pins the number as well as the prose.
+`SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD` is `0.5`, from the swept curve. Nothing in
+the tree pins either of them to what was measured: the harness that produced the
+comparison is not committed, so the question and the number are now ordinary code
+that a future edit can change without a test objecting.
 
 **Why:** the condition was required by the draft schema, stored on the accepted
 revision, and returned verbatim by the desktop client as the trigger's one-line
