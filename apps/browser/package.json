@@ -15,7 +15,12 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "catalog:",
-    "@rally/ui": "workspace:*"
+    "@rally/ui": "workspace:*",
+    "@radix-ui/react-dropdown-menu": "latest",
+    "@radix-ui/react-tooltip": "latest",
+    "@tanstack/react-query": "latest",
+    "react-router-dom": "latest",
+    "lucide-react": "latest"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",

@@ -231,12 +231,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     </div>;
   }
 
+  if (checking && !session && !proof) return <main className="entry" aria-busy="true"><p role="status">Opening Rally…</p></main>;
+
   return <main className="entry"><a className="wordmark" href="/">Rally</a>
     <section className="entry-card" aria-busy={busy || checking}>
       {session ? <>
         <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1><p>Signed in as {session.user.email}</p>
         {accepted ? <nav aria-label="Shared conversations">{accepted.targets.map((target, index) =>
-          <a className="workspace-link" key={index} href={invitationTargetPath(location.origin, region, target)}>{target.kind === "workstream" ? "Open work stream" : target.substreamId === "0" ? "Open main conversation" : `Open shared substream${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
+          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target)}>{target.kind === "workstream" ? "Open work stream" : target.substreamId === "0" ? "Open main conversation" : `Open shared substream${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
           : invitation ? <><p>Accept this invitation using the email address it was sent to.</p><button disabled={busy} onClick={() => { void acceptInvitation(); }}>{busy ? "Joining…" : "Accept invitation"}</button></>
           : workspaces.length ? <nav aria-label="Workspaces">{workspaces.map((workspace) =>
           <a className="workspace-link" key={workspace.id} href={`/app/workspaces/${region}/${workspace.id}`}>{workspace.name}<span aria-hidden="true">→</span></a>)}</nav>
@@ -246,14 +248,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
         <p>{proof ? "Continue to your shared conversations." : challenge ? `Enter the code sent to ${email}, or open the sign-in link in that email.` : invitation ? "Sign in with the email address that received this invitation." : "Sign in to collaborate with your team."}</p>
         <form onSubmit={(event) => { void submit(event); }}>
-          {!proof && (challenge ? <label>Sign-in code<input autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></label>
-            : <label>Email<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>)}
+          {!proof && (challenge ? <label>Sign-in code<input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></label>
+            : <label>Email<input key="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>)}
           <button disabled={busy || checking} type="submit">{busy ? "Please wait…" : proof || challenge ? "Continue" : "Email me a sign-in link"}</button>
           {challenge && <button className="secondary" type="button" disabled={busy} onClick={() => { issuance.current = null; setChallenge(null); setCode(""); setError(null); }}>Use another email or request a new code</button>}
         </form>
       </>}
       {error && <p className="error" role="alert">{error}</p>}
-      <noscript>JavaScript is required to sign in and collaborate.</noscript>
     </section>
   </main>;
 }

@@ -15,13 +15,17 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Validated invitation fragments and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
-| `apps/desktop/src/renderer/screens/browser-conversation.tsx` | Browser router and providers for the shared feed; no desktop background socket pool. |
+| `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context and optional setup capabilities. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
 | `apps/browser/test/host.test.ts` | Real workerd host and service-binding transport tests. |
+
+The browser shell lives in the browser package and declares its own UI dependencies.
+Both hosts reuse application recovery and query defaults. Initial session restoration
+shows a loading state before offering sign-in.
 
 ## How it works
 
@@ -50,6 +54,10 @@ verification and source-object admission; the web Worker returns its upgrade
 response directly and never accepts a socket or handles a frame.
 The [regional browser adapter](browser-sessions.md) owns authentication and
 Origin validation; the host has no signing key or identity database.
+
+The site’s workspace-invitation `/invite` link and this host’s scoped `/invite` link
+are separate entry points with different proof formats. Scoped invitation email
+links use `BROWSER_APP_ORIGIN`; workspace invitations retain the existing site flow.
 
 An email request carries a client operation ID. A failed issuance can retry that
 ID; choosing another email or requesting another code starts a new operation.

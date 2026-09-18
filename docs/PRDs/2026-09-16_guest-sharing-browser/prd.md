@@ -88,3 +88,11 @@ invitations, sessions and socket tickets have separate lifecycles.
   persistent local loading. Browser invalidation reuses `automations` sync.
 - Rollout flag choice and numeric email-challenge expiry/attempt/resend policy
   have been requested from the user. No numeric policy is invented here.
+
+## Rollout
+
+Implementation review and production enablement are separate. Email entry remains
+unavailable without explicit policy and origin configuration. Production hostname,
+sender, issuance/resend policy and external delivery checks are outstanding; see
+[release follow-through](implementation.md). No rollout flag decision has been
+recorded, so this PR does not claim production enablement approval.

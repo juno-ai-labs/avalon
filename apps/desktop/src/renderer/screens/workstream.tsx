@@ -1,3 +1,4 @@
+import { ShareConversationButton } from "../components/scope-sharing-panel";
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 
 import { useEffect, useRef, useState } from 'react';
@@ -473,6 +474,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       )}
       renderHeader={(context) => (
         <WorkstreamHeader
+          actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id}
+            parentId={id} substreamId={selectedSubstreamId} /> : null}
           currentUserId={session?.user.id ?? null}
           grokBotMode
           substreamId={selectedSubstreamId}

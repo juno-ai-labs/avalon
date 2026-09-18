@@ -1,5 +1,5 @@
 import { Share2 } from 'lucide-react';
-import { IconButton } from '@rally/ui/components/primitives';
+import { Button } from '@rally/ui/components/primitives';
 import { useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
@@ -77,7 +77,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
   return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={options.isPending || loadingInvitations || loadingGrants}>
     <form onSubmit={(event) => { event.preventDefault(); setNotice(null); invite.mutate(); }}>
       <h3>Invite by email</h3>
-      <label>Email addresses<textarea aria-label="Email addresses" value={emails} disabled={pending}
+      <label className="form-field">Email addresses<textarea aria-label="Email addresses" value={emails} disabled={pending}
         onChange={(event) => setEmails(event.target.value)} placeholder="person@example.com" rows={2} /></label>
       <fieldset disabled={pending || options.isPending}>
         <legend>Access</legend>
@@ -93,43 +93,43 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
           {scope.title}
         </label>)}
       </fieldset>
-      {options.isError ? <p role="alert">Unable to load sharing options. <button type="button" onClick={() => { void options.refetch(); }}>Retry</button></p> : null}
+      {options.isError ? <p role="alert">Unable to load sharing options. <Button type="button" onClick={() => { void options.refetch(); }}>Retry</Button></p> : null}
       {options.data?.scopes.length === 0 ? <p>You do not have sharing access here.</p> : null}
       <p>{completeWorkstream ? 'Includes every existing substream and its resources. Future restricted substreams need their own share.'
-        : 'Shares the selected conversations and their resources. Main and inheriting substreams excludes restricted substreams unless selected separately.'}</p>
-      <button type="submit" className="button button-primary" disabled={pending || !emails.trim() || !targets.length || !options.data?.scopes.length}>{invite.isPending ? 'Inviting…' : 'Send invitations'}</button>
+        : 'Shares the selected conversations and their resources. Sharing Main does not include private substreams unless selected separately.'}</p>
+      <Button type="submit" className="button-primary" disabled={pending || !emails.trim() || !targets.length || !options.data?.scopes.length}>{invite.isPending ? 'Inviting…' : 'Send invitations'}</Button>
     </form>
     {notice ? <p role="status">{notice}</p> : null}
     {invite.error || revoke.error || removeGrant.error ? <InlineError>{invite.error?.message ?? revoke.error?.message ?? removeGrant.error?.message}</InlineError> : null}
     <h3>Invitations</h3>
     {loadingInvitations && <p role="status">Loading invitations…</p>}
-    {!loadingInvitations && invitationQueries.every((query) => query.isSuccess && query.data.status === 'ready') && invitations.length === 0 && <p>No invitations for the selected scopes.</p>}
-    {invitationQueries.some((query) => query.isError) ? <p role="alert">Unable to load invitations. <button type="button" onClick={() => { void refresh(); }}>Retry</button></p> : null}
+    {!loadingInvitations && invitationQueries.every((query) => query.isSuccess && query.data.status === 'ready') && invitations.length === 0 && <p>No invitations for the selected conversations.</p>}
+    {invitationQueries.some((query) => query.isError) ? <p role="alert">Unable to load invitations. <Button type="button" onClick={() => { void refresh(); }}>Retry</Button></p> : null}
     {invitations.length > 0 ? <ul aria-label="Invitations">
       {invitations.map((invitation) => <li key={invitation.id}>
         <span>{invitation.email} — {invitation.status === 'pending' && invitation.expiresAt !== null && invitation.expiresAt <= Date.now() ? 'expired' : invitation.status}</span>
-        {invitation.status === 'pending' ? <button type="button" disabled={pending} aria-label={`Revoke invitation for ${invitation.email}`} onClick={() => revoke.mutate(invitation)}>Revoke</button> : null}
+        {invitation.status === 'pending' ? <Button type="button" disabled={pending} aria-label={`Revoke invitation for ${invitation.email}`} onClick={() => revoke.mutate(invitation)}>Revoke</Button> : null}
       </li>)}
     </ul> : null}
-    <h3>Direct shares in selected scopes</h3>
+    <h3>Direct shares in selected conversations</h3>
     <p>Removing one share leaves access from other shares intact.</p>
     {loadingGrants && <p role="status">Loading direct shares…</p>}
-    {!loadingGrants && grantQueries.every((query) => query.isSuccess && query.data.status === 'ready') && grants.length === 0 && <p>No direct shares for the selected scopes.</p>}
+    {!loadingGrants && grantQueries.every((query) => query.isSuccess && query.data.status === 'ready') && grants.length === 0 && <p>No direct shares for the selected conversations.</p>}
     {grantQueries.some((query) => query.isError) ? <p role="alert">Unable to load direct shares.</p> : null}
-    <button type="button" disabled={pending || refreshing} onClick={() => { void refresh(); }}>Refresh shares</button>
+    <Button type="button" disabled={pending || refreshing} onClick={() => { void refresh(); }}>Refresh shares</Button>
     {grants.length > 0 ? <ul aria-label="Direct shares">{grants.map((entry) => {
-      const label = options.data?.scopes.find((scope) => scopeKey(scope.target) === scopeKey(entry.grant.target))?.title ?? 'Selected scope';
+      const label = options.data?.scopes.find((scope) => scopeKey(scope.target) === scopeKey(entry.grant.target))?.title ?? 'Selected conversation';
       const person = entry.name ?? entry.email ?? 'Former member';
       return <li key={entry.grant.id}><span>{person}{entry.email && entry.email !== person ? ` (${entry.email})` : ''} — {label}</span>
-        <button type="button" disabled={pending} aria-label={`Remove ${entry.email ?? person} from ${label}`}
-          onClick={() => removeGrant.mutate(entry.grant)}>Remove share</button></li>;
+        <Button type="button" disabled={pending} aria-label={`Remove ${entry.email ?? person} from ${label}`}
+          onClick={() => removeGrant.mutate(entry.grant)}>Remove share</Button></li>;
     })}</ul> : null}
   </section>;
 }
 
 export function ShareConversationButton(props: Parameters<typeof ScopeSharingPanel>[0]): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  return <><IconButton label="Share conversation" onClick={() => setOpen(true)}><Share2 size={16} /></IconButton>
+  return <><Button aria-label="Share conversation" onClick={() => setOpen(true)}><Share2 aria-hidden="true" size={16} />Share</Button>
     <Modal open={open} onOpenChange={setOpen} title="Share conversation" description="Invite people to collaborate using their email address.">
       {open ? <ScopeSharingPanel {...props} /> : null}
     </Modal></>;
