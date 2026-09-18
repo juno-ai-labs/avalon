@@ -37,6 +37,8 @@ import {
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { runtimeDeferral } from "../lib/defer";
+import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger-admission";
 import type { AuthContext } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -313,12 +315,21 @@ async function consumeOne(message: Message<unknown>, env: Env,
           input.workspaceId,
           automationDOName(input.region, input.workspaceId, asAutomationId(input.destination.automationId)),
         );
-        const result = await automation.admitExternalEvent({
+        // A `semantic_activity` trigger's written condition is tested here,
+        // between the object's plan and its admission: it is the only trigger
+        // type whose gate is a sentence, and the classifier that judges it
+        // belongs in a Worker rather than inside the object.
+        const result = await admitExternalEventWithSemanticGate(env, {
+          sidekick: automation,
           workspaceId: input.workspaceId,
-          automationId: input.destination.automationId,
-          registrationId: input.registrationId,
-          event: input.event,
-          payloadHash: input.payloadHash,
+          defer: runtimeDeferral,
+          admission: {
+            workspaceId: input.workspaceId,
+            automationId: input.destination.automationId,
+            registrationId: input.registrationId,
+            event: input.event,
+            payloadHash: input.payloadHash,
+          },
         });
         logInfo(env, "external_event_delivery_terminal", {
           workspace_id: input.workspaceId,
@@ -328,6 +339,11 @@ async function consumeOne(message: Message<unknown>, env: Env,
           automation_id: input.destination.automationId,
           outcome: result.admitted ? "admitted" : "refused",
           reason: result.outcomeCode,
+          semantic_gate_code: result.gate?.code,
+          semantic_gate_confidence: result.gate?.confidence,
+          semantic_gate_model: result.gate?.model,
+          semantic_gate_failure_kind: result.gate?.failureKind,
+          semantic_condition_count: result.gate?.conditionCount,
         });
       } else {
         const substream = await durableObjectStubForWorkspace(

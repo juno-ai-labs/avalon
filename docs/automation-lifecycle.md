@@ -426,6 +426,19 @@ for a watched work-stream resource share one candidate index; a watched work
 stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
 
+**A `semantic_activity` trigger's `condition` is tested after the predicate, not
+by it.** The predicate above is the only runtime matcher and takes no semantic
+test; a registration carries `when` and nothing else, and the projection is built
+from `evaluator_rules_json` alone. So a ready `semantic_activity` trigger is
+*matched* on exactly what a `connector_activity` trigger is: the evaluator rules
+joined to it by `sourceBindingKey`. Its written condition is judged one step
+later, in the delivery, and `admitExternalEvent` refuses a gated event whose
+verdict does not admit or is missing — outcome codes `sidekick_semantic_*`. The
+join from an arriving event to the conditions that gate it is
+`deterministicPrefilter.eventType`, which is also the only thing that field is
+read for. [`semantic-activity-triggers.md`](semantic-activity-triggers.md) owns
+that mechanism, its confidence threshold and its failure modes.
+
 An evaluator rule is one AND group: `when` is `{kind: "always"}` or
 `{kind: "matching", allOf: [leaf, ...]}` over the manifest's declared attributes.
 Unknown keys, operators, attributes, plugin/event pairs, duplicate ids, empty
