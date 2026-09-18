@@ -39,7 +39,9 @@ Development delivery is skipped by the existing shared email sender.
 Authenticated GET `/auth/workspaces` lists active relationships in the current
 deployment. POST `/auth/workspace/select` validates the selected relationship and
 issues a workspace session. These routes use immutable user identity without a
-Google subject. Guest sessions carry `accessClass: "guest"` and a null role;
+Google subject. A Google-verified primary mailbox links to an existing verified email identity, preserving
+its user ID, platform ID, sessions and grants. An unverified profile email is never
+linking evidence. Guest sessions carry `accessClass: "guest"` and a null role;
 legacy member sessions can omit `accessClass`. Promotion keeps the user and
 session incarnation, and refresh returns the current member role. General
 member-only discovery and setup routes remain unavailable to guests; shared

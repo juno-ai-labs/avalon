@@ -38,7 +38,7 @@ only after verifying source existence, participant authority and archive state,
 then transfers the roster normally. It never fabricates Main from a directory
 row or workspace-public visibility.
 Creation rechecks current relationships and grants after preparation, so the
-preparation check is never the final sharing authorization. A conflicting
+preparation check is never the final sharing authorization. Inactive relationships and non-shareable or archived targets report access denial. A conflicting
 handoff reports `migration_pending` instead of writing grants ahead of import.
 Workspace-public reading alone is insufficient even to start preparation.
 

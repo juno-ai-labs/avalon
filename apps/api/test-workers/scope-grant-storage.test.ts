@@ -51,7 +51,7 @@ describe("workstream scope grants in real workerd", () => {
       expect(removed.status).toBe("committed");
       expect(store.mutateCurrent(add)).toEqual(added);
       expect(store.read(userId,add.target)).toMatchObject({ active:false });
-      expect(() => store.mutateCurrent({ ...add,active:false })).toThrow("scope_grant_operation_reused");
+      expect(store.mutateCurrent({ ...add,active:false })).toMatchObject({ status: "conflict" });
       expect(deliveries(state)).toHaveLength(2);
     });
   });
@@ -184,7 +184,7 @@ describe("workstream scope grants in real workerd", () => {
       if (result.status !== "committed") throw new Error("Expected tombstone");
       const stale = command();
       expect(store.mutate(stale)).toEqual({ status: "conflict", current: result.grant });
-      expect(() => store.mutate({ ...revoke, active: true })).toThrow("scope_grant_operation_reused");
+      expect(store.mutate({ ...revoke, active: true })).toMatchObject({ status: "conflict" });
       expect(deliveries(state)).toHaveLength(1);
       const reactivate = store.mutate(command({ expectedRevision: result.grant.revision }));
       expect(reactivate.status).toBe("committed");

@@ -149,14 +149,14 @@ export class ScopeGrantStorage {
   }
 
   /** Preserve the existing product rule that a scope retains a participant. */
-  hasParticipantAfterRemoval(userId: UserId, target: ScopeGrantTarget): boolean {
+  hasParticipantAfterRemoval(userId: UserId, target: ScopeGrantTarget, activeIncarnations: Record<string, string>): boolean {
     if (!this.read(userId,target)?.active) return true;
     const inherits = target.kind === "conversation" && (target.substreamId === "0" ||
       this.storage.sql.exec<{ audience: string }>("SELECT audience FROM conversation_children WHERE substream_id=?",target.substreamId)
         .toArray()[0]?.audience === "inherits_workstream");
     return this.storage.sql.exec<{ grant_json: string }>("SELECT grant_json FROM scope_grants").toArray().some((row) => {
       const grant = ScopeGrantSchema.parse(JSON.parse(row.grant_json));
-      if (!grant.active) return false;
+      if (!grant.active || grant.membershipIncarnation !== activeIncarnations[grant.userId]) return false;
       if (grant.userId === userId && grant.target.kind === target.kind
         && (grant.target.kind === "workstream" || (target.kind === "conversation" && grant.target.substreamId === target.substreamId))) return false;
       if (target.kind === "workstream") return grant.target.kind === "workstream";
@@ -284,7 +284,7 @@ export class ScopeGrantStorage {
         `SELECT request_json, result_json FROM scope_grant_operations WHERE operation_id = ?`, request.operationId,
       ).toArray()[0];
       if (receipt) {
-        if (receipt.request_json !== requestJson) throw new Error("scope_grant_operation_reused");
+        if (receipt.request_json !== requestJson) return { status: "conflict", current: this.read(request.userId, request.target) };
         return ScopeGrantMutationResultSchema.parse(JSON.parse(receipt.result_json));
       }
       const current = this.read(request.userId, request.target);

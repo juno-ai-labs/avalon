@@ -1,3 +1,4 @@
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { logWarn } from "../observability/logger";
 import { z } from "zod";
 import { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "@rally/contracts/browser-session";
@@ -32,7 +33,13 @@ export function configuredEmailLoginPolicy(env: Env): EmailLoginPolicy {
     const origin = new URL(env.BROWSER_APP_ORIGIN);
     if (origin.origin !== env.BROWSER_APP_ORIGIN || (origin.protocol !== "https:" && env.APP_ENV !== "development")) throw new Error("origin");
     return EmailLoginPolicySchema.parse(JSON.parse(env.EMAIL_LOGIN_POLICY_JSON));
-  } catch { throw new ApiError(503,"email_login_unavailable","Email sign-in is not configured"); }
+  } catch (error) {
+    logWarn(env, "email_login_configuration_invalid", {
+      reason: error instanceof z.ZodError ? describeZodIssues(error)
+        : error instanceof SyntaxError ? "EMAIL_LOGIN_POLICY_JSON:invalid_json" : "required_configuration_missing_or_invalid",
+    });
+    throw new ApiError(503,"email_login_unavailable","Email sign-in is not configured");
+  }
 }
 
 function otpCode(digits: number): string {

@@ -25,8 +25,7 @@ The lite browser host forwards same-origin ticketed upgrades through a configure
 regional API service binding. It returns the source upgrade directly, without
 accepting a socket or relaying frames. The shared API client maps browser ticket
 URLs to that route and preserves the ticket subprotocol. This implements the
-transport boundary; the browser's visible-surface subscription owners are still
-under construction. See [browser-client.md](browser-client.md).
+transport boundary; the browser opens a standalone feed for the visible conversation. See [browser-client.md](browser-client.md).
 
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
@@ -554,8 +553,7 @@ browser on another origin. Transport forwarding is tested in real workerd; the
 browser now mounts standalone conversation feeds without the desktop pool. The
 direct feed fallback does not acquire a parent control socket; a native pool
 continues to own its control/feed pair. A real browser check confirms child-only
-links request no Main, parent-control or workspace socket. Successful feed and
-mutation lifecycle acceptance remains unfinished.
+links request no Main, parent-control or workspace socket. Chrome acceptance covers feed and mutation lifecycle behavior. Production enablement remains a separate release task.
 
 ### 2026-09-16 — Migrated Main and child feeds share the grant revision fence
 

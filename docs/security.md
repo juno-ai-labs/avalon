@@ -296,7 +296,7 @@ mutations require the exact configured Origin. Workspace selection addresses a
 separate incarnation-bound session per workspace, so tabs cannot switch each
 other's authority. The HTTP adapter mints a request-local bearer internally and
 never exposes desktop session tokens in browser JSON. The same-origin browser
-host and client are still being implemented.
+host serves the lite client with shared collaboration components and ticketed sockets.
 
 Google identity OAuth uses state and PKCE. The desktop starts it with POST, then
 opens only the provider URL containing opaque state. Every identity and connector

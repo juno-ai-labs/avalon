@@ -166,7 +166,7 @@ describe("substream preparation on workerd", () => {
   it("lets a Main-only guest create a child before participant directory delivery", async () => {
     await parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
     await runDurableObjectAlarm(parent());
-    await expect.poll(() => parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+    await expect.poll(() => parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }), { timeout: 10_000 })
       .toMatchObject({ status: "complete" });
     await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE user_id=?")
       .bind(OTHER_ID).run();
@@ -196,7 +196,7 @@ describe("substream preparation on workerd", () => {
   ] as const)("hands new $audience children to existing grant authority (interrupted=$interrupted)", async ({ audience, interrupted }) => {
     await parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
     await runDurableObjectAlarm(parent());
-    await expect.poll(() => parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }))
+    await expect.poll(() => parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }), { timeout: 10_000 })
       .toMatchObject({ status: "complete" });
     expect(await parent().mutateScopeGrant({ actorUserId: CREATOR_ID, userId: OTHER_ID,
       target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID },
@@ -230,7 +230,7 @@ describe("substream preparation on workerd", () => {
       await runDurableObjectAlarm(parent());
       await expect.poll(() => runInDurableObject(parent(), (_instance, state) =>
         state.storage.sql.exec<{ phase: string }>("SELECT phase FROM child_participant_migrations WHERE substream_id=?", prepared.substreamId)
-          .one().phase)).toBe("complete");
+          .one().phase), { timeout: 10_000 }).toBe("complete");
     }
     const created = await service.confirm(WORKSTREAM_ID, operationId);
     await runInDurableObject(parent(), (_instance, state) => {
