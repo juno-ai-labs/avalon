@@ -278,9 +278,8 @@ comments; other designs were not changed.
 The [overview](https://www.canva.dev/docs/mcp/) continues to direct partners to
 apply for redirect allowlisting, and recommends CIMD while retaining DCR. Local
 Inspector success is not production approval. The application was submitted on
-2026-09-18; approval is pending. The proposed Global and EU callback paths are
-recorded in the PRD;
-they are not implemented or approved. Rally is pre-launch with zero active
+2026-09-18; approval is pending. The proposed callback is recorded in
+the PRD; it is not implemented or approved. Rally is pre-launch with zero active
 users. The submitted forecast is 1,000–10,000 aggregate MCP tool calls per month
 across all users and workspaces, including a launch buffer, not a measured
 demand figure, per-user quota or contractual promise.
