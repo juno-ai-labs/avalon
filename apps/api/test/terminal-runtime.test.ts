@@ -14,6 +14,7 @@ import type {
 import {
   DAYTONA_REQUEST_TIMEOUT_MS,
   type TerminalSandboxProvider,
+  type TerminalSandboxState,
 } from "../src/services/terminal/daytona-provider";
 import { sha256Hex } from "../src/lib/crypto";
 import {
@@ -123,7 +124,7 @@ function fixture(
     executionPrincipalJson: JSON.stringify({ type: "user", userId: U }),
     createdAt: Date.parse("2026-08-13") });
   seedToolReceipt(objectStore, {
-    id: I, runId: R, toolCallId: 'call-runtime', toolName: 'terminal_run_command',
+    id: I, runId: R, toolCallId: 'call-runtime', toolName: 'run_command',
   });
   const files = new Map<string, Uint8Array>();
   files.set("/workspace/src/file.txt", new TextEncoder().encode("hello\n"));
@@ -142,11 +143,22 @@ function fixture(
         (_error, stage) => { probeFailures.push(stage); },
       )
     : undefined;
+  // Acquisition reads the provider's state back rather than trusting the row,
+  // so a double that always answered "running" would hide a stop this runtime
+  // performs itself — command fencing stops the sandbox and the next
+  // acquisition is what starts it again.
+  const sandboxState = { current: "running" as TerminalSandboxState };
   const provider: TerminalSandboxProvider = {
-    createSandbox: vi.fn(async (input) => ({ id: "sandbox-runtime", name: input.stableName, state: "running" as const, domainAllowList: input.domainAllowList })),
-    getSandbox: vi.fn(async (name) => ({ id: "sandbox-runtime", name, state: "running" as const, domainAllowList: [] })),
-    startSandbox: vi.fn(async () => undefined), stopSandbox: vi.fn(async () => undefined),
-    archiveSandbox: vi.fn(async () => undefined), deleteSandbox: vi.fn(async () => undefined),
+    createSandbox: vi.fn(async (input) => {
+      sandboxState.current = "running";
+      return { id: "sandbox-runtime", name: input.stableName, state: "running" as const, domainAllowList: input.domainAllowList };
+    }),
+    getSandbox: vi.fn(async (name) => ({ id: "sandbox-runtime", name, state: sandboxState.current, domainAllowList: [] })),
+    recoverSandbox: vi.fn(async () => undefined),
+    startSandbox: vi.fn(async () => { sandboxState.current = "running"; }),
+    stopSandbox: vi.fn(async () => { sandboxState.current = "stopped"; }),
+    archiveSandbox: vi.fn(async () => { sandboxState.current = "archived"; }),
+    deleteSandbox: vi.fn(async () => { sandboxState.current = "expired"; }),
     updateNetworkPolicy: vi.fn(async () => undefined),
     configureGitHubReadAccess: vi.fn(async () => undefined), clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(async (_id, path) => files.get(path) ?? new Uint8Array()),
@@ -302,7 +314,7 @@ function fixture(
     false,
     acquisitionObserved,
   );
-  return { database, objectStore, files, provider, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
+  return { database, objectStore, files, provider, sandboxState, resources, publisher, coordinator, ledger, probeRoot, probeFailures, instructions, runtime: createDaytonaTerminalRuntime(
     testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox,
     () => clock.now().getTime(), instructions) };
 }
@@ -334,6 +346,21 @@ describe("Daytona Terminal runtime", () => {
     await runtime.readFile(context, "src/file.txt");
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/src/file.txt");
+  });
+
+  it.each([400, 404])("uses the real file read on a healthy sandbox and retains it after HTTP %s", async (status) => {
+    const { provider, runtime, objectStore } = fixture();
+    const unavailable = Object.assign(new Error("file endpoint unavailable"), { status });
+    vi.mocked(provider.readFile).mockRejectedValueOnce(unavailable);
+    await expect(runtime.readFile(context, "src/file.txt")).rejects.toMatchObject({ code: "file_read_failed" });
+    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/src/file.txt");
+    expect(vi.mocked(provider.runUtilityCommand).mock.calls.some(([, input]) => input.operation === "sandbox.readiness")).toBe(false);
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(provider.startSandbox).not.toHaveBeenCalled();
+    await expect(runtime.readFile(context, "src/file.txt")).resolves.toEqual(new TextEncoder().encode("hello\n"));
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1, sandbox_id: "sandbox-runtime" });
   });
 
   it("reads a bounded text page inside the sandbox without downloading the file", async () => {
@@ -708,7 +735,7 @@ describe("Daytona Terminal runtime", () => {
 
   it("stops a retained accepted command before a linked run uses the sandbox", async () => {
     const clockNow = Date.now();
-    const { objectStore, provider, runtime } = fixture({ now: () => new Date(clockNow) });
+    const { objectStore, provider, runtime, sandboxState } = fixture({ now: () => new Date(clockNow) });
     loseObservationAfterSubmission(provider);
 
     await expect(runtime.runCommand(context, { command: "sleep 3", timeoutMs: 3_000 }))
@@ -736,7 +763,9 @@ describe("Daytona Terminal runtime", () => {
     const linkedContext = { ...context, harnessRunId: R2, toolCallId: "call-linked" };
     let finishStop!: () => void;
     vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => (
-      new Promise<void>((resolve) => { finishStop = resolve; })
+      new Promise<void>((resolve) => {
+        finishStop = () => { sandboxState.current = "stopped"; resolve(); };
+      })
     ));
 
     const firstLinkedRead = runtime.readFile(linkedContext, "src/file.txt");
@@ -763,7 +792,7 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.stopSandbox).toHaveBeenCalledWith("sandbox-runtime");
     expect(provider.cleanupCommand).not.toHaveBeenCalled();
     expect(provider.startSandbox).toHaveBeenCalledWith("sandbox-runtime");
-    expect(provider.readFile).toHaveBeenCalledOnce();
+    expect(provider.readFile).toHaveBeenCalledTimes(2);
     expect(vi.mocked(provider.stopSandbox).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0]!);
     expect(vi.mocked(provider.startSandbox).mock.invocationCallOrder[0])
@@ -811,7 +840,7 @@ describe("Daytona Terminal runtime", () => {
     )).toEqual({ operation_run_id: R });
   });
 
-  it("retires and reprovisions when the retained provider sandbox is already absent", async () => {
+  it.each(["absent", "archived"] as const)("reconciles a stop 404 against the retained sandbox metadata: %s", async (providerState) => {
     const { objectStore, provider, runtime } = fixture();
     vi.mocked(provider.createSandbox).mockImplementation(async (input) => ({
       id: input.generation === 1 ? "sandbox-runtime" : `sandbox-runtime-${input.generation}`,
@@ -835,17 +864,38 @@ describe("Daytona Terminal runtime", () => {
     seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
+    if (providerState === "absent") {
+      vi.mocked(provider.getSandbox).mockRejectedValueOnce(Object.assign(new Error("sandbox missing"), { status: 404 }));
+    } else {
+      vi.mocked(provider.getSandbox).mockResolvedValue({
+        id: "sandbox-runtime", name: "sandbox-runtime", state: "archived", domainAllowList: [],
+      });
+    }
+    if (providerState === "absent") {
+      await expect(runtime.readFile(
+        { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" }, "src/file.txt",
+      )).rejects.toMatchObject({ code: "sandbox_busy" });
+      expect(provider.deleteSandbox).not.toHaveBeenCalled();
+      expect(provider.createSandbox).toHaveBeenCalledOnce();
+      expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
+        .toEqual({ generation: 1, sandbox_id: "sandbox-runtime" });
+      expect(workstreamObjectGet(objectStore, "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?", I))
+        .toEqual({ state: "running" });
+      return;
+    }
+    const expectedId = "sandbox-runtime";
+    const expectedGeneration = 1;
     await expect(runtime.readFile(
       { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" },
       "src/file.txt",
     )).resolves.toEqual(new TextEncoder().encode("hello\n"));
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
-    expect(provider.createSandbox).toHaveBeenCalledTimes(2);
-    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime-2", "/workspace/src/file.txt");
+    expect(provider.createSandbox).toHaveBeenCalledTimes(expectedGeneration);
+    expect(provider.readFile).toHaveBeenCalledWith(expectedId, "/workspace/src/file.txt");
     expect(workstreamObjectGet(
       objectStore,
       "SELECT generation, sandbox_id, operation_run_id FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ generation: 2, sandbox_id: "sandbox-runtime-2", operation_run_id: R2 });
+    )).toEqual({ generation: expectedGeneration, sandbox_id: expectedId, operation_run_id: R2 });
     expect(workstreamObjectGet(
       objectStore,
       "SELECT state FROM terminal_tasks WHERE effect_intent_id = ?",
@@ -855,7 +905,7 @@ describe("Daytona Terminal runtime", () => {
 
   it("keeps an aborted command unsettled until tokenized recovery confirms provider stop", async () => {
     const controller = new AbortController();
-    const { objectStore, provider, runtime } = fixture();
+    const { objectStore, provider, runtime, sandboxState } = fixture();
     vi.mocked(provider.runCommand).mockImplementationOnce(async (_id, input) => {
       await input.onSubmitted?.("provider-command-aborted");
       return new Promise((_resolve, reject) => {
@@ -864,7 +914,7 @@ describe("Daytona Terminal runtime", () => {
     });
     vi.mocked(provider.stopSandbox)
       .mockRejectedValueOnce(new Error("first stop failed"))
-      .mockResolvedValueOnce(undefined);
+      .mockImplementationOnce(async () => { sandboxState.current = "stopped"; });
     const abortedContext = { ...context, signal: controller.signal };
     const command = runtime.runCommand(abortedContext, {
       command: "sleep 100",
@@ -1271,7 +1321,7 @@ describe("Daytona Terminal runtime", () => {
         .toEqual([["AGENTS.md", "root rules\n", "transcript"]]);
       expect(pending[0]!.sourceId).toBe(`AGENTS.md@${await sha256Hex(new TextEncoder().encode("root rules\n"))}`);
       // The probe ran after the read, in its own group, without touching the read's exit status.
-      const command = vi.mocked(provider.runUtilityCommand).mock.calls[0]![1].command;
+      const command = vi.mocked(provider.runUtilityCommand).mock.calls.find(([, input]) => input.operation === "file.read_page")![1].command;
       expect(command).toMatch(/^python3 .*; s=\$\?\n\( set \+e; python3 .*\) \|\| true\nexit \$s$/su);
       await runtime.readFilePage(context, "src/file.txt", 1, 200);
       expect(ledger.allBlocks()).toHaveLength(1);

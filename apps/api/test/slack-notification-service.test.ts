@@ -249,6 +249,8 @@ describe("workspace Slack mention delivery", () => {
     // reader has to decode.
     expect(posted).not.toContain("**Sources**");
     expect(posted).not.toContain("](https://example.com/memo)");
+    expect(posted).not.toContain("\n  1. The memo");
+    expect(posted).toContain("\n1. The memo");
     expect(posted).toContain("The memo — https://example.com/memo");
   });
 

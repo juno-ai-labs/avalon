@@ -1,5 +1,5 @@
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
-import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
 import type { Message } from '../lib/types';
@@ -47,6 +47,8 @@ interface MessageFeedProps {
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
   acceptDraftError?: string | undefined;
+  /** Opts this conversation feed into interactive connector tool cards. */
+  connectorConnectionCards?: boolean;
   /**
    * Windowing, for the surface that pages.
    *
@@ -171,6 +173,7 @@ export function MessageFeed({
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
+  connectorConnectionCards = false,
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
   const feed = useRef<HTMLDivElement>(null);
@@ -207,6 +210,18 @@ export function MessageFeed({
   // clamped system note and a settled run's work accordion — because message
   // ids are unique and the question is the same one.
   const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(new Set());
+  // A virtualized row unmounts when it leaves the window. The first successful
+  // connection observation belongs to the feed, so remounting the historical
+  // card cannot turn it back into a recovery action during this feed session.
+  const [connectedConnectorSelections, setConnectedConnectorSelections] = useState<ReadonlySet<string>>(new Set());
+  const markConnectorConnected = useCallback((selectionKey: string) => {
+    setConnectedConnectorSelections((current) => {
+      if (current.has(selectionKey)) return current;
+      const next = new Set(current);
+      next.add(selectionKey);
+      return next;
+    });
+  }, []);
   const rowDisclosure = useMemo<RowDisclosure>(() => ({
     expanded: expandedRows,
     onToggle: (messageId) => setExpandedRows((current) => {
@@ -239,6 +254,9 @@ export function MessageFeed({
           {...(onAcceptDraft ? { onAcceptDraft } : {})}
           acceptingDraftFor={acceptingDraftFor ?? null}
           acceptDraftError={acceptDraftError}
+          connectorConnectionCards={connectorConnectionCards}
+          connectedConnectorSelections={connectedConnectorSelections}
+          onConnectorConnected={markConnectorConnected}
         />
       )}
     </div>

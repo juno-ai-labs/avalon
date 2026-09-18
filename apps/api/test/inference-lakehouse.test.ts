@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -57,6 +58,9 @@ function fixture() {
       const value = objects.get(key);
       return value === undefined ? null : { text: async () => value };
     },
+    async head(key: string) {
+      return objects.has(key) ? { key } : null;
+    },
     async delete(key: string) {
       objects.delete(key);
     },
@@ -93,6 +97,9 @@ describe("inference lakehouse", () => {
       requestId: "run-1",
       parentRequestId: "parent-1",
       draftId: "draft-1",
+      operationId: "00000000-0000-7000-8000-000000000099",
+      journey: "workstream_create" as const,
+      requestReceivedAt: Date.parse("2026-09-17T20:00:00.000Z"),
     };
     await captureStreamingInferenceRequest(env, context, {
       inferenceRequestId: "stream-request-1",
@@ -107,7 +114,7 @@ describe("inference lakehouse", () => {
         stream: true,
         stream_options: { include_usage: true },
       },
-    });
+    }, Date.parse("2026-09-17T20:00:00.425Z"));
     await captureStreamingInferenceAttempt(env, context, {
       inferenceRequestId: "stream-request-1",
       turnId: "turn-1",
@@ -131,6 +138,18 @@ describe("inference lakehouse", () => {
         usage: { prompt_tokens: 10, completion_tokens: 4 },
         finishReason: "stop",
         generationId: "generation-1",
+      },
+    });
+    const requestRecord = JSON.parse(objects.get(
+      "inference-lakehouse/records/2026-09-17/stream-request-1:request.json",
+    ) ?? "null") as InferenceLakehouseRecord;
+    expect(requestRecord).toMatchObject({
+      metadata: {
+        operationId: context.operationId,
+        journey: "workstream_create",
+        requestReceivedAt: "2026-09-17T20:00:00.000Z",
+        providerRequestIssuedAt: "2026-09-17T20:00:00.425Z",
+        requestToInferenceStartMs: 425,
       },
     });
     await captureStructuredInferenceDiagnostic(env, {
@@ -347,32 +366,32 @@ describe("inference lakehouse", () => {
     });
   });
 
-  it("does not archive EU inference while EU analytics export is deferred", async () => {
+  it("archives inference for another configured deployment", async () => {
     const { env, objects, pointers, delivered } = fixture();
-    env.AVALON_REGION = "eu";
+    env.AVALON_REGION = "enterprise";
 
     await captureStreamingInferenceRequest(env, {
       source: "workstream",
-      workspaceId: "workspace-eu",
-      workstreamId: "workstream-eu",
+      workspaceId: "workspace-enterprise",
+      workstreamId: "workstream-enterprise",
       substreamId: "0",
     }, {
-      inferenceRequestId: "eu-request-1",
-      turnId: "turn-eu",
+      inferenceRequestId: "enterprise-request-1",
+      turnId: "turn-enterprise",
       model: "canonical/model",
       provider: "openrouter",
       providerInvocationModel: "provider/model",
       cursor: { structuredOutputAttempt: 0, stageIndex: 0, candidateIndex: 0, endpointAttempt: 0 },
       payload: {
         model: "provider/model",
-        messages: [{ role: "user", content: "must stay out of analytics storage" }],
+        messages: [{ role: "user", content: "a synthetic inference request" }],
         stream: true,
         stream_options: { include_usage: true },
       },
     });
 
-    expect(objects.size).toBe(0);
-    expect(pointers).toEqual([]);
+    expect(objects.size).toBe(1);
+    expect(pointers).toHaveLength(1);
     expect(delivered).toEqual([]);
   });
 
@@ -433,13 +452,13 @@ describe("inference lakehouse", () => {
       messages: [
         { id: "bad", timestamp: new Date(), body: { nope: true }, attempts: 1, ack, retry },
         {
-          id: "eu",
+          id: "enterprise",
           timestamp: new Date(),
           body: {
             schemaVersion: 1,
-            eventId: "eu-event",
-            region: "eu",
-            objectKey: "inference-lakehouse/records/eu-event.json",
+            eventId: "enterprise-event",
+            region: "enterprise",
+            objectKey: "inference-lakehouse/records/enterprise-event.json",
             payloadSha256: "a".repeat(43),
             payloadBytes: 12,
             capturedAt: "2026-08-24T12:00:00.000Z",

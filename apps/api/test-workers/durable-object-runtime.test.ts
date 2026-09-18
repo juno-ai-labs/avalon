@@ -11,6 +11,7 @@ import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+  WorkspaceWorkstreamPageEventSchema,
 } from "@rally/contracts";
 import {
   conversationEffectHash,
@@ -1137,7 +1138,7 @@ describe("Durable Objects in the Workers runtime", () => {
         // Retired in schema version 3. Version 1 still creates them and always
         // will — its statements are hashed into the migration receipt — so a
         // fresh object proves the drop only by not having them at the end.
-        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist"],
+        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets"],
       },
     ] as const;
 
@@ -1555,6 +1556,18 @@ describe("Durable Objects in the Workers runtime", () => {
       const page = await workspace.listWorkstreams(request);
       expect(page.items[0]?.id).toBe(WORKSTREAM_ID);
       expect(page.items[0]?.lastAccessedAt).not.toBeNull();
+      const socketPagePromise = nextMessageOfType(peer, "workspace_workstream_page");
+      peer.send(JSON.stringify({
+        type: "list_workstreams",
+        requestId: "00000000-0000-7000-8000-000000000418",
+        limit: 20,
+        includeSystem: false,
+      }));
+      const socketPage = WorkspaceWorkstreamPageEventSchema.parse(await socketPagePromise);
+      expect(socketPage.items.map(({ id, scope }) => ({ id, scope }))).toEqual([
+        { id: WORKSTREAM_ID, scope: "workspace" },
+        { id: newerId, scope: "workspace" },
+      ]);
       const legacyPage = await workspace.listWorkstreams({ ...request,
         before: `${Date.parse("2026-08-28T20:00:00.000Z")}:${newerId}` });
       expect(legacyPage.items[0]?.id).toBe(WORKSTREAM_ID);
@@ -1854,14 +1867,14 @@ describe("Durable Objects in the Workers runtime", () => {
     try {
       const delivered = nextMessage(socket);
       await expect(stub.notifyProductFeatureFlagChanged(
-        "meeting-recording-enabled",
+        "suggested-work-enabled",
         WORKSPACE_ID,
         "wnam",
       )).resolves.toBe(1);
       expect(JSON.parse(String((await delivered).data))).toMatchObject({
         type: "workspace_feature_flags",
-        changedFlag: "meeting-recording-enabled",
-        flags: { meetingRecordingEnabled: false },
+        changedFlag: "suggested-work-enabled",
+        flags: { suggestedWorkEnabled: false },
       });
     } finally {
       socket.close(1000, "test complete");
@@ -2531,7 +2544,6 @@ describe("Durable Objects in the Workers runtime", () => {
     const subscriptionId = "00000000-0000-7000-8000-000000000704";
     const workstreamSubscriptionId = "00000000-0000-7000-8000-000000000709";
     const resourceId = "00000000-0000-7000-8000-000000000705";
-    const noteId = "00000000-0000-7000-8000-000000000706";
     await expect(stub.executeRuntimeSql({
       workspaceId: WORKSPACE_ID,
       requestId: "00000000-0000-7000-8000-000000000707",
@@ -2542,14 +2554,6 @@ describe("Durable Objects in the Workers runtime", () => {
             VALUES (?, ?, 'note', 'avalon', 'Standup', '2026-08-21T19:00:00.000Z',
                     '2026-08-21T19:00:00.000Z')`,
           params: [resourceId, WORKSPACE_ID],
-        },
-        {
-          sql: `INSERT INTO notes
-            (id, workspace_id, owner_user_id, resource_id, scope, title,
-             last_activity_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'workspace', 'Standup', '2026-08-21T20:30:00.000Z',
-                    '2026-08-21T19:00:00.000Z', '2026-08-21T20:30:00.000Z')`,
-          params: [noteId, WORKSPACE_ID, USER_ID, resourceId],
         },
       ],
     })).resolves.toMatchObject({ status: 200 });
@@ -2614,12 +2618,12 @@ describe("Durable Objects in the Workers runtime", () => {
           automations: { waterline: number; items: Array<{ id: string; name: string; emailAddress: string | null }> };
           notes: { waterline: number; items: Array<{ id: string; title: string }> };
         };
-        featureFlags: { meetingRecordingEnabled: boolean };
+        featureFlags: { suggestedWorkEnabled: boolean };
       };
 
       expect(event.type).toBe("workspace_sync");
       expect(event.reason).toBe("initial");
-      expect(event.featureFlags).toMatchObject({ meetingRecordingEnabled: false });
+      expect(event.featureFlags).toMatchObject({ suggestedWorkEnabled: false });
       const page = event.sidebar;
       expect(page).toBeDefined();
       expect(page.workstreams.items).toHaveLength(1);
@@ -2635,12 +2639,11 @@ describe("Durable Objects in the Workers runtime", () => {
       // this handler runs on the object's single thread beside the directory
       // read. The REST refresh is what fills it in.
       expect(page.automations.items[0]?.emailAddress).toBeNull();
-      expect(page.notes.items).toHaveLength(1);
-      expect(page.notes.items[0]).toMatchObject({ id: noteId, title: "Standup" });
+      expect(page.notes.items).toEqual([]);
       // The batch carries the same counters the pushes carry, so the client
       // can order the opening list against everything that follows it.
       expect(page.automations.waterline).toBeGreaterThan(0);
-      expect(page.notes.waterline).toBeGreaterThan(0);
+      expect(page.notes.waterline).toBeGreaterThanOrEqual(0);
     } finally {
       socket!.close(1000, "test complete");
     }
@@ -2847,7 +2850,6 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
     const resourceId = "00000000-0000-7000-8000-000000000811";
-    const noteId = "00000000-0000-7000-8000-000000000812";
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -2877,14 +2879,6 @@ describe("Durable Objects in the Workers runtime", () => {
               VALUES (?, ?, 'note', 'avalon', 'Retro', '2026-08-21T19:00:00.000Z',
                       '2026-08-21T19:00:00.000Z')`,
             params: [resourceId, WORKSPACE_ID],
-          },
-          {
-            sql: `INSERT INTO notes
-              (id, workspace_id, owner_user_id, resource_id, scope, title,
-               last_activity_at, created_at, updated_at)
-              VALUES (?, ?, ?, ?, 'workspace', 'Retro', '2026-08-21T20:00:00.000Z',
-                      '2026-08-21T19:00:00.000Z', '2026-08-21T20:00:00.000Z')`,
-            params: [noteId, WORKSPACE_ID, USER_ID, resourceId],
           },
         ],
       })).resolves.toMatchObject({ status: 200 });
@@ -3863,6 +3857,10 @@ describe("Durable Objects in the Workers runtime", () => {
       processingLeaseId: recovered.processingLeaseId,
       outcome: "failed",
       error: "injected retry",
+      // The code the settler derived beside the message a person reads; the
+      // entry point parses through `parseRpcInput`, so a code outside the
+      // class would refuse the settlement naming the field.
+      errorCode: "connector_event_processing_failed:event.eventType:invalid_type",
     });
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
@@ -6094,6 +6092,207 @@ describe("Durable Objects in the Workers runtime", () => {
       activeCompaction: null,
     });
     second.close(1000, "done");
+  });
+
+  it("broadcasts inference delay, restores it on reconnect, and fences settled or superseded attempts", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      parentKind: "workstream",
+      parentId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const harnessRunId = "00000000-0000-7000-8000-000000000125";
+    const childRunId = "00000000-0000-7000-8000-000000000145";
+    const attemptId = "00000000-0000-7000-8000-000000000126";
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workstream SET title = 'Inference wait', exact_state = 'running', updated_at = ?
+          WHERE id = 1`,
+        Date.now(),
+      );
+      for (const executionId of [harnessRunId, childRunId]) {
+        state.storage.sql.exec(
+          `INSERT INTO runs
+             (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+              next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+              idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+              input_tokens, output_tokens, cost_micros, output_bytes, origin,
+              execution_principal_json, chain_depth, parent_run_id, chain_root_run_id, created_at, updated_at)
+           VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0, 0,
+                   0, 0, 0, 0, 'user_message', '{}', ?, ?, ?, ?, ?)`,
+          executionId,
+          Date.now(),
+          executionId === harnessRunId ? 0 : 1,
+          executionId === harnessRunId ? null : harnessRunId,
+          harnessRunId,
+          Date.now(),
+          Date.now(),
+        );
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ?, lease_expires_at = ? WHERE run_id = ?`,
+          attemptId, Date.now() + 600_000, executionId);
+      }
+      state.storage.sql.exec(`UPDATE runs SET parent_tool_call_id = ? WHERE run_id = ?`,
+        "call:child", childRunId);
+    });
+    const connect = async (ticketId: string): Promise<WebSocket> => {
+      const response = await stub.fetch("https://substream.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-workstream-id": WORKSTREAM_ID,
+          "x-rally-substream-id": "0",
+          "x-rally-user-id": USER_ID,
+          "x-rally-session-id": SESSION_ID,
+          "x-rally-socket-ticket-id": ticketId,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      return socket;
+    };
+
+    const delay = {
+      type: "inference_delay_changed",
+      harnessRunId, executionId: harnessRunId, attemptId,
+      inferenceRequestId: "00000000-0000-7000-8000-000000000140",
+      turnId: "turn:1", active: true,
+    };
+    const publish = async (event: Record<string, unknown>) => {
+      const result = await stub.publishEvent({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, event });
+      expect(result.status).toBe(202);
+    };
+    const first = await connect("00000000-0000-7000-8000-000000000127");
+    const second = await connect("00000000-0000-7000-8000-000000000128");
+    try {
+      for (const socket of [first, second]) {
+        const snapshot = nextMessageOfType(socket, "snapshot");
+        socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+        expect(await snapshot).toMatchObject({ activeInferenceDelays: [] });
+      }
+      const notices = [first, second].map((socket) => nextMessageOfType(socket, delay.type));
+      await publish(delay);
+      for (const notice of notices) expect(await notice).toMatchObject(delay);
+      await evictDurableObject(stub);
+      const reconnect = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await reconnect).toMatchObject({ activeInferenceDelays: [{ inferenceRequestId: delay.inferenceRequestId }] });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE workstream SET exact_state = 'completed' WHERE id = 1`);
+      });
+      const stoppedResync = nextMessageOfType(first, "resync_required");
+      first.send(JSON.stringify({ type: "subscribe", afterSequence: 100_000 }));
+      expect(await stoppedResync).toMatchObject({ activeInferenceDelays: [] });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE workstream SET exact_state = 'running' WHERE id = 1`);
+      });
+      const restored = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+      expect(await restored).toMatchObject({ activeInferenceDelays: [{ inferenceRequestId: delay.inferenceRequestId }] });
+
+      const concurrent = { ...delay, parentAttemptId: attemptId, executionId: childRunId, inferenceRequestId: "00000000-0000-7000-8000-000000000141" };
+      const concurrentNotice = nextMessageOfType(first, delay.type);
+      await publish(concurrent);
+      expect(await concurrentNotice).toMatchObject(concurrent);
+      const cleared = nextMessageOfType(first, delay.type);
+      await publish({ ...delay, active: false });
+      expect(await cleared).toMatchObject({ ...delay, active: false });
+      const late = nextMessageOfType(first, delay.type);
+      await publish(delay);
+      expect(await late).toMatchObject({ ...delay, active: false });
+      const remaining = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect((await remaining).activeInferenceDelays).toEqual([{
+        harnessRunId, executionId: childRunId, attemptId, parentAttemptId: attemptId,
+        inferenceRequestId: concurrent.inferenceRequestId, turnId: delay.turnId,
+      }]);
+
+      // Superseding only the parent must fence a still-leased child's notice.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ? WHERE run_id = ?`,
+          "00000000-0000-7000-8000-000000000142", harnessRunId);
+      });
+      const parentStale = nextMessageOfType(first, delay.type);
+      await publish({ ...concurrent, inferenceRequestId: "00000000-0000-7000-8000-000000000146" });
+      expect(await parentStale).toMatchObject({ active: false });
+      const parentSnapshot = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await parentSnapshot).toMatchObject({ activeInferenceDelays: [] });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ? WHERE run_id = ?`, attemptId, harnessRunId);
+      });
+
+      // A clear received after lease expiry must remain cleared after renewal.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET lease_expires_at = ? WHERE run_id = ?`,
+          Date.now() - 1, childRunId);
+      });
+      await publish({ ...concurrent, active: false });
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET lease_expires_at = ? WHERE run_id = ?`,
+          Date.now() + 600_000, childRunId);
+      });
+      const renewed = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await renewed).toMatchObject({ activeInferenceDelays: [] });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET legacy_attempt_id = ? WHERE run_id IN (?, ?)`,
+          "00000000-0000-7000-8000-000000000142", harnessRunId, childRunId);
+      });
+      const stale = nextMessageOfType(first, delay.type);
+      await publish({ ...concurrent, inferenceRequestId: "00000000-0000-7000-8000-000000000143" });
+      expect(await stale).toMatchObject({ active: false });
+      const recovered = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await recovered).toMatchObject({ activeInferenceDelays: [] });
+
+      const replacement = nextMessageOfType(first, delay.type);
+      await publish({ ...delay, attemptId: "00000000-0000-7000-8000-000000000142",
+        inferenceRequestId: "00000000-0000-7000-8000-000000000144" });
+      expect(await replacement).toMatchObject({ active: true });
+
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(`UPDATE runs SET status = 'completed' WHERE run_id = ?`, harnessRunId);
+        state.storage.sql.exec(`UPDATE workstream SET exact_state = 'completed' WHERE id = 1`);
+      });
+      const done = nextMessageOfType(first, "harness_status_changed");
+      await publish({ type: "harness_status_changed", status: "completed" });
+      expect(await done).toMatchObject({ status: "completed" });
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM inference_delay_status`,
+        ).one().count).toBe(0);
+      });
+      const terminalLate = nextMessageOfType(first, delay.type);
+      await publish(delay);
+      expect(await terminalLate).toMatchObject({ active: false });
+      const terminalSnapshot = nextMessageOfType(first, "snapshot");
+      first.send(JSON.stringify({ type: "request_snapshot" }));
+      expect(await terminalSnapshot).toMatchObject({ activeInferenceDelays: [] });
+    } finally {
+      first.close(1000, "done"); second.close(1000, "done");
+    }
   });
 
   it("ignores retired message events and accepts the next authenticated subscription", async () => {

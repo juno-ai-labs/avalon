@@ -1,3 +1,4 @@
+import { configuredRegions, regions } from "./regions.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
@@ -5,22 +6,19 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const sourcePath = resolve(root, ".env.local");
 const legacyTargetPath = resolve(root, "apps/api/.dev.vars");
-const regionalTargetPaths = {
-  global: resolve(root, "apps/api/.dev.vars.global"),
-  eu: resolve(root, "apps/api/.dev.vars.eu")
-};
+const regionalTargetPaths = Object.fromEntries(configuredRegions.map((region) => [region, resolve(root, `apps/api/.dev.vars.${region}`)]));
 
 const workerKeys = [
   "APP_ENV",
   "AVALON_REGION",
   "RALLY_DEV_AUTH",
   "PUBLIC_API_BASE_URL",
-  "EU_PUBLIC_API_BASE_URL",
   "PUBLIC_WEB_BASE_URL",
   "ARTIFACT_SERVING_DOMAIN",
   "ALLOWED_ORIGINS",
   "DESKTOP_DEEP_LINK_URI",
   "OPENROUTER_API_KEY",
+  "TYPESAFE_API_KEY",
   "TURBO_PUFFER_DEV_API_KEY",
   "OPENROUTER_PRIMARY_MODEL",
   "OPENROUTER_FALLBACK_MODELS",
@@ -61,16 +59,17 @@ const workerKeys = [
   "LINEAR_OAUTH_CLIENT_SECRET",
   "LINEAR_WEBHOOK_SECRET",
   "LINEAR_NATIVE_AGENT_ENABLED",
+  "FIREFLIES_CONNECTOR_ENABLED",
   "SLACK_APP_ID",
   "SLACK_CLIENT_ID",
   "SLACK_CLIENT_SECRET",
   "SLACK_SIGNING_SECRET",
   "TWITTER_API_IO_API_KEY",
-  "POSTHOG_HOST",
-  "POSTHOG_PROJECT_TOKEN",
   "TELEMETRY_CAPABILITY_SIGNING_KEY",
   "TELEMETRY_OPERATORS_JSON",
   "DEMO_OPERATORS_JSON",
+  "APNS_AUTH_KEY",
+  "APNS_KEY_ID",
   "OPS_SLACK_BOT_TOKEN",
   "OPS_SLACK_CHANNEL_ID",
   "SLACK_INGRESS_BASE_URL",
@@ -137,19 +136,18 @@ const regionalizableKeys = [
   "CONNECTOR_CREDENTIALS_KEYS_JSON",
   "TELEMETRY_OPERATORS_JSON",
   "DEMO_OPERATORS_JSON",
+  "APNS_AUTH_KEY",
+  "APNS_KEY_ID",
   "OPS_SLACK_BOT_TOKEN",
   "OPS_SLACK_CHANNEL_ID"
 ];
 
 const globalOnlyKeys = new Set([
-  "EU_PUBLIC_API_BASE_URL",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
   "RESEND_WEBHOOK_SIGNING_SECRET",
   "RESEND_WEBHOOK_SECRET",
   "WORKSTREAM_EMAIL_ADDRESS_KEY",
-  "POSTHOG_HOST",
-  "POSTHOG_PROJECT_TOKEN",
   "TELEMETRY_CAPABILITY_SIGNING_KEY"
 ]);
 
@@ -174,6 +172,7 @@ const safeDefaults = {
   RESEND_NOTIFICATION_FROM_EMAIL: "Rally <notifications@rallywith.ai>",
   WORKSTREAM_EMAIL_DOMAIN: "automation.rallywith.ai",
   LINEAR_NATIVE_AGENT_ENABLED: "false",
+  FIREFLIES_CONNECTOR_ENABLED: "true",
   CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
   TOOL_DEFAULT_TIMEOUT_MS: "30000",
   WEB_SEARCH_MAX_RESULTS: "8",
@@ -228,10 +227,7 @@ async function readEnvFile(path) {
 }
 
 const legacyExisting = await readEnvFile(legacyTargetPath);
-const existingRegional = {
-  global: { ...legacyExisting, ...await readEnvFile(regionalTargetPaths.global) },
-  eu: { ...legacyExisting, ...await readEnvFile(regionalTargetPaths.eu) }
-};
+const existingRegional = Object.fromEntries(await Promise.all(configuredRegions.map(async (region) => [region, { ...legacyExisting, ...await readEnvFile(regionalTargetPaths[region]) }])));
 
 const sharedPublicAppKeys = [
   "GITHUB_APP_ID",
@@ -254,40 +250,32 @@ const sharedPublicAppValues = Object.fromEntries(sharedPublicAppKeys.map((key) =
   key,
   local[key]
     || local[`${key}_GLOBAL`]
-    || local[`${key}_EU`]
     || existingRegional.global[key]
-    || existingRegional.eu[key]
     || ""
 ]));
 
-for (const region of ["global", "eu"]) {
+for (const region of configuredRegions) {
   const existing = existingRegional[region];
   const regional = {
     ...safeDefaults,
     ...existing,
     ...local,
     AVALON_REGION: region,
-    PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${region.toUpperCase()}`]
-      || (region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788"),
+    PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${regions[region].bindingPrefix}`]
+      || regions[region].localApiUrl,
     OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
   };
   for (const key of regionalizableKeys) {
-    const regionalKey = `${key}_${region.toUpperCase()}`;
+    const regionalKey = `${key}_${regions[region].bindingPrefix}`;
     if (!key.startsWith("GITHUB_") && !key.startsWith("LINEAR_") && typeof local[regionalKey] === "string") {
       regional[key] = local[regionalKey];
     }
   }
   Object.assign(regional, sharedPublicAppValues);
-  // The Global Worker validates and returns sessions minted by EU. Production
-  // gets this route from Wrangler vars; local development must point at the
-  // sibling Worker or every cross-region activation looks like a forged route.
-  regional.EU_PUBLIC_API_BASE_URL = local.EU_PUBLIC_API_BASE_URL
-    || local.PUBLIC_API_BASE_URL_EU
-    || "http://127.0.0.1:8788";
   // A single GitHub App may issue independent private keys to each regional
   // Worker. An unsuffixed key remains the convenient development default.
   regional.GITHUB_APP_PRIVATE_KEY = local.GITHUB_APP_PRIVATE_KEY
-    || local[`GITHUB_APP_PRIVATE_KEY_${region.toUpperCase()}`]
+    || local[`GITHUB_APP_PRIVATE_KEY_${regions[region].bindingPrefix}`]
     || existing.GITHUB_APP_PRIVATE_KEY
     || "";
   // Notion derives its one redirect URI from this, so leaving it unset would
@@ -317,4 +305,4 @@ for (const region of ["global", "eu"]) {
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });
 }
 
-console.log("Synced fixed Global and EU local Worker environments from .env.local.");
+console.log("Synced configured local Worker environments from .env.local.");

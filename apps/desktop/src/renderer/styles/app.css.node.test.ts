@@ -14,18 +14,65 @@ function rule(selector: string): string | null {
   return ruleWithin(stylesheet, selector);
 }
 
+describe('connections table', () => {
+  /**
+   * The row is a flex line: dot, provider mark, name. A name long enough to
+   * wrap shrank its siblings first, and the 7px status dot became a 3px sliver
+   * beside a two-line "Google Drive + Docs + Sheets · alex@…". jsdom lays
+   * nothing out, so the declaration is what a component test can hold onto.
+   */
+  it('keeps the status dot and provider mark their size when a long name wraps', () => {
+    expect(rule('.connection-provider-dot')).toContain('flex: none;');
+    expect(rule('.settings-connection-name .connector-mark')).toContain('flex: none;');
+  });
+
+  it('draws the healthy dot in the saturated success step, not the text-and-fill one', () => {
+    // `success-base` is a sage tuned for text and fills; at 7px on the dark
+    // surface it read as grey, and an administrator could not tell healthy
+    // from disabled at a glance.
+    expect(rule('.connection-provider-dot.healthy')).toContain('var(--av-sys-color-success-vivid)');
+    expect(rule('.connection-provider-dot.healthy')).not.toContain('success-base');
+  });
+
+  it('puts each Manage events button beside its own caption and spaces the groups apart', () => {
+    // One column of equally spaced lines put "Test checks access…" as close
+    // to Get help below it as to Test above it.
+    expect(rule('.installation-action')).toContain('grid-template-columns: auto minmax(0, 1fr);');
+    expect(rule('.installation-panel')).toContain('gap: 20px;');
+    expect(rule('.installation-actions')).toContain('gap: 10px;');
+  });
+
+  it('colours the Test verdict by its outcome', () => {
+    expect(rule('.connection-test-outcome.is-passed')).toContain('var(--av-sys-color-success-');
+    expect(rule('.connection-test-outcome.is-failed')).toContain('var(--av-sys-color-danger-');
+    // A request that never ran the test is neither verdict.
+    expect(rule('.connection-test-outcome.is-unavailable')).toContain('var(--av-sys-color-warning-');
+  });
+});
+
 describe('capsule composer stacking', () => {
-  // This guards the CSS contract; actual pointer hit-testing is verified in Electron.
-  it('keeps both capsule control areas above the spanning attachment input shell', () => {
-    const controls = rule(':is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area)');
-    expect(controls).toContain('position: relative;');
-    expect(controls).toContain('z-index: 1;');
-    expect(rule('.composer-input-shell')).toContain('position: relative;');
-    expect(rule('.composer-input-shell')).not.toContain('z-index:');
-    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell'))
+  /**
+   * Once the field spans the capsule's full width — wrapped text, or an
+   * attachment row above it — the controls go on a row of their own beneath it.
+   * They used to share the field's row, held off it by bottom padding inside
+   * the textarea, and padding inside a scroller scrolls: a draft taller than
+   * the field ran its middle lines straight under the plus button. jsdom lays
+   * nothing out, so no component test can see that; this guards the two
+   * declarations that keep the rows apart, and a real window is where it was
+   * looked at.
+   */
+  it('gives the capsule controls a row of their own once the field spans the grid', () => {
+    const spanning = ":is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true']";
+    const withAttachments = ':is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments';
+    expect(rule(`${spanning} .composer-input-shell,\n${withAttachments} .composer-input-shell`))
       .toContain('grid-column: 1 / -1;');
-    expect(rule(":is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] .composer-input-shell,\n:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments .composer-input-shell"))
-      .toContain('grid-column: 1 / -1;');
+    expect(rule(`${spanning} :is(.composer-tools, .composer-submit-area),\n${withAttachments} :is(.composer-tools, .composer-submit-area)`))
+      .toContain('grid-row: 3;');
+    // The field's own row, which the controls no longer stand in.
+    expect(rule(':is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-input-shell'))
+      .toContain('grid-row: 2;');
+    expect(rule(`${spanning} :is(textarea, .composer-highlight),\n${withAttachments} :is(textarea, .composer-highlight)`))
+      .not.toContain('39px');
   });
 });
 
@@ -542,6 +589,80 @@ describe('clipped lines in both navigation rails', () => {
   });
 });
 
+/**
+ * The work-stream list, the work-stream sidebar, and the Sidekick strip fade
+ * their overflowing edges the same way a clipped line does — and only those
+ * edges, only when they overflow. jsdom lays nothing out, so the condition
+ * lives entirely in these declarations.
+ */
+describe('clipped scroll edges on both navigation rails', () => {
+  const BLOCK_SCROLLERS = ':is(.sidebar-scroll, .workstream-context-scroll)';
+  const INLINE_SCROLLER = '.sidebar .sidebar-automation-strip';
+  const COVER = 'clipped-scroll-fade-block linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both';
+  const INLINE_COVER = 'clipped-scroll-fade-inline linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both';
+
+  function fadeRule(selector: string): string {
+    const declarations = rule(selector);
+    expect(declarations, selector).not.toBeNull();
+    return declarations!;
+  }
+
+  it('fades the work-stream scrollers from their own block overflow', () => {
+    const fade = fadeRule(BLOCK_SCROLLERS);
+
+    expect(fade).toContain('scroll-padding-block: 24px;');
+    expect(fade).toContain(`animation: ${COVER};`);
+    const shorthand = fade.indexOf('animation: clipped-scroll-fade-block');
+    expect(fade.indexOf('animation-duration: auto, auto, auto;')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-timeline: scroll(self block), scroll(self block), scroll(self block);')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-range: normal, 0px 24px, calc(100% - 24px) 100%;')).toBeGreaterThan(shorthand);
+  });
+
+  it('fades the Sidekick strip from its own inline overflow', () => {
+    const fade = fadeRule(INLINE_SCROLLER);
+
+    expect(fade).toContain('scroll-padding-inline: 24px;');
+    expect(fade).toContain(`animation: ${INLINE_COVER};`);
+    const shorthand = fade.indexOf('animation: clipped-scroll-fade-inline');
+    expect(fade.indexOf('animation-duration: auto, auto, auto;')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-timeline: scroll(self inline), scroll(self inline), scroll(self inline);')).toBeGreaterThan(shorthand);
+    expect(fade.indexOf('animation-range: normal, 0px 24px, calc(100% - 24px) 100%;')).toBeGreaterThan(shorthand);
+  });
+
+  it('holds one mask on the cover, and moves only the near and far lengths', () => {
+    const block = stylesheet.match(/@keyframes clipped-scroll-fade-block \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+    const inline = stylesheet.match(/@keyframes clipped-scroll-fade-inline \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+    const start = stylesheet.match(/@keyframes clipped-scroll-fade-start \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+    const end = stylesheet.match(/@keyframes clipped-scroll-fade-end \{([\s\S]*?)\n\}/u)?.[1] ?? null;
+
+    expect(block).toContain('0%, 100% {');
+    expect(block).toContain('#000 var(--clipped-scroll-fade-start)');
+    expect(block).toContain('#000 calc(100% - var(--clipped-scroll-fade-end))');
+    expect(block).toContain('to bottom');
+    expect(inline).toContain('to right');
+    expect(start).toContain('--clipped-scroll-fade-start: 0px;');
+    expect(start).toContain('--clipped-scroll-fade-start: 24px;');
+    expect(end).toContain('--clipped-scroll-fade-end: 24px;');
+    expect(end).toContain('--clipped-scroll-fade-end: 0px;');
+  });
+
+  it('registers the fade lengths so they interpolate as lengths', () => {
+    expect(rule('@property --clipped-scroll-fade-start')).toContain("syntax: '<length>';");
+    expect(rule('@property --clipped-scroll-fade-start')).toContain('inherits: false;');
+    expect(rule('@property --clipped-scroll-fade-start')).toContain('initial-value: 0px;');
+    expect(rule('@property --clipped-scroll-fade-end')).toContain("syntax: '<length>';");
+    expect(rule('@property --clipped-scroll-fade-end')).toContain('initial-value: 0px;');
+  });
+
+  it('keeps the scroll-edge durations on the scroller timeline under reduced motion', () => {
+    const restore = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\*,\s*\*::before,\s*\*::after \{[\s\S]*?:is\(\.sidebar-scroll, \.workstream-context-scroll\), \.sidebar \.sidebar-automation-strip \{([^}]*)\}/u,
+    )?.[1] ?? null;
+
+    expect(restore).toContain('animation-duration: auto !important;');
+  });
+});
+
 /** The declarations inside one rule within an already bounded stylesheet fragment. */
 function ruleWithin(source: string, selector: string): string | null {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -743,8 +864,6 @@ describe('scrollbar gutter reservation on the always-tall scrollers', () => {
     ['.settings-content-scroll'],
     ['.automation-overview-scroll'],
     ['.new-automation-screen'],
-    ['.note-detail-scroll'],
-    ['.note-transcript-scroll'],
   ])('reserves a stable gutter on %s', (selector) => {
     const declarations = rule(selector);
 
@@ -1329,8 +1448,6 @@ describe('markdown list markers', () => {
   ];
 
   it.each([
-    ['.note-detail-article'],
-    ['.meeting-notes-body'],
     ['.inspector-detail-document'],
   ])(
     'leaves markdown element styling to the shared container in %s',
@@ -1342,28 +1459,6 @@ describe('markdown list markers', () => {
         .filter((prelude) => elementsIn(prelude).some((element) => MARKDOWN_ELEMENTS.includes(element)));
 
       expect(offenders).toEqual([]);
-    },
-  );
-
-  // The heading scales are the deliberate exception, and how they win matters as
-  // much as that they win. Written as `.note-detail-article :is(h1, …)` they tie
-  // `.markdown-body h1` at (0,1,1) and are decided by which sits lower in the
-  // file — so splitting this stylesheet, or moving either block, would return
-  // both surfaces to the shared scale with nothing going red. That is the same
-  // silent visual regression as the missing markers, arriving the same way.
-  // Naming `.markdown-body` in the selector settles it on specificity instead,
-  // and this is what stops the class being tidied back out.
-  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
-    'wins its heading scale on specificity rather than source order in %s',
-    (host) => {
-      const headingRules = preludes()
-        .filter((prelude) => prelude.includes(host))
-        .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
-
-      expect(headingRules.length).toBeGreaterThan(0);
-      for (const prelude of headingRules) {
-        expect(prelude).toContain('.markdown-body');
-      }
     },
   );
 
@@ -1394,12 +1489,6 @@ describe('markdown list markers', () => {
     expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
     expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
     expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
-    expect(rule('.note-detail-article .markdown-body h1')).toContain(
-      'var(--av-cmp-markdown-article-heading-1)',
-    );
-    expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
-      'font-size: 15px',
-    );
     expect(rule('.agent-message .markdown-body'))
       .toContain('14.5px');
   });
@@ -1678,42 +1767,6 @@ describe('collapsed heading preview mask', () => {
 });
 
 /**
- * A queued row renders the message through the transcript's own Markdown
- * renderer, which emits blocks: a paragraph, a heading, a list, a fenced block.
- * The row is one line. Nothing in a component test can see the difference —
- * jsdom lays nothing out, so every assertion about the row's markup stays green
- * while the composer dock grows to the height of a whole queued message — so
- * the flattening lives here, where deleting it fails.
- */
-describe('composer queue preview', () => {
-  it('keeps a queued message to one clipped line', () => {
-    const text = rule('.composer-queue-text');
-    expect(text).not.toBeNull();
-    expect(text).toContain('white-space: nowrap;');
-    expect(text).toContain('overflow: hidden;');
-    expect(text).toContain('text-overflow: ellipsis;');
-  });
-
-  it('flattens every Markdown block the renderer can emit into that line', () => {
-    const body = rule('.composer-queue-text .markdown-body');
-    expect(body).not.toBeNull();
-    expect(body).toContain('display: inline;');
-    // The prose type scale would otherwise set a heading in a 12px row.
-    expect(body).toContain('font-size: inherit;');
-    expect(body).toContain('line-height: inherit;');
-
-    const blocks = preludes().find((prelude) => (
-      prelude.startsWith('.composer-queue-text .markdown-body :is(')
-      && prelude.includes('p,')
-    ));
-    expect(blocks).toBeDefined();
-    for (const tag of ['p', 'h1', 'h6', 'ul', 'ol', 'li', 'pre', 'blockquote', 'table', 'tr', 'td']) {
-      expect(blocks).toMatch(new RegExp(`[(,]\\s*${tag}[,)]`, 'u'));
-    }
-  });
-});
-
-/**
  * The window's own buttons are drawn over the page on macOS, and the sidebar's
  * 48px title bar is what normally holds anything readable clear of them. Below
  * 921px the sidebar leaves the flow for a drawer, and the work-stream and
@@ -1889,5 +1942,54 @@ describe('the shared shell primitives and the artifact pane', () => {
 
     const main = readFileSync(resolve(process.cwd(), 'src/main/artifact-viewers.ts'), 'utf8');
     expect(main).not.toContain('PREVIEW_CORNER_RADIUS');
+  });
+});
+
+/**
+ * The sweep that marks a person's turn as still in flight is keyed on a
+ * selector list of the surfaces a turn draws — the bubble and the three
+ * attachment surfaces — written twice, in the animated rule and its
+ * reduced-motion twin, and jsdom applies none of it. These pin what a
+ * screenshot pass proved: the list, on both rules; the tiled-background
+ * construction rather than a transform, which would carry the overlay's own
+ * corners off the surface; the travel; the band taken from the surface's ink;
+ * and that nothing hangs off the content wrapper any more, which is the
+ * rectangle the sweep used to fill.
+ */
+describe('in-flight sweep', () => {
+  const surfaces = ':is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)';
+  const sweep = `.human-message.is-sending ${surfaces}::after`;
+
+  it('paints the sweep on each surface of a sending turn and not on its wrapper', () => {
+    const declarations = rule(sweep);
+    expect(declarations).toContain('animation: message-sending-shimmer 1.8s ease-in-out infinite;');
+    expect(declarations).toContain('background-size: 400% 100%;');
+    expect(declarations).toContain('border-radius: inherit;');
+    expect(declarations).toContain('inset: 0;');
+    expect(declarations).toContain('pointer-events: none;');
+    expect(declarations).not.toContain('transform');
+    expect(rule('.human-message.is-sending .human-message-bubble')).toContain('position: relative;');
+    expect(rule('.human-message.is-sending .human-message-content')).toBeNull();
+    expect(rule('.human-message.is-sending .human-message-content::after')).toBeNull();
+  });
+
+  it('travels an upright band of the surface\'s own ink over two and a half widths', () => {
+    expect(rule(sweep)).toContain('--sweep-ink: color-mix(in srgb, currentColor 5%, transparent);');
+    expect(rule(sweep)).toContain(
+      'background: linear-gradient(to right, transparent 43.75%, var(--sweep-ink) 48.75%, var(--sweep-ink) 51.25%, transparent 56.25%);',
+    );
+    expect(stylesheet).toContain(
+      '@keyframes message-sending-shimmer {\n  from { background-position: 100% 0; }\n  to { background-position: calc(100% / 6) 0; }\n}',
+    );
+  });
+
+  it('parks the same ink on the same surfaces under reduced motion', () => {
+    const block = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\n {2}\.human-message\.is-sending[\s\S]*?\n\}\n/u,
+    )?.[0] ?? '';
+    expect(block).not.toBe('');
+    const parked = ruleWithin(block, sweep);
+    expect(parked).toContain('background: var(--sweep-ink);');
+    expect(parked).not.toContain('animation');
   });
 });

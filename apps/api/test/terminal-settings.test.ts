@@ -148,6 +148,7 @@ function fixture(role: AuthContext["role"] = "owner") {
   let appliedDomains: string[] = [];
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(), getSandbox: vi.fn(async () => ({ id: "provider-1", name: "settings-sandbox", state: "stopped" as const, domainAllowList: appliedDomains })),
+    recoverSandbox: vi.fn(async () => undefined),
     startSandbox: vi.fn(), stopSandbox: vi.fn(async () => undefined), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(),
     updateNetworkPolicy: vi.fn(async (_id, domains) => { appliedDomains = domains ?? []; }), configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
     readFile: vi.fn(), writeFile: vi.fn(), runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })), runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
@@ -170,7 +171,7 @@ describe("Terminal workspace settings", () => {
     const settings = await service.get();
     expect(settings).toMatchObject({
       availability: "supported", mode: "trusted_only", revision: 1, verificationState: "verified",
-      customDomains: [], remainingCustomSlots: 7,
+      customDomains: [], remainingCustomSlots: 8,
     });
     expect(settings).not.toHaveProperty("baselineGroups");
     expect(settings).not.toHaveProperty("effectiveDomains");
@@ -179,11 +180,11 @@ describe("Terminal workspace settings", () => {
   it("previews before confirmation and reconciles active sandboxes without restarting", async () => {
     const { objectStore, provider, service } = fixture();
     const preview = await service.preview({ expectedRevision: 1, mode: "trusted_only", customDomains: ["custom.example"] });
-    expect(preview).toMatchObject({ affectedWorkstreamIds: [S], customDomains: ["custom.example"], remainingCustomSlots: 6 });
+    expect(preview).toMatchObject({ affectedWorkstreamIds: [S], customDomains: ["custom.example"], remainingCustomSlots: 7 });
     expect(preview).not.toHaveProperty("effectiveDomains");
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true })).resolves.toMatchObject({
-      revision: 2, verificationState: "verified", customDomains: ["custom.example"], remainingCustomSlots: 6,
+      revision: 2, verificationState: "verified", customDomains: ["custom.example"], remainingCustomSlots: 7,
     });
     expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
     expect(provider.updateNetworkPolicy).toHaveBeenCalledWith("provider-1", expect.arrayContaining(["custom.example"]));

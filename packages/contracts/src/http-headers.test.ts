@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import {
   LEGACY_RALLY_HEADER_PREFIXES,
@@ -26,8 +27,8 @@ describe("rally http headers", () => {
   });
 
   it("reads the canonical name from a Headers source", () => {
-    const headers = new Headers({ [RALLY_HEADERS.REGION]: "eu" });
-    expect(readRallyHeader(headers, RALLY_HEADERS.REGION)).toBe("eu");
+    const headers = new Headers({ [RALLY_HEADERS.REGION]: "enterprise" });
+    expect(readRallyHeader(headers, RALLY_HEADERS.REGION)).toBe("enterprise");
   });
 
   it("reads the superseded name a shipped client still sends", () => {

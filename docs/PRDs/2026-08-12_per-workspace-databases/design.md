@@ -18,22 +18,23 @@ A tenant store for Rally must satisfy, in priority order:
    the authorization to read that workspace and nothing else. Cross-tenant
    reads are impossible to *express* in the data path, not merely forbidden by
    query discipline.
-2. **Residency by construction.** A workspace pinned to the EU stores its rows
-   in the EU jurisdiction, through the same kind of mechanism that pins its
-   Durable Objects today — not through an operator promising to have created
-   the right resource.
+
 3. **Schema velocity.** Rally changes schema almost every other PR. A schema
    change must ship in the same pull request and the same deploy as the code
    that needs it, with no separate operator step, no cross-fleet coordination,
    and no window in which deployed code and stored schema disagree.
+
 4. **No standing platform credentials in Workers.** The repository rule stands:
    Cloudflare administration credentials never become Worker variables. An
    architecture that requires a Worker to hold an account-scoped API token to
    reach its own data is disqualified.
+
 5. **Tenant-scoped failure.** A migration or storage failure in one workspace
    affects that workspace only, and fails closed.
+
 6. **Query latency comparable to today.** The API's repositories are chatty;
    a per-query HTTP round trip is a permanent tax the design must not pay.
+
 7. **Provisioning in the request path.** Creating a workspace creates its
    database synchronously, without deploys and without calling the Cloudflare
    management API from a Worker.
@@ -45,17 +46,14 @@ Four ways to give each workspace its own database on Cloudflare:
 | Option | Verdict | Why |
 | --- | --- | --- |
 | **A. One D1 database per workspace, bound statically** | Rejected outright | Bindings are fixed at deploy time (~5,000 per script). Workspace creation would require a Worker deployment — requirement 7 fails immediately. |
-| **B. One D1 database per workspace, queried over the D1 HTTP API** | Rejected | Requires an account-scoped D1 API token as a Worker secret, violating requirement 4; that one token reads every tenant database in **both** regions, collapsing the Global/EU boundary into a single credential and inverting requirement 1 into a worse posture than today's. Every query becomes an HTTPS request (requirement 6), database creation calls the Cloudflare management API from the signup path (requirement 7), and schema changes need a self-built fleet orchestrator (requirement 3, and see [the fleet procedure below](#appendix-what-fleet-migration-over-per-tenant-d1-would-look-like)). |
+| **B. One D1 database per workspace, queried over the D1 HTTP API** | Rejected | Requires an account-scoped D1 API token as a Worker secret, violating requirement 4; that one token reads every tenant database in **both** regions, collapsing the configured deployment boundary into a single credential and inverting requirement 1 into a worse posture than today's. Every query becomes an HTTPS request (requirement 6), database creation calls the Cloudflare management API from the signup path (requirement 7), and schema changes need a self-built fleet orchestrator (requirement 3, and see [the fleet procedure below](#appendix-what-fleet-migration-over-per-tenant-d1-would-look-like)). |
 | **C. Workers for Platforms — one dispatched user Worker per workspace, each with a D1 binding** | Rejected | Solves dynamic binding by deploying a Worker per tenant through the platform API. Built for running third-party code; for a first-party API it adds a deployment pipeline per workspace and keeps option B's provisioning credential, buying nothing over D. |
-| **D. One SQLite-backed Durable Object per workspace** | **Chosen** | D1's own storage engine, used directly. Unlimited objects, 10 GB each, addressed by name (`idFromName`), pinned to the EU jurisdiction through the exact helper the codebase already uses for its other per-workspace objects, no credentials, no management-API calls, synchronous SQL colocated with the object, 30-day point-in-time recovery. Migrations ship inside the Worker bundle and run in the object constructor — requirement 3 is satisfied *by construction*. |
 
 The honest framing of D versus B: D1 **is** a SQLite Durable Object with an
 HTTP front end, a dashboard, Wrangler tooling, and Time Travel attached.
 Option B buys that tooling at the price of requirements 3, 4, 6, and 7.
 Option D gives up the tooling and keeps the engine; the [operator
 tooling](#operator-access) we actually need is small and gets built once.
-
-## Target architecture
 
 ### Two stores, split by what owns the row
 
@@ -93,20 +91,11 @@ whose rows carry `workspace_id` today. Inside a workspace database the
 A new Durable Object class, `WorkspaceDatabase`, bound once in both Wrangler
 configurations:
 
-- **Named** `${region}:${workspaceId}` and resolved exclusively through the
-  shared helper in `apps/api/src/lib/durable-object-namespace.ts`, which pins
-  EU workspaces with `jurisdiction("eu")` — and which, in local development
-  only, returns the unpinned namespace because Miniflare does not implement
-  jurisdictions; that existing documented tradeoff carries over unchanged.
-  The name is derived from the session's resolved workspace — never from a
-  request body — preserving the existing invariant that repositories never
-  choose a region (now: a database) from a user-controlled object ID; the
-  PRD's security section states the equivalent rule for every sessionless
-  entry point (Queue, Workflows, bridges, inbound email, cron).
 - **Provisioned implicitly.** A Durable Object exists when first addressed;
   workspace creation writes the `workspaces` row in the control plane and the
   first request to the object runs the full migration set against an empty
   database. No management API, no deploy, nothing to leak.
+
 - **Exposes SQL over RPC, not domain methods.** The object's RPC surface is
   the `D1DatabaseLike` contract that `packages/db` already defines: prepared
   statements, bound parameters, `first`/`all`/`run`, and an atomic `batch`.
@@ -118,10 +107,12 @@ configurations:
   today, because D1 is the same object model; that placement behavior is
   accepted as inherent to the platform (key design decision 8), the same
   regional property D1 already has.
+
 - **Keeps FTS5.** Cloudflare documents the FTS5 module (including
   `fts5vocab`), the JSON extension, and math functions as supported in
   Durable Object SQLite ([`research.md`](./research.md)), so scoped-memory
   lexical search — D1 FTS5 today — carries over unchanged.
+
 - **Serializes writes per workspace.** A Durable Object processes one event at
   a time, which strengthens — for free — the invariants the schema currently
   defends with unique indexes and compare-and-swap: sequence-number
@@ -136,6 +127,7 @@ configurations:
   is the number the version telemetry watches as workspaces grow, and
   approaching that ceiling argues for splitting hot tables into sibling
   objects, not for abandoning the model.
+
 - **Owns per-workspace housekeeping.** The regional cron's unfiltered sweeps
   become work each workspace performs for itself, with the two genuinely
   fleet-wide sweeps coordinated through a small control-plane index — the
@@ -281,7 +273,7 @@ consequence of schema and code deploying *separately*, and dissolves when they
 ship as one artifact:
 
 - **The migrate-before-deploy window is gone** for workspace data. Today the
-  deploy job applies both regions' migrations before either Worker deploys, so
+  deploy job applies configured deployments' migrations before either Worker deploys, so
   the previous Worker writes into the new schema for ~20 seconds — indefinitely
   if the deploy fails between the steps, which is how
   `0063_activity_events_digestible.sql`'s fail-open default mis-marked rows in

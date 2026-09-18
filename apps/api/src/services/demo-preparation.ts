@@ -31,6 +31,7 @@ import {
   type DemoOperationStatus,
   type DemoPreparationPhase,
 } from "@rally/contracts";
+import { zodDiagnosticCode, codeShaped, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 
 import { boundParameterChunks } from "../durable-objects/bound-parameters";
 import type { Env } from "../env";
@@ -135,7 +136,11 @@ const CastSchema = DemoOperationStatusSchema.shape.cast;
 /** The cast as stored — a row this module wrote, re-parsed rather than trusted. */
 function castOf(record: OperationRecord): Record<string, string> {
   const parsed = CastSchema.safeParse(parseJsonObject(record.cast_json));
-  if (!parsed.success) throw new ApiError(500, "demo_cast_unreadable", "The operation's cast could not be read");
+  // This is the reader a corrupt row actually meets, and it answers before
+  // `operatorError` sees anything: the field rides behind the constant here.
+  if (!parsed.success) {
+    throw new ApiError(500, codeShaped(`demo_cast_unreadable:${describeZodIssues(parsed.error)}`), "The operation's cast could not be read");
+  }
   return parsed.data;
 }
 
@@ -278,7 +283,7 @@ export async function demoTemplate(env: Env): Promise<{
   castEmailDomain: string;
 }> {
   // Demos are prepared where the template lives, and this answer is the
-  // company's directory: an EU call could do nothing with it but read out
+  // company's directory: a regional call could do nothing with it but read out
   // every European colleague's name and address.
   requireDemoRegion(env);
   const rows = await env.DB.prepare(
@@ -309,7 +314,7 @@ export async function demoTemplate(env: Env): Promise<{
   };
 }
 
-/** Demos are prepared where the template lives. The EU deployment carries the routes and refuses them. */
+/** Demos are prepared where the template lives. The regional deployment carries the routes and refuses them. */
 function requireDemoRegion(env: Env): void {
   if (env.AVALON_REGION !== "global") {
     throw new ApiError(409, "demo_region_unsupported", "Demos are prepared in the Global region");
@@ -639,6 +644,10 @@ async function recordPhase(
  */
 function operatorError(error: unknown): { code: string; message: string } {
   if (error instanceof ApiError) return { code: error.code, message: error.message.slice(0, 1200) };
+  // A record this repository wrote that no longer parses names its field; the
+  // rejection's text stays in the log.
+  const rejected = zodDiagnosticCode(error, "demo_phase");
+  if (rejected) return { code: rejected, message: "A stored demo record no longer matches its schema; the code names the field and the log has the detail" };
   return { code: "demo_internal_error", message: "An internal error stopped this phase; the log has the detail" };
 }
 
@@ -910,3 +919,5 @@ function requireWorkspace(record: OperationRecord): string {
   if (!record.workspace_id) throw new ApiError(409, "demo_workspace_not_created", "The workspace has not been created yet");
   return record.workspace_id;
 }
+
+export const __demoPreparationTesting = { castOf, operatorError };

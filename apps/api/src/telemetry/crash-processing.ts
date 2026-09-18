@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import type { Env } from '../env';
 import {
   durableObjectStubForRegionalSingleton,
@@ -10,7 +11,7 @@ interface PendingCrashRow {
   build_id: string;
   platform: 'darwin' | 'win32' | 'linux';
   architecture: 'arm64' | 'x64';
-  route: 'global' | 'eu';
+  route: Region;
   received_at: string;
   byte_size: number;
   process_role: 'main' | 'renderer' | 'utility' | 'gpu' | 'unknown';
@@ -100,7 +101,7 @@ export async function processPendingCrashReports(env: Env): Promise<CrashProcess
              processing_next_attempt_at = ?, processing_started_at = NULL
          WHERE crash_id = ? AND parser_state = 'processing'`,
       ).bind(
-        row.route === 'eu' ? 'internal_only' : 'waiting_for_processing',
+        'waiting_for_processing',
         nextAttempt.toISOString(),
         row.crash_id,
       ).run();
@@ -135,46 +136,10 @@ async function saveResult(
     encoded,
     fingerprint,
     normalized.process_role,
-    row.route === 'global' ? 'pending' : 'internal_only',
+    'pending',
     row.crash_id,
   );
-  if (row.route === 'global') {
-    await update.run();
-    return;
-  }
-
-  const contributionDeleteAt = addUtcMonths(new Date(row.received_at), 13).toISOString();
-  await env.DB.batch([
-    update,
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO telemetry_eu_crash_contributions
-        (occurrence_id, fingerprint, occurred_at, release, build_id, platform, architecture,
-         process_role, channel, launch_id, delete_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      row.crash_id,
-      fingerprint,
-      row.received_at,
-      row.release,
-      row.build_id,
-      row.platform,
-      row.architecture,
-      normalized.process_role,
-      row.channel,
-      row.launch_id,
-      contributionDeleteAt,
-    ),
-  ]);
-}
-
-function addUtcMonths(value: Date, months: number): Date {
-  const result = new Date(value);
-  const day = result.getUTCDate();
-  result.setUTCDate(1);
-  result.setUTCMonth(result.getUTCMonth() + months);
-  const lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
-  result.setUTCDate(Math.min(day, lastDay));
-  return result;
+  await update.run();
 }
 
 interface NormalizedCrashFrame {

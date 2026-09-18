@@ -2,7 +2,7 @@ import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asProjectId, type Pro
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
@@ -55,6 +55,7 @@ vi.mock('../lib/platform', () => ({
       return () => applicationSettings.listeners.delete(listener);
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 /** The main-process broadcast a change in the Settings window arrives on. */
@@ -110,6 +111,28 @@ function workstream(
   };
 }
 
+function personalProjectDirectory(projectId: ReturnType<typeof asProjectId>): ProjectDirectory {
+  return {
+    waterline: 1,
+    items: [{
+      id: projectId,
+      name: 'Hiring',
+      iconKey: 'briefcase',
+      colorKey: 'blue',
+      scope: 'personal',
+      status: 'active',
+      presentationRevision: 1,
+      audienceGeneration: 1,
+      lifecycleGeneration: 1,
+      participants: [currentUser, teammate].map((member) => ({ userId: member.id, state: 'active', generation: 1 })),
+      workstreamIds: [],
+      defaultResourceIds: [],
+      createdAt: '2026-08-27T00:00:00.000Z',
+      updatedAt: '2026-08-27T00:00:00.000Z',
+    }],
+  };
+}
+
 function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -132,6 +155,7 @@ function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }):
 function renderProjectScreen(
   projectId: string,
   projects: ProjectDirectory = { waterline: 0, items: [] },
+  nextProjectId?: string,
 ): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -141,6 +165,7 @@ function renderProjectScreen(
     <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/projects/${projectId}/workstreams/new`]}>
+          {nextProjectId && <Link to={`/projects/${nextProjectId}/workstreams/new`}>New work stream in another project</Link>}
           <Routes>
             <Route element={<NewWorkstreamScreen projectId="route" workspace={workspace} />} path="/projects/:projectId/workstreams/new" />
           </Routes>
@@ -228,25 +253,7 @@ describe('New work-stream home', () => {
 
   it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
     const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
-    const projects: ProjectDirectory = {
-      waterline: 1,
-      items: [{
-        id: projectId,
-        name: 'Hiring',
-        iconKey: 'briefcase',
-        colorKey: 'blue',
-        scope: 'personal',
-        status: 'active',
-        presentationRevision: 1,
-        audienceGeneration: 1,
-        lifecycleGeneration: 1,
-        participants: [currentUser, teammate].map((member) => ({ userId: member.id, state: 'active', generation: 1 })),
-        workstreamIds: [],
-        defaultResourceIds: [],
-        createdAt: '2026-08-27T00:00:00.000Z',
-        updatedAt: '2026-08-27T00:00:00.000Z',
-      }],
-    };
+    const projects = personalProjectDirectory(projectId);
     renderProjectScreen(projectId, projects);
 
     expect(await screen.findByRole('textbox', { name: 'Opening work-stream message' })).toBeVisible();
@@ -440,6 +447,7 @@ describe('New work-stream home', () => {
   it('keeps recipient selection above the composer and sends selected people', async () => {
     renderScreen();
 
+    act(() => screen.getByRole('combobox', { name: 'Search people' }).focus());
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
     expect(screen.getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveAttribute('placeholder', 'Add people');
@@ -460,18 +468,39 @@ describe('New work-stream home', () => {
     expect(request?.operationId).toBe(request?.requestId);
   });
 
-  it('focuses the recipient search when the new chat opens', async () => {
-    renderScreen();
+  it.each(['workspace', 'project'] as const)('focuses the message composer when the %s launcher opens', async (scope) => {
+    const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
+    const queryClient = scope === 'workspace'
+      ? renderScreen()
+      : renderProjectScreen(projectId, personalProjectDirectory(projectId));
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveFocus());
-    expect(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus();
+    expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
+    await waitFor(() => expect(queryClient.getQueryState(['workspace-members'])?.status).toBe('success'));
+    expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
+  });
+
+  it('focuses the message when navigating between project launchers', async () => {
+    const firstId = asProjectId('00000000-0000-7000-8000-0000000000f2');
+    const secondId = asProjectId('00000000-0000-7000-8000-0000000000f3');
+    renderProjectScreen(firstId, {
+      waterline: 1,
+      items: [...personalProjectDirectory(firstId).items, ...personalProjectDirectory(secondId).items],
+    }, secondId);
+    const firstComposer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    expect(firstComposer).toHaveFocus();
+    const nextProject = screen.getByRole('link', { name: 'New work stream in another project' });
+    act(() => nextProject.focus());
+    fireEvent.click(nextProject);
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveFocus());
   });
 
   it('shows an empty recipient result when the workspace has no available members', async () => {
     api.getWorkspaceMembers.mockResolvedValue([currentUser]);
     renderScreen();
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Search people' })).toHaveFocus());
+    act(() => screen.getByRole('combobox', { name: 'Search people' }).focus());
     expect(await screen.findByText('Everyone available is selected')).toBeVisible();
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
   });

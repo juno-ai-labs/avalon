@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { newId } from '@rally/db';
 import { TELEMETRY_ENVELOPE_SCHEMA, TELEMETRY_EVENTS, TelemetryEnvelopeSchema, type TelemetryEnvelope, type TelemetryEventName } from '@rally/contracts/telemetry';
 import type { Env, IdentityAuthContext } from '../env';
@@ -16,7 +17,7 @@ export function apiTelemetryEnvelope(
   properties: Record<string, unknown>,
   operationId: string,
   identityScope: 'platform-user' | 'workspace-user' | 'workspace',
-  region: 'global' | 'eu' = env.AVALON_REGION,
+  region: Region = env.AVALON_REGION,
   eventId?: string,
 ): TelemetryEnvelope {
   const now = new Date();

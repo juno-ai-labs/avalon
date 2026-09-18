@@ -1,6 +1,7 @@
-import { personMentionMarkdownPattern, rewriteCitationsAsPlainText } from "@rally/contracts/citations";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
+import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { nowIso } from "@rally/db";
 import { z } from "zod";
 
@@ -537,10 +538,7 @@ async function workspaceBotToken(
  * was added to close, rather than none.
  */
 function humanReadableMessage(value: string): string {
-  return rewriteCitationsAsPlainText(value, { sources: "plain" }).replace(
-    personMentionMarkdownPattern(),
-    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
-  );
+  return rewriteMessageAsPlainText(value, { sources: "plain" });
 }
 
 function slackParticipantAddedChunks(
@@ -640,9 +638,17 @@ function slackFailureReason(error: unknown): string {
     if (details && typeof details === "object" && typeof (details as { error?: unknown }).error === "string") {
       return String((details as { error: string }).error);
     }
+    // A malformed Slack body arrives as `provider_error` with the failing
+    // paths the adapter attached, not as a raw `ZodError`: the adapter parses
+    // the response and wraps the rejection. The word `provider_error` alone
+    // is what a network fault also says.
+    const responseIssues = details && typeof details === "object" ? (details as { responseIssues?: unknown }).responseIssues : undefined;
+    if (typeof responseIssues === "string" && isCodeShaped(responseIssues)) return codeShaped(`invalid_slack_data:${responseIssues}`);
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  // Slack answered with a body this binary does not model. The failing path
+  // is the diagnosis and is schema shape; the body's values stay behind.
+  if (error instanceof z.ZodError) return codeShaped(`invalid_slack_data:${describeZodIssues(error)}`);
   return error instanceof Error ? error.name : "unknown_error";
 }
 

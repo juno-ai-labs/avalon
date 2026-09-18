@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { sanitizeToolSchema } from "@juno-ai/bind/tools";
+
 import {
+  droppedNullableBranches,
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
   repairRootSchemaForProviders,
@@ -92,6 +95,32 @@ describe("weakenedCompositionBranches", () => {
       "/properties/filter/oneOf/0 (required dropped)",
       "/properties/rows/items/anyOf/0 (required dropped)",
       "/dependentSchemas/filter/oneOf/0 (required dropped)",
+    ]);
+  });
+
+  it("looks through the nullable rewrite to a composition beneath it", () => {
+    // Bind 14 rewrites `type: ["object", "null"]` into
+    // `anyOf: [<typed branch>, {type: "null"}]` and moves `properties` onto the
+    // typed branch. A walk reading the sanitized node literally found no
+    // `properties` there and reported nothing, so an emptied composition under
+    // a nullable object or array property passed with the check green.
+    expect(weakenedCompositionBranches({
+      type: "object",
+      properties: {
+        filter: {
+          type: ["object", "null"],
+          properties: { a: { type: "string", oneOf: [{}, {}] } },
+        },
+        rows: {
+          type: ["array", "null"],
+          items: { type: "object", properties: { a: { type: "string", oneOf: [{}, {}] } } },
+        },
+      },
+    })).toEqual([
+      "/properties/filter/properties/a/oneOf/0 (constrains nothing)",
+      "/properties/filter/properties/a/oneOf/1 (constrains nothing)",
+      "/properties/rows/items/properties/a/oneOf/0 (constrains nothing)",
+      "/properties/rows/items/properties/a/oneOf/1 (constrains nothing)",
     ]);
   });
 
@@ -627,5 +656,113 @@ describe("readableRootUnionBranch", () => {
       type: "object",
       properties: { a: { type: "object", properties: { inner: { oneOf: [{ type: "string" }] } } } },
     })).toBe(true);
+  });
+});
+
+/**
+ * The shape that had a scheduled Sidekick replying to itself, kept as a
+ * literal: `slack_send_message.thread_ts` as authored, a flat nullable string
+ * with a floor and a description that says to omit it or send `null`.
+ *
+ * Under `@juno-ai/bind` 13 the sanitizer collapsed it to `{ type: "string",
+ * minLength: 1 }` with "Accepts string or null." appended to the description,
+ * and a model that will not leave the key out invented values for it; the
+ * Sidekick delivery PRD's `research.md` has the record. Bind 14 rewrites it to
+ * a union instead. That is the dependency's behaviour, not this module's,
+ * which is why it is asserted here: a bind release that collapsed again would
+ * put the invented values back, and this file is where that would surface
+ * first.
+ */
+const SEND_MESSAGE_THREAD_TS_AS_AUTHORED = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    channel_id: { type: "string", minLength: 1, description: "Where to post the message." },
+    text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body." },
+    thread_ts: {
+      type: ["string", "null"],
+      minLength: 1,
+      description: "Post as a reply inside an existing thread. Omit it, or send `null`, to post a new top-level message.",
+    },
+  },
+  required: ["channel_id", "text"],
+};
+
+describe("droppedNullableBranches", () => {
+  it("reports nothing for a flat nullable string, which bind 14 delivers as a union", () => {
+    expect(droppedNullableBranches(SEND_MESSAGE_THREAD_TS_AS_AUTHORED)).toEqual([]);
+    // The wire shape itself, so the assertion above cannot pass by the guard
+    // going quiet: the null branch is a value the model can send, and the
+    // description no longer carries the "Accepts string or null." note that
+    // stood in for it.
+    const wire = sanitizeToolSchema(SEND_MESSAGE_THREAD_TS_AS_AUTHORED) as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(wire.properties.thread_ts).toEqual({
+      anyOf: [{ type: "string", minLength: 1 }, { type: "null" }],
+      description: "Post as a reply inside an existing thread. Omit it, or send `null`, to post a new top-level message.",
+    });
+  });
+
+  it("walks nested declarations and names them by their path", () => {
+    // The shape `submit_draft` authors: a dozen nullable fields under
+    // `triggers.items.properties`. A guard that read only the root passed
+    // while a bind regression confined to the recursive rewrite would have
+    // collapsed every one of them.
+    const nested = {
+      type: "object",
+      properties: {
+        triggers: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              rrule: { type: ["string", "null"], description: "Recurrence." },
+              // Case (b): still collapsed by bind 14, so still reported, and
+              // reported by its full path rather than as a root property.
+              window: { type: ["string", "number", "null"], description: "Either." },
+            },
+          },
+        },
+        filter: {
+          // A nullable object: its own properties now live on the typed branch
+          // of the delivered union, and the walk has to look through it.
+          type: ["object", "null"],
+          properties: {
+            teamId: { type: ["string", "null"], minLength: 1, description: "Team." },
+            mode: { type: ["string", "boolean", "null"], description: "Either." },
+          },
+        },
+        variants: {
+          anyOf: [
+            { type: "object", properties: { cursor: { type: ["string", "null"], minLength: 1, description: "Cursor." } } },
+            { type: "object", properties: { page: { type: ["integer", "boolean", "null"], description: "Either." } } },
+          ],
+          description: "Authored as a union.",
+        },
+      },
+      $defs: {
+        Cursor: { type: ["string", "null"], minLength: 1, description: "Cursor." },
+        Either: { type: ["string", "number", "null"], description: "Either." },
+      },
+    };
+    expect(droppedNullableBranches(nested)).toEqual([
+      "triggers.items.window: authored-null-branch-not-delivered",
+      "filter.mode: authored-null-branch-not-delivered",
+      "variants.anyOf[1].page: authored-null-branch-not-delivered",
+      "$defs.Either: authored-null-branch-not-delivered",
+    ]);
+  });
+
+  it("still reports a multi-type union, which bind 14 collapses as before", () => {
+    // Case (b) of bind's transform #1: no single shape every provider accepts,
+    // so `["string", "number", "null"]` becomes `"string"` with the rest in
+    // prose, and the authored null is gone from the wire.
+    expect(droppedNullableBranches({
+      type: "object",
+      properties: {
+        value: { type: ["string", "number", "null"], description: "Either." },
+      },
+    })).toEqual(["value: authored-null-branch-not-delivered"]);
   });
 });

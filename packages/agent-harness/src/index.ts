@@ -1,3 +1,6 @@
+import type { RallyCheckpointPort } from "./evaluation";
+import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
+export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
 import type {
   AddressingClassification,
   AutomationPluginActivity,
@@ -10,15 +13,17 @@ import type {
 } from "@rally/contracts";
 import {
   AddressingClassificationSchema,
-  AutomationSetEvaluatorRulesInputV1Schema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   isSentinelAutomationResourceId,
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
+  ConnectorConnectionCardInputSchema,
   type AutomationDraft,
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
-import { createStreamWatchdog } from "@juno-ai/bind/completion";
+import { createInferenceDelayObserver, INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
+import { createInferenceStreamWatchdog } from "./inference-stream-watchdog";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
 import { chatResultFromJSON } from "@openrouter/sdk/models/chatresult.js";
 import { chatStreamChunkFromJSON } from "@openrouter/sdk/models/chatstreamchunk.js";
@@ -28,16 +33,19 @@ import {
 } from "@openrouter/sdk/models/operations/createembeddings.js";
 import type { ChatMessages } from "@openrouter/sdk/models/chatmessages.js";
 import type { ChatRequest as OpenRouterChatRequest } from "@openrouter/sdk/models/chatrequest.js";
+import type { ProviderPreferences as OpenRouterProviderPreferences } from "@openrouter/sdk/models/providerpreferences.js";
 import type { ChatResult } from "@openrouter/sdk/models/chatresult.js";
 import type { ChatStreamChunk } from "@openrouter/sdk/models/chatstreamchunk.js";
 import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
 import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 // Cycle: `bind-runtime` imports back from this module. Sound because every
 // value it takes is read inside a function body — see `runHarness` below.
 import { runHarnessWithBind } from "./bind-runtime";
 import {
+  limitAddressingRecentMessages,
   renderAddressingMessages,
   type AddressingContextMessage,
 } from "./prompts";
@@ -460,6 +468,7 @@ export type ModelRequestTool = ModelToolDefinition | {
 };
 
 export type StructuredModelDiagnostic = {
+  provider?: "openrouter" | "typesafe";
   stage: "model_request" | "model_response" | "normalize" | "validate" | "repair" | "complete";
   schemaName: string;
   model: string;
@@ -503,6 +512,7 @@ export interface ChatRequest {
   reasoningEffort?: "low" | "medium" | "high" | undefined;
   trace?: OpenRouterTracePayload | undefined;
   signal?: AbortSignal | undefined;
+  onInferenceDelay?: (active: boolean) => void | Promise<void>;
 }
 
 export interface StreamResult {
@@ -745,6 +755,7 @@ export class OpenRouterClient {
      * thinking would buy them nothing.
      */
     reasoningEffort?: "none" | "low" | "medium" | "high";
+    provider?: OpenRouterProviderPreferences;
     signal?: AbortSignal | undefined;
     onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   }): Promise<T> {
@@ -814,6 +825,7 @@ export class OpenRouterClient {
             },
             plugins: [{ id: "response-healing" }],
             ...(reasoning ? { reasoning } : {}),
+            ...(input.provider ? { provider: input.provider } : {}),
             ...(tracePayload ? {
               ...(tracePayload.user ? { user: tracePayload.user } : {}),
               ...(tracePayload.session_id ? { sessionId: tracePayload.session_id } : {}),
@@ -1054,15 +1066,12 @@ export class OpenRouterClient {
   ): Promise<StreamResult> {
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
-    const watchdog = createStreamWatchdog({
-      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+    const watchdog = createInferenceStreamWatchdog({
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS,
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
-      maxCallDurationMs: Math.max(
-        this.config.ttftTimeoutMs ?? 120_000,
-        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
-      ),
       external: input.signal ?? null,
     });
+    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, watchdog.signal);
     const establishment = new AbortController();
     let establishmentTimedOut = false;
     const establishmentTimer = setTimeout(() => {
@@ -1122,6 +1131,7 @@ export class OpenRouterClient {
       });
     }
 
+    delayObserver.open();
     let content = "";
     let usage: Record<string, number> | null = null;
     let finishReason: string | null = null;
@@ -1146,14 +1156,21 @@ export class OpenRouterClient {
         if (choice.finishReason) finishReason = choice.finishReason;
         const text = choice.delta?.content;
         const toolCallDeltas = choice.delta?.toolCalls ?? [];
-        watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+        if (text || toolCallDeltas.length > 0) delayObserver.observedOutput();
+        // Metadata/keepalives must not restart the first-output deadline.
+        if (text || toolCallDeltas.length > 0 || firstOutputAt !== null) {
+          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+        }
         if (text || toolCallDeltas.length > 0) {
           firstOutputAt ??= Date.now();
           onOutput();
         }
         if (text) {
           content += text;
-          deltaChain = deltaChain.then(() => onDelta(text));
+          deltaChain = deltaChain.then(async () => {
+            await delayObserver.flush();
+            await onDelta(text);
+          });
         }
         for (const deltaCall of toolCallDeltas) {
           const current = pendingCalls.get(deltaCall.index) ?? {
@@ -1176,6 +1193,7 @@ export class OpenRouterClient {
       if (done) break;
       responseBytes += value.byteLength;
       parser.feed(decoder.decode(value, { stream: true }));
+      await delayObserver.flush();
     }
     parser.feed(decoder.decode());
     await deltaChain;
@@ -1206,6 +1224,7 @@ export class OpenRouterClient {
     } finally {
       clearTimeout(establishmentTimer);
       watchdog.dispose();
+      await delayObserver.finish();
     }
   }
 
@@ -1254,15 +1273,12 @@ export class AzureOpenAIClient {
     assertAzureMessages(input.messages);
     const requestStartedAt = Date.now();
     let firstOutputAt: number | null = null;
-    const watchdog = createStreamWatchdog({
-      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+    const watchdog = createInferenceStreamWatchdog({
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS,
       interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
-      maxCallDurationMs: Math.max(
-        this.config.ttftTimeoutMs ?? 120_000,
-        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
-      ),
       external: input.signal ?? null,
     });
+    const delayObserver = createInferenceDelayObserver(input.onInferenceDelay, watchdog.signal);
     const establishment = new AbortController();
     let establishmentTimedOut = false;
     const establishmentTimer = setTimeout(() => {
@@ -1306,6 +1322,7 @@ export class AzureOpenAIClient {
         });
       }
 
+      delayObserver.open();
       let content = "";
       let usage: Record<string, number> | null = null;
       let finishReason: string | null = null;
@@ -1328,11 +1345,18 @@ export class AzureOpenAIClient {
           if (choice.finishReason) finishReason = choice.finishReason;
           const text = choice.delta?.content;
           const toolCallDeltas = choice.delta?.toolCalls ?? [];
-          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+          if (text || toolCallDeltas.length > 0) delayObserver.observedOutput();
+          // Metadata/keepalives must not restart the first-output deadline.
+          if (text || toolCallDeltas.length > 0 || firstOutputAt !== null) {
+            watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+          }
           if (text || toolCallDeltas.length > 0) firstOutputAt ??= Date.now();
           if (text) {
             content += text;
-            deltaChain = deltaChain.then(() => onDelta(text));
+            deltaChain = deltaChain.then(async () => {
+              await delayObserver.flush();
+              await onDelta(text);
+            });
           }
           for (const deltaCall of toolCallDeltas) {
             const current = pendingCalls.get(deltaCall.index) ?? {
@@ -1355,6 +1379,7 @@ export class AzureOpenAIClient {
         if (done) break;
         responseBytes += value.byteLength;
         parser.feed(decoder.decode(value, { stream: true }));
+        await delayObserver.flush();
       }
       parser.feed(decoder.decode());
       await deltaChain;
@@ -1383,6 +1408,7 @@ export class AzureOpenAIClient {
     } finally {
       clearTimeout(establishmentTimer);
       watchdog.dispose();
+      await delayObserver.finish();
     }
   }
 }
@@ -1422,6 +1448,7 @@ function serializeOpenRouterChatRequest(input: {
   parallelToolCalls?: boolean;
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "none" | "low" | "medium" | "high" };
+  provider?: OpenRouterProviderPreferences;
   responseFormat?: OpenRouterChatRequest["responseFormat"];
   user?: string;
   sessionId?: string;
@@ -1440,6 +1467,7 @@ function serializeOpenRouterChatRequest(input: {
         : { parallelToolCalls: input.parallelToolCalls }),
       ...(input.plugins ? { plugins: toSdkPlugins(input.plugins) } : {}),
       ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+      ...(input.provider ? { provider: input.provider } : {}),
       ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),
       ...(input.user ? { user: input.user } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -1949,6 +1977,90 @@ const addressingJsonSchema = {
   required: ["classification", "confidence", "rationaleCode"]
 };
 
+const TYPESAFE_SYSTEMONE_URL = "https://api.typesafe.ai/v1/systemone";
+export const TYPESAFE_ADDRESSING_MODEL = "jev-latest";
+export const TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD = 0.5;
+// The measured JEV p95 is about 350 ms. Three times that tail keeps ordinary
+// variation on the primary while bounding message admission tightly enough for
+// the availability fallback to do its job.
+export const TYPESAFE_ADDRESSING_TIMEOUT_MS = 1_000;
+// Two measured wafer/fast trials put p99 between 10.0s and 11.6s. Fifteen
+// seconds preserves that observed tail while keeping the terminal local floor
+// reachable during a stalled connection.
+export const ADDRESSING_FALLBACK_TIMEOUT_MS = 15_000;
+export const ADDRESSING_FALLBACK_MODEL = "deepseek/deepseek-v4-flash-0731";
+export const ADDRESSING_FALLBACK_PROVIDER = "wafer/fast";
+
+const TypeSafeAddressingResponseSchema = z.object({
+  model: z.string().min(1),
+  answers: z.object({
+    addressing: z.object({
+      type: z.literal("choice"),
+      choice: z.enum([
+        "rally_should_act",
+        "people_only",
+        "rally_and_people_should_act",
+        "no_clear_request",
+      ]),
+      confidence: z.number().min(0).max(1),
+      probabilities: z.record(z.string(), z.number()).optional(),
+    }),
+  }),
+  usage: z.object({
+    input_tokens: z.number().nonnegative(),
+    output_tokens: z.number().nonnegative(),
+  }).optional(),
+});
+
+const typesafeAddressingQuestions = {
+  addressing: {
+    type: "choice",
+    instructions: {
+      question: "Who is expected to act on `current_message.text` now?",
+      focus: "Judge the current message. Use `conversation_context.recent_messages` only to resolve references, implied addressee, or continuation.",
+      decision: "Choose exactly one actor pattern.",
+    },
+    criteria: {
+      rally_should_act: {
+        meaning: "Rally should answer or perform work now.",
+        include: [
+          "Direct request to Rally",
+          "Question or instruction whose implied addressee is Rally",
+          "Continuation asking Rally to proceed or revise",
+        ],
+        exclude: [
+          "Quoted commands presented as content",
+          "Request directed only to a person",
+          "Acknowledgement, FYI, status report, or social reaction",
+        ],
+      },
+      people_only: {
+        meaning: "Rally should not act; the message is for people or conversational only.",
+        include: [
+          "Request or question directed only to a named person",
+          "Human coordination",
+          "Acknowledgement, FYI, status report, or social reaction",
+          "Follow-up questions in an established person-to-person exchange retain that human addressee until redirected to Rally.",
+        ],
+        exclude: ["Implied question or instruction to Rally"],
+      },
+      rally_and_people_should_act: {
+        meaning: "Rally and at least one person each receive an independent action.",
+        include: ["One action assigned to Rally and another assigned to a person"],
+        exclude: [
+          "Rally doing work about, for, or involving a person",
+          "A person merely mentioned in Rally work",
+        ],
+      },
+      no_clear_request: {
+        meaning: "The intended actor cannot genuinely be determined.",
+        include: ["Gibberish", "Unresolvable fragment", "Conflicting evidence"],
+        exclude: ["Ordinary uncertainty", "FYIs or reactions, which are people_only"],
+      },
+    },
+  },
+} as const;
+
 /**
  * The two ways a message can name the product, and why they are not one pattern.
  *
@@ -1958,13 +2070,13 @@ const addressingJsonSchema = {
  * this" names no agent — so the same short-circuit would buy a false positive
  * at 0.96 confidence, decided deterministically and never seen by the model.
  *
- * So the ambiguous token does not short-circuit; it rides into the prompt as
- * `addressesRally`, where the classifier weighs it against the surrounding
- * turns. The prompt tells the model an explicit Rally reference is strong
- * evidence, and this is what makes that true.
+ * So the ambiguous token does not short-circuit. Only explicit vocative shapes
+ * such as "Rally, ..." set the strong JEV state bit; ordinary uses remain in the
+ * message text for the classifier to weigh with surrounding turns.
  */
 const UNAMBIGUOUS_PRODUCT_REFERENCE = /\bavalon\b/iu;
 const PRODUCT_REFERENCE = /\b(?:avalon|rally)\b/iu;
+const EXPLICIT_PRODUCT_ADDRESS = /\bavalon\b|(?:^|[([{"'\s])@?rally(?:\s*[,!:—-]|\s+(?:please|can|could|would|will|should)\b)/iu;
 
 export function classifyAddressingHeuristically(input: {
   message: string;
@@ -2002,6 +2114,7 @@ export function classifyAddressingHeuristically(input: {
 
 export async function classifyAddressing(input: {
   apiKey: string;
+  typesafeApiKey?: string;
   model: string;
   fallbackModels?: string[];
   message: string;
@@ -2015,8 +2128,254 @@ export async function classifyAddressing(input: {
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   traceContext?: OpenRouterTraceContext;
 }): Promise<AddressingClassification> {
+  if (input.typesafeApiKey) {
+    let typesafe: AddressingClassification | null = null;
+    try {
+      typesafe = await classifyAddressingWithTypeSafe({
+        ...input,
+        typesafeApiKey: input.typesafeApiKey,
+      });
+    } catch (error) {
+      // Cancellation belongs to the caller. It must stop the cascade rather
+      // than masquerading as a provider failure and starting another request.
+      if (input.signal?.aborted) throw error;
+    }
+    if (typesafe && typesafe.confidence > TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD) {
+      return typesafe;
+    }
+    const fallbackDeadline = new AbortController();
+    const fallbackTimer = setTimeout(() => {
+      fallbackDeadline.abort(new DOMException("addressing fallback timed out", "TimeoutError"));
+    }, ADDRESSING_FALLBACK_TIMEOUT_MS);
+    const fallbackSignal = input.signal
+      ? AbortSignal.any([input.signal, fallbackDeadline.signal])
+      : fallbackDeadline.signal;
+    try {
+      return await classifyAddressingWithModel({
+        ...input,
+        fallbackModels: [],
+        reasoningEffort: "low",
+        signal: fallbackSignal,
+      });
+    } catch (error) {
+      if (input.signal?.aborted) throw error;
+      // Addressing is admission policy, not message durability. If both remote
+      // stages are unavailable, retain the user's message and use the existing
+      // conservative deterministic classifier as the terminal floor.
+      return classifyAddressingHeuristically(input);
+    } finally {
+      clearTimeout(fallbackTimer);
+    }
+  }
   const deterministic = classifyAddressingHeuristically(input);
   if (deterministic.confidence >= 0.9) return deterministic;
+  return classifyAddressingWithModel(input);
+}
+
+export async function classifyAddressingWithTypeSafe(input: {
+  typesafeApiKey: string;
+  message: string;
+  activeTask: boolean;
+  connectorMentions?: string[];
+  humanMentions?: string[];
+  addressesRally?: boolean;
+  recentMessages?: AddressingContextMessage[];
+  signal?: AbortSignal;
+  fetch?: typeof globalThis.fetch;
+  onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
+  traceContext?: OpenRouterTraceContext;
+}): Promise<AddressingClassification> {
+  const fetcher = input.fetch ?? globalThis.fetch;
+  const traceId = input.traceContext?.requestId
+    ?? input.traceContext?.harnessRunId
+    ?? crypto.randomUUID();
+  const inferenceRequestId = crypto.randomUUID();
+  const startedAt = Date.now();
+  const requestPayload = {
+    state: {
+      current_message: {
+        text: input.message,
+        explicitly_addresses_rally: input.addressesRally ?? EXPLICIT_PRODUCT_ADDRESS.test(input.message),
+        mentioned_people: input.humanMentions ?? [],
+        mentioned_connectors: input.connectorMentions ?? [],
+      },
+      current_agent_state: { task_active: input.activeTask },
+      conversation_context: { recent_messages: limitAddressingRecentMessages(input.recentMessages ?? []) },
+    },
+    questions: typesafeAddressingQuestions,
+    model: TYPESAFE_ADDRESSING_MODEL,
+  };
+  const diagnosticBase = {
+    provider: "typesafe" as const,
+    schemaName: "message_addressing",
+    model: TYPESAFE_ADDRESSING_MODEL,
+    attempt: 0,
+    fallbackAttempt: 0,
+    repairAttempt: 0,
+    inferenceRequestId,
+    traceId,
+  };
+  await input.onDiagnostic?.({
+    ...diagnosticBase,
+    stage: "model_request",
+    requestPayload,
+  });
+
+  const deadline = new AbortController();
+  const deadlineTimer = setTimeout(() => deadline.abort(), TYPESAFE_ADDRESSING_TIMEOUT_MS);
+  const signal = input.signal
+    ? AbortSignal.any([input.signal, deadline.signal])
+    : deadline.signal;
+  let failureResponseBytes: number | undefined;
+  let failureResponsePayload: Record<string, unknown> | undefined;
+  try {
+    const response = await fetcher(TYPESAFE_SYSTEMONE_URL, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${input.typesafeApiKey}`,
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
+      signal,
+    });
+    const raw = await response.text();
+    failureResponseBytes = new TextEncoder().encode(raw).byteLength;
+
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw);
+    } catch {
+      if (!response.ok) throw new Error(`typesafe_http_${response.status}`);
+      throw new Error("typesafe_response_invalid_json");
+    }
+    if (typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)) {
+      failureResponsePayload = decoded as Record<string, unknown>;
+    }
+    if (!response.ok) throw new Error(`typesafe_http_${response.status}`);
+    const parsed = TypeSafeAddressingResponseSchema.safeParse(decoded);
+    if (!parsed.success) {
+      await input.onDiagnostic?.({
+        ...diagnosticBase,
+        stage: "complete",
+        latencyMs: Date.now() - startedAt,
+        responseBytes: new TextEncoder().encode(raw).byteLength,
+        success: false,
+        failureKind: zodDiagnosticCode(parsed.error, "typesafe_response") ?? "typesafe_response_invalid",
+        responsePayload: decoded as Record<string, unknown>,
+        validationIssues: parsed.error.issues.map((issue) => ({
+          path: issue.path.length === 0 ? "-root-" : issue.path.join("."),
+          code: issue.code,
+        })),
+      });
+      throw parsed.error;
+    }
+    const answer = parsed.data.answers.addressing;
+    const classification = mapTypeSafeAddressingChoice(answer.choice, answer.confidence, input);
+    await input.onDiagnostic?.({
+      ...diagnosticBase,
+      stage: "complete",
+      model: parsed.data.model,
+      latencyMs: Date.now() - startedAt,
+      responseBytes: new TextEncoder().encode(raw).byteLength,
+      ...(parsed.data.usage ? {
+        inputTokens: parsed.data.usage.input_tokens,
+        outputTokens: parsed.data.usage.output_tokens,
+      } : {}),
+      success: true,
+      responsePayload: decoded as Record<string, unknown>,
+    });
+    return classification;
+  } catch (error) {
+    if (error instanceof z.ZodError) throw error;
+    await input.onDiagnostic?.({
+      ...diagnosticBase,
+      stage: "complete",
+      latencyMs: Date.now() - startedAt,
+      ...(failureResponseBytes !== undefined ? { responseBytes: failureResponseBytes } : {}),
+      ...(failureResponsePayload ? { responsePayload: failureResponsePayload } : {}),
+      success: false,
+      failureKind: typeSafeFailureKind(error, input.signal, deadline.signal),
+    });
+    throw error;
+  } finally {
+    clearTimeout(deadlineTimer);
+  }
+}
+
+function typeSafeFailureKind(error: unknown, callerSignal?: AbortSignal, deadlineSignal?: AbortSignal): string {
+  if (callerSignal?.aborted) return "typesafe_request_aborted";
+  if (deadlineSignal?.aborted) return "typesafe_request_timed_out";
+  if (error instanceof Error && /^typesafe_(?:http_\d{3}|response_invalid_json)$/u.test(error.message)) {
+    return error.message;
+  }
+  return "typesafe_request_failed";
+}
+
+function mapTypeSafeAddressingChoice(
+  choice: z.infer<typeof TypeSafeAddressingResponseSchema>["answers"]["addressing"]["choice"],
+  confidence: number,
+  input: {
+    message: string;
+    activeTask: boolean;
+    connectorMentions?: string[];
+    humanMentions?: string[];
+    addressesRally?: boolean;
+  },
+): AddressingClassification {
+  switch (choice) {
+    case "rally_should_act":
+      return {
+        classification: "agent_action",
+        confidence,
+        rationaleCode: (input.connectorMentions?.length ?? 0) > 0
+          ? "connector_mention"
+          : input.addressesRally || EXPLICIT_PRODUCT_ADDRESS.test(input.message)
+            ? "rally_reference"
+            : /\?\s*$/u.test(input.message)
+              ? "question"
+              : "imperative",
+      };
+    case "people_only":
+      return {
+        classification: "human_only",
+        confidence,
+        rationaleCode: /^(thanks|thank you|sounds good|got it|okay|ok|nice)[!. ]*$/iu.test(input.message.trim())
+          ? "social_acknowledgement"
+          : "human_coordination",
+      };
+    case "rally_and_people_should_act":
+      return { classification: "both", confidence, rationaleCode: "question" };
+    case "no_clear_request":
+      return {
+        classification: "uncertain",
+        confidence,
+        rationaleCode: input.activeTask ? "active_task" : "insufficient_signal",
+      };
+  }
+}
+
+/** Run only the OpenRouter half of addressing classification. Production uses
+ * this as JEV's low-confidence/failure fallback; development without TypeSafe
+ * still uses it after deterministic fast paths. Evaluations invoke it directly
+ * so a prompt/model comparison cannot silently become a heuristic benchmark. */
+export async function classifyAddressingWithModel(input: {
+  apiKey: string;
+  model: string;
+  fallbackModels?: string[];
+  message: string;
+  activeTask: boolean;
+  connectorMentions?: string[];
+  humanMentions?: string[];
+  addressesRally?: boolean;
+  recentMessages?: AddressingContextMessage[];
+  signal?: AbortSignal;
+  fetch?: typeof globalThis.fetch;
+  onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
+  traceContext?: OpenRouterTraceContext;
+  provider?: OpenRouterProviderPreferences;
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+}): Promise<AddressingClassification> {
   const client = new OpenRouterClient({
     apiKey: input.apiKey,
     primaryModel: input.model,
@@ -2024,6 +2383,7 @@ export async function classifyAddressing(input: {
     ...(input.fetch ? { fetch: input.fetch } : {}),
     ...(input.traceContext ? { traceContext: input.traceContext } : {}),
   });
+  const provider = input.provider ?? addressingProviderRouting(input.model);
   return client.structured({
     messages: renderAddressingMessages({
       message: input.message,
@@ -2036,9 +2396,27 @@ export async function classifyAddressing(input: {
     schemaName: "message_addressing",
     jsonSchema: addressingJsonSchema,
     parse: (value) => AddressingClassificationSchema.parse(value),
+    ...(provider ? { provider } : {}),
+    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
   });
+}
+
+function addressingProviderRouting(model: string): OpenRouterProviderPreferences | undefined {
+  if (model === ADDRESSING_FALLBACK_MODEL) {
+    return {
+      only: [ADDRESSING_FALLBACK_PROVIDER],
+      allowFallbacks: false,
+      requireParameters: true,
+    };
+  }
+  if (model !== "deepseek/deepseek-v4.1-flash") return undefined;
+  return {
+    order: ["modal", "together"],
+    allowFallbacks: false,
+    requireParameters: true,
+  };
 }
 
 const automationDraftSubmissionJsonSchema = {
@@ -2074,7 +2452,7 @@ const automationDraftSubmissionJsonSchema = {
           summary: { type: ["string", "null"], description: "One line saying when this trigger fires, in the person's own terms, for example \"Every Monday at 9am\". Null when the type makes it obvious." },
           intervalSeconds: { type: ["integer", "null"], minimum: 60, description: "For an `interval` trigger, how many seconds between runs, at least 60 — 3600 is hourly. Null for every other type." },
           connectorType: { type: ["string", "null"], description: "For a `connector_activity` or `semantic_activity` trigger, which connector the events come from, for example `slack`. Null for every other type." },
-          sourceBindingKey: { type: ["string", "null"], description: "For a `connector_activity`, `semantic_activity`, or `webhook` trigger, the stable key naming what is watched — a channel, a mailbox, a repository — taken from plugin_inspect or resources_search rather than composed, and reused as the binding the evaluator rules refer to. A draft submitted with `ready: true` is refused without it on all three of those types, so it cannot be left null even for a watch covering a whole connector. Null for every other type." },
+          sourceBindingKey: { type: ["string", "null"], description: "For a `connector_activity`, `semantic_activity`, or `webhook` trigger, a short lowercase label you compose for what this trigger watches, for example `fireflies_meetings`. Choose it yourself: it is not a provider identifier and no tool returns one, so there is nothing to look up. Its only job is to join this trigger to the evaluator rules that filter it — write the identical label in each of those rules' `sourceBindingKey`, and reuse one label rather than inventing a second for the same trigger. The one exception: where resources_search returned `sourceBindingKeys` for a resource a rule names, use one of those instead. Narrowing a rule to a particular channel, folder, or repository is `resourceId`'s job and not this field's. A draft submitted with `ready: true` is refused without it on all three of those types, so it cannot be left null even for a watch covering a whole connector. Null for every other type." },
           suggestedSourcePluginId: { type: ["string", "null"], description: "For a `connector_activity`, `semantic_activity`, or `webhook` trigger, the plugin whose events these are, as a `pluginId` from plugins_list or plugins_search. A draft submitted with `ready: true` is refused without it on all three. Null for every other type." },
           eventTypes: { type: ["array", "null"], items: { type: "string" }, description: "For a `connector_activity` or `webhook` trigger, which event types to listen for, at least one, spelled exactly as plugin_inspect reports them, for example [\"slack.message.posted\"]. They are namespaced by connector, so copy them from plugin_inspect rather than shortening them: an event type the plugin does not declare is not reported as wrong, it simply never fires, and the Sidekick is silently inert. Null for every other type." },
           deterministicFilters: {
@@ -2199,6 +2577,17 @@ export interface AutomationCreatorPluginCatalogEntry {
   searchAliases: string[];
   systemMessage: string;
   activityTriggers: ConnectorActivityTriggerDescriptor[];
+  /**
+   * The connection scope this connector's events need, set only when this
+   * connection does not have it.
+   *
+   * `activityTriggers` is empty in that case, and a count of zero is the one
+   * thing a drafting model reads as "this connector has no events" — which is
+   * false, and led it to build the automation on a timer instead. The scope is
+   * carried so the discovery tools can say what the connection is missing
+   * rather than leaving the model to infer it from an absence.
+   */
+  activityRequiresScope?: "personal" | "workspace";
   tools: Array<{
     name: string;
     /** Canonical adapter identity; `name` remains the exact model-facing wire name. */
@@ -2208,6 +2597,7 @@ export interface AutomationCreatorPluginCatalogEntry {
     mode: "read" | "write";
     idempotency?: "safe" | "provider_key" | "record_before_execute";
     timeoutMs?: number;
+    longRunning?: boolean;
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
@@ -2372,6 +2762,22 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   },
 };
 
+/**
+ * Why a connection advertises no activity trigger, when the answer is its
+ * scope rather than the connector.
+ *
+ * Written for the model to relay rather than act around: the drafting loop's
+ * instinct on an event it cannot have is to substitute the nearest schedule,
+ * which produces an automation that runs forever and never does the thing it
+ * was asked for.
+ */
+export function activityTriggerScopeRefusal(
+  plugin: Pick<AutomationCreatorPluginCatalogEntry, "displayName" | "scope" | "activityRequiresScope">,
+): string | null {
+  if (!plugin.activityRequiresScope || plugin.activityRequiresScope === plugin.scope) return null;
+  return `${plugin.displayName} events reach Rally only through a ${plugin.activityRequiresScope} connection, and this one is ${plugin.scope}, so no automation can be triggered by it. Tell the person a ${plugin.activityRequiresScope} connection is required and stop; do not substitute a schedule or another plugin's events.`;
+}
+
 export function executeAutomationCreatorDiscoveryTool(
   toolName: string,
   args: Record<string, unknown>,
@@ -2379,15 +2785,19 @@ export function executeAutomationCreatorDiscoveryTool(
 ): unknown {
   if (toolName === "plugins_list") {
     return {
-      plugins: catalog.map((plugin) => ({
-        pluginId: plugin.pluginId,
-        displayName: plugin.displayName,
-        description: plugin.description,
-        scope: plugin.scope,
-        aliases: plugin.searchAliases,
-        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode })),
-        activityTriggerCount: plugin.activityTriggers.length,
-      })),
+      plugins: catalog.map((plugin) => {
+        const activityTriggersUnavailable = activityTriggerScopeRefusal(plugin);
+        return {
+          pluginId: plugin.pluginId,
+          displayName: plugin.displayName,
+          description: plugin.description,
+          scope: plugin.scope,
+          aliases: plugin.searchAliases,
+          tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
+          activityTriggerCount: plugin.activityTriggers.length,
+          ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
+        };
+      }),
     };
   }
   if (toolName === "plugins_search") {
@@ -2402,24 +2812,30 @@ export function executeAutomationCreatorDiscoveryTool(
     }).toLocaleLowerCase().includes(query));
     return {
       query,
-      plugins: matches.map((plugin) => ({
-        pluginId: plugin.pluginId,
-        displayName: plugin.displayName,
-        description: plugin.description,
-        scope: plugin.scope,
-        aliases: plugin.searchAliases,
-        tools: plugin.tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          capability: tool.capability,
-          mode: tool.mode,
-        })),
-      })),
+      plugins: matches.map((plugin) => {
+        const activityTriggersUnavailable = activityTriggerScopeRefusal(plugin);
+        return {
+          pluginId: plugin.pluginId,
+          displayName: plugin.displayName,
+          description: plugin.description,
+          scope: plugin.scope,
+          aliases: plugin.searchAliases,
+          tools: plugin.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            capability: tool.capability,
+            mode: tool.mode,
+            ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
+          })),
+          ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
+        };
+      }),
     };
   }
   if (toolName === "plugin_inspect") {
     const pluginId = String(args.pluginId ?? "");
     const plugin = catalog.find((entry) => entry.pluginId === pluginId);
+    const activityTriggersUnavailable = plugin ? activityTriggerScopeRefusal(plugin) : null;
     return plugin ? {
       plugin: {
         pluginId: plugin.pluginId,
@@ -2434,6 +2850,7 @@ export function executeAutomationCreatorDiscoveryTool(
           capability: tool.capability,
           mode: tool.mode,
           idempotency: tool.idempotency ?? "safe",
+          ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }),
           inputSchema: tool.inputSchema,
         })),
         // Projected rather than returned whole, like `plugins_search` above.
@@ -2458,6 +2875,7 @@ export function executeAutomationCreatorDiscoveryTool(
             : {}),
           ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
+        ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
       },
     } : { error: "plugin_not_found", pluginId };
   }
@@ -2652,6 +3070,7 @@ export interface HarnessToolContext {
 }
 
 export interface HarnessToolResult {
+  pagination?: ToolPaginationResult;
   output: unknown;
   summary: string;
   /**
@@ -2679,6 +3098,8 @@ export interface HarnessToolResult {
  * from `@juno-ai/bind/skills`.
  */
 export interface HarnessSkill {
+  /** Host-selected routing preference; does not activate instructions. */
+  recommended?: boolean;
   /** Lower-kebab identifier, unique within a run. What `load_skill` takes. */
   name: string;
   /** Tier-1 catalog line: what the skill does. */
@@ -2820,7 +3241,7 @@ const requestElicitationInputJsonSchema = memoizedValue(
 );
 const automationEvaluatorRulesJsonSchema = memoizedValue(
   () => withoutSentinelIdAlternatives(
-    z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema, { io: "input" }),
+    z.toJSONSchema(AutomationSetEvaluatorRulesModelInputV1Schema, { io: "input" }),
   ) as Record<string, unknown>,
 );
 
@@ -2874,6 +3295,51 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   idempotency: "provider_key",
   get inputSchema() {
     return requestElicitationInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+const connectorConnectionCardInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(ConnectorConnectionCardInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/** Read the durable connection state for the same trusted catalog selection a card presents. */
+export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
+  name: "get_connector_connection_state",
+  description: [
+    "Check Rally's saved connection state for a connector and scope. Call this first.",
+    "Returns connected, reconnect_required, not_connected, or unavailable.",
+    "If connected, continue the task and do not show a card.",
+    "If reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and scope.",
+    "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
+    "This checks Rally's saved state, not the provider directly.",
+  ].join(" "),
+  capability: "connector.connection.read",
+  mode: "read",
+  idempotency: "safe",
+  get inputSchema() {
+    return connectorConnectionCardInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+/**
+ * Ask Rally's main conversation feed to present one trusted connector card.
+ * The model selects only catalog identity and scope; the client owns all copy,
+ * capabilities, displayed connection state, and the authorization destination.
+ */
+export const AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION = {
+  name: "show_connector_connection",
+  description: [
+    "Show a persistent card that lets the user connect or reconnect a connector.",
+    "Call only after get_connector_connection_state returns reconnect_required or not_connected and the missing connection blocks the task.",
+    "Use the same connectorId and scope. Briefly explain what is blocked before this call.",
+    "After this call, do not claim the connector is connected or retry connector-dependent work in this run.",
+    "Never create an authorization URL or ask for credentials.",
+  ].join(" "),
+  capability: "connector.connection.present",
+  mode: "read",
+  idempotency: "safe",
+  get inputSchema() {
+    return connectorConnectionCardInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 
@@ -2982,7 +3448,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "sidekicks_list",
-    description: "List the Sidekicks this conversation can edit, each with its current definition: in a work stream, the ones the room owns; in a Sidekick's own conversation, that Sidekick. Start an edit from the definition returned here and submit the whole revised draft with its sidekickId.",
+    description: "List editable Sidekick definitions (canEdit) and, in workstreams, workspace Sidekick summaries available to recommend (canAttach, attached). Edit definitions in the Sidekick's authoring conversation; use attach or detach for workspace recommendations. Recommendations affect future executions; load_skill is still required to use one now.",
     capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",
@@ -2990,7 +3456,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "submit_draft",
-    description: "Save the best current Sidekick draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question. A ready draft with a connector_activity, semantic_activity or webhook trigger is refused unless set_evaluator_rules has already sent at least one rule.",
+    description: "Save the full Sidekick draft. If required information is missing, set ready=false and ask the requester for it. If an agent requested the work, send that agent your question. Before saving ready=true with a connector_activity, semantic_activity, or webhook trigger, add at least one evaluator rule.",
     capability: "rally.sidekick.submit",
     mode: "write",
     idempotency: "record_before_execute",
@@ -3294,6 +3760,8 @@ export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
 export type PluginAuthorizationOccasion = "activation" | "continuation";
 
 export interface RunHarnessInput {
+  /** Optional settled checkpoint capture, using the same runtime and Bind loop as production. */
+  checkpoints?: RallyCheckpointPort;
   config: OpenRouterConfig & {
     /** Optional iteration ceiling; callers that intend an unlimited loop omit it. */
     maxIterations?: number;
@@ -3460,6 +3928,8 @@ export interface RunHarnessInput {
     providerOperationId?: string;
   }) => void | Promise<void>;
   onAmbiguousExternalWrite?: (event: { toolCallId: string; pluginId: string; toolName: string }) => void | Promise<void>;
+  /** Transient first-output wait status, scoped to a provider invocation. */
+  onInferenceDelay?: (event: { inferenceRequestId: string; turnId: string; active: boolean }) => void | Promise<void>;
   /** Receives the complete provider request body immediately before dispatch. */
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
@@ -3732,3 +4202,5 @@ export const __testing = {
   normalizeAutomationDraft,
   automationResearchToolPresentation: AUTOMATION_RESEARCH_TOOL_PRESENTATION,
 };
+
+export * from "./prepared-content";

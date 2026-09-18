@@ -426,6 +426,14 @@ describe("Slack connector", () => {
       details: { oauthStage: "token_exchange", error: "invalid_code" },
     });
 
+    // Slack answered with a body this adapter does not model. Which field is
+    // the whole diagnosis, and the body's values do not travel with it.
+    respond.set("/api/oauth.v2.user.access", () => json({ ok: true, team: { id: "TACME" }, authed_user: { access_token: 123 } }));
+    expect(await failure()).toMatchObject({
+      code: "provider_error",
+      details: { oauthStage: "token_exchange", responseIssues: "authed_user.access_token:invalid_type" },
+    });
+
     // Slack answered, but with nothing this connection can be built from.
     respond.set("/api/oauth.v2.user.access", () => json({ ok: true, team: { id: "TACME" } }));
     expect(await failure()).toMatchObject({
@@ -512,6 +520,35 @@ describe("Slack connector", () => {
     for (const capability of SlackWorkspaceCapabilities) {
       expect(connectorCapabilitySupportsScope(adapter, capability, "workspace")).toBe(true);
     }
+  });
+
+  it("states the create_conversation choice at tool level and validates it at execution", () => {
+    const definition = slackTools.find((tool) => tool.name === "create_conversation");
+    expect(definition).toMatchObject({
+      description: expect.stringMatching(/exactly one.*`name`.*channel.*`user_ids`.*direct or group message/iu),
+      inputSchema: {
+        properties: {
+          name: { description: expect.stringContaining("Omit it when using `user_ids`.") },
+          user_ids: { description: expect.stringContaining("Omit it when using `name`.") },
+          is_private: { description: expect.stringMatching(/ignored for direct and group messages.*cannot be changed later/iu) },
+        },
+      },
+    });
+
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+    });
+    expect(adapter.validateToolInput?.("create_conversation", {})).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("create_conversation", {
+      name: "project-alpha",
+      user_ids: ["UALEX"],
+    })).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("create_conversation", { name: "Project Alpha" })).toBeInstanceOf(Error);
+    expect(adapter.validateToolInput?.("create_conversation", { name: "project-alpha" })).toBeNull();
+    expect(adapter.validateToolInput?.("create_conversation", { user_ids: ["UALEX"] })).toBeNull();
   });
 
   it("uses Slack's query transport for conversations.info", async () => {
@@ -891,9 +928,9 @@ describe("Slack connector", () => {
     };
 
     await expect(adapter.executeTool("search_messages", { query: "gizmo" }, context))
-      .resolves.toMatchObject({ output: { next_cursor: null } });
+      .resolves.toMatchObject({ pagination: { continuations: [] } });
     await expect(adapter.executeTool("search", { query: "gizmo" }, context))
-      .resolves.toMatchObject({ output: { next_cursor: null } });
+      .resolves.toMatchObject({ pagination: { continuations: [] } });
   });
 
   it("uses hidden event authorization for workspace message search", async () => {
@@ -1048,7 +1085,7 @@ describe("Slack connector", () => {
       .resolves.toMatchObject({ output: { member_user_ids: ["UALEX", "UADA"] } });
   });
 
-  it("executes the three workspace Slack writes with stable provider identities", async () => {
+  it("executes workspace Slack writes with stable provider identities", async () => {
     const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -1060,6 +1097,10 @@ describe("Slack connector", () => {
       if (method === "conversations.create") return json({
         ok: true,
         channel: { id: "CNEW", name: "project-alpha", is_private: false },
+      });
+      if (method === "conversations.open") return json({
+        ok: true,
+        channel: { id: "DNEW", is_im: false, is_mpim: true },
       });
       throw new Error(`Unexpected URL ${url}`);
     });
@@ -1089,8 +1130,14 @@ describe("Slack connector", () => {
       name: "project-alpha",
       is_private: false,
     }, context)).resolves.toMatchObject({ providerOperationId: "CNEW" });
+    await expect(adapter.executeTool("create_conversation", {
+      user_ids: ["UALEX", "UADA"],
+      is_private: true,
+    }, context)).resolves.toMatchObject({ providerOperationId: "DNEW" });
     expect(requests.find((request) => request.method === "chat.postMessage")?.body.client_msg_id)
       .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(requests.find((request) => request.method === "conversations.open")?.body)
+      .toEqual({ users: "UALEX,UADA" });
   });
 
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {
@@ -1417,8 +1464,16 @@ describe("Slack connector", () => {
       return json({ ok: true, plan: 42 });
     });
 
+    // The failing field rides on the error, code-shaped, for the API's reason
+    // helpers to read; the body's values do not.
     await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
-      .rejects.toThrow(/malformed response/iu);
+      .rejects.toMatchObject({
+        code: "provider_error",
+        message: expect.stringMatching(/malformed response/iu),
+        details: { responseIssues: expect.stringMatching(/^[A-Za-z0-9_:.-]+$/u) },
+      });
+    await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
+      .rejects.toMatchObject({ details: { responseIssues: expect.stringContaining("invalid_type") } });
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "ada@example.com",
     }, neverAborts(), fetcher)).resolves.toMatchObject({

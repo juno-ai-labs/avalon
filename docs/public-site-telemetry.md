@@ -1,12 +1,5 @@
 # Public-site telemetry
 
-Rally's public site records a closed, content-free acquisition and desktop-
-handoff journey through the same regional telemetry boundary as the desktop.
-Global traffic can form an anonymous multi-page funnel and reaches PostHog as
-real web events. EU traffic stays in Rally's EU Cloudflare resources and is
-page-scoped: the site does not read or write a persistent analytics identifier
-for an affirmative EU route.
-
 The request-only landing submits its email solely to `/access/requests`; neither
 email values nor submission bodies enter telemetry. `/download/` deliberately
 skips telemetry initialization so its bearer fragment cannot reach analytics.
@@ -16,13 +9,12 @@ The former landing download/CTA click listeners were removed with the public her
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/src/telemetry.ts` | Cloudflare route lookup, region-dependent anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
+| `apps/site/src/telemetry.ts` | Global route lookup, first-party anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
 | `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry. |
 | `apps/site/src/landing.ts` | Sends the access-request form to its API; emits no telemetry or email content. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
-| `apps/api/src/telemetry/bootstrap.ts` | Reduces Cloudflare country to `eu` or `global`, fixes the journey route, and permits only the public-site event allowlist before authentication. |
 | `apps/api/src/telemetry/posthog-adapter.ts` | Maps the Global page observations once to PostHog `$pageview` and `$pageleave`. |
 | `apps/site/trust/cookies/index.html` | Public disclosure for first-party site analytics, browser storage, regional behavior, and prohibited fields. |
 
@@ -32,29 +24,8 @@ and destination mechanics remain in [`telemetry.md`](telemetry.md).
 
 ## How it works
 
-Every page first requests `GET /telemetry/route` from the Global edge. The
-Worker prefers Cloudflare's maintained `request.cf.isEUCountry` classification,
-falls back to the coarse country code when that property is unavailable, and
-reduces either signal to `eu` or `global`. The response carries that route,
-whether it came from Cloudflare geolocation or the conservative Global fallback,
-and a five-minute signed route token. It creates no D1 journey and returns
-`Cache-Control: no-store`. The site
-then selects an identity:
-
 - Global reads or creates one random UUIDv7 in first-party `localStorage`, so
   landing, download, and handoff pages can form one anonymous acquisition path.
-- EU creates one in-memory UUIDv7 for this page load and never reads or writes a
-  persistent analytics identifier.
-
-That ID and the signed route token enter the ordinary `/telemetry/bootstrap`
-exchange. Bootstrap consumes the token's route rather than independently
-classifying the second request; a pre-existing journey with a conflicting route
-is rejected. The signed, one-hour capability then fixes the route and anonymous
-epoch. Events enter
-`/telemetry/anonymous`; the Global Worker either accepts them locally or sends
-an already validated EU projection through the named EU telemetry RPC. The
-country and source IP are not event properties and are not retained by this
-subsystem.
 
 `site_page_viewed` carries a closed page class, a lowercased bounded pathname,
 an external referring domain, and allowlisted `utm_source`, `utm_medium`, and
@@ -76,24 +47,22 @@ in memory, sends immediately, and uses browser `keepalive` only for the single
 page-leave attempt. It has no persistent event spool and no retry that can delay
 navigation or opening the desktop.
 
-## Invariants
-
-- **Routing precedes browser identity selection.** EU must not read a Global
-  persistent anonymous ID. The signed decision used for identity selection is
-  the decision bootstrap consumes, so a network/location change between the two
-  requests cannot move the epoch or event.
 - **One observed page produces one web event.** The adapter translates the
   Rally event to the reserved PostHog name; it does not deliver a custom copy.
+
 - **Handoff analytics never carries the handoff.** Tokens, fragments, query
   values, and resource identifiers stay inside the page-specific parser.
+
 - **The site has no generic capture or DOM autocapture.** A new event starts in
   the shared closed registry and one semantic producer.
+
 - **PostHog remains a server-side destination.** The site does not load
   `posthog-js`, expose the project token, accept remote capture settings, or
   enable PostHog cookies, autocapture, replay, heatmaps, exception capture, or
   browser person profiles. PostHog's cookieless browser mode is therefore not
   part of this path; Rally's narrower first-party envelopes already cross the
   regional boundary before delivery.
+
 - **Measurement cannot change the site experience.** Storage denial, route or
   bootstrap failure, a rejected event, and destination failure are silent to
   navigation, downloads, and desktop handoffs.
@@ -107,19 +76,19 @@ session replay, heatmaps, form analytics, consent-law determinations, or the
 desktop action that follows a handoff. Site identities are not automatically
 linked to a Rally login.
 
-## Failure modes and limits
-
 - If route lookup or capability bootstrap fails, events for that page are lost;
   product behavior continues.
+
 - A route token expires after five minutes and a token/journey route conflict is
   rejected. The page does not retry with a newly inferred route or reuse the
   selected epoch across that conflict.
+
 - `pagehide` delivery is best effort. A browser that terminates before the
   keepalive request begins can omit `site_page_left`.
-- EU paths cannot be joined across full page loads because EU uses a page-scoped
-  anonymous epoch. Aggregate page, action, and handoff funnels remain available.
+
 - Global browsers that block `localStorage` receive a fresh epoch and remain
   usable; only cross-page attribution is reduced.
+
 - Campaign fields are 160-character allowlisted taxonomy values. The reporter
   ignores arbitrary query keys and never sends a complete URL.
 
@@ -133,26 +102,6 @@ pnpm --filter @rally/api exec vitest run test/telemetry-routes.test.ts test/post
 pnpm --filter @rally/contracts test
 ```
 
-Site tests prove every HTML entry receives the shared reporter, legal copy
-matches the implemented storage boundary, and bootstrap receives the signed
-decision used before identity selection. API tests force different Cloudflare
-country values between route lookup and bootstrap and prove the signed first
-decision wins without creating an EU journey for a persistent Global epoch.
-They also prove the route endpoint creates no journey, site events pass only the
-anonymous allowlist, and the Global destination gets the exact reserved
-web-event mapping.
-
-## Regional impact
-
-The public route lookup and signed-capability issuer exist only on the Global
-Worker because Cloudflare supplies the maintained EU-country classification and
-incoming country there. An affirmative EU
-route sends the validated event projection to EU over `EU_TELEMETRY_BRIDGE` and
-terminates in EU D1. EU has no PostHog token or destination call. Non-EU,
-unknown, malformed, or unavailable geolocation uses Global and may reach the US
-PostHog project. Nothing is queued in a region-pending store or moved after an
-explicit choice elsewhere in the product.
-
 ## Security and trust model
 
 The site is an untrusted anonymous producer. The route token proves only one
@@ -165,26 +114,6 @@ local development origins. The reporter never receives a PostHog token,
 regional service credential, account session, or cross-region bridge authority.
 
 ## Operations
-
-The public site needs no analytics secret. Production Global delivery targets
-US PostHog project `541600`; its project token remains only in the Global Worker
-secret `POSTHOG_PROJECT_TOKEN`, and the EU Worker must not have that secret or a
-PostHog host. The project-level **Discard client IP data** control remains
-enabled as defense in depth alongside every delivered event's
-`$geoip_disable: true`; neither setting substitutes for the regional route.
-The Global Worker also needs exact
-`ALLOWED_ORIGINS` entries for all four served site origins —
-`https://rallywith.ai`, `https://www.rallywith.ai`, `https://with-avalon.com`,
-and `https://www.with-avalon.com` — plus the existing telemetry capability signing
-key and Global PostHog configuration. Operators inspect Global and EU telemetry
-backlogs independently; a healthy Global PostHog graph says nothing about EU
-site delivery. Cloudflare Pages applies one `/*` Content Security Policy to
-every public path. Its `connect-src` permits the Global browser origin on both
-zones, `https://api.rallywith.ai` and `https://api.with-avalon.com`: the route
-probe, bootstrap, and anonymous batch all use it, and the page calls the
-canonical host from whichever domain served it. An EU decision is forwarded
-server-side over `EU_TELEMETRY_BRIDGE`; the browser must not call
-`https://eu.api.rallywith.ai` directly.
 
 `$host` and `$current_url` on a web event are reconstructed in the Global
 PostHog adapter from the Worker's own `PUBLIC_WEB_BASE_URL`, because a site
@@ -201,7 +130,9 @@ that reports. Events are sent immediately in batches bounded by the shared
 avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
-## Changelog
+### 2026-09-14 — Configurable deployment isolation
+
+Public-site measurement now consistently uses the Global endpoint and first-party anonymous epoch. Country-based routing and page-only regional identities are removed alongside the geographical product choice; the existing event registry and preference behavior remain unchanged.
 
 ### 2026-09-09 — Keep request addresses and grant tokens out of site telemetry
 
@@ -260,8 +191,6 @@ work-stream identifier enters a site event.
 
 Shipped in #464.
 
-### 2026-08-25 — The public acquisition journey speaks Rally only, Cloudflare owns the EU classification, and PostHog stays off the page
-
 **What changed:** The landing page now has one Rally art direction and one
 meeting-grounded narrative: multiplayer workstreams turn an individual's AI
 setup into shared team leverage. The Trust Center, support, legal, invitation,
@@ -296,13 +225,6 @@ the superseded name. Research across the team's meetings and Slack repeated one
 positioning pressure: AI use is still private and copy-paste mediated, while
 Rally's value is the shared workstream and the visible trail behind an outcome.
 
-PostHog's JavaScript SDK can run without cookies, but loading it would still
-broaden the browser's data path and make project-side defaults relevant to what
-the landing page collects. Rally already has a narrower semantic collector and a
-regional edge boundary. Cloudflare also publishes an EU classification, so
-maintaining only a hand-written country set would create avoidable policy drift
-at the exact point that decides whether an identifier may persist.
-
 **Considered and rejected:** Keeping the four randomly shuffled landscape
 concepts and replacing only their nouns. Each concept still centered an
 individual handing work to a named assistant, which contradicted the multiplayer
@@ -320,11 +242,6 @@ the old served domains, deep-link scheme, renderer origin, and already-published
 installer names continue to be accepted where the domain-migration contract
 requires them. New landing interactions must keep using the registered
 `site_action_selected` actions rather than adding DOM capture.
-
-New public-site measurement must continue through Rally's typed first-party
-endpoint. Changes to PostHog project defaults cannot silently expand browser
-collection, and EU routing follows Cloudflare's maintained signal before the
-browser chooses whether an anonymous identifier may persist.
 
 ### 2026-08-25 — The web page host is read from configuration, not hardcoded
 
@@ -360,27 +277,15 @@ argument is required rather than defaulted, so a caller cannot silently
 reintroduce a hardcoded host. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-13 — One site-wide CSP admits the regional telemetry exchange, and public paths and invalid handoffs keep truthful bounded classes
 
-**What changed:** The `/*` Cloudflare Pages policy permits the one Global API
-origin used by route lookup, bootstrap, and anonymous batch delivery. Tests
-enumerate all three paths and reject a direct EU browser origin.
-
 Canonical work-stream handoff paths collapse their UUID segment to
 `/app/workstreams/:id` before page-view or page-leave construction. Invalid
 generic desktop targets preserve a provable workstream/settings/automation
 type, or use `unknown` when no type is provable, instead of defaulting to
 Settings.
 
-**Why:** `connect-src 'none'` blocked the reporter before CORS or regional
-routing ran. Adding the EU API origin would have bypassed the Global-only route
-decision and signed-capability exchange.
-
 Raw work-stream pathnames leaked the resource identifier that the public site
 contract prohibits, while attributing every malformed target to Settings
 corrupted the handoff funnel.
-
-**Considered and rejected:** Allowing broad HTTPS connections or both regional
-API hosts. The site needs one outbound origin; affirmative EU traffic crosses
-the named server-side RPC after validation.
 
 Dropping all path and invalid-handoff observations. Bounded canonical paths and
 explicit validity retain useful acquisition and failure metrics without
@@ -401,11 +306,6 @@ signed decision token. The site submits that token with its selected anonymous
 epoch, and bootstrap uses the token's route instead of re-reading Cloudflare
 country on the second request. Existing journey state must match the decision.
 
-**Why:** The site previously selected persistent versus memory-only identity
-from the first request while bootstrap independently routed the second. A
-network change between them could therefore admit a persistent epoch to an EU
-journey despite the region-before-identity promise.
-
 **Considered and rejected:** Merely comparing bootstrap's response in the
 browser. That detects the mismatch only after the server has persisted the
 wrong journey. Combining identity selection into bootstrap was also rejected
@@ -418,25 +318,7 @@ use its single authoritative Cloudflare request without this site-only preflight
 
 ### 2026-08-13 — The public acquisition path becomes region-aware product telemetry
 
-**What changed:** Every public page now reports real page views/leaves, bounded
-semantic actions, and browser-to-desktop handoff attempts through Rally's
-regional anonymous boundary. Global may keep a first-party random anonymous
-epoch and maps page events to PostHog's reserved web events. EU uses an in-memory
-page epoch and keeps the accepted projection in EU Cloudflare resources.
-
 **Why:** Desktop adoption data could show what happened after Rally opened but
 not which acquisition pages, calls to action, downloads, or handoff paths brought
 someone there. Directly embedding a provider SDK would bypass the regional and
 schema boundaries already built for the more sensitive product.
-
-**Considered and rejected:** PostHog's browser autocapture, URL/query capture,
-session replay, a Global identifier for EU visitors, and one persistent identity
-regardless of location. Those alternatives either collect content, expose
-handoff tokens, or merge residency histories. Also rejected was a bootstrap-only
-route probe because it would create a retained journey for every route check.
-
-**Consequences:** Global gains cross-page anonymous acquisition funnels; EU gains
-aggregate page/action/handoff funnels without persistent browser identity. The
-public disclosure now names the practice. Any additional site signal must extend
-the shared registry, the anonymous allowlist, the disclosure when applicable,
-and exact producer/adapter tests.

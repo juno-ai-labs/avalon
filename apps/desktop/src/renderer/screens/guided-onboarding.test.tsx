@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from './guided-onboarding';
 import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
+import { connectorProviders } from '../lib/connector-catalog';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 
 const state = vi.hoisted(() => ({
@@ -13,12 +14,22 @@ const state = vi.hoisted(() => ({
   account: { eligible: true, introduced: true, presentation: null, revision: 0 },
   getAccount: vi.fn(), saveAccount: vi.fn(), journey: vi.fn(), updateJourney: vi.fn(),
   invitations: vi.fn(), invite: vi.fn(), members: vi.fn(), connections: vi.fn(), connectors: vi.fn(),
+  openSettings: vi.fn(), openExternal: vi.fn(), startProviderConnection: vi.fn(),
 }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ getAccountOnboarding: state.getAccount, updateAccountOnboarding: state.saveAccount }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    getAccountOnboarding: state.getAccount,
+    updateAccountOnboarding: state.saveAccount,
+    openSettings: state.openSettings,
+    openExternal: state.openExternal,
+  }),
+  desktopServicesAvailable: () => false,
+}));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: state.signedIn ? { user: { id: 'user-1', email: 'person@example.com', name: 'Person' }, workspace: state.hasWorkspace ? { id: 'workspace-1' } : null } : null,
   api: { getWorkspaceInvitations: state.invitations, createWorkspaceInvitation: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
-    updateOnboardingJourney: state.updateJourney, getConnections: state.connections, getAvailableConnectorTypes: state.connectors },
+    updateOnboardingJourney: state.updateJourney, getConnections: state.connections, getAvailableConnectorTypes: state.connectors,
+    startProviderConnection: state.startProviderConnection },
   signOut: vi.fn(), setPendingConnectorOAuth: vi.fn(),
 }) }));
 const workspace = { id: 'workspace-1', region: 'global', name: 'Team', currentUser: { id: 'user-1', name: 'Person', role: 'member' } } as Workspace;
@@ -46,6 +57,7 @@ beforeEach(() => {
   state.invitations.mockResolvedValue([]);
   state.members.mockResolvedValue([]); state.connections.mockResolvedValue([]); state.connectors.mockResolvedValue(['google']);
   state.journey.mockResolvedValue({ path: 'member', stage: 'profile', revision: 0, connectorIds: [] });
+  state.startProviderConnection.mockResolvedValue({ attemptId: 'attempt-1', url: 'https://provider.example/authorize' });
 });
 describe('new-account learning paths', () => {
   it('introduces the platform before offering sign-in without fetching private account data', async () => {
@@ -102,6 +114,34 @@ describe('new-account learning paths', () => {
     await screen.findByRole('heading', { name: 'Connect your personal tools' });
     fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'profile' }));
+  });
+  it.each([{ provider: 'ashby', name: 'Ashby' }, { provider: 'granola', name: 'Granola' }])('opens Settings for $name workspace setup', async ({ provider, name }) => {
+    const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
+    state.connectors.mockResolvedValue([provider]);
+    state.journey.mockResolvedValue(journey);
+    state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
+    show();
+    fireEvent.click(await screen.findByRole('button', { name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect for workspace' }));
+    await waitFor(() => expect(state.openSettings).toHaveBeenCalledWith('connections'));
+    expect(state.startProviderConnection).not.toHaveBeenCalled();
+    expect(state.openExternal).not.toHaveBeenCalled();
+  });
+  it('keeps personal Ashby onboarding on browser authorization', async () => {
+    const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
+    state.connectors.mockResolvedValue(['ashby']);
+    state.journey.mockResolvedValue(journey);
+    state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
+    show();
+    await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ashby' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect for me' }));
+    await waitFor(() => expect(state.openExternal).toHaveBeenCalledWith('https://provider.example/authorize'));
+    expect(state.startProviderConnection).toHaveBeenCalledWith('ashby', 'you', ['ashby.personal.mcp']);
+    expect(state.openSettings).not.toHaveBeenCalled();
   });
   it('opens a restored workspace before account lookup and keeps it mounted when details arrive', async () => {
     let resolveLookup!: (account: typeof state.account) => void;
@@ -247,6 +287,26 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 2, stage: 'connectors',
       connectorIds: ['workspace:google-drive-workspace', 'you:google-mail-calendar'] }));
+  });
+  it('saves every connector the picker offers on both pages, whatever the catalog grows to', async () => {
+    const journey = { path: 'creator', stage: 'connectors', revision: 0, connectorIds: [] };
+    state.journey.mockResolvedValue(journey);
+    state.connectors.mockResolvedValue([...new Set(connectorProviders.map((provider) => provider.provider))]);
+    state.updateJourney.mockImplementation(async (update) => ({ ...journey, ...update, revision: update.expectedRevision + 1 }));
+    show();
+    const offeredFor = (scope: string) => connectorProviders.filter((provider) => provider.scopes.some((candidate) => candidate === scope));
+    await screen.findByRole('heading', { name: 'Connect tools for your workspace' });
+    for (const provider of offeredFor('workspace')) fireEvent.click(await screen.findByRole('button', { name: provider.name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const workspaceIds = offeredFor('workspace').map((provider) => `workspace:${provider.id}`);
+    await waitFor(() => expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 0, stage: 'connectors',
+      connectorIds: workspaceIds }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Connect your personal tools' });
+    for (const provider of offeredFor('you')) fireEvent.click(await screen.findByRole('button', { name: provider.name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(state.updateJourney).toHaveBeenLastCalledWith({ expectedRevision: 1, stage: 'connectors',
+      connectorIds: [...workspaceIds, ...offeredFor('you').map((provider) => `you:${provider.id}`)] }));
   });
   it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });

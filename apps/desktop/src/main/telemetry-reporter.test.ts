@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,8 +17,8 @@ const identity = {
 async function harness(input: {
   enabled?: boolean;
   deliveryEnabled?: () => boolean;
-  route?: 'global' | 'eu';
-  auth?: { apiBaseUrl: string; accessToken: string; workspace: boolean; route: 'global' | 'eu' } | null;
+  route?: string;
+  auth?: { apiBaseUrl: string; accessToken: string; workspace: boolean; route: string } | null;
   anonymous?: { capability: string; journeyId: string; expiresAt: string } | null;
   refreshAnonymous?: () => Promise<{ capability: string; journeyId: string; expiresAt: string } | null>;
   now?: () => Date;
@@ -199,7 +200,6 @@ describe('TelemetryReporter', () => {
     });
     const workstreamId = '00000000-0000-4000-8000-000000000101';
     const messageId = '00000000-0000-4000-8000-000000000102';
-    const noteId = '00000000-0000-4000-8000-000000000103';
     const automationId = '00000000-0000-4000-8000-000000000104';
     await reporter.workstreamOpened({
       workstreamId, visibility: 'private', navigation: 'switched', origin: 'ad_hoc', pinned: true,
@@ -214,11 +214,6 @@ describe('TelemetryReporter', () => {
     await reporter.automationActionCompleted({
       automationId, action: 'archive_draft', visibility: 'private', status: 'draft',
     });
-    await reporter.noteOpened({ noteId, visibility: 'public', recordingState: 'complete', navigation: 'reopened' });
-    await reporter.transcriptionStateChanged({
-      noteId, state: 'paused', visibility: 'public', audioSource: 'microphone_and_system',
-    });
-
     const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(rows.map((row) => ({ name: row.event.name, properties: row.event.properties }))).toEqual([
       { name: 'workstream_opened', properties: {
@@ -233,12 +228,6 @@ describe('TelemetryReporter', () => {
       } },
       { name: 'automation_action_completed', properties: {
         automationId, action: 'archive_draft', visibility: 'private', status: 'draft',
-      } },
-      { name: 'note_opened', properties: {
-        noteId, visibility: 'public', recordingState: 'complete', navigation: 'reopened',
-      } },
-      { name: 'transcription_state_changed', properties: {
-        noteId, state: 'paused', visibility: 'public', audioSource: 'microphone_and_system',
       } },
     ]);
   });
@@ -642,15 +631,15 @@ describe('TelemetryReporter', () => {
     expect(await spool.ready(new Date('2026-08-12T20:01:00.000Z'))).toEqual([]);
   });
 
-  it('uses the Global capability endpoint for a route-fixed anonymous EU event', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'rally-reporter-eu-'));
+  it('uses the Global capability endpoint for a route-fixed anonymous enterprise event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'rally-reporter-enterprise-'));
     roots.push(directory);
     const spool = new TelemetrySpool({ rootDirectory: directory });
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
       results: [{ result: 'accepted', eventId: '018f0000-0000-7000-8000-000000000010' }],
     }), { status: 202 }));
     const reporter = new TelemetryReporter({
-      spool, identity: () => identity, route: () => 'eu', productAnalyticsEnabled: () => true,
+      spool, identity: () => identity, route: () => 'enterprise', productAnalyticsEnabled: () => true,
       authenticatedSession: async () => null,
       anonymousSession: () => ({
         capability: 'c'.repeat(64), journeyId: '018f0000-0000-7000-8000-000000000004',
@@ -670,14 +659,14 @@ describe('TelemetryReporter', () => {
     });
   });
 
-  it('routes pre-workspace EU onboarding intent immediately through its anonymous epoch', async () => {
+  it('routes pre-workspace enterprise onboarding intent immediately through its anonymous epoch', async () => {
     const anonymous = {
       capability: 'c'.repeat(64),
       journeyId: '018f0000-0000-7000-8000-000000000004',
       expiresAt: '2026-08-12T21:00:00.000Z',
     };
     const { reporter, spool, fetch } = await harness({
-      route: 'eu',
+      route: 'enterprise',
       anonymous,
       auth: {
         apiBaseUrl: 'https://api.rallywith.ai',
@@ -691,13 +680,13 @@ describe('TelemetryReporter', () => {
     }), { status: 202 }));
 
     await reporter.workspaceCreateRequested(
-      'eu',
+      'enterprise',
       'first_run',
       '018f0000-0000-7000-8000-000000000099',
     );
     const [queued] = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
     expect(queued).toMatchObject({
-      route: 'eu',
+      route: 'enterprise',
       event: { identityScope: 'anonymous-epoch', context: { onboardingJourneyId: anonymous.journeyId } },
     });
     await reporter.flush();

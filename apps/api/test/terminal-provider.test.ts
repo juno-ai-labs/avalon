@@ -478,6 +478,57 @@ describe("Daytona Terminal provider", () => {
     expect(sandbox.delete).toHaveBeenCalledWith(60, true);
   });
 
+  it("exposes recovery metadata and invokes Daytona recovery on the same sandbox", async () => {
+    const sandbox = {
+      id: "sandbox-1", name: "retained", state: "error", recoverable: true,
+      recover: vi.fn(async () => { sandbox.state = "started"; }),
+    };
+    const create = vi.fn();
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create, get: vi.fn(async () => sandbox) }));
+    await expect(provider.getSandbox("sandbox-1")).resolves.toMatchObject({ state: "failed", recoverable: true });
+    await provider.recoverSandbox("sandbox-1");
+    expect(sandbox.recover).toHaveBeenCalledWith(60);
+    await expect(provider.getSandbox("sandbox-1")).resolves.toMatchObject({ id: "sandbox-1", state: "running" });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("reports transitional states without turning them into failure verdicts", async () => {
+    // Daytona auto-stops and auto-archives on its own schedule.
+    // A tool call landing inside one of those transitions must
+    // not read as a verdict that the workspace is gone.
+    const observed = [
+      ["stopping", "starting"],
+      ["archiving", "starting"],
+      ["destroying", "starting"],
+      ["pausing", "starting"],
+      ["resizing", "starting"],
+      ["snapshotting", "starting"],
+      ["forking", "starting"],
+      ["pulling_snapshot", "starting"],
+      ["resuming", "starting"],
+      ["paused", "stopped"],
+      // Failure state is separate from the recovery verdict.
+      ["error", "failed"],
+      ["build_failed", "failed"],
+      ["destroyed", "expired"],
+      // Anything a later SDK adds waits rather than being replaced.
+      ["a_state_this_sdk_has_never_published", "unknown"],
+    ] as const;
+    const get = vi.fn(async (name: string) => ({ id: "sandbox-1", name: "stable", state: name }));
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get }));
+
+    for (const [daytonaState, expected] of observed) {
+      await expect(provider.getSandbox(daytonaState), daytonaState)
+        .resolves.toMatchObject({ state: expected });
+    }
+  });
+
   it("evicts every alias after lifecycle changes", async () => {
     const first = {
       id: "sandbox-alias", name: "provider-stable-name", state: "started",

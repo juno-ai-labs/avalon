@@ -158,7 +158,7 @@ describe('useWorkstreamsQuery', () => {
     await waitFor(() => expect(result.current.data).toHaveLength(1));
     expect(listWorkstreams).not.toHaveBeenCalled();
 
-    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
+    announce({ releaseChannel: 'stable', releaseChannelAvailable: true, lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
     await waitFor(() => expect(listWorkstreams).toHaveBeenCalledTimes(1));
     expect(listWorkstreams.mock.calls[0]?.[0]).toMatchObject({ includeSystem: true });
@@ -294,7 +294,7 @@ describe('useWorkstreamsQuery', () => {
       await waitFor(() => expect(result.current.data).toHaveLength(2));
       listWorkstreams.mockClear();
 
-      announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
+      announce({ releaseChannel: 'stable', releaseChannelAvailable: true, lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
 
       // The rows are a different population now, so the pages walked before
       // describe a list that no longer exists: one request, from the start.

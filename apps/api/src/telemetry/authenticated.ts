@@ -80,7 +80,6 @@ async function queueProfileJobs(
   personAnalyticsId: string,
   workspaceAnalyticsId: string | null,
 ): Promise<void> {
-  if (env.AVALON_REGION !== 'global') return;
   const user = await env.DB.prepare(
     'SELECT email, name, product_analytics_enabled FROM users WHERE id = ?',
   ).bind(auth.userId).first<{ email: string; name: string; product_analytics_enabled: number }>();

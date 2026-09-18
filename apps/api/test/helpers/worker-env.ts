@@ -16,7 +16,7 @@ function binding(): never {
 export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
     DB: binding(), PLATFORM_DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
-    INFERENCE_PRICING_CACHE: binding(),
+    INFERENCE_PRICING_CACHE: binding(), FAVICON_CACHE: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
     RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(),
     DOCUMENT_PROCESSOR: binding(), TERMINAL_PROVIDER: binding(), TELEMETRY_DELIVERY: binding(),
@@ -43,6 +43,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     ALLOWED_ORIGINS: "app://avalon",
     DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
     OPENROUTER_API_KEY: "sk-or-secret",
+    TYPESAFE_API_KEY: "typesafe-secret",
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",

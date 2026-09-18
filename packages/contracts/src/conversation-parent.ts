@@ -81,6 +81,12 @@ export const ConversationParentReserveChildRequestSchema = z.strictObject({
     titleStatus: z.enum(["naming", "automatic", "settled"]),
     createdAt: z.string().datetime({ offset: true }),
   }).optional(),
+  /**
+   * Creation may overlap the provisional workspace-directory delivery with
+   * child initialization, then explicitly flush it before answering. Omitted
+   * by every existing caller, which preserves the synchronous default.
+   */
+  deferDirectoryDelivery: z.boolean().optional(),
 });
 export const ConversationParentReserveChildResultSchema = z.strictObject({
   reserved: z.literal(true),
@@ -114,6 +120,7 @@ export const PrivateChildPreparationOperationSchema = z.strictObject({
   sourceThroughTurnId: z.string().min(1).nullable(),
   recipe: SubstreamContextRecipeSchema,
   status: PrivateChildPreparationStatusSchema,
+  preparedConversationHash: z.string().regex(/^fnv1a64:[a-f0-9]{16}$/).nullable().default(null),
   capture: SubstreamContextCaptureSchema.nullable(),
   completedParts: PreparedSubstreamContextSchema.shape.parts,
   preparedContext: PreparedSubstreamContextSchema.nullable(),
@@ -145,6 +152,7 @@ export const ReadPrivateChildPreparationRequestSchema = z.strictObject(PrivateCh
 export const ClaimPrivateChildConfirmationRequestSchema = z.strictObject({
   ...PrivateChildOperationAddress,
   actorUserId: UserIdSchema,
+  preparedConversationHash: z.string().regex(/^fnv1a64:[a-f0-9]{16}$/).nullable().optional(),
 });
 export const SavePrivateChildCaptureRequestSchema = z.strictObject({
   ...PrivateChildOperationAddress,

@@ -29,7 +29,6 @@ content; excerpts, titles and archive state are served from the index within the
 projection's staleness window rather than reloaded from their owners.
 The operation-level and pagination contracts are detailed in [authorization](authorization.md).
 
-
 ## Sidekick authoring and loading
 
 Conversational publication resolves the current workspace membership role and
@@ -63,6 +62,7 @@ the source credentials, memory, authoring conversation, or run history.
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
 | `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
+| `apps/ios/Rally/Auth/KeychainStore.swift`, `apps/ios/Rally/Rally.entitlements` | iOS session secrets and APNs/associated-domain entitlements. Owned with [`ios-client.md`](ios-client.md). |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
 The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
@@ -70,14 +70,20 @@ including transcription tickets acquired before capture setup finishes. Aliases
 from shadowed or reassigned bindings are rejected; the constructor remains
 checked instead of carrying a local lint suppression.
 
-## How it works
-
 ### Trust boundaries
 
 The renderer, inbound internet, connector providers, monitored URLs, model
 output, and connector payloads are untrusted. The Electron main process and
 regional Worker are trusted only within their narrow responsibilities. D1 and R2
 are canonical storage services, not authorization layers.
+
+iOS has no renderer. The comparable split is the SwiftUI process (untrusted for
+secrets it does not need) versus the Keychain (identity and workspace refresh
+tokens) versus the regional Worker. Google credentials stay in
+`ASWebAuthenticationSession`. Refresh tokens are
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and are never written to
+UserDefaults or iCloud. Socket tickets still travel as `Sec-WebSocket-Protocol`,
+same as desktop.
 
 ### Electron
 
@@ -87,7 +93,7 @@ are canonical storage services, not authorization layers.
   sandbox. Its bridge exposes a small named API and never exposes `ipcRenderer`,
   environment variables, filesystem paths, or arbitrary channel names.
 - Every IPC argument is parsed before use.
-- Five window kinds are trusted IPC senders: main, Sidekicks, settings, meeting, and the
+- Four window kinds are trusted IPC senders: main, Sidekicks, settings, and the
   deep-link failure window. Handlers that must not be reachable from every one of
   them narrow further — `assertDeepLinkErrorIpcSender` admits only the failure
   window, because its channels read and close that window. The failure window's
@@ -115,6 +121,15 @@ are canonical storage services, not authorization layers.
   frontmatter before its sanitised SVG is inserted. The application never calls
   Mermaid's binding callback, so a diagram cannot install click handlers. A
   rejected parse leaves the original source visible.
+  HTTP(S) link favicons are fetched only by the authenticated regional API,
+  never by the renderer from the model-chosen destination. The service accepts
+  public domain names only, uses the existing Firecrawl client to discover a
+  public HTTPS favicon URL, rejects image redirects, bounds the body read at
+  Cloudflare KV's value limit without a second retained chunk copy, applies a
+  25-second deadline across branding discovery and the origin response,
+  validates image bytes, and keeps only a 30-day platform-wide KV entry. The
+  renderer requests each HTTP(S) anchor when its message renders, receives the
+  cached bytes, and exposes them through a revocable local object URL.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
@@ -268,7 +283,7 @@ promotion, Gatekeeper, stapler, bundle ID/version, updater URL, final blockmaps,
 nested signatures, and a LaunchServices smoke all have to pass. The update
 transport is still treated as untrusted: electron-updater's macOS signature
 validation remains the execution trust boundary, while R2 publication uses
-immutable versioned objects and promotes the mutable feed last.
+immutable versioned objects and promotes only validated mutable channel feeds.
 
 ### Authentication and authorization
 
@@ -295,6 +310,12 @@ membership leaves its session row alive and only the platform refuses that link
 before the window moves. The regional middleware resolves active membership and
 workspace scope on every request under either path. A failed activation cannot
 fall back to the currently active workspace or search other stored credentials.
+
+Identity and workspace middleware share one authenticated context within a single
+HTTP request. Workspace middleware still requires a workspace and role; an
+identity-only session cannot enter protected routes. Each new request verifies
+its token and reads current regional session/membership state again. This is not
+a cross-request cache and does not change revocation or regional isolation.
 
 Addressed native links use the distinct `workspace` host rather than routing
 query parameters. A pre-addressing desktop therefore rejects them instead of
@@ -398,7 +419,7 @@ This is retry safety, not a broad approval gate.
 Provider refresh tokens remain in the regional backend, encrypted with AES-GCM and
 additional authenticated data tied to the connection ID. Key version is stored
 beside ciphertext so rotation can decrypt with an old key and re-encrypt with the
-active key. Global and EU deployments use independent keys. Rotation itself is in
+active key. configured deployments deployments use independent keys. Rotation itself is in
 [Operations](#operations).
 
 Granola Workspace API keys and the signing secrets returned while registering
@@ -413,11 +434,63 @@ workspace-scoped.
 Google scopes are requested incrementally. Sign-in does not grant Gmail, Calendar,
 or Drive access. Revoked and expired grants become an explicit reconnect state.
 
+### Workspace installation and cleanup authority
+
+Ashby and Granola workspace setup binds an administrator's attempt and input
+digest to a reserved connection before provider mutations. A provider whose
+`create` is manual inverts that order: Fireflies' pasted key is validated
+read-only *before* anything is reserved, because the create that would otherwise
+reject it never happens, so without this a bad key would reserve a connection
+and only report itself when somebody pressed Test. API keys and signing
+material use the connection-bound regional credential envelope. Replacement
+validates provider access and checks both generation and the current envelope
+before committing, so a racing settlement cannot overwrite a newer API key.
+
+Disconnect removes ordinary access atomically while retaining separate encrypted
+cleanup authority. Only a claimed removal of an exact recorded provider ID may
+use it; it cannot refresh, discover tools, create or update registrations.
+Repeated disconnect preserves pending cleanup. An uncertain create's late result
+is handled against its recorded intent without reviving access; forgetting local
+cleanup authority leaves provider removal to the administrator. The existing Ace
+`demos` operator role authorizes reviewed fleet maintenance, never arbitrary
+provider requests or new customer event grants. Administrative mutations retain
+actor-attributed audit records without keys or candidate content. See
+[installation lifecycle](connector-installation-lifecycle.md).
+
 ### Webhooks
 
 Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256
 signature, a bounded replay window, a stored receipt, schema validation, size
 limits, and provider dedupe keys.
+
+Fireflies signs the body and nothing else: no timestamp header, no delivery id.
+Rally verifies HMAC-SHA256 over the exact raw bytes against a single
+`X-Hub-Signature` header — after the size cap and before any decode — then
+anchors the replay window on the timestamp **inside** the signed body, which is
+the only value in a Fireflies delivery an attacker replaying a capture cannot
+move. With no delivery id the ingress receipt is keyed on the hash of those
+bytes, so a replay is byte-identical and a genuinely new delivery never is. A
+body that verifies but is stale is reported as its own failure rather than as an
+invalid signature, so an administrator is not sent to rotate a secret when the
+cause is a clock. The signing secret is **host-generated and revealed exactly
+once**, at setup, because the provider has no registration API and the
+administrator has to carry it to a dashboard by hand: it is absent from every
+read path afterwards and is replaced by reconnecting, not by asking again.
+
+Ashby verifies the exact raw body with HMAC-SHA256 before decoding, parsing or
+regional persistence. Both dedicated ingress and regional receipt enforce the
+existing `PROVIDER_WEBHOOK_MAX_BYTES` limit (1,000,000 bytes when unset;
+2,000,000 in all three checked-in Wrangler configs), before buffering/forwarding
+on ingress. Host-derived content hashes bind replay identity
+to the same bytes except Ashby's email-change signal, whose documented retry
+renews its watermark. That event compares normalized candidate identity while
+retaining each raw delivery and its actual hash regionally; changed candidate
+identity still conflicts. New setup discloses automatic organization event
+subscriptions rather than offering a subset picker. The administrator authorizes
+normalized organization notifications for the Rally workspace, including matching
+workspace automations. That audience does not inherit individual Ashby MCP
+permissions. Names and recruiting content stay out of normalized event summaries
+and automation trigger messages; raw payload storage remains regional.
 
 Granola webhooks are verified using the Standard Webhooks `webhook-id`,
 `webhook-timestamp`, and `webhook-signature` headers over the exact raw request
@@ -565,6 +638,13 @@ merely because the From address resembles a workspace member. Friendly addresses
 are immutable and permanently reserved so a stale sender can never reach a
 different work stream.
 
+Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
+check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current
+metadata, regional routing, and the owner object's sandbox-ID/generation fence
+must all agree before an observation is stored. These events cannot launch a
+run or mutate retention intent. The endpoint signing secret is installed as a
+Worker secret through the [Terminal setup command](runbook.md#daytona-state-synchronization).
+
 Automation email may start a run, and the sender match against active
 membership is the only control on it: since 2026-09-03 such a run holds the same
 connector and web tools as every other automation run, for the reasons the
@@ -577,14 +657,6 @@ Audit events cover sign-in and session changes, membership, connector
 authorization and revocation, external writes, automation changes, suggestion
 decisions, and administrative actions.
 
-Telemetry logs and rejection/audit rows contain fixed states, codes, counts, and
-opaque IDs only. Verified Global name/email and current workspace name are sent by
-explicit profile jobs so staff can identify and contact users; they are never
-copied onto each event or crash. A sanitized JavaScript/native report may reach
-Global PostHog, but raw minidumps, memory fragments, source excerpts, absolute
-paths, symbols, and source maps stay in Rally's dedicated regional bucket. EU
-telemetry never reaches PostHog or Analytics Engine.
-
 ### Secrets
 
 Local server keys live only in ignored `.env.local`. Renderer-safe values are an
@@ -592,15 +664,6 @@ explicit `VITE_` allowlist containing API base URLs and the protocol name. Hoste
 secrets, including `RESEND_API_KEY`, use separate Cloudflare secrets per region.
 Cloudflare administrative credentials are local deployment inputs and never Worker
 bindings.
-
-`TELEMETRY_CAPABILITY_SIGNING_KEY` is an independent Global-only Worker secret
-used for short-lived, route-bound pre-auth telemetry capability. EU presents a
-capability to the narrow `GLOBAL_TELEMETRY_CONTROL` RPC and receives no key or
-Global destination identity. `POSTHOG_PROJECT_TOKEN` also exists only in Global.
-Neither secret is exposed through a `VITE_` variable, preload, renderer bundle,
-Crashpad URL, multipart field, log, or support audit. The
-`CRASH_SYMBOLICATOR` Container receives one Worker-scoped dump and artifact stream;
-it has no R2 credentials and no network egress.
 
 `TELEMETRY_OPERATORS_JSON` is an independent secret in each region. Its bearer
 tokens never cross regions or enter URLs; its stored principal is the only source
@@ -635,26 +698,29 @@ costs one comment and widens nothing. Where an exception is genuinely warranted,
 bound it on the thing a placeholder cannot fake, and add the bound to
 `scripts/gitleaks-allowlist.test.mjs`.
 
-## Invariants
-
 - **The renderer never receives a secret.** No provider credentials, native PKCE
   verifiers, OpenRouter keys, Cloudflare administration keys, raw `ipcRenderer`,
   Node integration, or arbitrary navigation. A capability added to the preload
   bridge is a capability added to every page the renderer could ever be tricked
   into loading.
+
 - **Every IPC argument is parsed before use**, and every exposed handler is
   validated against a live Rally window and its pinned renderer origin.
+
 - **A plaintext preference is never authority to unwrap a protected envelope.** An
   off Lockdown preference beside a Lockdown envelope deletes the local credentials
   and forces sign-in; it does not export the session.
+
 - **Every write to `application-settings.json` goes through the one shared queue
   and re-reads before merging.** Two owners serializing on different primitives is
   how a lost update becomes a credential deletion on the next launch.
+
 - **Model-authored web content is never same-origin with the application, the
   API, or another artifact.** A live artifact serves from a per-artifact
   subdomain of a registrable domain that is not `rallywith.ai`, so it is never
   cookie-adjacent to the product apex and one artifact cannot read another's
   storage, cookies, or DOM.
+
 - **Separate artifact origins do not close cross-artifact CSRF, and the serving
   Worker does.** Every artifact is a subdomain of one registrable domain, so two
   artifacts are same-*site*: `SameSite` does not stop script in one sending a
@@ -663,6 +729,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   response. Admission is by fetch metadata — `same-origin`, or `none` for a
   genuine top-level `GET` — refused before untrusted code runs, and refused for
   GETs too, because artifact code may treat any method as a write.
+
 - **A new ticket audience never issues a ticket in a URL.** Cloudflare records
   whole URLs into the invocation log, Logpush, and traces, and no redaction here
   reaches them. An artifact's access code travels in a fragment, which a browser
@@ -670,22 +737,28 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   that never serves artifact content — so no artifact document is ever loaded at
   a location that held it. Single-use redemption bounds replay; it does not keep
   a secret out of a log, and is not on its own compliance.
+
 - **Nothing that protects data is scoped by a feature flag.** Flag targeting is a
   product scope; a flag that cannot be evaluated keeps its last answer, which is
   the wrong failure mode for a confidentiality boundary.
+
 - **Every API resource query includes `workspace_id`; every mutation additionally
   resolves membership role.** Knowing an ID authorizes nothing.
+
 - **Every connector tool checks execution principal, connection scope, granted
   capability, and resource visibility** — at execution, not only at admission.
+
 - **A Terminal sandbox generation is reused only under its exact frozen authority
   fingerprint, and never receives a GitHub write or R2 credential.** Filesystem
   persistence cannot become a way around later revocation.
+
 - **A current client never sends a socket ticket in a URL, and a new ticket
   audience never issues one there.** Cloudflare records whole request URLs into
   the invocation log, the Logpush export, and trace spans, and no redaction in
   this repository can reach them. Legacy issuer response fields exist only for
   old desktop compatibility and must be removed at the declared compatibility
   cutoff rather than copied to any later role.
+
 - **A prepared feed admission is usable only by its exact signed ticket and
   object authority generation.** It is in memory, never a second durable
   credential; it is revalidated against D1 during ticket transit, natural
@@ -693,53 +766,59 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   loses it, and every miss falls back to current regional session/membership
   authorization. The room retains only one preparation, and the durable ticket
   receipt remains the one-use decision.
+
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's work-stream broker is
   narrower still.** Its typed IPC accepts only configured regional
   WorkstreamDO/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
   application Origin.
+
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
   validation accepts `javascript:` and `data:`.
+
 - **Every desktop HTTP header is covered by the regional CORS allowlist and an
   exact preflight test.** A header implemented only in the renderer cannot reach
   the Worker.
+
 - **A request-validation log retains shape, never rejected content.** Route,
   target, field path, issue code, JSON keys, array positions, and empty
   containers are operational metadata; every logged body leaf is `"***"` or
   `-1`, and raw values, Zod messages, regexes, and unmasked request bodies do not
   enter the log.
+
 - **A document built out of model output is never same-origin with the
   application.** The exported message card gets `rallywithai-export://`, no preload,
   and a policy that forbids script; putting it on `app://rallywithai` would buy one
   fewer scheme at the price of the boundary.
+
 - **A webhook is verified against its exact raw body before anything parses,
   stores, or queues it.**
+
 - **A tool call is a proposal, never an instruction.** Name, schema, principal,
   capability, limits, and idempotency state are all checked before execution.
+
 - **An inbound email address is a routing identifier, never an authenticator.** The
   From match against active workspace membership is the only control on a
   mail-started run: since 2026-09-03 such a run holds the same connector and web
   tools as every other automation run, so a spoofed From that passes the screen
   steers a run that can write and send. The changelog entry of that date records
   why the tool filter came out and what stands in its place.
+
 - **An invitation token exists in D1 only as a SHA-256 hash**, and never in a query
   string, log, audit event, or Resend tag.
+
 - **A Gitleaks exception is a bounded pattern**, never a path exemption or a
   fingerprint, and it ships with a case in
   `scripts/gitleaks-allowlist.test.mjs` proving it still rejects real material.
+
 - **Crashpad's live database is opaque.** Invalidation changes only its sibling
   generation manifest; deletion, enumeration, and upload occur after rotation on a
   later launch.
+
 - **Opt-out is enforced at creation, regional acceptance, and destination
   delivery.** Attributable undelivered product, diagnostic, identify, profile, and
   crash work is suppressed or deleted; already delivered destination data is
   outside Rally's internal lifecycle.
-- **EU telemetry has no cross-region fallback.** A routing, storage, processing,
-  or support-access failure is handled inside EU and never by copying the payload
-  to Global.
-- **Public-site routing happens before persistent analytics identity.** Global
-  may read a first-party random epoch; affirmative EU traffic uses an in-memory
-  page epoch and never reads the Global identifier.
 
 ## Boundary
 
@@ -826,6 +905,7 @@ no unit test standing in for them.
 | `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's content fetch. |
 | `apps/api/test/connector-credential-envelope.test.ts` | The AES-GCM envelope, its connection-bound additional authenticated data, and key-version rotation reads. |
 | `apps/api/test/auth-session-lifecycle.test.ts` | Session minting, revocation, and single-use consumption. |
+| `apps/api/test/auth-router.test.ts` | Root-mounted identity/workspace middleware reuse, standalone workspace-middleware authentication, and next-request revocation. |
 | `apps/api/test/security-and-config.test.ts` | Exact desktop CORS origin/method/header preflights and environment guardrails. |
 | `apps/api/test/validation-errors.test.ts` | Generic public 400 envelopes plus operator-only request target, field paths, issue codes, and recursively masked JSON body shape with rejected values absent. |
 | `apps/api/test/rpc-contracts.test.ts` | That a cross-region rejection names field paths and never values. |
@@ -849,11 +929,127 @@ regional secret `CONNECTOR_CREDENTIALS_KEYS_JSON` temporarily maps every
 still-referenced old numeric version to its old key. Reads decrypt with the row
 version and opportunistically rewrite the row with the active key. Operators
 remove an old mapping only after confirming no regional
-`connector_connections.credential_key_version` rows still reference it. Global and
-EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
+`connector_connections.credential_key_version` rows still reference it. Deployments rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
+## Apple notifications
+
+Apple device registrations reuse authenticated workspace sessions and the regional
+D1 control plane. The existing notification access decision runs again when the
+queue consumer sends. The native bridge handles permission state and explicit
+notification responses; main validates the work-stream link through the shared
+parser before navigation. Only the main app gains Push Notifications and
+Associated Domains entitlements; helpers retain their existing entitlement set.
+[Apple push](push-notifications.md) owns provisioning and release verification.
+
 ## Changelog
+
+### 2026-09-16 — Receipt-owned pagination replaces model-held provider tokens
+
+Authored tool continuations now live in the owning SubstreamAgent and expose
+plugin-prefixed page IDs. Redemption checks run, principal, connection, operation,
+producer completion, and receipt ownership before executing with current
+authorization. New attachment state therefore needs neither a second HMAC nor
+an artificial TTL; signed-token decoding remains for historical receipts only.
+Generic JSON rewriting was rejected because content fields are not evidence of
+cursor ownership. MCP/pass-through contracts remain unchanged. See
+[`tool-pagination.md`](tool-pagination.md) for the lifecycle and recovery rules.
+
+### 2026-09-15 — Link decoration does not widen renderer egress
+
+**What changed:** Markdown HTTP(S) links may display a favicon, but the
+sandboxed renderer obtains its bytes through the authenticated Rally API. The
+server accepts public domains only, asks the existing Firecrawl client for
+branding metadata, rejects image redirects, bounds and verifies image bytes,
+applies a 25-second deadline to each complete candidate lookup, and caches the
+result or confirmed miss for 30 days in dedicated KV. Transient
+provider and image-origin failures are not negative-cached. A primary-domain
+fallback that outlives an exact-host response is retained through the request
+execution context rather than detached from the Worker lifecycle.
+
+**Why:** Letting an `<img>` point at a model-authored site would notify that site
+when a message merely painted and would move arbitrary network access into the
+renderer. Repeating lookup on every client would also discard the platform-wide
+reuse the mark is meant to provide. Cloudflare publishes no individual
+subrequest deadline, so an origin can otherwise keep the authenticated request
+and its coalesced desktop promise open indefinitely.
+
+**Considered and rejected:** Direct renderer fetches and direct page scraping in
+the API. The former discloses browsing context from each client; the latter
+duplicates the server's existing public-web acquisition boundary.
+
+**Consequences:** Favicon failure is silent and never changes navigation.
+Redirects are treated as absent for that host, the separately resolved primary
+domain may still supply its own mark, and detached still exports do not fetch
+live decoration. Concurrent desktop requests for one normalized hostname share
+one API operation, and browser responses revalidate so the KV entry remains the
+one 30-day cache clock. Every HTTP(S) link loads with its message rather than
+adding viewport or per-message limit bookkeeping. The team selected
+25 seconds to match Firecrawl's branding scrape budget and remain within
+Cloudflare's 30-second `waitUntil` window; one signal spans Firecrawl discovery,
+image headers, and the body. A deadline failure is transient and therefore never
+stored as a 30-day miss.
+
+### 2026-09-12 — Authenticate once within each HTTP request
+
+**What changed:** Protected routes reuse the identity middleware's request-local
+decision in workspace middleware, removing their duplicate token verification
+and session query.
+
+**Why:** Both middleware stacks are root-mounted, so a protected route passes
+through both in one request while requiring only one current identity decision.
+
+**Considered and rejected:** Persistent caching was rejected because it would
+introduce stale revocation decisions.
+
+**Consequences:** Only the current request shares the decision; every later
+request still reads current session, membership, workspace, and role state, and
+workspace middleware still rejects identity-only sessions.
+
+Shipped in #730.
+
+### 2026-09-12 — Separate workspace installation cleanup from personal access
+
+**What changed:** Workspace installation reserves encrypted authority before provider writes, isolates exact-ID removal credentials after disablement, and fences credential replacement against the current envelope. Administrative mutations retain actor attribution.
+
+**Why:** A disabled connection must stop ordinary access without losing the only means of deleting its provider registration. A stale response must not restore credentials or silently replace a newer API key.
+
+**Considered and rejected:** Reusing ordinary credential authorization for cleanup, blindly retrying uncertain creates, or widening event grants through operator maintenance.
+
+**Consequences:** Cleanup remains removal-only; repeat disconnect preserves it and forgetting leaves manual provider work. Raw-byte signature/size checks precede persistence, and Ashby workspace notifications use the administrator-authorized workspace audience and retain the normalized field allowlist. The [lifecycle owner](connector-installation-lifecycle.md) records recovery details.
+
+The full-history secret scan permits exactly the Granola test key encoding of
+`provider-issued-secret`; it grants no provider authority. Its anchored literal
+exception has a regression test rejecting other keys and longer values, rather
+than allowing arbitrary webhook secrets or excluding the fixture file.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
+
+### 2026-09-11 — iOS holds sessions in the Keychain, not a renderer
+
+**What changed:** The iOS client stores identity and workspace sessions with
+`KeychainStore` (`AfterFirstUnlockThisDeviceOnly`). It reuses the desktop Google
+PKCE start/exchange and the same JWT audience. There is no preload, CSP, or
+`safeStorage` path on iOS.
+
+**Why:** Copying Electron's encrypted file envelope onto a phone would have
+invented a second secret format without the main-process isolation that makes
+the desktop envelope make sense. The Keychain is the platform primitive that
+already matches "refresh tokens never sit in UserDefaults." Reusing
+`avalon-desktop` as the audience avoids a Worker change just to put the same
+member on a second device.
+
+**Considered and rejected:** A `WKWebView` around the desktop renderer, which
+would have put OAuth and session state in web storage on iOS. Also rejected:
+shipping refresh tokens in `UserDefaults` behind a debug flag.
+
+**Consequences:** A security change that tightens renderer isolation does not
+automatically cover iOS. iOS review is Keychain accessibility, URL scheme
+admission, associated domains, and the ticket-as-subprotocol rule. APNs tokens
+register through `PUT /push-devices/:installationId` with topic `ai.rallywith.ios`;
+they are not a session.
+
+Shipped in #725.
 
 ### 2026-09-11 — The five prompt trust labels are gone
 
@@ -1132,11 +1328,6 @@ revocation for the captured sessions.
 a fresh Google sign-in, and encrypting only the active credential would leave
 background workspace authority outside the Lockdown promise.
 
-**Considered and rejected:** One rebindable refresh token and one encrypted file
-per workspace. The former cannot cross from EU to Global discovery; the latter
-creates several independently committed files whose active pointer can disagree
-after a crash.
-
 **Consequences:** Exact-credential refresh failure removes one workspace without
 touching siblings. A failed online logout is reported, but local sign-out still
 deletes the complete set and all drafts. The preload gains only scoped actions;
@@ -1369,8 +1560,9 @@ the Dock disagrees with the product forever.
 the sign-in screen, not a crash, because an undecryptable envelope is already
 caught and treated as no session. Signing is unaffected — a Developer ID
 Application certificate is issued to the team, not to a bundle identifier, and
-none of the entitlements in `resources/entitlements.mac.plist` requires a
-provisioning profile.
+at the time of the rename none of the entitlements required a provisioning
+profile. Apple push and associated domains now require the embedded Developer ID
+profile described in [Apple push](push-notifications.md).
 
 The bundle identifier is the expensive part, and it is not only a TCC and
 login-item reset. **Squirrel.Mac cannot update across a bundle-ID change**, per
@@ -1408,7 +1600,7 @@ compatibility surface rather than a label.
 **Consequences:** `app://avalon` stays in the allowlist until shipped clients
 carrying it are gone; removing it is a decision about installed builds.
 `apps/api/test/domain-migration-config.test.ts` asserts both origins are listed
-in both regions, so dropping one fails on the edit. The origin policy is
+in configured deployments, so dropping one fails on the edit. The origin policy is
 otherwise unchanged — it still admits exact origins only, and CORS remains not
 authorization. See [`domain-migration.md`](domain-migration.md).
 ### 2026-08-25 — The origin allowlist admits both site zones
@@ -1560,11 +1752,6 @@ changes and must not expose token plaintext in commands, output, or logs.
 
 ### 2026-08-13 — Public-site and Lockdown telemetry observe without gaining provider, handoff, or transition authority
 
-**What changed:** The exact API origin allowlist now includes Rally's two
-production site origins. The site can obtain a content-free route and a signed
-anonymous capability, then send only registered site events. EU identity remains
-in memory; Global may retain a first-party random epoch.
-
 The main process contributes Lockdown enabled/available state to the bounded
 settings snapshot and reports previous, requested, and applied booleans only
 after an in-app transition succeeds.
@@ -1594,14 +1781,14 @@ setting enum, and cannot influence migration, rollback, or session recovery.
 
 **What changed:** The regional API admits `X-Rally-Operation-Id` in its explicit
 CORS header allowlist, and app-origin preflight tests cover the desktop mutation
-header in both Global and EU. Connector telemetry-version negotiation
+header in both configured deployments. Connector telemetry-version negotiation
 deliberately uses a query marker rather than another header. Caught renderer
 transport failures use the existing sanitized, main-owned exception route
 rather than a new renderer destination.
 
 **Why:** Chromium stops a request at preflight when any renderer header is absent
 from the Worker allowlist. Operation correlation must therefore be admitted in
-both regions. The connector version marker avoids expanding that preflight
+configured deployments. The connector version marker avoids expanding that preflight
 contract and remains safe while the independently deployed desktop and API
 briefly run different revisions.
 
@@ -1609,12 +1796,6 @@ briefly run different revisions.
 correlation, or adding a direct renderer PostHog client. Those respectively widen
 the accepted browser boundary, lose idempotent intent/outcome correlation, or
 place provider authority in the untrusted renderer.
-
-**Consequences:** New renderer request headers must update both the narrow Worker
-allowlist and its production-shaped preflight test. CORS failures remain ordinary
-failed product actions; bounded diagnostic telemetry observes them without
-changing or replaying the request or misclassifying them as process-health
-transitions, and EU diagnostics do not cross regions.
 
 ### 2026-08-13 — Telemetry keeps provider, operator, and raw-crash authority in main and the regional Worker
 
@@ -1628,11 +1809,6 @@ Main creates an owner-only route-final parent around the Crashpad database,
 stores only sparse lifecycle metadata beside it, invalidates the whole
 generation without touching the live database, and deletes malformed or expired
 generations instead of inferring policy.
-
-Restricted telemetry HTTP operations authenticate a per-region bearer token to
-a fixed operator UUID and `support`/`security` role. EU does not hold the
-onboarding capability-signing key; it asks the narrow Global control RPC to
-authorize or close a route-bound journey.
 
 **Why:** Electron crash dumps can contain memory and customer content, while a
 renderer can be compromised independently of main. Product analytics also needs
@@ -1648,24 +1824,6 @@ An internal helper is not an authorization boundary, and request fields cannot
 prove an operator's identity or role. Sharing the signing key across regions
 also widened a one-direction capability into authority held by both data
 planes.
-
-**Considered and rejected:** Direct PostHog/Sentry SDKs in the renderer, a
-token or dump path in preload, Crashpad URL upload, reading the live crash
-database, shared product/telemetry R2, and an EU fallback to US infrastructure.
-Each widens an untrusted boundary or makes region/opt-out/deletion
-unenforceable. For operator access: reusing desktop sessions, accepting
-operator metadata from the request, a public internal-debug route, and
-provisioning the same key in both regions. None gives the regional, auditable,
-least-authority boundary raw crash access requires.
-
-**Consequences:** Main and the regional Worker are the only telemetry
-authorities; raw bytes require audited regional access and never reach logs or
-PostHog. PostHog-side governance remains operational configuration outside
-Rally's internal retention lifecycle. Operator tokens are independent regional
-secrets, raw access reasons are role-bound, and audit rows derive their
-principal server-side. Future EU journey operations receive only route/epoch
-control results from Global and must never receive key material or destination
-identity.
 
 **Future changes must preserve:** No credential enters a Crashpad URL or local
 generation, no renderer learns a dump path, invalidation remains durable and

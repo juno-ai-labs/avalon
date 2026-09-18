@@ -12,6 +12,9 @@
  * hook cannot await. `docs/durable-object-alarms.md` and `docs/ops-alerting.md`
  * are the module documents.
  */
+import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
+import { z } from "zod";
+
 import type { Env } from "../env";
 import { logError, logWarn } from "../observability/logger";
 import { notifyOps } from "../observability/ops-slack-notifier";
@@ -46,10 +49,20 @@ export interface ScheduledAlarmAttemptReport {
  * error quoting a stored row, a provider SDK's prose all arrive the same way.
  * The log row keeps the message; the notice carries it only when it has the
  * shape of a code, and names the error class otherwise.
+ *
+ * A schema rejection is the one exception with structure worth keeping. A
+ * handler that parses a stored row — an accepted definition, a schedule's
+ * JSON — against a schema that has since moved throws a `ZodError` on this
+ * side of any hop, issues intact. Its message is a JSON blob the notice
+ * cannot carry; its paths and issue codes are schema shape, not member data,
+ * and are what an operator needs. The class name stays in front so the notice
+ * still reads as the error it was, with the field appended where before there
+ * was nothing.
  */
 export function scheduledAlarmErrorCode(error: unknown): string {
+  if (error instanceof z.ZodError) return codeShaped(`handler_error:ZodError:${describeZodIssues(error)}`);
   const message = error instanceof Error ? error.message : "";
-  if (/^[a-z0-9_:.-]{1,120}$/iu.test(message)) return message;
+  if (isCodeShaped(message)) return message;
   return error instanceof Error && /^[A-Za-z]{1,60}$/u.test(error.name) ? `handler_error:${error.name}` : "handler_error";
 }
 

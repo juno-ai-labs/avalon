@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
@@ -30,12 +31,12 @@ const sessionState = vi.hoisted(() => ({
   declineInvitation: vi.fn(),
   exchangingTicket: false,
   finishWorkspaceSetup: vi.fn(),
-  region: 'global' as 'global' | 'eu',
+  region: 'global' as string,
   runtime: {
     appVersion: 'test',
     isPackaged: true,
     platform: 'darwin',
-    api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+    api: { global: 'https://api.rallywith.ai', enterprise: 'https://enterprise.api.rallywith.ai' },
     devAuthEnabled: false,
   },
   selectRegion: vi.fn(),
@@ -51,7 +52,10 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => sessionState }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => bridge }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => bridge,
+  desktopServicesAvailable: () => false,
+}));
 vi.mock('../lib/telemetry', () => ({
   reportTelemetryProductIntent: telemetry.reportTelemetryProductIntent,
   uuidV7: () => telemetry.operationId,
@@ -61,7 +65,7 @@ const invitation: PendingWorkspaceInvitation = {
   id: '00000000-0000-7000-8000-000000000009',
   workspaceId: '00000000-0000-7000-8000-000000000010',
   workspaceName: 'Rally Studio',
-  region: 'eu',
+  region: 'enterprise',
   email: 'adam@example.com',
   role: 'member',
   invitedByName: 'Sam',
@@ -84,7 +88,7 @@ describe('identity-first onboarding screens', () => {
   });
 
   it('uses one global identity entry and does not ask for a login region', async () => {
-    sessionState.region = 'eu';
+    sessionState.region = 'enterprise';
     render(<SignInScreen />);
 
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
@@ -98,16 +102,15 @@ describe('identity-first onboarding screens', () => {
     ));
   });
 
-  it('collects organization name and data region only after authentication', async () => {
+  it('collects a workspace name after authentication and defaults to Global', async () => {
     render(<RegionOnboarding />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Workspace name' }), {
       target: { value: 'Acme Research' },
     });
-    fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
     fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
 
     await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
-      'Acme Research', 'eu', telemetry.operationId,
+      'Acme Research', 'global', telemetry.operationId,
     ));
   });
 
@@ -153,28 +156,14 @@ describe('identity-first onboarding screens', () => {
     fireEvent.keyDown(nameField, { key: 'Enter' });
 
     expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledOnce();
-    expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledTimes(2);
+    expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
     finishSetup?.();
   });
 
-  it('describes storage jurisdiction without listing unavailable EU capabilities', () => {
+  it('does not offer a deployment picker during workspace creation', () => {
     render(<RegionOnboarding />);
-
-    expect(screen.getByText('US-Jurisdiction storage')).toBeVisible();
-    expect(screen.getByText('EU-jurisdiction storage')).toBeVisible();
-    expect(screen.getByText('This choice controls only where workspace data is stored and cannot be changed later.')).toBeVisible();
-    expect(screen.queryByText(/Cloudflare storage|regional routing|Your Rally sign-in stays the same/u)).not.toBeInTheDocument();
-    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
-    expect(screen.queryByText('Rally agent: Terminal access')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
-    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
-    expect(screen.queryByText('Rally agent: Terminal access')).not.toBeInTheDocument();
-    expect(screen.queryByRole('list')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('radio', { name: /United States/u }));
-    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
-    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Workspace name' })).toBeVisible();
   });
 
   it('accepts a pending invitation through its own region without another login prompt', async () => {
@@ -182,11 +171,11 @@ describe('identity-first onboarding screens', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await waitFor(() => expect(sessionState.acceptInvitation).toHaveBeenCalledWith(
-      'eu', invitation.id, telemetry.operationId,
+      'enterprise', invitation.id, telemetry.operationId,
     ));
     expect(telemetry.reportTelemetryProductIntent).toHaveBeenCalledWith({
       kind: 'workspace_activation_requested',
-      selectedRegion: 'eu',
+      selectedRegion: 'enterprise',
       entrypoint: 'invitation',
       operationId: telemetry.operationId,
     });
@@ -197,7 +186,7 @@ describe('identity-first onboarding screens', () => {
     render(<InvitationOnboarding invitations={[invitation]} onChanged={onChanged} />);
     fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
 
-    await waitFor(() => expect(sessionState.declineInvitation).toHaveBeenCalledWith('eu', invitation.id));
+    await waitFor(() => expect(sessionState.declineInvitation).toHaveBeenCalledWith('enterprise', invitation.id));
     expect(onChanged).toHaveBeenCalledOnce();
   });
 });

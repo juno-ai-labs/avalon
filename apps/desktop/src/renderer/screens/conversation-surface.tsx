@@ -1,11 +1,10 @@
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   AlertTriangle,
-  Copy,
   Ellipsis,
   FileText,
   FileUp,
@@ -45,6 +44,7 @@ import {
 import {
   adjacentTranscriptRange,
   collapseSettledWorkIntoAccordion,
+  dedupeAdjacentConnectorConnectionCards,
   composeTranscript,
   createTextMessage,
   foldSettledWorkIntoMessages,
@@ -52,12 +52,6 @@ import {
   groupThinkingMessages,
   optimisticMentionRendering,
   orderedTranscriptMessages,
-  applyPendingInputQueueOrder,
-  assignPendingInputQueueSequences,
-  composerQueueOverlays,
-  isComposerQueueOverlay,
-  pendingOverlayInputId,
-  transcriptOverlayIdentityKey,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
   transcriptCoverageAdvanced,
@@ -73,7 +67,7 @@ import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { ActivityPresence, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
+import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { RIGHT_SIDEBAR_ENABLED, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -94,13 +88,13 @@ import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store'
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { workstreamSidekickRows, type SidekickRow } from '../components/sidekick-section';
-import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
+import { AgentCompactionIndicator, AgentWorkTiming, RunStoppingIndicator, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState } from '../components/primitives';
-import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
+import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
@@ -201,6 +195,68 @@ export function orderedTranscriptOwnsRunTiming(
       : []));
   return [...snapshot.ranges.flatMap((range) => range.turns), ...snapshot.activeTurns]
     .some((turn) => turn.activityId !== null && assistantActivityIds.has(turn.activityId));
+}
+
+/**
+ * Which row the transcript's activity slot shows, if any.
+ *
+ * Both answers describe the run, so both belong in the feed, in reading order,
+ * with the turns they are about. The pending-stop acknowledgement deliberately
+ * is not one of them — see `conversationShowsStoppingRow`.
+ *
+ * `timing` is left to the feed whenever the ordered transcript already draws
+ * the run's own rows, which is why it is the one answer that can be `null`
+ * while a run is plainly going.
+ *
+ * The `timing` answer carries the props it was decided from rather than naming
+ * a kind and leaving the caller to fetch them. A bare kind made the call site
+ * assert `runTiming!` back, which moved the non-null guarantee out of the
+ * compiler and into this function and that spread agreeing — so a fourth answer,
+ * or a `timing` branch that stopped requiring `runTiming`, would have spread
+ * `null` at render instead of failing typecheck.
+ */
+export function conversationActivityRow(input: {
+  status: HarnessStatus;
+  compactingThisRun: boolean;
+  orderedOwnsRunTiming: boolean;
+  runTiming: AgentWorkTimingProps | null;
+}): { kind: 'compacting' } | { kind: 'timing'; timing: AgentWorkTimingProps } | null {
+  if (input.compactingThisRun && input.status === 'running') return { kind: 'compacting' };
+  if (!input.orderedOwnsRunTiming && input.runTiming) {
+    return { kind: 'timing', timing: input.runTiming };
+  }
+  return null;
+}
+
+/**
+ * Whether to acknowledge a pending stop above the composer.
+ *
+ * Stop is observed at the loop's next safe step boundary: the response in
+ * flight and every tool it already asked for settle first, and no further
+ * provider request begins. A production run took 11.2 seconds to get there, and
+ * for all of it the only sign the click had landed was a spinner in a 28px
+ * button and a tooltip nobody hovers.
+ *
+ * Drawn in the composer dock rather than in the transcript's activity slot,
+ * which is inside the scroller. `useTranscriptFollow` hands the viewport to the
+ * reader the moment they scroll up and nothing about pressing Stop takes it
+ * back — correctly, since only the reader's own scrolling may move it — so a
+ * row appended to the feed lands below the fold for exactly the person most
+ * likely to be reading history while a run is going. The dock sits outside the
+ * scroller, so this is visible at any scroll position. It also puts the
+ * acknowledgement beside the control it answers: the two rows in the feed
+ * describe the run, and this one answers a button press.
+ *
+ * Gated on a live run, not on the flag alone. The loop clears
+ * `stop_requested_at` as it goes idle, but a settled run can still be read back
+ * before the next snapshot lands, and a stopping row over an already-stopped
+ * run promises a wait that is over.
+ */
+export function conversationShowsStoppingRow(
+  status: HarnessStatus,
+  stopRequested: boolean | undefined,
+): boolean {
+  return status === 'running' && stopRequested === true;
 }
 
 /**
@@ -606,14 +662,12 @@ export function RunFailureNotice({
   message,
   requestId,
   retrying,
-  onCopyRequestId,
   onRetry,
 }: {
   code: string;
   message: string;
   requestId?: string;
   retrying: boolean;
-  onCopyRequestId: () => void;
   onRetry: () => void;
 }): React.JSX.Element {
   return (
@@ -623,11 +677,18 @@ export function RunFailureNotice({
         <strong>Run failed</strong>
         <p>{message}</p>
         <code>{code}</code>
+        {/* The id is shown beside its control rather than hidden behind a
+            sentence: the message asks for it to be copied for support, and a
+            copy control is an icon, so the value has to be on screen for the
+            icon to be about something. */}
+        {requestId ? (
+          <div className="copy-detail run-failure-request">
+            <span>Request ID <span className="mono">{requestId}</span></span>
+            <CopyButton label="Copy request ID" size={12} value={requestId} />
+          </div>
+        ) : null}
       </div>
       <div className="run-failure-actions">
-        {requestId ? (
-          <Button onClick={onCopyRequestId}><Copy aria-hidden="true" size={13} /> Copy request ID</Button>
-        ) : null}
         <Button className="button-primary" disabled={retrying} onClick={onRetry}>
           {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
           Retry
@@ -1018,6 +1079,10 @@ export function ConversationSurface({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
     enabled: Boolean(api),
+    // OAuth completion publishes the workspace socket's
+    // `connector_connections` topic. Its invalidation refetches this active
+    // query, which lets an in-feed connection card become Connected without a
+    // focus heuristic or polling loop.
     staleTime: 60_000,
   });
   const availableResources = useInfiniteQuery({
@@ -1071,22 +1136,10 @@ export function ConversationSurface({
     id,
     members.data ?? [],
   ), [id, members.data, orderedTranscript.data]);
-  const harnessRunning = routedDetail?.harnessStatus === 'running';
-  const queueOverlays = useMemo(
-    () => composerQueueOverlays(transcriptOverlays.data, { harnessRunning }),
-    [harnessRunning, transcriptOverlays.data],
-  );
-  const queueItems = useMemo<ComposerQueueItem[]>(
-    () => queueOverlays.map((overlay) => ({
-      key: transcriptOverlayIdentityKey(overlay.identity),
-      inputId: pendingOverlayInputId(overlay) ?? null,
-      text: overlay.message.text ?? '',
-      mentions: overlay.message.mentions ?? [],
-      member: queueAuthorMember(overlay.message, members.data ?? []),
-      sending: overlay.message.deliveryState === 'sending',
-    })),
-    [members.data, queueOverlays],
-  );
+  const backgroundAgents = useQuery({
+    queryKey: ['workstream-background-agents', id], queryFn: skipToken,
+    initialData: null as number | null,
+  });
   const liveMessageIds = useMemo(() => new Set((transcriptOverlays.data ?? [])
     .filter((overlay) => overlay.provenance.source === 'client_command'
       || overlay.provenance.source === 'stream_event'
@@ -1094,17 +1147,18 @@ export function ConversationSurface({
     .map((overlay) => overlay.message.id)), [transcriptOverlays.data]);
   const transcript = useMemo(
     () => {
-      const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
-        !isComposerQueueOverlay(overlay, { harnessRunning }));
+      const feedOverlays = transcriptOverlays.data ?? [];
       return collapseSettledWorkIntoAccordion(
         foldSettledWorkIntoMessages(
           groupThinkingMessages(
-            groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+            groupPluginToolMessages(dedupeAdjacentConnectorConnectionCards(
+              composeTranscript(canonicalTranscript, feedOverlays),
+            )),
           ),
         ),
       );
     },
-    [canonicalTranscript, harnessRunning, transcriptOverlays.data],
+    [canonicalTranscript, transcriptOverlays.data],
   );
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
@@ -1418,7 +1472,10 @@ export function ConversationSurface({
       // the main room would otherwise keep the empty list their refusal
       // cached, and somebody who leaves would keep the names it held.
       if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
-      setParticipantDialogOpen(false);
+      // The roster is the dialog's job: it stays open so another person can be
+      // added or removed without reopening. Dismissal is click-outside, Escape,
+      // or the header close control. Self-removal still closes, below, because
+      // that person is leaving the room.
     },
   });
 
@@ -1435,13 +1492,18 @@ export function ConversationSurface({
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
-      if (member.id === session?.user.id && (target !== '0' || previous?.scope === 'personal')) {
-        setParticipantDialogOpen(false);
-        if (target !== '0') {
-          queryClient.removeQueries({ queryKey: targetKey, exact: true });
-          void navigate(`/workstreams/${id}`, { replace: true });
-          return;
-        }
+      if (member.id !== session?.user.id) return;
+      // Leave-room navigation is only for a substream or a personal Main, but
+      // the dialog has to close for every self-removal: a workspace-scoped
+      // Main still lets the person view, and the portaled Remove menu is no
+      // longer an outside click that would dismiss it for free.
+      setParticipantDialogOpen(false);
+      if (target !== '0') {
+        queryClient.removeQueries({ queryKey: targetKey, exact: true });
+        void navigate(`/workstreams/${id}`, { replace: true });
+        return;
+      }
+      if (previous?.scope === 'personal') {
         evictCachedWorkstream(queryClient, id);
         openFirstWorkstream([id]);
       }
@@ -1565,8 +1627,8 @@ export function ConversationSurface({
   // Sidekicks the room owns, and the ones its main conversation has loaded.
   // Both are the room's, so both are fetched here and folded into one list.
   const attachedSidekicks = useQuery({
-    queryKey: ['attached-sidekicks', id],
-    queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal),
+    queryKey: ['attached-sidekicks', id, substreamId],
+    queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
   const ownedSidekicks = useQuery({
@@ -1581,9 +1643,22 @@ export function ConversationSurface({
     }),
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
+  const recommendedSidekicks = useQuery({
+    queryKey: ['recommended-sidekicks', id],
+    queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal),
+    enabled: Boolean(api && id && parentKind === 'workstream'),
+  });
   const removeSidekick = useMutation({
-    mutationFn: (sidekickId: string) => api!.removeAttachedSidekick(id!, sidekickId),
-    onSuccess: (items) => queryClient.setQueryData(['attached-sidekicks', id], items),
+    mutationKey: ['remove-sidekick', id, substreamId],
+    mutationFn: async ({ sidekickId, recommendation, workstreamId, substreamId: targetSubstreamId }: { sidekickId: string; recommendation: boolean; workstreamId: string; substreamId: string }) => {
+      if (recommendation) {
+        await api!.setRecommendedSidekick(workstreamId, sidekickId, false, targetSubstreamId);
+      } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
+    },
+    onSuccess: (_result, { workstreamId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
+      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
+    },
   });
   const sidekickRefreshSequence = orderedTranscript.data?.eventSequence;
   useEffect(() => {
@@ -1592,6 +1667,7 @@ export function ConversationSurface({
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
     } else {
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
+      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', id] });
       // A room's Sidekick is created from its conversation, by the run that is
       // writing the turns this sequence counts, so the list that would show it
       // is stale exactly when the transcript moves.
@@ -1844,27 +1920,6 @@ export function ConversationSurface({
     }
   };
 
-  const reorderQueue = async (inputIds: string[]): Promise<void> => {
-    const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId));
-    queryClient.setQueryData<TranscriptOverlay[]>(
-      transcriptOverlaysQueryKey(id, substreamId),
-      (current) => applyPendingInputQueueOrder(current, inputIds),
-    );
-    try {
-      const result = await socketConnection.reorderPendingInputs(inputIds);
-      queryClient.setQueryData<TranscriptOverlay[]>(
-        transcriptOverlaysQueryKey(id, substreamId),
-        (current) => assignPendingInputQueueSequences(current, result.pendingInputs),
-      );
-    } catch (error) {
-      if (previous) {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), previous);
-      }
-      setSendError(error instanceof Error ? error.message : 'Queued messages could not be reordered.');
-      throw error;
-    }
-  };
-
   useEffect(() => {
     if (!routedDetail || searchTurnId || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
@@ -1975,6 +2030,26 @@ export function ConversationSurface({
     orderedTranscript.data,
     detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
   );
+  const showsStoppingRow = conversationShowsStoppingRow(
+    detail.harnessStatus,
+    detail.stopRequested,
+  );
+  const activityRow = conversationActivityRow({
+    status: detail.harnessStatus,
+    // A compaction has to be running AND belong to the run on screen. Reading
+    // the id straight off `activeCompaction` would compare `undefined` with the
+    // id of a run that has none either, and a room with no run at all would
+    // report itself compacting. `!= null` rather than `!== null`, because the
+    // absent value here is sometimes `undefined`: the type says
+    // `AgentCompactionState | null`, but a connection double that names only
+    // the fields its test drives leaves the key off entirely. It narrows too,
+    // which `Boolean(…)` did not, so the read below needs no `?.`.
+    compactingThisRun: socketConnection.activeCompaction != null
+      && socketConnection.activeCompaction.harnessRunId
+        === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id),
+    orderedOwnsRunTiming,
+    runTiming,
+  });
   const visibleTranscript = transcript;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
@@ -2003,13 +2078,18 @@ export function ConversationSurface({
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
     owned: ownedSidekicks.isError ? [] : ownedSidekicks.data,
-    attached: attachedSidekicks.data,
+    attached: attachedSidekicks.isError ? [] : attachedSidekicks.data,
+    recommended: recommendedSidekicks.isError ? [] : recommendedSidekicks.data,
+    ...(detail.participants.some((person) => person.id === session?.user.id)
+      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
+      : {}),
     ...(sidebarDetail.participants.some((person) => person.id === session?.user.id)
-      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate(sidekickId) }
+      ? { onRemoveRecommendation: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: true, workstreamId: id!, substreamId }) }
       : {}),
   });
   const sidekicksError = ownedSidekicks.error?.message
     ?? attachedSidekicks.error?.message
+    ?? recommendedSidekicks.error?.message
     ?? removeSidekick.error?.message;
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
@@ -2175,6 +2255,7 @@ export function ConversationSurface({
             />
           ) : (
             <MessageFeed
+              connectorConnectionCards
               citations={citations}
               currentUserId={session?.user.id}
               currentUserName={session?.user.name}
@@ -2195,25 +2276,24 @@ export function ConversationSurface({
               virtualizer={transcriptVirtualizer}
             />
           )}
-          <ActivityPresence>{socketConnection.activeCompaction
-            && detail.harnessStatus === 'running'
-            && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
+          {detail.harnessStatus === 'running'
+            && socketConnection.activeInferenceDelays.some((delay) => delay.harnessRunId === detail.latestHarnessRunId)
+            && <InferenceDelayNotice />}
+          <ActivityPresence>{activityRow?.kind === 'compacting'
             ? <AgentCompactionIndicator />
-            : !orderedOwnsRunTiming
-              && runTiming
-              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}</ActivityPresence>
+            : activityRow?.kind === 'timing'
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...activityRow.timing} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={detail.latestHarnessRun.error?.message ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.'}
-              onCopyRequestId={() => void desktopBridge().copyText(detail.latestHarnessRun?.requestId ?? detail.latestHarnessRun!.id)}
               onRetry={() => retry.mutate()}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
               retrying={retry.isPending}
             />
           )}
           {detail.latestHarnessRun?.status === 'stopped' && (
-            <RunStoppedNotice onRetry={() => retry.mutate()} retrying={retry.isPending} />
+            <RunStoppedNotice />
           )}
         </div>
       </div>
@@ -2221,6 +2301,10 @@ export function ConversationSurface({
       <div className="composer-dock">
         <JumpToLatestButton onJump={() => void jumpToLatest()} visible={!transcriptAtEnd} />
         <div className="composer-stack">
+          {/* First in the stack, so it reads as a line above the field rather
+              than as something the field is sitting on. The stack is a grid
+              with its own gap, so it needs no spacing of its own. */}
+          {showsStoppingRow && <RunStoppingIndicator />}
           <WorkstreamComposer
             api={api ?? undefined}
             placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the work stream…'}
@@ -2248,8 +2332,7 @@ export function ConversationSurface({
             onStop={async () => {
               await stop.mutateAsync();
             }}
-            onReorderQueue={reorderQueue}
-            queueItems={queueItems}
+            backgroundAgentCount={backgroundAgents.data}
             sendBlocked={feedFromLocalCache}
             sending={sending}
             uploading={attachmentDraft.uploading}

@@ -4,5 +4,5 @@ import type { AccessEnvironment } from "./access";
 
 export interface Env extends AccessEnvironment {
   GLOBAL_INSPECTION: EngineeringInspectionRpcBinding;
-  EU_INSPECTION: EngineeringInspectionRpcBinding;
+  [binding: `${string}_INSPECTION`]: EngineeringInspectionRpcBinding;
 }

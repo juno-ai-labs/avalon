@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 import { Hono } from 'hono';
@@ -21,7 +22,7 @@ function validForm(): FormData {
   form.set('metadata', JSON.stringify({
     uploadId: '018f22f2-4c22-7abc-8def-0123456789ab',
     installationId: '018f22f2-4c22-7abc-8def-0123456789ac',
-    route: 'eu', release: '1.0.0', buildId: 'build', platform: 'linux',
+    route: 'enterprise', release: '1.0.0', buildId: 'build', platform: 'linux',
     architecture: 'x64', processRole: 'renderer',
     launchId: '018f22f2-4c22-7abc-8def-0123456789ad', channel: 'stable',
   }));
@@ -34,11 +35,11 @@ function validForm(): FormData {
 describe('telemetry multipart parsing in workerd', () => {
   it('parses one real workerd File and preserves validated metadata', async () => {
     const response = await app().request('/parse', { method: 'POST', body: validForm() }, {
-      AVALON_REGION: 'eu', LOG_LEVEL: 'error',
+      AVALON_REGION: 'enterprise', LOG_LEVEL: 'error',
     } as never);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      metadata: { route: 'eu', processRole: 'renderer' },
+      metadata: { route: 'enterprise', processRole: 'renderer' },
       bytes: [77, 68, 77, 80],
     });
   });

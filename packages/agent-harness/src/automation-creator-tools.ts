@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import {
-  AutomationSetEvaluatorRulesInputV1Schema,
+  IdSchema,
+  AutomationSetEvaluatorRulesModelInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
   automationTriggersAdmitResourceType,
@@ -10,6 +11,7 @@ import {
 } from "@rally/contracts";
 
 import {
+  activityTriggerScopeRefusal,
   asRecord,
   executeAutomationCreatorDiscoveryTool,
   parseAutomationSubmission,
@@ -69,6 +71,9 @@ export interface AutomationCreatorToolHost {
   automationDirectoryPort?: {
     listAutomations(): Promise<unknown>;
   };
+  attachmentPort?: {
+    setAttached(sidekickId: string, attached: boolean): Promise<unknown>;
+  };
   draftMutationPort?: {
     /** `target` names an automation from `listAutomations`; null creates one. */
     submitDraft(
@@ -125,6 +130,51 @@ export function rememberAutomationResourceSearchResult(
       });
     }
   }
+}
+
+/**
+ * The rules whose source binding names no trigger in the draft they belong to.
+ *
+ * The same predicate `automationDraftAcceptanceBlocker` refuses on, kept in one
+ * place so the warning `set_evaluator_rules` echoes and the refusal
+ * `submit_draft` throws can never disagree about which rules are unbound — a
+ * warning that cleared a submission the object then rejected would be worse
+ * than no warning, because it would be believed.
+ */
+function unboundEvaluatorRules(
+  triggers: AutomationDraft["triggers"],
+  rules: AutomationSetEvaluatorRulesInputV1 | null,
+): {
+  declared: Record<string, string>;
+  unbound: AutomationSetEvaluatorRulesInputV1["evaluators"];
+} {
+  const declared = automationActivitySourcePluginIds(triggers);
+  return {
+    declared,
+    // `undefined !== string` covers the binding no trigger declares at all, so
+    // this one comparison is both halves of the blocker's `!bound || bound !==`.
+    unbound: (rules?.evaluators ?? []).filter(
+      (evaluator) => declared[evaluator.source.sourceBindingKey] !== evaluator.source.suggestedSourcePluginId,
+    ),
+  };
+}
+
+function describeSourceBindings(declared: Record<string, string>): string {
+  const entries = Object.entries(declared);
+  return entries.length === 0
+    ? "no activity source bindings at all"
+    : entries.map(([key, pluginId]) => `${key} (${pluginId})`).join(", ");
+}
+
+function describeUnboundRules(unbound: AutomationSetEvaluatorRulesInputV1["evaluators"]): string {
+  if (unbound.length === 0) return "Every rule names one of those";
+  const named = unbound
+    .map((evaluator) => (
+      `${evaluator.evaluatorKey} names ${evaluator.source.sourceBindingKey} `
+      + `(${evaluator.source.suggestedSourcePluginId})`
+    ))
+    .join("; ");
+  return `${unbound.length === 1 ? "This rule names something else" : "These rules name something else"}: ${named}`;
 }
 
 export function createAutomationCreatorTools(input: AutomationCreatorToolHost): HarnessTool[] {
@@ -203,10 +253,30 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
         return {
           output: await input.automationDirectoryPort.listAutomations(),
-          summary: "Listed the Sidekicks this conversation can edit",
+          summary: "Listed editable and attachable Sidekicks",
         };
       },
     },
+    ...(["attach", "detach"] as const).filter(() => input.attachmentPort !== undefined).map((operation): HarnessTool => ({
+      definition: {
+        name: operation,
+        description: `${operation === "attach" ? "Attach" : "Detach"} a workspace Sidekick ${operation === "attach" ? "as a recommendation for" : "from"} this workstream. Use an ID returned by sidekick_sidekicks_list.`,
+        capability: `rally.sidekick.${operation}`,
+        mode: "write",
+        idempotency: "record_before_execute",
+        inputSchema: { type: "object", additionalProperties: false, properties: { sidekickId: { type: "string" } }, required: ["sidekickId"] },
+      },
+      serial: true,
+      validateInput: (raw) => {
+        const parsed = z.strictObject({ sidekickId: IdSchema }).safeParse(raw);
+        return parsed.success ? null : parsed.error;
+      },
+      execute: async (raw) => {
+        const { sidekickId } = z.strictObject({ sidekickId: IdSchema }).parse(raw);
+        const result = await input.attachmentPort!.setAttached(sidekickId, operation === "attach");
+        return { output: { result, note: "Recommendations apply to future executions. Call load_skill to use the Sidekick in this execution." }, summary: `${operation === "attach" ? "Attached" : "Detached"} workstream Sidekick` };
+      },
+    })),
     {
       definition: creatorDefinition("submit_draft"),
       serial: true,
@@ -287,10 +357,21 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             );
           }
           if (blocker === "sidekick_activity_source_unbound") {
+            // Both halves are in hand here and nowhere else: the triggers are
+            // in this submission, the rules are the ones already buffered. The
+            // wording used to say only that they had to agree, which leaves a
+            // model to guess *which* of two invented labels it typed wrong —
+            // and a binding key is invented, so neither side is discoverable
+            // from a catalog. Naming the two sets is what turns the refusal
+            // into an edit.
+            const { declared, unbound } = unboundEvaluatorRules(parsed.data.triggers, draftState.evaluatorRules ?? null);
             throw new Error(
               "Every rule's sourceBindingKey and suggestedSourcePluginId must match a connector_activity, "
-              + "semantic_activity or webhook trigger in this draft. Call set_evaluator_rules again with rules "
-              + "that name the triggers' bindings, or with [] when the draft no longer has such a trigger",
+              + "semantic_activity or webhook trigger in this draft. "
+              + `This draft's triggers declare ${describeSourceBindings(declared)}. `
+              + `${describeUnboundRules(unbound)}. `
+              + "Call set_evaluator_rules again with rules that name the triggers' bindings, "
+              + "or with [] when the draft no longer has such a trigger",
             );
           }
         }
@@ -326,11 +407,32 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         // pointing at it so the two can never drift.
         const issues = evaluatorRuleIssues(raw);
         if (issues) throw issues;
-        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
+        // The model's spelling in, the stored shape out; everything below and
+        // downstream of here is the stored shape.
+        const rules = AutomationSetEvaluatorRulesModelInputV1Schema.parse(raw);
         const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
         draftState.evaluatorRules = rules;
+        // What the submitted draft's triggers currently declare, echoed back so
+        // a binding key typed two ways is visible now rather than at submit.
+        // Only when a draft exists: rules may be set before one, deliberately —
+        // buffering is what keeps the two calls order-independent — and there
+        // is then nothing to compare against rather than a disagreement to
+        // report. The check that does fire in that case is `submit_draft`'s,
+        // which names both sets for the same reason.
+        const submitted = draftState.submitted;
+        const check = submitted === null
+          ? null
+          : unboundEvaluatorRules(submitted.triggers, rules);
         return {
-          output: result,
+          output: {
+            ...asRecord(result),
+            ...(check === null ? {} : {
+              declaredSourceBindings: check.declared,
+              ...(check.unbound.length > 0
+                ? { rulesNamingNoTrigger: check.unbound.map((evaluator) => evaluator.evaluatorKey) }
+                : {}),
+            }),
+          },
           summary: rules.evaluators.length === 0
             ? "Cleared external event evaluator rules"
             : `Set ${rules.evaluators.length} external event evaluator rule${rules.evaluators.length === 1 ? "" : "s"}`,
@@ -339,7 +441,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     },
   ];
   function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
-        const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
+        const parsed = AutomationSetEvaluatorRulesModelInputV1Schema.safeParse(raw);
         if (!parsed.success) return parsed.error;
         const issues: z.core.$ZodIssue[] = [];
         for (const [index, evaluator] of parsed.data.evaluators.entries()) {
@@ -349,6 +451,21 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
               code: "custom",
               path: ["evaluators", index, "source", "suggestedSourcePluginId"],
               message: "This plugin has not been inspected. Call sidekick_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
+              input: evaluator.source.suggestedSourcePluginId,
+            });
+            continue;
+          }
+          // Refused on the plugin rather than on the event, because every
+          // event is refused: this connection's scope cannot receive any of
+          // them. A rule naming an event type outright is not otherwise
+          // checked against the catalog here, so without this the draft is
+          // accepted and the automation is silent for good.
+          const scopeRefusal = activityTriggerScopeRefusal(plugin);
+          if (scopeRefusal) {
+            issues.push({
+              code: "custom",
+              path: ["evaluators", index, "source", "suggestedSourcePluginId"],
+              message: scopeRefusal,
               input: evaluator.source.suggestedSourcePluginId,
             });
             continue;
@@ -465,36 +582,28 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
 export const AUTOMATIONS_PLUGIN_ID = "rally:sidekicks";
 
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
+  "Workspace Sidekicks marked canAttach may be attached or detached proactively when useful for this workstream. Attachment recommends them in future executions; call load_skill separately to use them now. Only edit entries marked canEdit.",
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
-  "After submit_draft succeeds, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
+  "After saving a draft, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
-  "Ask which scope before you submit, because it cannot be changed afterwards:",
+  "Use the scope already selected for this Sidekick. Do not ask participants to choose it again. Workstream ownership cannot change. Before first publication, change between personal and workspace scope only when explicitly requested. Published scope cannot change.",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",
-  "and \"workstream\" belongs to this work stream — everyone in the room can manage it,",
-  "Rally posts its results here, and it outlives whoever asked for it.",
-  "Nothing else is delivered for a Sidekick: if its result should reach an inbox, a channel, a DM, or a document,",
-  "write that send and its recipient into the instructions as a step, because the run performs it with its own tools",
-  "and a result the instructions do not send goes nowhere.",
-  "A Sidekick can never deliver into a different work stream, so do not offer to send results to one.",
-  "To change a Sidekick that already exists, call sidekicks_list, start from its current definition,",
+  "and \"workstream\" belongs to its owning work stream — everyone in that room can manage it,",
+  "A Sidekick outlives whoever asked for it. Include each result destination and delivery step in its instructions.",
+  "To send a result to an inbox, channel, DM, or document, name the recipient and tell the run to send it.",
+  "Scheduled result delivery to a workstream is limited to the owning workstream.",
+  "To change a Sidekick that already exists, discover it and start from its current definition,",
   "and submit the whole revised draft with its sidekickId; ready changes save immediately.",
 ].join(" ");
 
 /**
- * The drafting tools, as a plugin any work-stream agent can load.
- *
- * Deferred rather than preloaded: discovered through `list_plugins` and loaded
- * with `load_plugin`, the way `rally:terminal` is. Loading it starts,
- * authorizes and persists nothing — it puts the drafting tools in the catalog,
- * and the first thing that durably exists is the draft a person is asked to
- * accept, in the feed where the conversation happened.
- *
- * Withheld from an automation occurrence, and that is the host's call to make:
- * an occurrence that could draft automations from the email it just read is a
- * spam engine with a human approval step in front of it.
+ * Drafting tools for a Sidekick's own authoring conversation. The host controls
+ * eligibility and supplies the existing Sidekick identity. Loading tools does
+ * not create another Sidekick; a ready submission saves through normal domain
+ * validation. Occurrences and coordinating workstreams use their own surfaces.
  */
 export function createAutomationsPlugin(
   host: AutomationCreatorToolHost,
@@ -521,7 +630,7 @@ export function createAutomationsPlugin(
       "every week", "when this happens", "watch for", "remind",
     ],
     description:
-      "Create or teach a Sidekick to provide reusable knowledge or carry out delegated work, for a person, the workspace, or this work stream.",
+      "Configure this Sidekick to provide reusable knowledge or carry out delegated work within its existing scope.",
     systemMessage,
     tools: createAutomationCreatorTools(host),
     preload: false,

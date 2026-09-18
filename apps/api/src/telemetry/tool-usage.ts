@@ -1,5 +1,7 @@
 import { asUserId, type ExecutionPrincipal, type WorkspaceId } from '@rally/contracts';
 import type { Env, IdentityAuthContext } from '../env';
+import { runtimeDeferral, type WorkDeferral } from '../lib/defer';
+import { diagnosticErrorCode, logStructuredEvent } from '../observability/logger';
 import {
   apiTelemetryEnvelope,
   emitAuthenticatedApiTelemetry,
@@ -31,7 +33,7 @@ export interface AgentToolStartedTelemetryInput {
  * Tool arguments, results, summaries, and provider payloads never cross this
  * boundary.
  */
-export async function emitAgentToolStartedTelemetry(
+async function acceptAgentToolStartedTelemetry(
   env: Env,
   input: AgentToolStartedTelemetryInput,
 ): Promise<void> {
@@ -71,6 +73,23 @@ export async function emitAgentToolStartedTelemetry(
   await emitAuthenticatedApiTelemetry(env, auth, event);
 }
 
+export function emitAgentToolStartedTelemetry(
+  env: Env,
+  input: AgentToolStartedTelemetryInput,
+  defer: WorkDeferral = runtimeDeferral,
+): void {
+  defer(acceptAgentToolStartedTelemetry(env, input).catch((error: unknown) => {
+    logStructuredEvent(env, 'warn', 'agent_tool_telemetry_failed', {
+      stage: 'started',
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      harness_run_id: input.harnessRunId,
+      invocation_id: input.invocationId,
+      error_code: diagnosticErrorCode(error, 'agent_tool_started_telemetry_failed'),
+    });
+  }));
+}
+
 interface ToolTerminalRow {
   id: string;
   harness_run_id: string;
@@ -86,6 +105,17 @@ interface ToolTerminalRow {
   execution_principal_json: string;
   automation_id: string | null;
   automation_run_id: string | null;
+}
+
+export interface AgentToolTerminalTelemetryInput {
+  workspaceId: WorkspaceId;
+  workstreamId: string;
+  harnessRunId: string;
+  invocationId: string;
+  replayed?: boolean;
+  /** Set on an automation run's loop; the provenance rides on the loop input. */
+  automationId?: string | undefined;
+  automationRunId?: string | undefined;
 }
 
 function objectJson(value: string | null): Record<string, unknown> {
@@ -124,18 +154,10 @@ function terminalRunKind(row: ToolTerminalRow): AgentToolStartedTelemetryInput['
  * receipt. Content-bearing inputs, summaries, errors, and outputs are never
  * copied into telemetry.
  */
-export async function emitAgentToolTerminalTelemetry(
+async function acceptAgentToolTerminalTelemetry(
   env: Env,
-  input: {
-    workspaceId: WorkspaceId;
-    workstreamId: string;
-    harnessRunId: string;
-    invocationId: string;
-    replayed?: boolean;
-    /** Set on an automation run's loop; the provenance rides on the loop input. */
-    automationId?: string | undefined;
-    automationRunId?: string | undefined;
-  },
+  input: AgentToolTerminalTelemetryInput,
+  defer: WorkDeferral,
 ): Promise<void> {
   const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
     .toolTerminalTelemetry({
@@ -172,7 +194,7 @@ export async function emitAgentToolTerminalTelemetry(
   // Already numbers. The view answered ISO-8601 and this re-parsed it.
   const started = row.started_at ?? Number.NaN;
   const completed = row.settled_at ?? Number.NaN;
-  await emitProductUsageTelemetry(env, {
+  emitProductUsageTelemetry(env, {
     workspaceId: input.workspaceId,
     ...(userId ? { userId } : {}),
     name: 'agent_tool_terminal',
@@ -194,5 +216,22 @@ export async function emitAgentToolTerminalTelemetry(
     },
     operationId: input.harnessRunId,
     eventId: resourceTelemetryEventId(input.invocationId, 1),
-  });
+  }, defer);
+}
+
+export function emitAgentToolTerminalTelemetry(
+  env: Env,
+  input: AgentToolTerminalTelemetryInput,
+  defer: WorkDeferral = runtimeDeferral,
+): void {
+  defer(acceptAgentToolTerminalTelemetry(env, input, defer).catch((error: unknown) => {
+    logStructuredEvent(env, 'warn', 'agent_tool_telemetry_failed', {
+      stage: 'terminal',
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      harness_run_id: input.harnessRunId,
+      invocation_id: input.invocationId,
+      error_code: diagnosticErrorCode(error, 'agent_tool_terminal_telemetry_failed'),
+    });
+  }));
 }

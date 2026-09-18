@@ -277,10 +277,10 @@ Two traps:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 - **The renderer test needs `fetch` stubbed.** The mark is read out of the bundle
   before the bridge is called, and jsdom has no server to read it from. A test
-  that renders an agent turn also needs `desktopServicesAvailable` in its
-  `../lib/platform` mock, or the buttons throw on render.
-
-## Changelog
+  that renders a feed `MessageBlock` also needs `desktopServicesAvailable` in
+  its `../lib/platform` mock. Export buttons and the message-text context menu
+  both read it on mount, and a mock that only exports `desktopBridge` throws
+  there.
 
 ### 2026-08-30 — Mermaid diagrams save as source
 

@@ -14,6 +14,33 @@ describe('Electron telemetry wiring', () => {
     expect(handler).not.toContain('preloadPath');
   });
 
+  it('offers native recovery when the primary renderer exits unexpectedly', () => {
+    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
+    const mainWindowCrashHandler = source.match(
+      /mainWindow\.webContents\.on\('render-process-gone',[\s\S]*?\n {2}\}\);/u,
+    )?.[0];
+    const beforeQuitHandler = source.match(
+      /app\.on\('before-quit',[\s\S]*?\n\}\);/u,
+    )?.[0];
+
+    expect(source).toContain('new RendererCrashRecovery({');
+    expect(mainWindowCrashHandler).toBeDefined();
+    expect(mainWindowCrashHandler).toContain('realtimeSocketBroker.closeOwner(mainWindowWebContentsId)');
+    expect(mainWindowCrashHandler).toContain('rendererReady = false');
+    expect(mainWindowCrashHandler).toContain('void rendererCrashRecovery.offer(details.reason)');
+    expect(source).toContain('isQuitting: () => applicationIsQuitting');
+    expect(source).toContain(
+      'parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()',
+    );
+    expect(source).toContain(
+      'availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow])',
+    );
+    expect(beforeQuitHandler).toBeDefined();
+    expect(beforeQuitHandler).toContain('applicationIsQuitting = true');
+    expect(beforeQuitHandler!.indexOf('applicationIsQuitting = true'))
+      .toBeLessThan(beforeQuitHandler!.indexOf('telemetryQuitBarrier.hold'));
+  });
+
   it('applies breadcrumb teardown to Product analytics changes rather than Debug changes', () => {
     const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
     const debugController = source.match(

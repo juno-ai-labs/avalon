@@ -79,7 +79,8 @@ describe("multimodal generation contract", () => {
     expect(plugin).toMatchObject({
       canonicalId: "rally:multimodal-generation",
       modelId: "rally_multimodal_generation",
-      shortWireName: "multimodal_generation",
+      // No wire prefix, so a canonical name is also the model-facing one.
+      shortWireName: "",
       preload: false,
       explicit: false,
     });
@@ -93,6 +94,8 @@ describe("multimodal generation contract", () => {
       { name: "generate_audio", timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS, idempotency: "record_before_execute" },
     ]);
     expect(plugin.tools[1]!.definition.description).toContain("new version of that same resource");
+    expect(plugin.tools.filter((tool) => tool.definition.longRunning).map((tool) => tool.definition.name))
+      .toEqual(["generate_image", "edit_image"]);
     expect(plugin.tools[0]!.validateInput?.({ prompt: "Draw a lighthouse", extra: true })).not.toBeNull();
     expect(plugin.tools[0]!.validateInput?.({ prompt: "Draw a lighthouse", size: "1536x1024" })).toBeNull();
     expect(plugin.tools[1]!.validateInput?.({

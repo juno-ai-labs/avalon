@@ -75,8 +75,15 @@ export async function readArtifactVersionFiles(
  * version deleted, and the next publish would silently ship them back as though
  * they had been restored on purpose.
  *
- * The tree is staged beside the destination and moved into place, so a failure
- * partway leaves the previous tree intact rather than a half-replaced one.
+ * **The existing tree is moved aside, not deleted.** This used to `rm -rf` the
+ * destination and then move staging into it, which meant a move that failed —
+ * or a command interrupted between the two — had already destroyed the tree it
+ * was replacing, including local edits that were never published. A rename to a
+ * sibling holds the previous tree until the new one is in place; the swap back
+ * runs if the install fails, and only a successful install deletes it. Exit 47
+ * is the one case worth naming separately: the install failed *and* so did the
+ * restore, so the previous tree is still on disk under the backup path rather
+ * than where it belongs.
  */
 export function materializeTreeCommand(input: {
   destination: string;
@@ -88,6 +95,7 @@ export function materializeTreeCommand(input: {
   return [
     `destination=${destination}`,
     `staging=${staging}`,
+    'backup="$destination.rally-replacing"',
     // 44: the destination exists and holds something, and no overwrite was
     // asked for. Refused rather than merged.
     input.overwrite
@@ -95,9 +103,14 @@ export function materializeTreeCommand(input: {
       : 'if [ -e "$destination" ] && [ -n "$(ls -A "$destination" 2>/dev/null)" ]; then exit 44; fi',
     // 45: something is there that is not a directory Rally may replace.
     'if [ -e "$destination" ] && [ ! -d "$destination" ]; then exit 45; fi',
-    'rm -rf -- "$destination" || exit 46',
     'mkdir -p -- "$(dirname -- "$destination")" || exit 46',
-    'mv -- "$staging" "$destination" || exit 46',
+    'rm -rf -- "$backup" || exit 46',
+    'if [ -e "$destination" ]; then mv -- "$destination" "$backup" || exit 46; fi',
+    'if ! mv -- "$staging" "$destination"; then',
+    '  if [ -e "$backup" ]; then mv -- "$backup" "$destination" || exit 47; fi',
+    '  exit 46',
+    'fi',
+    'rm -rf -- "$backup"',
     'printf "%s\\n" "$(find "$destination" -type f | wc -l)"',
   ].join("\n");
 }
@@ -126,6 +139,17 @@ export function importTreeFailure(exitCode: number): TerminalToolError | null {
       "destination_not_regular",
       "The destination exists but is not a directory Rally can safely replace. Choose a different destinationPath and retry.",
       { reason: "Choose a destinationPath that is absent or names a directory." },
+    );
+  }
+  if (exitCode === 47) {
+    // The one failure the model cannot simply retry its way out of: the
+    // previous tree is intact but under the backup name, so a retry that
+    // overwrites the destination would be overwriting nothing while the real
+    // contents sit beside it.
+    return new TerminalToolError(
+      "resource_import_failed",
+      "The site's files could not be installed, and the previous directory could not be moved back. It is beside the destination with a `.rally-replacing` suffix; inspect it with run_command and restore or remove it before retrying.",
+      { reason: "Inspect the `.rally-replacing` directory beside the destination before retrying." },
     );
   }
   return new TerminalToolError(

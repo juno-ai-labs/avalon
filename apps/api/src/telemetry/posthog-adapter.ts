@@ -1,4 +1,4 @@
-import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
+import { isRetiredMeetingTelemetry, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { PostHog } from "posthog-node";
 import type {
   GlobalCrashDeliveryRow,
@@ -409,10 +409,12 @@ export async function sendPostHogBatch(input: {
   webBaseUrl: string;
   rows: GlobalTelemetryDeliveryRow[];
 }): Promise<TelemetryDestinationResult> {
+  const rows = input.rows.filter(row => !isRetiredMeetingTelemetry(row.envelope));
+  if (rows.length === 0) return { result: "delivered", requestId: null, retryAfterMs: null };
   return sendPostHogCaptures({
     host: input.host,
     projectToken: input.projectToken,
-    captures: input.rows.map((row) => mapPostHogCapture(row, { webBaseUrl: input.webBaseUrl })),
+    captures: rows.map((row) => mapPostHogCapture(row, { webBaseUrl: input.webBaseUrl })),
   });
 }
 

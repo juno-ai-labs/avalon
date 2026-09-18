@@ -2,6 +2,8 @@ export const ConnectorOAuthProviders = [
   "custom_mcp",
   "google",
   "github",
+  "ashby",
+  "fireflies",
   "granola",
   "linear",
   "notion",

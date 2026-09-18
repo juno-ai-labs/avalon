@@ -51,7 +51,7 @@ function accountDouble(names, onCreate = () => assert.fail('unexpected create'),
 
 const reportQueue = {
   required: [
-    { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
+    { surface: 'api-enterprise', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
   ],
   createdOnDeploy: [],
@@ -67,26 +67,19 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
     { surface: 'api-global', role: 'producer:INFERENCE_LAKEHOUSE_QUEUE', name: 'avalon-global-inference-lakehouse' },
     { surface: 'api-global', role: 'producer:ANALYTICS_LAKEHOUSE_QUEUE', name: 'avalon-global-analytics-events-lakehouse' },
     { surface: 'api-global', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-global-access-revocations' },
+    { surface: 'api-global', role: 'producer:PUSH_DELIVERY_QUEUE', name: 'avalon-global-push-deliveries' },
     { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-activities' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-inference-lakehouse' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-analytics-events-lakehouse' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-access-revocations' },
+    { surface: 'api-global', role: 'consumer', name: 'avalon-global-push-deliveries' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-product-feature-flags' },
     { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
-    { surface: 'api-eu', role: 'producer:ACTIVITY_QUEUE', name: 'avalon-eu-activities' },
-    { surface: 'api-eu', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-eu-access-revocations' },
-    { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
-    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-activities' },
-    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-access-revocations' },
-    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-product-feature-flags' },
-    { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-migration-commands' },
     { surface: 'migration-tracker', role: 'producer:GLOBAL_MIGRATION_COMMAND_QUEUE', name: 'avalon-global-migration-commands' },
-    { surface: 'migration-tracker', role: 'producer:EU_MIGRATION_COMMAND_QUEUE', name: 'avalon-eu-migration-commands' },
     { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
     { surface: 'ace', role: 'producer:PRODUCT_FLAG_CHANGE_QUEUE', name: 'avalon-product-feature-flag-changes' },
     { surface: 'ace', role: 'producer:GLOBAL_PRODUCT_FLAG_QUEUE', name: 'avalon-global-product-feature-flags' },
-    { surface: 'ace', role: 'producer:EU_PRODUCT_FLAG_QUEUE', name: 'avalon-eu-product-feature-flags' },
     { surface: 'ace', role: 'consumer', name: 'avalon-product-feature-flag-changes' },
   ]);
   assert.deepEqual(createdOnDeploy.map((queue) => queue.name), [
@@ -94,12 +87,9 @@ test('the queue inventory comes from every Wrangler file that binds one', async 
     'avalon-global-inference-lakehouse-dead-letter',
     'avalon-global-analytics-events-lakehouse-dead-letter',
     'avalon-global-access-revocations-dead-letter',
+    'avalon-global-push-deliveries-dead-letter',
     'avalon-global-product-feature-flags-dead-letter',
     'avalon-global-migration-commands-dead-letter',
-    'avalon-eu-activities-dead-letter',
-    'avalon-eu-access-revocations-dead-letter',
-    'avalon-eu-product-feature-flags-dead-letter',
-    'avalon-eu-migration-commands-dead-letter',
     'avalon-migration-reports-dead-letter',
     'avalon-product-feature-flag-changes-dead-letter',
   ]);
@@ -110,19 +100,16 @@ test('against an empty account, exactly the queues the Wrangler files require ar
 
   await ensureRequiredQueues({ environment, log: () => {}, fetchImpl: account.fetchImpl });
 
-  // Twelve names from twenty-five bindings; no dead-letter queue among them.
+  // Fourteen names from twenty-nine bindings; no dead-letter queue among them.
   assert.deepEqual(account.created.map((request) => request.body.queue_name), [
     'avalon-global-activities',
     'avalon-global-inference-lakehouse',
     'avalon-global-analytics-events-lakehouse',
     'avalon-global-access-revocations',
+    'avalon-global-push-deliveries',
     'avalon-migration-reports',
     'avalon-global-product-feature-flags',
     'avalon-global-migration-commands',
-    'avalon-eu-activities',
-    'avalon-eu-access-revocations',
-    'avalon-eu-product-feature-flags',
-    'avalon-eu-migration-commands',
     'avalon-product-feature-flag-changes',
   ]);
 });
@@ -145,7 +132,7 @@ test('creates nothing and reports each queue when the account holds every one', 
 
 test('creates a queue a binding names that the account does not hold', async () => {
   const lines = [];
-  const account = accountDouble(['avalon-eu-activities'], (request) => created(request.body.queue_name));
+  const account = accountDouble(['avalon-enterprise-activities'], (request) => created(request.body.queue_name));
 
   await ensureRequiredQueues({
     environment, log: (line) => lines.push(line), queues: reportQueue, fetchImpl: account.fetchImpl,
@@ -162,7 +149,7 @@ test('creates a queue a binding names that the account does not hold', async () 
 });
 
 test('--check reports what a deploy would create and fails without creating it', async () => {
-  const account = accountDouble(['avalon-eu-activities']);
+  const account = accountDouble(['avalon-enterprise-activities']);
 
   await assert.rejects(
     ensureRequiredQueues({
@@ -182,16 +169,16 @@ test('refuses a queue only one side names, before anything is created', async ()
       log: () => {},
       queues: {
         required: [
-          { surface: 'api-eu', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-eu-access-revocaitons' },
-          { surface: 'api-eu', role: 'consumer', name: 'avalon-eu-access-revocations' },
+          { surface: 'api-enterprise', role: 'producer:ACCESS_REVOCATION_QUEUE', name: 'avalon-enterprise-access-revocaitons' },
+          { surface: 'api-enterprise', role: 'consumer', name: 'avalon-enterprise-access-revocations' },
         ],
         createdOnDeploy: [],
       },
       fetchImpl: account.fetchImpl,
     }),
     (error) => {
-      assert.match(error.message, /avalon-eu-access-revocaitons has producer api-eu\/producer:ACCESS_REVOCATION_QUEUE but no consumer/u);
-      assert.match(error.message, /avalon-eu-access-revocations has consumer api-eu\/consumer but no producer/u);
+      assert.match(error.message, /avalon-enterprise-access-revocaitons has producer api-enterprise\/producer:ACCESS_REVOCATION_QUEUE but no consumer/u);
+      assert.match(error.message, /avalon-enterprise-access-revocations has consumer api-enterprise\/consumer but no producer/u);
       return true;
     },
   );
@@ -405,9 +392,9 @@ test('refuses a queue consumed by two Workers', () => {
     () => assertSingleConsumerPerQueue([
       { surface: 'api-global', role: 'producer:COMMANDS', name: 'avalon-global-migration-commands' },
       { surface: 'api-global', role: 'consumer', name: 'avalon-global-migration-commands' },
-      { surface: 'api-eu', role: 'consumer', name: 'avalon-global-migration-commands' },
+      { surface: 'api-enterprise', role: 'consumer', name: 'avalon-global-migration-commands' },
     ]),
-    /avalon-global-migration-commands is consumed by api-global and api-eu/u,
+    /avalon-global-migration-commands is consumed by api-global and api-enterprise/u,
   );
 });
 
@@ -416,7 +403,7 @@ test('allows the same queue produced by two Workers', () => {
   // only the tracker consumes it. The limit is on consumers alone.
   assert.doesNotThrow(() => assertSingleConsumerPerQueue([
     { surface: 'api-global', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
-    { surface: 'api-eu', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
+    { surface: 'api-enterprise', role: 'producer:MIGRATION_REPORT_QUEUE', name: 'avalon-migration-reports' },
     { surface: 'migration-tracker', role: 'consumer', name: 'avalon-migration-reports' },
   ]));
 });

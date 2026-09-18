@@ -12,13 +12,21 @@ Non-image bytes never enter transcript projection. A triggering image may be
 visible immediately, but its durable manifest and derivative are still the
 source of truth for retry, replay, and compaction recovery.
 
+Imported user attachments and assistant artifact files use the verified upload
+pipeline and per-turn canonical attachment relationships. Import retry reconciliation
+checks operation identity, bytes and the intended descriptor. Prepared conversation
+receipts own reservations separately from live input mailboxes; definite failures
+release holds, while canonical resource projection releases committed holds. Both
+historical roles retain model manifests. Unavailable originals remain references,
+and extracted text is labeled separately. See [session import](session-import.md).
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/attachment-contracts.ts` | Single registry for attachment kinds, MIME/extension classification, strict tool argument schemas, exact success-output schemas, and the complete list-tool description. |
 | `packages/contracts/src/index.ts` | Sanitizes bounded structured recovery data before Bind puts it in a model-visible failed tool result. |
-| `apps/api/src/lib/attachment-cursor.ts` | Signs, verifies, scopes, expires, and bounds opaque attachment continuations. |
+| `apps/api/src/lib/attachment-cursor.ts` | Legacy signed-cursor decoding for pre-pagination receipts. New continuations use receipt-owned private state. |
 | `apps/api/src/services/attachment-derivative-state.ts` | Interprets explicit lifecycle state and lazily maps pre-migration resources. |
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives, then atomically selects their regional objects. |
 | `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
@@ -40,8 +48,6 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/desktop/src/renderer/lib/transcript.ts` | Maps canonical transcript descriptors back into the existing attachment-tile view model. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
-
-## How it works
 
 ### Member search projection
 
@@ -65,12 +71,17 @@ Zod schema because the harness does not enforce provider-facing JSON Schema.
 
 ### Continuations and recovery
 
-An attachment cursor contains a version, purpose, expiry, principal identity,
-owning scope, and operation-specific state. Rally signs it using a key derived
-for the attachment-cursor purpose from the regional Worker's configured session
-signing secret. A cursor presented to another operation, principal, or scope is
-the same bounded `invalid_cursor` failure as a malformed or tampered value;
-expiry is separately recoverable as `cursor_expired`.
+The model sees [friendly page IDs](tool-pagination.md), not opaque cursors.
+First/next tools store private continuation state with the producing receipt;
+reads expose both directions, and search passages and summary citations expose
+`readPageId`. Grounding tracks these IDs and still understands older receipts.
+
+New attachment continuation state contains purpose, principal identity, owning
+scope, and operation-specific state. It is not model input and needs neither
+HMAC signing nor a second expiry. The receipt authority fences redemption;
+the executor still checks resource visibility and derivative/inventory version.
+Historical signed tokens are still decoded for stored receipts and retain their
+original expiry behavior; new results never mint them.
 
 The common failed-tool sanitizer passes only fixed, bounded recovery fields. It
 understands attachment kind and one strict suggested read or view call, while
@@ -145,7 +156,7 @@ set, while model tools use bounded point, batch, aggregate, and keyset-page
 queries. A workspace principal never inherits a user's private-note view.
 Knowledge of a resource ID or cursor does not bypass this query.
 
-`workstream_list_resources` returns 25 rows by default and at most 50, optionally
+`list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
 principal, work stream, filters, size, ordering key, and a monotonic work-stream
 inventory revision. SubstreamAgent advances that revision for relationship, message-
@@ -154,21 +165,21 @@ not hydration timestamps or derivative processing bookkeeping. A continuation
 compares it before and after its bounded queries, so a relevant change
 invalidates the scan rather than mixing old and new pages.
 
-`workstream_read_resource` targets 12,000 and never exceeds 24,000 UTF-16
+`read_resource` targets 12,000 and never exceeds 24,000 UTF-16
 characters. Every result reports exact range, total, and character counts on
 both sides, with independently usable previous and next cursors.
-`workstream_search_resource` scans deterministic in-memory ranges from the
+`search_resource` scans deterministic in-memory ranges from the
 already bounded derivative, centers passages on actual phrase or term matches,
 returns no more than five passages or 20,000 passage characters, and gives every
 passage a read cursor against the same derivative version.
 
-`workstream_view_resource` accepts up to eight unique image IDs, keeps valid
+`view_resource` accepts up to eight unique image IDs, keeps valid
 members in request order, and returns a JSON inclusion summary followed by
 ephemeral image parts. The JSON is the only durable receipt. A replay
 reauthorizes every dependency, verifies the exact derivative hashes, and
 rebuilds those parts from the selected regional derivative. Missing visual bytes
 invalidate the receipt and re-execute the safe read; they never degrade to stale
-JSON without pixels. `workstream_summarize_resource` makes one isolated inference
+JSON without pixels. `summarize_resource` makes one isolated inference
 over at most 80,000 characters sampled across the derivative. The model selects
 Rally-generated source IDs, which the server maps to exact ranges rather than
 trusting model-authored offsets. All model-authored strings are capped, and a
@@ -181,8 +192,8 @@ resource and message-attachment totals plus non-empty groups for the same eight
 natural-language kinds used by the list tool. The aggregate comes from a grouped
 query using the shared sidebar visibility predicate, not the summary. It contains no name, ID, MIME
 type, or content, so its size is constant in the number of resources. Exact
-entries remain discoverable by paging `workstream_list_resources` until
-`nextCursor` is null.
+entries remain discoverable through `list_resources`, followed by
+`list_resources_next`, until `nextPageId` is null.
 
 The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
@@ -207,7 +218,7 @@ gone with the compiler ([`automation-lifecycle.md`](automation-lifecycle.md)).
 ### Terminal resource exchange
 
 The Terminal plugin reuses the same authorized resource and lifecycle boundary
-without projecting original bytes into the model. `terminal_import_resource`
+without projecting original bytes into the model. `import_resource`
 resolves one resource through current work-stream/principal visibility, streams
 its regional R2 original through the Worker, verifies its stored hash, and writes
 it into the current authority-fenced sandbox generation. Daytona receives no R2
@@ -215,7 +226,7 @@ credential or signed URL. An omitted destination is deterministic beneath
 `.rally/resources/`; an explicit destination is create-only unless the model
 states `overwrite: true`.
 
-`terminal_publish_resource` reads one stable nonempty regular file from the
+`publish_resource` reads one stable nonempty regular file from the
 host-provided output directory, classifies it with the attachment MIME/kind
 registry, pre-registers the regional object in the cleanup outbox, writes R2,
 then creates and attaches a normal generated `resources` row. The work stream
@@ -326,7 +337,7 @@ character envelope.
 - Provider-facing schemas and executor parsing remain strict, so an invented
   MIME filter, old field, or mixed cursor/first-call shape fails instead of being
   silently ignored.
-- A cursor is authenticated and bound to purpose, principal, and scope, but every
+- A page ID is receipt-owned and bound to purpose, principal, and scope, but every
   dereference still reauthorizes current state; stealing or guessing a cursor
   cannot preserve revoked access.
 - Structured failure data is allowlisted and bounded before it enters the model
@@ -366,7 +377,7 @@ character envelope.
 - The sidebar and agent inventory share one visibility predicate. Full sidebar,
   point, keyset-page, and grouped queries may differ only in result shape and
   bounds, never authorization semantics.
-- `nextCursor: null` is the only evidence that a filtered listing is exhausted,
+- `nextPageId: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
 - A version row's author identity matches its author kind, or the write that
   would have created it aborts. A wrong attribution is worse than none, because
@@ -416,7 +427,7 @@ generic tool execution/receipt loop is owned by
 
 ## Failure modes and limits
 
-- Opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
+- Legacy opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
   encoding, or shape returns `invalid_cursor`; an elapsed expiry returns
   `cursor_expired`.
 - List calls accept 1–50 items, defaulting to 25. View calls accept 1–8
@@ -589,7 +600,7 @@ authoritative.
 
 ## Regional impact
 
-Contracts, lifecycle, and conversion execute identically in both regions. Cursor
+Contracts, lifecycle, and conversion execute identically in configured deployments. Cursor
 signing happens inside the Worker that handles the owning regional run. Existing
 originals and model derivatives remain in that region's R2 bucket;
 WorkspaceDO owns lifecycle/outbox rows and SubstreamAgent owns work-stream
@@ -642,6 +653,20 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-15 — Share prepared conversation file ownership
+
+Imported user attachments and assistant artifact files use the verified upload
+pipeline and per-turn canonical attachment relationships. Import retry reconciliation
+checks operation identity, bytes and the intended descriptor. Prepared conversation
+receipts own reservations separately from live input mailboxes; definite failures
+release holds, while canonical resource projection releases committed holds. Both
+historical roles retain model manifests. Unavailable originals remain references,
+and extracted text is labeled separately. See [session import](session-import.md).
+
+The separate durable preparation owner prevents file holds from depending on a
+live-message mailbox that imported history never creates. Fake pending messages
+and generation receipts were rejected because they conflate storage with execution.
 
 ### 2026-09-11 — An attachment is reachable and advertised, separately
 

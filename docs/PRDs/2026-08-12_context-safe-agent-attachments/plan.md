@@ -562,15 +562,6 @@ proof that adjacent behavior remained intact.
 Run once, with full output captured, and require all to pass without warnings or
 retries:
 
-```text
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm test:scripts
-pnpm --filter @rally/api build
-pnpm --filter @rally/api build:eu
-```
-
 Also run the desktop release invariants if a desktop release file or script was
 touched. Independently of whether the DOM changed, inspect the composer,
 transcript attachment, current image, loading, processing, conversion-failure,

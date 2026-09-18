@@ -99,19 +99,17 @@ function assertInertFetchHandler(path, source) {
   );
 }
 
-test('a merge to main provisions every declared Queue before either regional deploy', async () => {
+test('a merge to main provisions every declared Queue before the regional deploy', async () => {
   const workflow = await readFile(deployWorkflowPath, 'utf8');
   const ensureQueues = workflow.indexOf(
     '- name: Ensure every Queue the Wrangler configs declare exists',
   );
-  const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
   const deployGlobal = workflow.indexOf('- name: Deploy the Global Worker');
 
   assert.match(workflow, /push:\s+branches:\s+- main/su);
   assert.match(workflow, /- "apps\/api\/\*\*"/u);
   assert.match(workflow, /- "packages\/\*\*"/u);
   assert.notEqual(ensureQueues, -1, 'the deploy must run the idempotent Queue provisioner');
-  assert.ok(ensureQueues < deployEu, 'Queue provisioning must precede the EU deploy');
   assert.ok(ensureQueues < deployGlobal, 'Queue provisioning must precede the Global deploy');
 });
 
@@ -126,11 +124,10 @@ test('private RPC Workers register Cloudflare-required inert fetch handlers', as
 });
 
 test('the Global pricing Worker refreshes the shared regional KV on an hourly cron', async () => {
-  const [pricingConfig, pricingEntrypoint, globalConfig, euConfig] = await Promise.all([
+  const [pricingConfig, pricingEntrypoint, globalConfig] = await Promise.all([
     readFile(pricingConfigPath, 'utf8'),
     readFile(pricingEntrypointPath, 'utf8'),
     readFile(join(repositoryDirectory, 'apps/api/wrangler.global.jsonc'), 'utf8'),
-    readFile(join(repositoryDirectory, 'apps/api/wrangler.eu.jsonc'), 'utf8'),
   ]);
   const pricingKv = pricingConfig.match(
     /"binding": "INFERENCE_PRICING_CACHE", "id": "(?<id>[a-f0-9]+)"/u,
@@ -142,41 +139,20 @@ test('the Global pricing Worker refreshes the shared regional KV on an hourly cr
   assert.match(pricingConfig, /"crons": \["0 \* \* \* \*"\]/u);
   assert.ok(pricingKv?.groups?.id, 'the pricing Worker must bind the shared pricing KV');
   assert.match(globalConfig, new RegExp(`INFERENCE_PRICING_CACHE", "id": "${pricingKv.groups.id}"`, 'u'));
-  assert.match(euConfig, new RegExp(`INFERENCE_PRICING_CACHE", "id": "${pricingKv.groups.id}"`, 'u'));
   assert.match(pricingEntrypoint, /async scheduled\([\s\S]+await refreshOpenRouterPricingCache\(env\)/u);
 });
 
-test('profiles all static service artifacts and uploads both regional sets before promotion', async () => {
+test('profiles and uploads every Global service before promotion', async () => {
   const workflow = await readFile(deployWorkflowPath, 'utf8');
-  const buildEu = workflow.indexOf('- name: Build and profile the exact EU Worker artifact');
-  const buildGlobal = workflow.indexOf('- name: Build and profile the exact Global Worker artifact');
-  const buildTelemetry = workflow.indexOf('- name: Build and profile the Global telemetry-delivery Worker');
-  const uploadEu = workflow.indexOf('- name: Upload all EU Worker versions without traffic');
-  const uploadGlobal = workflow.indexOf('- name: Upload all Global Worker versions without traffic');
-  const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
-  const euHealth = workflow.indexOf('- name: Verify EU health before Global promotion');
-  const deployGlobal = workflow.indexOf('- name: Deploy the Global Worker');
-
-  for (const position of [buildEu, buildGlobal, buildTelemetry, uploadEu, uploadGlobal, deployEu, euHealth, deployGlobal]) {
-    assert.notEqual(position, -1);
+  const build = workflow.indexOf('- name: Build and profile the exact Global Worker artifact');
+  const upload = workflow.indexOf('- name: Upload all Global Worker versions without traffic');
+  const deploy = workflow.indexOf('- name: Deploy the Global Worker');
+  assert.ok(build >= 0 && upload > build && deploy > upload);
+  for (const service of ['api', 'documents', 'terminal', 'pricing', 'telemetry']) {
+    assert.ok(workflow.includes(`steps.upload_global.outputs.global_${service}`));
   }
-  assert.ok(buildEu < uploadEu && buildGlobal < uploadEu && buildTelemetry < uploadEu);
-  assert.ok(uploadEu < deployEu && uploadGlobal < deployEu);
-  assert.ok(deployEu < euHealth && euHealth < deployGlobal);
-  assert.match(workflow, /wrangler\.documents\.eu\.jsonc wrangler\.terminal\.eu\.jsonc \.wrangler\.lakehouses\.eu\.json/u);
-  assert.match(workflow, /wrangler\.documents\.global\.jsonc wrangler\.terminal\.global\.jsonc wrangler\.telemetry\.global\.jsonc wrangler\.pricing\.global\.jsonc \.wrangler\.lakehouses\.global\.json/u);
-  assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$output_file"[\s\S]+\.version_id/u);
+  assert.match(workflow, /node scripts\/deploy-api-direct-region\.mjs global/u);
   assert.match(workflow, /wrangler versions deploy[\s\S]+--version-id "\$version_id"/u);
-  assert.doesNotMatch(workflow, /versions deploy[\s\S]{0,200}--version-tag/u);
-  assert.match(workflow, /steps\.upload_eu\.outputs\.eu_documents/u);
-  assert.match(workflow, /steps\.upload_global\.outputs\.global_api/u);
-  assert.match(workflow, /steps\.upload_global\.outputs\.global_pricing/u);
-  assert.match(workflow, /steps\.upload_global\.outputs\.global_telemetry/u);
-  assert.match(workflow, /pnpm --filter @rally\/api build:telemetry/u);
-  assert.match(workflow, /pnpm --filter @rally\/api check:telemetry-startup-boundary/u);
-  assert.match(workflow, /apps\/api\/dist-telemetry\/startup\.cpuprofile/u);
-  assert.match(workflow, /pnpm --filter @rally\/api build:pricing/u);
-  assert.match(workflow, /apps\/api\/dist-pricing\/startup\.cpuprofile/u);
   assert.match(workflow, /Preserve exact deployment startup evidence/u);
 });
 
@@ -187,7 +163,7 @@ test('a missing capability Worker selects the service-first direct bootstrap', a
     workflow,
     /if ! deployment="\$\(pnpm --filter @rally\/api exec wrangler deployments status[\s\S]+echo unknown/u,
   );
-  assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.documents\.eu\.jsonc\)"\)/u);
+  assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.documents\.global\.jsonc\)"\)/u);
   assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.terminal\.global\.jsonc\)"\)/u);
   assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.pricing\.global\.jsonc\)"\)/u);
   assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.telemetry\.global\.jsonc\)"\)/u);
@@ -195,10 +171,9 @@ test('a missing capability Worker selects the service-first direct bootstrap', a
 });
 
 test('the shared telemetry-delivery capability is Global-only and private', async () => {
-  const [config, globalConfig, euConfig] = await Promise.all([
+  const [config, globalConfig] = await Promise.all([
     readFile(telemetryConfigPath, 'utf8'),
     readFile(join(repositoryDirectory, 'apps/api/wrangler.global.jsonc'), 'utf8'),
-    readFile(join(repositoryDirectory, 'apps/api/wrangler.eu.jsonc'), 'utf8'),
   ]);
 
   assert.match(config, /"name": "avalon-api-telemetry-delivery-global"/u);
@@ -207,51 +182,25 @@ test('the shared telemetry-delivery capability is Global-only and private', asyn
   assert.match(config, /"preview_urls": false/u);
   assert.match(globalConfig, /"binding": "TELEMETRY_DELIVERY"[\s\S]+"service": "avalon-api-telemetry-delivery-global"/u);
   assert.doesNotMatch(globalConfig, /POSTHOG_DELIVERY|avalon-api-posthog-global/u);
-  assert.doesNotMatch(
-    euConfig,
-    /TELEMETRY_DELIVERY|avalon-api-telemetry-delivery-global|POSTHOG_DELIVERY|avalon-api-posthog-global/u,
-  );
 });
 
-test('applies destructive D1 retirements only after compatible Workers deploy', async () => {
+test('applies Worker-first D1 migrations after the compatible Worker', async () => {
   const workflow = await readFile(deployWorkflowPath, 'utf8');
-  const pendingEu = workflow.indexOf('- name: List the pending remote migrations for EU');
-  const ordinaryEu = workflow.indexOf('- name: Apply the remote D1 migrations to EU');
-  const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
-  const deployGlobal = workflow.indexOf('- name: Deploy the Global Worker');
-  const retireEu = workflow.indexOf(
-    '- name: Apply Worker-first D1 migrations in EU after the compatible Worker',
-  );
-  const retireGlobal = workflow.indexOf(
-    '- name: Apply Worker-first D1 migrations in Global after the compatible Worker',
-  );
-  const health = workflow.indexOf('- name: Verify regional health');
-
-  for (const [label, position] of Object.entries({
-    pendingEu,
-    ordinaryEu,
-    deployEu,
-    deployGlobal,
-    retireEu,
-    retireGlobal,
-    health,
-  })) assert.notEqual(position, -1, `${label} step is required`);
-  assert.ok(pendingEu < ordinaryEu, 'the pending ledger must select migration ordering');
-  assert.ok(ordinaryEu < deployEu, 'ordinary migrations remain migration-first');
-  assert.ok(deployEu < deployGlobal, 'EU must still deploy before Global');
-  assert.ok(deployGlobal < retireEu, 'a Worker-first migration must wait for both compatible Workers');
-  assert.ok(retireEu < retireGlobal, 'EU Worker-first migrations must still precede Global');
-  assert.ok(retireGlobal < health, 'health must inspect the final schema');
+  const positions = [
+    'List the pending remote migrations for Global',
+    'Apply the remote D1 migrations to Global',
+    'Deploy the Global Worker',
+    'Apply Worker-first D1 migrations in Global after the compatible Worker',
+    'Verify regional health',
+  ].map((name) => workflow.indexOf(`- name: ${name}`));
+  for (let i = 0; i < positions.length; i++) {
+    assert.ok(positions[i] >= 0);
+    if (i) assert.ok(positions[i] > positions[i - 1]);
+  }
   assert.match(workflow, /0090_drop_legacy_product_tables\.sql/u);
   assert.match(workflow, /0094_retire_agent_inference_payload_ledger\.sql/u);
   assert.match(workflow, /0097_email_routes_use_full_address\.sql/u);
-  assert.equal(
-    workflow.match(/classify-pending-d1-migrations\.mjs/gu)?.length,
-    2,
-    "both regional ledgers must reject companions around Worker-first migrations",
-  );
-  assert.match(workflow, /steps\.pending_eu\.outputs\.worker_first == 'true'/u);
-  assert.match(workflow, /steps\.pending_global\.outputs\.worker_first == 'true'/u);
+  assert.equal(workflow.match(/classify-pending-d1-migrations\.mjs/gu)?.length, 1);
 });
 
 test('deploy verify shards workers the same way CI does', async () => {
@@ -260,7 +209,12 @@ test('deploy verify shards workers the same way CI does', async () => {
     readFile(ciWorkflowPath, 'utf8'),
   ]);
 
-  for (const lane of ['api-tests-workers-1-of-n', 'api-tests-workers-2-of-n']) {
+  for (const lane of [
+    'api-tests-workers-1-of-n',
+    'api-tests-workers-2-of-n',
+    'api-tests-workers-3-of-n',
+    'api-tests-workers-4-of-n',
+  ]) {
     assert.equal(
       matrixCommand(deploy, lane),
       matrixCommand(ci, lane),
@@ -280,7 +234,7 @@ test('deploy verify shards workers the same way CI does', async () => {
   );
 });
 
-test('deploys the Managed OAuth engineering MCP only after both regional APIs are healthy', async () => {
+test('deploys the Managed OAuth engineering MCP only after configured APIs are healthy', async () => {
   const [workflow, provisioner, hostedClientsSource] = await Promise.all([
     readFile(deployWorkflowPath, 'utf8'),
     readFile(engineeringMcpDeployPath, 'utf8'),
@@ -288,7 +242,7 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
   ]);
   const hostedClients = JSON.parse(hostedClientsSource);
   const regionalHealth = workflow.indexOf('- name: Verify regional health');
-  const deployMcp = workflow.indexOf('- name: Deploy the engineering MCP after both regional entrypoints');
+  const deployMcp = workflow.indexOf('- name: Deploy the engineering MCP after configured regional entrypoints');
   const verifyMcp = workflow.indexOf(
     '- name: Verify the engineering MCP advertises OAuth to non-browser clients',
   );
@@ -300,11 +254,11 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
     /run: pnpm --filter @rally\/engineering-mcp run deploy/u,
     'MCP deployment must explicitly run the package script instead of pnpm\'s built-in deploy command',
   );
-  assert.ok(regionalHealth < deployMcp, 'both regional health checks must precede MCP deployment');
+  assert.ok(regionalHealth < deployMcp, 'regional health checks must precede MCP deployment');
   assert.ok(deployMcp < verifyMcp, 'the OAuth challenge probe must inspect the new MCP deployment');
   assert.match(
     workflow.slice(deployMcp, verifyMcp),
-    /if: env\.DEPLOY_EU == 'true' && env\.DEPLOY_GLOBAL == 'true'/u,
+    /if: env\.DEPLOY_GLOBAL == 'true'/u,
   );
   assert.match(workflow, /www-authenticate:.*resource_metadata/u);
 
@@ -333,4 +287,13 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
   assert.match(provisioner, /cloudflareList\("\/access\/apps"\)/u);
   assert.match(provisioner, /body\.result_info\?\.total_pages/u);
   assert.match(provisioner, /cloudflareList\(\s*`\/access\/apps\/\$\{encodeURIComponent\(ace\.id\)\}\/policies`/u);
+});
+
+test('deployment workflows include their shared region configuration inputs', async () => {
+  for (const name of ['deploy-api', 'deploy-ace', 'deploy-site', 'deploy-migration-tracker']) {
+    const workflow = await readFile(join(repositoryDirectory, `.github/workflows/${name}.yml`), 'utf8');
+    const paths = workflow.slice(workflow.indexOf('    paths:'), workflow.indexOf('  workflow_dispatch:'));
+    assert.ok(paths.includes('"config/regions.json"'), `${name} must deploy region-map changes`);
+    if (name !== 'deploy-site') assert.ok(paths.includes('"scripts/regions.mjs"'), `${name} must deploy the script adapter`);
+  }
 });

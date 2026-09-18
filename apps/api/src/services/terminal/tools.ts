@@ -52,11 +52,20 @@ export interface TerminalCommandOutput {
 
 export interface TerminalImportResourceOutput {
   resourceId: string;
+  /**
+   * Where the import landed: a file's path, or a site's directory root.
+   *
+   * One key for both rather than a second one beside it, so the round trip
+   * stays `filePath` in, `filePath` out and a republish targets exactly what
+   * the import returned.
+   */
   filePath: string;
   outcome: "created" | "reused" | "replaced";
   mimeType: string;
   sizeBytes: number;
   sourceSha256: string;
+  /** A site's materialized file count. Absent for a single-file import. */
+  fileCount?: number;
 }
 
 export interface TerminalPublishedResourceOutput {
@@ -321,8 +330,8 @@ function decodeText(bytes: Uint8Array, filePath: string): string {
   } catch {
     throw new TerminalToolError(
       "not_text_file",
-      "This is not a regular UTF-8 text file. Use `terminal_run_command` with `file` or `ls -l` for metadata, or use resource tools for binary bytes.",
-      { reason: `Use terminal_run_command to inspect ${filePath} without reading binary bytes into the model.` },
+      "This is not a regular UTF-8 text file. Use `run_command` with `file` or `ls -l` for metadata, or use resource tools for binary bytes.",
+      { reason: `Use run_command to inspect ${filePath} without reading binary bytes into the model.` },
     );
   }
 }
@@ -414,7 +423,7 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
       if (!page) {
         throw new TerminalToolError(
           "not_found",
-          "The requested file was not found. Use `terminal_run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.",
+          "The requested file was not found. Use `run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.",
           { reason: "Inspect the terminal workspace root before choosing another path." },
         );
       }
@@ -431,12 +440,12 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
       const filePath = safeRelativePath(input.filePath, "filePath");
       const priorBytes = await runtime.readFile(context, filePath);
       if (!priorBytes) {
-        throw new TerminalToolError("not_found", "The requested file was not found. Use `terminal_run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.", { reason: "Inspect the terminal workspace root, then read the current file." });
+        throw new TerminalToolError("not_found", "The requested file was not found. Use `run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.", { reason: "Inspect the terminal workspace root, then read the current file." });
       }
       const prior = decodeText(priorBytes, filePath);
       const matches = countMatches(prior, input.oldString);
       if (matches === 0) {
-        throw new TerminalToolError("match_not_found", "`oldString` was not found. Read the file again, copy exact current text, and rebuild the edit.", { reason: `Call terminal_read_file for ${filePath}, then rebuild oldString from current text.` });
+        throw new TerminalToolError("match_not_found", "`oldString` was not found. Read the file again, copy exact current text, and rebuild the edit.", { reason: `Call read_file for ${filePath}, then rebuild oldString from current text.` });
       }
       if (!input.replaceAll && matches !== 1) {
         throw new TerminalToolError("match_not_unique", "`oldString` matches more than once. Include more surrounding text, or use `replaceAll: true` only if every match should change.", { reason: `oldString has ${matches} exact matches; include unique context or intentionally replace all ${matches}.` });
@@ -534,7 +543,12 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
         ? { ...input, destinationPath: safeRelativePath(input.destinationPath, "destinationPath") }
         : input;
       const output = await runtime.importResource(context, placed);
-      return { output, summary: `Imported resource ${input.resourceId}` };
+      return {
+        output,
+        summary: output.fileCount === undefined
+          ? `Imported resource ${input.resourceId}`
+          : `Imported ${output.fileCount} site files into ${output.filePath}`,
+      };
     },
     async publish_resource(rawInput, context): Promise<HarnessToolResult> {
       const input: PublishResourceInput = TerminalArgumentSchemas.publish_resource.parse(rawInput);

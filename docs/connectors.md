@@ -37,6 +37,35 @@ returns the legacy shape to a newer desktop. The pending attempt itself lives in
 the application session rather than a Settings component, so changing workspace
 or remounting Settings does not orphan reconciliation.
 
+An opted-in conversation feed may start that same flow from a validated agent
+tool card. The
+tool stores only a connector catalog id and requested scope; the desktop maps
+that id to the provider, capability bundle, presentation, and regional OAuth
+route already used by Connections. Reconnect uses the existing connection row.
+The model never supplies the authorization URL or requested capability list,
+and the card's presence is not evidence that OAuth completed. A paired read
+tool resolves the same catalog id and scope against caller-visible WorkspaceDO
+rows, returning durable `connected`, `reconnect_required`, `not_connected`, or
+`unavailable` state without pretending to have made a fresh provider call.
+
+The started tool fact retains the validated catalog id and scope, and transcript
+lifecycle updates carry that safe input into the terminal fact. The feed can
+therefore reconstruct the card from durable history after reload, pagination,
+recovery, or virtualization. Summary-only interrupted-run recovery uses the
+same shared summary formatter as the writer. Arbitrary assistant prose cannot
+create a card.
+Adjacent repeated presentations of the same connector and scope collapse to the
+newest durable row, while an intervening conversation row keeps a later request
+as a separate occasion.
+
+While the card has not observed `connected`, it follows the active connections
+query in the conversation surface. OAuth completion publishes the workspace
+socket's `connector_connections` topic, which invalidates that query and makes
+the card become **Connected** without polling or relying on application focus. The
+card latches that success: a historical card does not turn back into a recovery
+action if the provider later revokes the grant; a new agent state read owns that
+later decision.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -58,9 +87,12 @@ or remounting Settings does not orphan reconciliation.
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 
-## How it works
-
 ### Authorization model
+
+Rally-authored cursor tools use [first/next pagination](tool-pagination.md).
+Adapters extract their known continuation field before bounding content; the
+run's receipt authority stores it and returns a plugin-prefixed page ID. Native
+tools are opted in explicitly, while hosted MCP schemas/results remain untouched.
 
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
@@ -109,7 +141,7 @@ Freshness at the door is necessary but not sufficient, because a credential can 
 
 Two things about that recovery are easy to get wrong, so neither is left to the caller. **What counts as a refusal is provider-specific and is never inferred from the `unauthorized` code alone** — adapters raise that for policy and configuration failures that never reached the provider, and spending a single-use refresh token on one buys a retry that fails identically. Each adapter states its own vocabulary through `isProviderCredentialRejection`, which additionally admits only errors carrying provider response details: Granola matches a 401 from its MCP transport and not a 403, Slack matches `token_expired` and not the settled answers around it, Google matches the two reasons a new access token resolves. **And the rotation itself is serialized by the host**, not performed beside the coordinator: the door hands the adapter a `rotateCredentials` that claims the same WorkspaceDO-local lease, so two calls refused at the same moment cannot each redeem a rotating refresh token and leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. A caller that finds the stored credentials already changed adopts them instead of redeeming over them.
 
-Two adapter obligations sit alongside that. **A health check answers a question and must not write.** Reauthorization calls it on every plugin activation, so a read-shaped call that quietly repairs provider state does so on that cadence; an adapter with state worth restoring — Granola's webhook endpoint, which stops delivering when disabled — declares `repair`, which only an explicit connection test invokes. A repair never fails the test, and its outcome is reported in the test result either way, because a connection whose delivery is still broken must not read the same as one that was fixed. The health check reports the same condition without failing on it: the authorization is sound and every read tool works, so failing would take a usable connection out of every run to describe a problem only the test can fix. **And a token-endpoint failure is classified by the provider's error code, not its status.** `isRevokedGrantError` treats `invalid_grant`, `expired_token`, and `invalid_token` as a dead grant and everything else the provider names as Rally's problem, because OAuth reports a revoked grant and our own malformed request with the same HTTP 400 — and marking a member's working connection `needs_reconnect` over our bug is the worse of those two mistakes. `providerJsonResponse` carries the code through as `details.providerError`, read from `error` or `code` and from either nested, since Notion keys its token-endpoint envelope differently from the OAuth spec. When a provider names nothing at all the original status test stands: an unclassifiable failure that leaves a dead connection reporting healthy, prompting nobody while every call fails, is worse than one that asks for a reconnect that was not needed.
+Two adapter obligations sit alongside that. **A health check answers a question and must not write.** Reauthorization calls it on every plugin activation, so a read-shaped call that quietly repairs provider state does so on that cadence; an adapter with state worth restoring uses its installation-management facet, or `repair` when it has no installation lifecycle. Only an explicit connection test invokes repair; Granola webhook restoration belongs solely to the shared lifecycle. A repair never fails the test, and its outcome is reported in the test result either way, because a connection whose delivery is still broken must not read the same as one that was fixed. The health check reports the same condition without failing on it: the authorization is sound and every read tool works, so failing would take a usable connection out of every run to describe a problem only the test can fix. **And a token-endpoint failure is classified by the provider's error code, not its status.** `isRevokedGrantError` treats `invalid_grant`, `expired_token`, and `invalid_token` as a dead grant and everything else the provider names as Rally's problem, because OAuth reports a revoked grant and our own malformed request with the same HTTP 400 — and marking a member's working connection `needs_reconnect` over our bug is the worse of those two mistakes. `providerJsonResponse` carries the code through as `details.providerError`, read from `error` or `code` and from either nested, since Notion keys its token-endpoint envelope differently from the OAuth spec. When a provider names nothing at all the original status test stands: an unclassifiable failure that leaves a dead connection reporting healthy, prompting nobody while every call fails, is worse than one that asks for a reconnect that was not needed.
 
 Both halves are held to account by `connector-credential-freshness.test.ts` — see
 [Testing](#testing).
@@ -329,7 +361,71 @@ The capability check is enforced for every tool invocation. The current Google t
 
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
-- Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`. `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit and a threaded reply has the `inReplyTo` value `google_gmail_create_draft` requires. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. A draft or message body is delivered as `text/plain` exactly as written — `serializeEmail` builds no alternative part — so the descriptor's system message, the capability-gated Google presentation, and the `body` parameter's own description all say to write plain text rather than Markdown, which would otherwise reach the recipient as `#` and `**`.
+- Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`. `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit. Drafts and sends take an explicit new/reply message, described below. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. A draft or message body is delivered as `text/plain` exactly as written — `serializeEmail` builds no alternative part — so the descriptor's system message, the capability-gated Google presentation, and the `body` parameter's own description all say to write plain text rather than Markdown, which would otherwise reach the recipient as `#` and `**`.
+  Both Gmail writes accept one `message` object, with two complete shapes:
+
+  | Intent | Arguments |
+  | --- | --- |
+  | New conversation | `{ "message": { "kind": "new", "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana." } }` |
+  | Reply to a message | `{ "message": { "kind": "reply", "messageId": "id-from-a-search-hit", "to": ["dana@example.com"], "body": "Thank you." } }` |
+
+  `cc` is optional in either shape; omitted, `null`, and `[]` all mean none.
+  Recipients remain explicit, including for replies: the adapter does not infer
+  reply-all recipients or copy the original's recipient list. A new message has
+  no message id or threading fields. A reply accepts a Gmail **message id** from
+  the same connection's search/read result, and has no caller-supplied subject,
+  `threadId`, `inReplyTo`, or `references`.
+
+  Before either reply write, the adapter checks `gmail.read` and reads that
+  message's metadata from the same account. Its subject, thread id, and validated
+  RFC Message-ID determine the outgoing MIME and Gmail request together. Valid
+  ancestor Message-IDs from References are preserved and deduplicated in linear
+  time, with the parent Message-ID once at the end; malformed or oversized
+  ancestor tokens are ignored. Both `References` and `In-Reply-To` are folded
+  between complete IDs, targeting 78 bytes per physical line. An indivisible ID
+  may exceed that target, but must fit within the 998-byte line maximum including
+  a continuation's leading space: at most 997 UTF-8 bytes per ID. These are the
+  [email format's line limits](https://www.rfc-editor.org/rfc/rfc6532.html#section-3.4),
+  with the folding target conservatively measured in bytes. Valid ancestry is
+  retained without a count cap; the existing metadata response bound still
+  bounds the input. A
+  missing or invalid parent Message-ID, missing thread id, or unreadable message
+  stops before the write. It never falls back to sending a new conversation.
+  New messages need only the existing send/draft capability and perform no read.
+  Resolving a reply adds one metadata request and depends on that message still
+  being readable at execution time.
+
+  Short ASCII subjects stay plain. Longer or non-ASCII subjects use UTF-8
+  encoded-words split at complete Unicode characters, including when a reply's
+  inherited subject exceeds the new-message input limit. Each encoded-word is
+  at most 75 characters and each physical line containing them at most 76,
+  including the `Subject:` prefix or continuation space, per
+  [RFC 2047 §2](https://www.rfc-editor.org/rfc/rfc2047.html#section-2).
+  Folding whitespace between encoded-words does not change the decoded subject;
+  original spaces stay inside the encoded text. Input CR/LF is neutralized
+  before serialization.
+
+  `EmailArgsSchema` supplies both runtime validation and the advertised schema
+  through `z.toJSONSchema(..., { io: "input" })`. Its new/reply union is nested
+  under `message` so the root remains an object across providers. Unknown fields
+  are rejected in both branches by execution, including old flat arguments.
+  Bind's `toolWireDefinition` sanitizes even `rawJsonSchema` before Rally's root
+  repair. Its xAI compatibility pass removes `additionalProperties: false`.
+  Gmail therefore also expresses each closed object as a complete required-key
+  set with `maxProperties` equal to that set's size. The optional `cc` field has
+  two generated variants, absent and present; omitting it cannot free a slot
+  for an undeclared field. The root likewise permits only the required
+  `message` property. These constraints survive Bind without changing its
+  treatment of other tools or relaxing execution. Ignoring
+  undeclared write options could change intent, such as turning an invented
+  `preview: true` into an actual send. The regression test captures the real
+  harness HTTP request and uses Ajv to check declared-field constraints and
+  unknown-key rejection against execution; Zod's JSON Schema importer does not
+  enforce `maxProperties` and cannot prove this boundary. The selected
+  plugin's worked examples show both kinds for each granted write capability,
+  with replies shown only when read access is granted. Callers using older flat arguments need the refreshed tool definition
+  before retrying.
+
 - Calendar: `google_calendar_list_calendars`, `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event`. Event tools accept a calendar ID, `primary`, or a calendar's **name**, which is resolved against the account's calendar list — a name matching two calendars is an `ambiguous_calendar_name` failure listing both rather than a guess — and otherwise use the configured calendar, which defaults to primary. An event ID that looks like a calendar address is rejected as `wrong_id_family` at the boundary. Scheduled activity polling still follows the configured calendar.
 
   A relative change carries each existing guest across whole rather than rebuilding them from an address, so `responseStatus`, `optional`, `displayName`, and a room's `resource` flag survive an addition; re-sending bare addresses would reset every RSVP and re-invite everyone. The read is uncapped and an `attendeesOmitted` response is refused rather than patched from, because `maxAttendees` returns only the participant past its cap rather than a prefix — a capped read is how a large event loses its guest list. Resolving a calendar by name needs the connection's calendar read capability, and says so rather than failing as an opaque provider error.
@@ -352,8 +448,6 @@ A revoked refresh grant marks the connection `needs_reconnect`. Production smoke
 The two records are isolated by Rally capability checks, not by separate Google OAuth principals. Because both presets use one OAuth client with incremental authorization, Google may return a token containing scopes previously granted to that account; Rally still exposes only the capabilities recorded on the particular connection. Disconnect is local when another Google connection for that account remains. Operators must not describe the presets as provider-level credential isolation.
 
 ### GitHub App
-
-GitHub uses one public App with a signature-verifying smart ingress. One installation may be connected to Global workspaces, EU workspaces, or both; an indexed installation directory fans exact signed deliveries only to the applicable regional Workers. OAuth callbacks, credentials, raw payload storage, normalization, and activity processing remain regional. Workspace connections execute with short-lived installation tokens. Personal connections require an expiring user token and prove that the user can access the selected installation and repository.
 
 The agent can list and search repositories, list directories or bounded recursive
 trees, list commits, read files, inspect and create/update issues and comments,
@@ -444,14 +538,13 @@ to work streams without copying their content into Rally. Issue-dependency and
 sub-issue deliveries add both sides of the relationship, including
 cross-repository issues, while retaining one normalized activity per delivery.
 
-
 ### Linear
 
 Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Rally owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants `app:assignable` and `app:mentionable` for activation plus `write` for the deterministic source-comment acknowledgement; resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams and workflow states, create/update issues, and create comments.
 
 `search_issues` matches a term against issue titles **and descriptions**, so an issue is findable by what it is about rather than only by what it was called. `list_workflow_states` exists because `stateId` had no discovery path: the only way to learn a valid state was to read an unrelated issue in the same team and copy the id out of it, which is a lookup dance a model does not invent and frequently gets wrong. Every argument schema on this connector is strict, and `create_issue` accepts every issue field `update_issue` accepts — the two go together, because a family whose members take different fields plus a non-strict parse is the silent-drop trap in [`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input): a model that learned `dueDate` on update sent it to create, it vanished, and the tool reported success.
 
-Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning Global/EU connections, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Workspace app connections receive matching resource events directly. A personal connection receives a delivery only after its own token proves access to the signed resource or a signed parent in one bounded GraphQL probe; its normalized activity remains personal and targets only its Rally owner. Authorization loss marks that connection `needs_reconnect`, and lifecycle/native-agent events never fan out to personal connections. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
+Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning configured deployment connections, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Workspace app connections receive matching resource events directly. A personal connection receives a delivery only after its own token proves access to the signed resource or a signed parent in one bounded GraphQL probe; its normalized activity remains personal and targets only its Rally owner. Authorization loss marks that connection `needs_reconnect`, and lifecycle/native-agent events never fan out to personal connections. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
 
 The native-agent surface is a control-plane protocol, not a model-callable tool. `ConnectorAdapter.nativeAgent` supplies the typed invocation and outbound protocol facet; the manifest separately records `runtimeStatus`. Linear is currently `protocol_only`: the provider schemas and GraphQL operations exist, but the coordinating session-to-workstream runtime is deliberately not advertised as operational. Its descriptor records preview maturity, delegation/mention/follow-up invocation, authored activity kinds, cancellation, links, plans, proactive sessions, Linear's five-second webhook response deadline, and the ten-second first-activity deadline.
 
@@ -484,14 +577,129 @@ setup URL, encrypted in the owning WorkspaceDO connection row, and then used to
 verify every later webhook signature before normalization and queueing. Unlike
 every other connector here, Notion's OAuth callback and webhook are not
 regional: one public connection issues one redirect URI and one webhook URL for
-both regions, so both arrive at a Global ingress that routes them to the owning
+configured deployments, so both arrive at a Global ingress that routes them to the owning
 region — see [`notion-ingress.md`](notion-ingress.md).
+
+### Ashby
+
+Ashby has independent personal and workspace modes. **Connect for me** uses
+Ashby's hosted MCP service, with the personal `ashby.personal.mcp` grant and
+owner authorization. Tool names and schemas come from live discovery; all retain
+conservative write execution and receipts without individual tool confirmations.
+**Connect for workspace** requires a Rally administrator and an Ashby API key
+with webhook management access. Its model-visible workspace catalogue explicitly describes an event-only
+connection and directs recruiting queries or updates to a personal connection;
+it exposes no recruiting read or write tools. New setup subscribes automatically
+to all 27 documented business event types in `packages/contracts/src/ashby-events.ts`
+(application, candidate, interview, job, posting, offer, opening, HRIS, survey,
+signature, take-home and email-change notifications). These are operational, not
+digest news. `ping` is transport-only. Existing explicit subsets remain bounded.
+Normalization retains regional payload references and extracts only documented
+application/candidate/job identity fields. The email beta renews its watermark on
+retry: only that signal excludes delivery-specific raw hash/reference from the
+canonical comparison, retaining candidate identity and every raw R2 delivery.
+No email fetching is added. Administrator-authorized workspace events use the
+existing workspace audience and deterministic automation matching. Personal MCP
+permissions remain separate. Live provider behavior is unverified without an
+Ashby test organization; that does not disable workspace automation.
+
+The dedicated `ashby.rallywith.ai` Worker forwards unchanged signed bytes to the
+owning regional API. Credentials, signature verification, payload persistence,
+and canonical event admission remain regional. [Provider app registrations](provider-apps.md)
+owns the OAuth/API prerequisites; [installation lifecycle](connector-installation-lifecycle.md)
+owns registration state and recovery.
+
+### Workspace installation management
+
+`ConnectorAdapter.installationManagement` declares the provider's reviewed event
+set, grouping, configuration version, supported operations and manual recovery.
+Ashby and Granola use the shared lifecycle service for setup, repair and removal.
+It reserves workspace identity before creating provider registrations, records
+uncertain outcomes, and separates ordinary authorization from exact-ID cleanup
+credentials. Health checks and inventory reads never repair an installation.
+Explicit **Test** adopts legacy Granola state, then requests lifecycle repair and
+checks health. Granola has no second adapter repair/revoke mutation path.
+
+The request/response contracts are shared with the desktop in
+`@rally/contracts`. Installation changes invalidate both the connection list and
+open installation details through the workspace connection notification. A
+personal OAuth failure cannot disable a separately authorized workspace install.
+
+### Fireflies
+
+Fireflies has two independent connection modes, like Granola's. A **personal**
+connection uses Fireflies' hosted MCP server at `https://api.fireflies.ai/mcp`
+over browser OAuth with PKCE and dynamic client registration, origin-pinned to
+that host. It exposes the server's live tool surface — including Fireflies' own
+sharing, retitling, moving and soundbite actions — under the pass-through's
+confirmed-write treatment, and is available only to its Rally owner. Fireflies'
+authorization server publishes exactly the `profile` and `email` scopes, so
+Rally asks for no `offline_access`; if no refresh token comes back, the
+connection reports itself as needing reconnection when its access expires
+rather than pretending it can renew itself.
+
+A **workspace** connection uses one administrator-pasted Fireflies API key,
+validated against the provider's `user` query before anything is stored, and
+exposes three fixed read tools over checked-in GraphQL documents: search
+meetings, read a meeting's AI summary, read its transcript pages. The model
+never writes GraphQL. Every provider-controlled string and array in those
+outputs is capped and the cut reported through a `truncated` flag, and a
+transcript document over the 2 MB response cap fails as `payload_too_large`
+pointing at the summary instead. Fireflies reports application errors in a GraphQL
+`errors` array, and **not always with a 200** — a rejected API key comes back
+as HTTP 500 carrying that array, checked before the query is parsed (observed
+live 2026-09-13; the documentation describes the body and is silent on the
+status). The adapter therefore reads the body first and maps `errors[].code`,
+falling back to the status only for a response that carries no code at all.
+Going through the shared `providerJson` helper, which throws on a non-2xx
+before the body is read, made a revoked key look like a transient outage and
+left the connection reporting healthy. So: `auth_failed` becomes the `unauthorized` that marks the connection
+`needs_reconnect`, `too_many_requests` carries a wait derived from the
+provider's own reset time, and the rest resolve to correct-and-retry,
+not-found, forbidden, or retry-once-then-continue.
+
+What the key can read is the connected Fireflies account's own access.
+Team-wide visibility needs Fireflies Enterprise with Super Admin, and Fireflies
+publishes no field that reports whether it is enabled, so the setup copy states
+the uncertainty rather than guessing; every workspace member can read whatever
+the key can.
+
+Activity is webhook-only at `POST /ingest/fireflies/:id`. A delivery carries an
+event name, a millisecond timestamp and a meeting id and nothing else, so the
+normalized activity names the meeting and `hydrateResource` reads it over
+GraphQL after admission — keeping a provider round trip out of Fireflies'
+ten-second acknowledgement window and off a delivery that turns out to be a
+duplicate. `meeting.summarized` is digestible; `meeting.transcribed` is
+operational, because they are the same meeting minutes apart. The two keep
+distinct dedupe keys so the earlier one cannot swallow the later. Verification
+is HMAC-SHA256 over the exact bytes against `X-Hub-Signature`, then a freshness
+window on the in-body timestamp — the only replay anchor Fireflies signs — then
+an ingress receipt keyed on the hash of those bytes, since Fireflies sends no
+delivery id. A post failing any of it is rejected with no row written anywhere.
+A verified delivery of `meeting.bot_joined`, or of anything else this connector
+does not handle, is refused before the receipt. The one exception is the
+dashboard's **Send test event**, an undocumented `event: "test"` delivery
+observed live: signed and timestamped like a meeting but naming a placeholder,
+it is answered `200 { ping: true }` with no receipt, payload, or activity
+written, and it counts as the registration's verifying delivery.
+
+Registration is the customer's: Fireflies exposes no webhook API at all, so the
+adapter declares create, update, remove and rotate manual and inspect and
+reconcile unsupported, Rally generates the signing secret and shows it once at
+setup, and the first verified delivery — the dashboard's test event, or the
+first meeting — is what makes the installation current.
+[Installation lifecycle](connector-installation-lifecycle.md) owns that path.
+Both scopes are gated region by region on the non-secret
+`FIREFLIES_CONNECTOR_ENABLED` variable; unset, the type is absent from the
+catalog and creation is refused, while existing rows are retained and inert.
 
 ### Granola
 
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes the server's live tool surface rather than a code-authored snapshot. A personal connection remains available only to its Rally owner.
 
-A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
+A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Rally creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events — the three events Granola's API defines; a regenerated summary arrives as `note.edited`, and a verified delivery naming any other event is refused with 400 `unsupported_webhook_event`. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Rally hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting immediately disables local access and queues removal of the exact recorded remote endpoint. Pending cleanup retains separate encrypted removal authority; repeated disconnect does not erase it. Test and disconnect adopt an existing connection without changing its subscription, destination or signing secret. A workspace connection whose webhook endpoint was never registered, no longer exists, or is disabled reports healthy with a warning naming the condition, because its read tools work; delivery is restored only through Test and the installation lifecycle, never by the health check.
+
+Granola sends `note.generated` only when a note's first summary is written while the workspace endpoint can already read the note, and a workspace endpoint reads public workspace notes and spaces with API access turned on. A note generated in a person's own space and moved into a shared folder afterwards — the ordinary way a note reaches one, because a note cannot be started inside a team space — arrives as `note.access_granted` instead, and Granola never sends the other. So the ingress asks Granola for the note before storing anything: when its summary exists, a `note.generated` activity is stored beside the share, from the same delivery and payload with its own dedupe key and `derivedFrom` naming the share, and a Sidekick whose trigger is "Transcript added" runs for it. Both that derived event and the `note.generated` Granola sends itself carry an occurrence key naming the note — `occurrenceKey`, a field of the normalized activity that adapter code sets and namespaces by provider and connection, which the workspace store lifts onto the delivery as its own field and never from provider metadata, so no payload can plant one — and a Sidekick admits an external event under that key when one is present, so a note reported twice — shared before its summary existed, or moved between two shared folders — runs once. A share of a note whose summary does not exist yet derives nothing, because Granola will send `note.generated` when the summary is written; a note the workspace key cannot read (401, 403 or 404) derives nothing either and is logged as `connector_webhook_derive_refused` with the status; and a share Granola will not answer about — a timeout, a 5xx, a note shape this connector does not recognise — is reported anyway, marked `summaryVerified: false` in its metadata and logged as `connector_webhook_derive_unverified` with the failure code, but under its own delivery's identity rather than the note's key, so the `note.generated` Granola may still send for it is not turned into a replay. Every outcome that stores nothing has its own word in the wrapper's log (`pending_summary`, `unreadable`, `credential_unavailable`, `not_applicable`). Rally sets no deadline of its own on that read: `WEBHOOK_DERIVE_TIMEOUT_MS` is open until the team sets it, and Granola allows fifteen seconds for the whole delivery and retries one that overruns it. `note.access_granted` remains a trigger of its own, labelled "Note shared", for a person who asks for every share.
 
 The workspace key and webhook signing secret are encrypted in the owning
 WorkspaceDO connector row with AES-GCM and connection-ID additional
@@ -588,11 +796,22 @@ metadata keeps JSON merge-patch semantics, including explicit-null deletion.
 changes: those fields and `updated_at` describe the last meaningful discovery
 change, not a last-seen heartbeat. Real workerd coverage lives in `resource-update-cost.test.ts`.
 
-
 Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
 
-- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. GitHub, Granola, Linear, Notion, and generic webhook use this facet.
+- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
+
+**A connector whose events reach Rally in only some connection scopes says so
+in `activityConnectionScopes`,** which narrows `manifest.supportedScopes` for
+activity the way `capabilityConnectionScopes` narrows it for a capability, and
+is read through `connectorActivitySupportsScope`. Granola, Fireflies and Ashby
+declare `["workspace"]`: their webhook belongs to the workspace install, and
+each `normalize` throws `unauthorized` for any other connection. Nothing in a
+manifest says which side of an install a provider's webhook lives on, so this
+is declared rather than inferred, and an adapter that narrows activity it does
+not produce is refused at registry construction. What reads it is the drafting
+catalog, in
+[`automation-lifecycle.md`](automation-lifecycle.md#drafting-in-the-conversation).
 
 #### Declaring what a digest may read
 
@@ -706,11 +925,6 @@ A provider account installed twice in one workspace may likewise produce two
 connection-scoped events; collapsing those requires an explicit workspace-level
 product rule rather than an accidental cross-connection dedupe.
 
-“Global ingress” means Cloudflare's edge Worker fleet, not one US data plane.
-The global router may inspect routing metadata, but EU workspace content is
-forwarded to the EU regional Worker, EU Queue, and EU-locked WorkspaceDO.
-Normalized content never crosses through the global D1 routing plane.
-
 The removed semantic route into an existing work stream is recorded in
 [`contextual-routing.md`](contextual-routing.md). It is not a dormant step in
 this pipeline: current processing has no classifier, card, or feedback endpoint.
@@ -764,18 +978,19 @@ telemetry. The established OAuth operation pair remains available to correlate a
 desktop request with denial/failure while richer connection events describe the
 configuration that was actually established.
 
-
 ## Invariants
 
 Every rule below was learned from a defect in production or in review, and each names the failure that produced it. A new adapter is expected to satisfy all of them; several are enforced by the compiler or by `apps/api/test/connector-credential-freshness.test.ts`, which enumerates the registry so a connector is enrolled by existing rather than by someone remembering it.
 
-**A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, which is the only spelling Bind's sanitizer delivers intact. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+**A pagination cursor says what to send when there is none, and spells that value `anyOf`.** Every cursor names the result field it is copied from, states that it is opaque and never constructed, and declares `anyOf: [{string, minLength: 1}, {null}]`, the spelling that says so without depending on the sanitizer; since `@juno-ai/bind` 14 the flat `type: ["string", "null"]` reaches the model as the same union, and `apps/api/test/tool-schema-sanitization.test.ts` asserts the delivered null branch for every property of every tool rather than only the cursors. Both halves are enforced by `apps/api/test/tool-argument-empty-strings.test.ts` and `apps/api/test/tool-schema-sanitization.test.ts`, which enumerate the registry through `apps/api/test/helpers/connector-cursors.ts` so a connector is enrolled by existing; a cursor named outside `CURSOR_PARAMETERS` is the one case still enrolled by someone remembering. *A run told to read a shared Drive folder invented `"/"`, `"1"`, and `"next"` for `pageToken` across eight calls, each rejected whole by Google, and then answered from public web search instead; the description added first did not stop it, because `minLength: 1` reads as a floor to clear when nothing says absence is expressible.*
+
+**An event a connection cannot receive is never advertised to it.** A connector whose `normalize` refuses a connection scope declares that scope out of `activityConnectionScopes`, so no surface offers it a trigger on that connection. *A personal Granola connection advertised its four triggers, and the Sidekick drafted on one applied, activated, and never fired; nothing in the product distinguished that from a Sidekick that had nothing to do yet.*
 
 **Never refuse an incoming request because a stored status says the connection is unhealthy.** Gate on `disabled` — a person's decision — and on nothing else; see [Stored status is a belief, not a gate](#stored-status-is-a-belief-not-a-gate). *A Slack installation refused sixteen hours of events, unfurls, identity links and automation deliveries without once asking Slack whether the grant still worked, and overwrote the accurate diagnosis of its own failure while doing so.*
 
 **Never reach a provider with a credential nobody refreshed.** Enforced structurally: provider-calling entry points take `AuthorizedConnectorConnection`, which only the credential door can mint. *A Granola personal connection became unloadable minutes after it was connected, reporting `plugin_not_authorized` while the connections screen showed it healthy, because `load_plugin` revalidation health-checked it without refreshing first.*
 
-**A health check must not write.** Provider state that needs restoring goes in `repair`, which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
+**A health check must not write.** Provider state that needs restoring goes through installation management (or adapter `repair` for a provider without that lifecycle), which only an explicit connection test invokes. *Granola re-enabled its webhook endpoint with a `PATCH` inside `healthCheck`, which reauthorization ran on every plugin activation.*
 
 **An unsigned setup challenge is not a logging channel.** When the delivered
 plaintext will verify future webhooks, authorize the challenge with an expiring,
@@ -956,7 +1171,6 @@ whichever object makes the mistake next.
 `apps/api/test-workers/resource-update-cost.test.ts` covers no-op discovery, each
 independent change condition, mixed batches, and URL/metadata merge behavior.
 
-
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
@@ -964,7 +1178,8 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
 | `apps/api/test/connector-actor-identity.test.ts` | The three tiers, the monotonic write, and that only `verified_email` is recorded. |
 | `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
-| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
+| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection, capability-gated Gmail new/reply examples, and the `connectorCapabilityRefused` shape. |
+| `packages/connectors/src/index.test.ts`, `apps/api/test/tool-schema-sanitization.test.ts` | Gmail new/reply MIME and request bodies, metadata/read-capability failures before writes, and equivalent acceptance of valid and invalid arguments in the authored/provider schema and executor. Gmail HTTP is the capability double; no email is sent by these tests. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
@@ -985,6 +1200,544 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-17 — A Granola event tells the run which note it is about
+
+**What changed:** Every Granola activity carries `noteId` in its metadata, and
+the trigger vocabulary lists it as a filter field. The derived transcript from
+a shared note carries it too.
+
+**Why:** The first run the shared-note fix produced completed in one turn with
+no tool calls: "The event payload does not include a Granola note ID." A run
+reads the event's title, type, time, and metadata; the note id was in the
+subject and resource fields, which never reach it. The model refused to guess,
+correctly, and no recap was sent — for a note generated in a shared space just
+as for one shared afterwards.
+
+**Considered and rejected:** Handing every event's subject to the run. What a
+run may read is a decision per connector, and one field this connector's
+instructions name is enough.
+
+**Consequences:** A Sidekick on Transcript added can call `get_note` with the
+id the event names. No re-activation needed.
+
+### 2026-09-17 — A note shared into the workspace after it was generated is a transcript added
+
+**What changed:** A Granola `note.access_granted` delivery on a workspace
+connection now asks Granola for the note before any activity row exists. When
+the note's summary exists, the ingress stores a `note.generated` activity beside
+the share — same delivery, same payload, its own dedupe key, `derivedFrom`
+naming the share — and a Sidekick whose trigger is "Transcript added" runs for
+it. That derived event and the `note.generated` Granola sends itself both carry
+an occurrence key naming the note, and a Sidekick admits an external event under
+that key when one is present, so a note reported twice runs once. The key is a
+field of the normalized activity that adapter code sets, namespaced by provider;
+the workspace store drops a same-named key from provider metadata at ingest and
+lifts only the activity's own onto the delivery, in a key space
+(`occurrence:<key>`) an event id's (`external:<id>`) cannot reach. A transcript
+reported on a read Granola did not answer carries no key, so the
+`note.generated` Granola may still send is not turned into a replay. The
+trigger descriptions say what each Granola event now means; `note.access_granted`
+stays available, labelled "Note shared", for a person who asks for every share.
+The webhook source interface gains an optional `derive` that answers with the
+activities it decided and the outcome by name, honoured by every ingress that
+persists through the workspace object, and the observability wrapper carries
+it through: that wrapper is the only copy of a source the host ever sees, and
+it rebuilt the source by naming `verify` and `normalize` — the first `derive`
+existed in the adapter and nowhere the ingress could reach it.
+
+**Why:** Granola sends `note.generated` only while the endpoint can read the
+note. Notes start in a person's own space and are moved into a shared folder
+after the meeting — a note cannot be started inside a team space — so the
+workspace endpoint received `note.access_granted` for every one of them, and a
+Sidekick built on "Transcript added" never ran. Nothing was broken and nothing
+said so: the connection was healthy, the Sidekick was active, the event arrived,
+matched no rule, and was dropped with a delivery count of zero in a log.
+
+**Considered and rejected:** Subscribing "Transcript added" Sidekicks to both
+events without asking Granola about the note. A note shared before its summary
+exists then runs at the share, on a note with nothing to read, and the real
+`note.generated` that follows is the same occurrence and admits as a replay —
+one bad run in place of one good one. Also rejected: putting
+`note.access_granted` into the transcript event family and relying on the
+drafting model to pick the family. Sidekicks already active keep their single
+event until re-drafted, and a person who says "when a note is generated" gets
+exactly that and nothing for the notes they share. Also rejected: answering a
+share Granola will not tell us about with nothing, which is the failure this
+entry exists to end — and, on review, keying that unverified answer on the note,
+which would have re-created the rejected first alternative through the error
+path. Also rejected: reading the key out of the event's metadata, where the
+generic webhook copies whatever a caller posted; a caller must not pick the key
+a Sidekick dedupes on.
+
+**Consequences:** Every `note.access_granted` on a workspace connection costs
+one Granola read inside the delivery. `WEBHOOK_DERIVE_TIMEOUT_MS` is an open
+limit handed to the team: Granola allows fifteen seconds for the whole delivery
+and retries with backoff for four days, verification and the payload write are
+spent before the read and the receipt claim, both persists and the queue sends
+after it, and the trip stores the share, reports the transcript unverified, and
+logs `timeout`. The activity log shows "Granola note generated" beside the
+share. Sidekicks already active on "Transcript added" need no change; the two
+in BetaBeta-demo that never fired will fire on the next note shared into the
+workspace. Which note shape Granola returns is transcribed from its OpenAPI
+document beside the parser, and a note with neither summary field is reported
+and logged as `unexpected_shape` rather than passed off as a summary not yet
+written.
+
+PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
+
+### 2026-09-16 — A removed connection leaves the list, and Test says pass or fail
+
+**What changed:** `GET /connections` no longer returns a disabled connection
+whose installation is settled — every registration removed, or the cleanup
+credential forgotten — or that never had one, so a removed connection leaves
+the list as soon as its provider webhook is gone. A row whose installation is
+still unsettled stays, because Manage events is reachable only from the row;
+the object answers for every disabled candidate in one hop. The Manage events Test
+result is a verdict box: green with "Connection test passed" when the check
+passed, red with "Connection test failed" when it did not, the sentence beneath
+either way. In the connections table the status dot and provider mark no longer
+shrink when a long name wraps, and the healthy dot draws the new saturated
+`success-vivid` step with a faint halo instead of the sage `success-base`
+that read as grey at seven pixels.
+
+**Why:** `disable` marks a row rather than deleting it, and the list returned
+every row: an administrator who removed a connection watched it sit there,
+badge reading "disabled", tools reading "—", a trash icon that did nothing more.
+The Test result was one unstyled sentence at the same weight as the caption
+above it, so "Granola authorization is healthy. Approved webhook configuration
+is verified" read as more instructions and nobody could tell they were done.
+And a two-line name squeezed the 7px status dot to a 3px sliver.
+
+**Considered and rejected:** Hiding every disabled row. A disconnected
+installation whose webhook Rally has not yet removed, or whose create outcome
+was never learned, needs its Manage events window, and hiding it would leave a
+live registration at the provider with no control to reach it. Also rejected:
+keeping only the rows Rally itself can clean up, which was the first cut and
+dropped exactly the rows where the administrator has to act. Also rejected:
+filtering in the desktop only, which would have left the API's list, and every
+count derived from it, saying otherwise.
+
+**Consequences:** A row that lingers after removal means its installation is
+not settled: a removal still queued or refused, a webhook only the administrator
+can find, or a disconnect that did not complete. A settled removal or Forget
+local cleanup credential makes it leave. A request that fails before the test
+runs is a warning box headed "Couldn’t run the connection test", not a verdict.
+Verified in a real window on the local stack: the removed Granola row gone, the
+wrapped-name dot intact at 820px, and both Test verdicts.
+
+Shipped in the pull request for this change.
+
+### 2026-09-15 — Granola registers the three events its API defines
+
+**What changed:** The webhook registration request, the installation facet's
+declared events, and the delivery's admission read one list —
+`note.access_granted`, `note.edited`, `note.generated` — and `note.regenerated`
+is gone from all of them, from the setup and adoption paths, and from the
+desktop labels. A verified delivery naming any other event is refused with 400
+`unsupported_webhook_event`, as Fireflies' is, rather than failing schema
+validation with a 500 that Standard Webhooks retries for four days. A workspace
+connection whose webhook endpoint was never registered or no longer exists now
+reports healthy with a warning and a reason code, the way a disabled endpoint
+already did, instead of failing the health check. Test runs a managed repair
+before the credential door and reloads the envelope after it, so a retried
+create is checked against the endpoint it just registered, and it reports the
+repair's reason when it could not repair.
+
+**Why:** Granola's API defines three note events; a regenerated summary is
+delivered as `note.edited`. Rally sent a fourth name, and the first workspace to
+register a webhook ended with no endpoint, no signing secret, and a health check
+saying only that the endpoint identity was missing. That failure reached plugin
+activation as an authorization the host could not verify, so the Sidekick built
+on the connection was told to retry after the authorization service recovered —
+for a connection whose key worked and whose read tools worked.
+
+**Considered and rejected:** Keeping the fourth event in the delivery schema in
+case Granola adds one: a delivery Rally has never seen is refused by name where
+it arrives, not normalized under a title nobody reviewed. Also
+rejected: leaving the missing endpoint a health failure and teaching the host a
+fourth verdict for it. The disabled-endpoint branch had already settled the
+question — delivery state is a warning, not a verdict about authority.
+
+**Consequences:** A missing or absent endpoint no longer blocks `load_plugin`;
+it is visible in the health warning log, in the Test result, and in Manage
+events, and only Test through the installation lifecycle restores delivery. The
+one Granola workspace installation that existed never registered an endpoint;
+it is disconnected and connected again, not reconciled.
+
+PR [#779](https://github.com/juno-ai-labs/avalon/pull/779).
+
+### 2026-09-15 — Gmail callers choose new or reply; the adapter owns threading
+
+**What changed:** Gmail send and draft take a nested `message` union. New
+messages supply recipients, subject, and body. Replies supply an existing
+message id, recipients, and body, and the adapter fetches the original subject
+and threading headers under the same connection. One Zod schema defines both
+advertised inputs and runtime validation. Threading headers are deduplicated
+with a Set and folded between IDs, with byte validation ensuring that even an
+indivisible UTF-8 ID fits on one physical line. Long and Unicode subjects use
+independently decodable, folded encoded-words. Generated complete-key variants
+preserve Gmail's closed input shapes through Bind's compatibility sanitizer,
+and wire tests now validate the actual request with Ajv rather than a schema
+that has only passed Rally's root repair.
+
+**Why:** Two fixes to examples and error wording still left a production run
+making nine rejected sends. Nonempty reply placeholders satisfied the advertised
+schema but failed the executor, and the model repeated the same invalid shape.
+The 2026-09-14 new-email-example change below improved guidance but could not
+remove that contradictory contract or the unnecessary threading work assigned
+to the model.
+
+Automatically copying ancestry also exposed the inherited serializer's repeated
+array scans and single-line References join. Forty ordinary ancestor IDs already
+produced a 1,032-byte line, beyond the protocol maximum; the old 50-ID input cap
+did not guarantee a valid line either. Processing and folding the chain in linear
+time preserves the history without making long conversations expensive to send.
+Subject encoding had the same physical-line defect: 400 accented characters
+became a 1,089-byte line, and one large encoded-word also violated RFC 2047.
+
+The first regression check missed Bind's intermediate sanitizer. That pass
+deliberately drops `additionalProperties: false` because xAI rejected nested
+boolean schemas. Merely documenting that loss left an extra threading field
+legal in the advertised schema and illegal at execution. The generated
+required-key variants plus exact property counts express the same constraint
+without the removed keyword. A real request-boundary test checks the formerly
+accepted extra fields, with and without `cc`, at the root and inside `message`.
+
+**Considered and rejected:** Another prompt/error repair or accepting more
+placeholder spellings would keep that ambiguity. Separate new/reply tool names
+would also separate the inputs, but the nested union does so within the existing
+send/draft capabilities, tool names, and receipt policy. The shape follows
+[OpenAI's function design guidance](https://developers.openai.com/api/docs/guides/function-calling#best-practices-for-defining-functions)
+and resolves the coupled fields required by
+[Gmail's threading contract](https://developers.google.com/workspace/gmail/api/guides/threads#adding_drafts_and_messages_to_threads)
+in code.
+
+An ancestor-count cap would discard valid history while still admitting an
+oversized individual ID. Folding preserves the chain, and the existing metadata
+response bound covers total input size.
+
+Restoring `additionalProperties: false` globally would reinstate a documented
+xAI request failure. Silently stripping unknown write fields would violate the
+tool policy and risk discarding caller intent. The alternative is scoped to
+these two Gmail tools and generated from their executor schema. `maxProperties`
+is supported by [xAI's tool schema rules](https://docs.x.ai/developers/model-capabilities/text/structured-outputs#constraint-limits)
+and [Google's schema definition](https://ai.google.dev/api/generate-content#Schema).
+Strict structured-output restrictions are distinct from Rally's non-strict
+Chat Completions tools, as OpenAI's
+[function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)
+explains. This does not enable strict generation or change
+provider routing. Runtime validation remains necessary because a model can
+still generate arguments that violate its advertised schema.
+
+**Consequences:** Replies require read access and one metadata fetch before the
+write. Recipients stay explicit; unreadable or unthreadable originals produce a
+field-named error before any write. Existing flat inputs are deliberately
+rejected, so callers need refreshed tool definitions. A parent Message-ID that
+cannot fit on a continuation line is refused before the write; an oversized
+ancestor is omitted without truncating any ID. The tests use synthetic messages
+and inspect provider requests, including long duplicate-heavy chains and ASCII
+and UTF-8 byte boundaries; they do not send live email. Required fields, kinds,
+and declared-value constraints, including rejection of undeclared keys, are
+checked after the real harness serialization path. The property counts are
+derived from the required keys, not independently chosen defensive limits.
+Adding another optional Gmail field requires deliberately extending the
+generated variants; it must not leave an unused slot for an unknown key.
+
+PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
+
+### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
+
+**What changed:** `SummaryRowSchema.summary.keywords` accepts a string or an
+array of strings, and `meetingSummaryOutput` joins a list into the bounded
+string the tool has always returned. The test fixture is corrected to the shape
+a real workspace returns, and a case covers both.
+
+**Why:** Every workspace `get_meeting_summary` call failed. Fireflies answered
+HTTP 200 and this rejected the body, so the call surfaced as
+`unexpected_error` — a `ZodError` is not a `ConnectorError` — and a Sidekick that
+had finally received its `meeting.summarized` event ran, could not read the
+meeting, and sent no recap.
+
+Read against a real workspace key on 2026-09-15, `keywords` came back as six
+strings. [Fireflies' schema page](https://docs.fireflies.ai/schema/summary)
+declares it `String` and `topics_discussed` `[String]`. Both shapes are real:
+the same page says a summary's fields are produced by "AI apps" an account can
+customize, so this is configuration rather than a provider bug, and rejecting
+either shape fails somebody's workspace.
+
+The fixture is the reason this was invisible. It encoded `keywords` as a string
+— the documented shape, never the returned one — so the suite was green while
+every live call was rejected. That is the failure mode
+[`testing.md`](testing.md#prove-the-test-can-fail) describes as asserting on a
+fixture: the test proved the adapter agreed with the fixture, and the fixture
+was written from the same wrong source as the schema.
+
+**How it is proved:** `packages/connectors/src/fireflies.test.ts` drives
+`get_meeting_summary` with each shape and asserts the same joined output.
+Restoring `keywords: z.string().nullish()` fails both with
+`ZodError: Invalid input: expected string, received array` — the production
+rejection exactly.
+
+**What a future change has to respect:** the output stays a bounded string.
+Which shape arrives is the account's configuration, and a caller should not have
+to branch on it; `topicsDiscussed` is already the field that carries a list.
+
+**Considered and rejected:** changing `keywords` to `z.array(z.string())` to
+match what was observed. That trades one account's configuration for another's
+and would have failed for anyone whose summary app returns the documented
+`String`. Also rejected: surfacing the list as a list, which changes the tool
+output shape the model reads for a fix whose whole job is to stop a rejection.
+
+Shipped in the pull request for this change.
+
+### 2026-09-14 — A refused webhook delivery names the event it refused
+
+**What changed:** All four `unsupported_webhook_event` refusals — Fireflies'
+two, Granola's, and the generic webhook connector's — go through one
+`unsupportedWebhookEvent` helper. It logs `connector_webhook_event_refused`
+with the connector, connection and event type, and returns an `ApiError` whose
+message names the provider and event and whose `details` carry both.
+
+**Why:** The reason was always thrown; no operator could read it.
+`request_failed` records a refusal's `detail_keys` and deliberately withholds
+their values, and never records the message at all, so every one of these
+landed in Workers Logs as a bare `request_failed 400 unsupported_webhook_event`
+— you learn a delivery was refused and never which one. Recovering it meant
+joining against whatever `connector_operation_finished` happened to share the
+millisecond, which works only while traffic is thin enough for that to be
+unambiguous, and not at all once two connectors deliver at once.
+
+An event type is the provider's own vocabulary: it is in the connector manifest
+and `connector_operation_finished` already logs it. It is not member data, so
+it is named rather than withheld. The `details` carry it to the caller too,
+because a provider dashboard replaying a delivery shows the response body, and
+"Rally does not model the fireflies event meeting.bot_joined" is the whole
+diagnosis without anyone opening a log.
+
+**How it is proved:**
+`apps/api/test-workers/connector-installation-fireflies.test.ts` already
+delivered a verified `meeting.bot_joined` and asserted the 400; it now also
+asserts the message contains the event type and that `details` name the
+provider and event.
+
+**What a future change has to respect:** a connector added later gets this for
+free only if its refusal goes through the helper. A new
+`new ApiError(400, "unsupported_webhook_event", …)` is the regression.
+
+**Considered and rejected:** logging `details` values generically in
+`errorHandler`. Those values are arbitrary across every route that raises an
+`ApiError`, and the whole reason `detail_keys` exists is that they may be
+member data. The event type is safe because of what it is, not because of where
+it sits, so it is named at the site that knows that.
+
+Shipped in the pull request for this change.
+
+### 2026-09-14 — A connector declares which scopes its events can arrive in
+
+**What changed:** `activityConnectionScopes` narrows a connector's supported
+scopes for activity, beside the `capabilityConnectionScopes` that narrows them
+for a capability, and Granola, Fireflies and Ashby declare `["workspace"]`.
+`connectorActivitySupportsScope` is the one reader. Registry construction
+refuses a declaration naming a scope the manifest does not support, and one on
+an adapter with no activity at all.
+
+**Why:** All three refuse a personal connection from `normalize`, because the
+provider's webhook is created by the workspace install — a fact that appears
+nowhere in a manifest, so every consumer that wanted it was inferring it or,
+in the drafting catalog's case, not asking at all. Declared per connector
+rather than derived from `webhookActivity`, because the asymmetry is the
+provider's and not a property of the facet: GitHub, Linear, Notion and a
+generic webhook all deliver to a personal connection through that same facet.
+
+**Consequences:** A connector that starts delivering events to personal
+connections drops the declaration in its adapter, and every surface that asks
+this question follows. The eventless-adapter refusal exists so the field
+cannot become a claim nothing reads: silence has to keep meaning "the
+connector's own scopes", not "there is no activity here".
+
+### 2026-09-14 — A new Gmail email is demonstrated, not only described
+
+**What changed:** The non-threaded mail shape is present on every surface a
+model reads before a Gmail write, rather than on one of them. `gmail.draft`
+gains a worked example that starts a conversation — `to`, `subject`, `body`
+and nothing else — shown before the threaded reply; the mail guidance gains
+the matching sentence; and `inReplyTo` and `references` describe what omitting
+them does and which tool produces their value, which only `threadId` did. The
+reply example's identifiers are now the `…` the rest of the file uses, not
+`<hit.threadId>` and `<hit.messageIdHeader>`.
+
+**Why:** A run failed to draft a brand-new email twice, and reported the tool
+as requiring reply fields. The threading rule was never the fault and the tool
+descriptions had already been fixed to say so; the two surfaces that outrank a
+description had not. The only `create_draft` call ever demonstrated was a
+threaded reply, and the only guidance sentence about threading described
+replying, so a model composing a new email had the reply as its sole model of
+the call and filled in identifiers the conversation does not have. An example
+is the strongest instruction here: the shape that is shown is the shape that
+gets sent.
+
+The placeholders are the second half of the same report — *"Google rejects the
+resulting malformed request"*. `<hit.messageIdHeader>` satisfies
+`RfcMessageIdSchema` exactly: angle-bracketed, no inner brackets, no
+whitespace. Copied verbatim it passed the JSON Schema, the harness, the
+cross-field rule and the connector's parse, and was refused only by Gmail —
+which names no argument on a body field, so the model could not tell which of
+its arguments was at fault and blamed the schema. A placeholder that fails
+Rally's own parse is refused against the field to fill in instead.
+
+**Considered and rejected:** Validating `threadId`'s id family at the boundary
+per agent-tools principle 12. Gmail thread ids are bare hex in every example
+Rally shows, but that alphabet is asserted nowhere and the adapter's own
+fixtures use `thread-1`, so the check would have been a guess that rejects
+valid replies. Relaxing the `threadId`-without-`inReplyTo` rule: it is correct,
+and Gmail accepts that pair and files the mail where nobody is reading it.
+
+**Consequences:** A Gmail write rejected by Google still fails without naming
+an argument. `googleRejectedArgument` reads Google's `locationType:
+"parameter"`, which covers the query-parameter rejections the paginated read
+tools earn and not a body field like `threadId`, so `gmail.create_draft` and
+`gmail.send` pass no mapping at all. Closing that needs an observed Google
+rejection body for a bad draft `threadId`.
+
+Only one of the two placeholders is caught by the boundary in the meantime, and
+it is not the one that needs catching. `inReplyTo` is refused by
+`RfcMessageIdSchema`; `threadId` is an unformatted `min(1)` string, so a
+half-substituted reply — a real `inReplyTo` beside a `threadId` still reading
+`…` — validates cleanly and reaches Gmail, which is the same nameless rejection
+one field over. Both are therefore pinned as literals in
+`connector-tool-selection.test.ts` rather than left to the validator, and that
+test is the only thing stopping a later change from restoring realistic-looking
+values. It also pins the other direction: the new-email example must validate.
+
+### 2026-09-13 — Fireflies' test event verifies the installation
+
+**What changed:** A signed Fireflies delivery whose event is `test` — what the
+Webhooks V2 page's **Send test event** button sends — is answered
+`200 { ping: true }` and recorded as the registration's verifying delivery,
+with no receipt, payload, or activity written. Setup copy tells the
+administrator to press that button.
+
+**Why:** The connector shipped on research that found no test ping, so the
+first real meeting was the only verification. Fireflies has one now, and the
+first administrator to press it got `400 unsupported_webhook_event` back —
+Fireflies' page reported the webhook as failing on a setup that was correct,
+and Rally could not say otherwise until a meeting finished. The ping proves
+what a meeting would: the URL reaches this connection and the secret matches.
+
+**Considered and rejected:** Acknowledging the test with 2xx but leaving the
+installation **Action required** until a meeting, which keeps Fireflies' page
+green while Rally's Settings still says otherwise. Letting any verified but
+unhandled event verify, which would let a `meeting.bot_joined` subscription
+nobody asked for stand as evidence.
+
+**Consequences:** The test event's shape is undocumented and asserted from one
+live observation; `FIREFLIES_TEST_EVENT` is where a change in it shows up.
+`lastReceivedAt` moves on a test event too, so a last-received time is
+evidence of reachability, not of a meeting.
+
+### 2026-09-13 — Fireflies connects a meeting record Rally cannot register itself
+
+**What changed:** A `fireflies` connector with the two-scope shape Granola set:
+an admin API key behind three fixed GraphQL read tools plus signed webhook
+activity, and a hosted-MCP OAuth pass-through for a member's own account.
+`meeting.summarized` is digestible and `meeting.transcribed` operational. Its
+rollout is gated per region on `FIREFLIES_CONNECTOR_ENABLED`, and WorkspaceDO
+migration 55 widens the connector vocabularies and adds its cardinality indexes.
+
+**Why:** Fireflies' install base is larger than Granola's, and a prospect who
+already pays for it will not move their meeting capture to Rally as a
+precondition for evaluating Rally. Without this their meeting record is
+invisible: the agent cannot answer what a customer objected to on Tuesday's
+call, and members re-paste summaries by hand.
+
+**Considered and rejected:** Pointing the workspace scope at Fireflies' own MCP
+server with the API key, which it accepts — pass-through tools are all treated
+as confirmed writes and so are unusable at automation time, several are marked
+experimental and can change shape underneath us, and a fixed document keeps the
+read authority reviewable field by field. A raw GraphQL tool, for the same
+reason at greater cost. Requiring Enterprise with Super Admin so coverage could
+be stated exactly, which would exclude most Fireflies customers for a purity the
+product does not need. A checkpointed poll alongside the webhook, which the
+installation lifecycle defers outright and which could never see a summary that
+landed more than the poll's own window after its meeting, because Fireflies
+filters on creation date alone.
+
+**Consequences:** Fireflies is the first provider whose every registration
+operation is the customer's, so setup hands the administrator an endpoint and a
+signing secret and the installation stays **Action required** until a delivery
+proves the registration — the one lifecycle extension this needed. A missed
+delivery is made visible rather than compensated: Fireflies documents no retry,
+so a last-received time that stops moving is the signal. Coverage is stated as
+unknown because the provider exposes no way to know it.
+
+PR #738. Design:
+[Fireflies connector](PRDs/2026-08-14_fireflies-connector/prd.md).
+
+### 2026-09-12 — Ashby and shared workspace installation ownership
+
+**What changed:** Ashby adds personal hosted MCP and independent workspace event installation, automatically registering its documented 27-event catalog. Its email-change signal deduplicates renewed delivery watermarks while preserving raw regional evidence. Granola setup, explicit repair and removal now use the shared installation facet.
+
+**Why:** Subscription management belongs to the connector while event choice belongs to automations. Personal tool consent cannot authorize organization event registration, and direct provider writes could lose the identity needed for recovery after uncertainty or disablement.
+
+**Considered and rejected:** Adding recruiting REST tools to the workspace grant or retaining a parallel Granola repair/revoke path. Both would blur the authority the new lifecycle separates.
+
+**Consequences:** Keep inventory and health read-only, preserve existing Granola subscriptions on adoption, and use the [installation lifecycle](connector-installation-lifecycle.md) for mutations. Ashby organization events use the workspace audience authorized by the connecting administrator; normalized fields remain limited to event metadata and IDs.
+
+PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-installation-lifecycle/prd.md).
+
+### 2026-09-11 — Agent-presented connection cards reuse the one OAuth authority
+
+**What changed:** An opted-in conversation-feed card can initiate or reconnect a trusted native
+OAuth connector, including a personal Slack connection, while registering its
+pending attempt in the application session. A paired agent tool reads durable
+connection state, and the card follows workspace-socket connection changes
+until it observes and latches **Connected**.
+
+**Why:** Connector failures could identify a missing authorization but offered
+no in-context recovery. Reusing the existing start, reconnect, callback, and
+query-invalidation path keeps the card a new presentation of one authority,
+not a second connection mechanism.
+
+**Alternative rejected:** Storing an OAuth URL or capability list in the
+agent-authored transcript. Either could become stale or hostile, and both
+duplicate decisions already owned by the connector catalog and regional API.
+
+**Consequences:** Shared non-UI catalog data owns card ids, provider/capability
+discriminators, supported scopes, and stable icon names; the model-visible enum
+and validation derive from it, while the desktop consumes its icon names and
+remains responsible for translating those trusted entries into provider
+requests. OAuth completion, denial, and failure continue through the existing
+deep-link receipt and refresh every surface from the shared connection query.
+The terminal transcript fact retains the safe card input, with an exact shared
+summary fallback for interrupted-run recovery, so the presentation stays
+visible; adjacent repeats collapse instead of double-stacking.
+
+### 2026-09-11 — The collapsed null-branch backlog is retired by Bind 14
+
+**What changed:** Nothing in the adapters. `@juno-ai/bind` 14 delivers a flat
+`type: [T, "null"]` as a union, so the 28 parameters the entries below counted
+as "still collapsed" (Linear 13, Granola 7, Slack 6, Notion 2) now reach the
+model with their null branch, and the registry-wide assertion in
+`apps/api/test/tool-schema-sanitization.test.ts` names the three Bind 14 still
+collapses by design: the cell values of Google's `sheets.update_values` and
+`sheets.append_values`, and the artifact query tool's `params`, each a
+multi-type union with `null`.
+
+**Why:** The backlog was left for per-parameter decisions about what `null`
+means for an id or a filter, and the wire was forbidding the value regardless
+of what the prose decided; one of the Slack six was `send_message.thread_ts`.
+The [`agent-tools.md`](agent-tools.md) entry of the same date owns the
+reasoning and the alternative that was rejected.
+
+**Consequences:** a new connector cannot ship the collapsed shape, because the
+guard covers every declaration, and a parameter in one of the shapes Bind 14
+still collapses is reported by name. Descriptions still owe the reader what
+`null` requests. And the wire is the only thing that changed:
+`SlackTimestampSchema` still accepts any non-empty string, and the `pattern`
+that refuses a non-timestamp before the provider call is phase 0 of
+[the Sidekick delivery PRD](PRDs/2026-09-11_sidekick-delivery-reliability/prd.md),
+not this change.
 
 ### 2026-09-11 — Connections report tool counts
 
@@ -1083,7 +1836,6 @@ request.
 reads the named collection on it. `head` and `base` are sent only when the
 caller supplied them, which `github.test.ts` asserts directly — a default
 quietly reintroduced there is the original failure again.
-
 
 ### 2026-09-08 — Skip unchanged discovered resources
 

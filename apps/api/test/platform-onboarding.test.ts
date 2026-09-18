@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceSchema, type Region, type Session, type Workspace } from "@rally/contracts";
@@ -28,7 +29,7 @@ import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const platformUserId = asUserId("00000000-0000-7000-8000-000000000001");
-const euWorkspaceId = "00000000-0000-7000-8000-000000000002";
+const enterpriseWorkspaceId = "00000000-0000-7000-8000-000000000002";
 const globalWorkspaceId = "00000000-0000-7000-8000-000000000003";
 const invitationId = "00000000-0000-7000-8000-000000000004";
 const operationId = "00000000-0000-7000-8000-000000000005";
@@ -39,7 +40,7 @@ const preferenceSubjectHandle = "00000000-0000-7000-8000-000000000009";
 const at = "2026-08-01T12:00:00.000Z";
 
 function placementAffinity(region: Region): "wnam" | "weur" {
-  return region === "eu" ? "weur" : "wnam";
+  return region === "enterprise" ? "weur" : "wnam";
 }
 
 const auth: IdentityAuthContext = {
@@ -67,11 +68,11 @@ function workspace(
 ): Workspace & { placementAffinity: "wnam" | "weur" } {
   return {
     id,
-    name: region === "eu" ? "Europe Research" : "Global Research",
-    slug: region === "eu" ? "europe-research" : "global-research",
+    name: region === "enterprise" ? "Enterprise Research" : "Global Research",
+    slug: region === "enterprise" ? "enterprise-research" : "global-research",
     region,
     role: "member",
-    timezone: region === "eu" ? "Europe/London" : "America/Los_Angeles",
+    timezone: region === "enterprise" ? "Europe/London" : "America/Los_Angeles",
     createdAt: at,
     placementAffinity: placementAffinity(region),
   };
@@ -82,7 +83,7 @@ function session(region: Region, workspaceId: string): Session {
     accessToken: `access-token-${region}-longer-than-twenty-characters`,
     refreshToken: `refresh-token-${region}-longer-than-twenty-characters`,
     expiresAt: "2026-08-01T12:15:00.000Z",
-    apiBaseUrl: region === "eu" ? "https://eu.api.with-avalon.com" : "https://api.with-avalon.com",
+    apiBaseUrl: region === "enterprise" ? "https://enterprise.api.with-avalon.com" : "https://api.with-avalon.com",
     user: {
       id: platformUserId,
       email: identity.email,
@@ -95,11 +96,11 @@ function session(region: Region, workspaceId: string): Session {
   };
 }
 
-function invitation(region: Region = "eu") {
+function invitation(region: Region = "enterprise") {
   return {
     id: invitationId,
-    workspaceId: euWorkspaceId,
-    workspaceName: "Europe Research",
+    workspaceId: enterpriseWorkspaceId,
+    workspaceName: "Enterprise Research",
     region,
     email: identity.email,
     role: "member" as const,
@@ -319,52 +320,51 @@ class FakeRawRegionalBridge implements RegionalIdentityBridgeRpcBinding {
     this.discover.mockResolvedValue({ ok: true, value: discovery });
     this.activate.mockImplementation(async (input) => ({
       ok: true,
-      value: session("eu", input.workspaceId),
+      value: session("enterprise", input.workspaceId),
     }));
     this.create.mockImplementation(async (input) => ({
       ok: true,
-      value: session("eu", input.workspaceId),
+      value: session("enterprise", input.workspaceId),
     }));
     this.accept.mockImplementation(async (input) => ({
       ok: true,
-      value: session("eu", input.workspaceId),
+      value: session("enterprise", input.workspaceId),
     }));
     this.decline.mockResolvedValue({ ok: true, value: { ok: true } });
   }
 }
 
-function environment(database: IdentityDatabase, eu?: RegionalIdentityBridgeRpcBinding): Env {
+function environment(database: IdentityDatabase, enterprise?: RegionalIdentityBridgeRpcBinding): Env {
   return createTestEnv({
     DB: database.binding,
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
-    EU_PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
-    EU_IDENTITY_BRIDGE: eu,
+    REGION_ENTERPRISE_IDENTITY_BRIDGE: enterprise,
     SESSION_SIGNING_KEY: "global-session-signing-key-with-enough-entropy",
   });
 }
 
 function service(input: {
   global?: FakeRegionalGateway;
-  eu?: FakeRegionalGateway;
+  enterprise?: FakeRegionalGateway;
   bindings?: MemoryBindingStore;
   operations?: MemoryOperationStore;
   ids?: string[];
 } = {}) {
   const database = new IdentityDatabase();
   const global = input.global ?? new FakeRegionalGateway("global");
-  const eu = input.eu ?? new FakeRegionalGateway("eu");
+  const enterprise = input.enterprise ?? new FakeRegionalGateway("enterprise");
   const bindings = input.bindings ?? new MemoryBindingStore();
   const operations = input.operations ?? new MemoryOperationStore();
   const ids = [...(input.ids ?? [operationId])];
   return {
     database,
     global,
-    eu,
+    enterprise,
     bindings,
     operations,
     value: new PlatformOnboardingService(environment(database), auth, {
-      gateways: { global, eu },
+      gateways: { global, enterprise },
       bindings,
       operations,
       newId: () => ids.shift() ?? operationId,
@@ -385,7 +385,7 @@ describe("single-platform regional onboarding", () => {
         platform_user_id: platformUserId,
         action: "create",
         request_fingerprint: "sha256:same-request",
-        region: "eu",
+        region: "enterprise",
         workspace_id: createdWorkspaceId,
         placement_affinity: "weur",
         invitation_id: null,
@@ -398,8 +398,8 @@ describe("single-platform regional onboarding", () => {
       ]);
       expect(replayedOperation).toEqual(firstOperation);
       const [firstBinding, replayedBinding] = await Promise.all([
-        bindings.reserve(platformUserId, "eu", createdWorkspaceId, "weur", operationId),
-        bindings.reserve(platformUserId, "eu", createdWorkspaceId, "weur", operationId),
+        bindings.reserve(platformUserId, "enterprise", createdWorkspaceId, "weur", operationId),
+        bindings.reserve(platformUserId, "enterprise", createdWorkspaceId, "weur", operationId),
       ]);
       expect(replayedBinding).toEqual(firstBinding);
 
@@ -445,24 +445,24 @@ describe("single-platform regional onboarding", () => {
     })).rejects.toMatchObject({ status: 503, code: "regional_database_unavailable" });
   });
 
-  it("aggregates an EU invitation after the one Global identity login", async () => {
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    await expect(service({ eu }).value.state()).resolves.toEqual({
+  it("aggregates an enterprise invitation after the one Global identity login", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    await expect(service({ enterprise }).value.state()).resolves.toEqual({
       workspace: null,
       workspaces: [],
       invitations: [invitation()],
     });
   });
 
-  it("accepts an EU invitation, activates the binding, and retains the account session", async () => {
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    const subject = service({ eu, ids: [operationId] });
+  it("accepts an enterprise invitation, activates the binding, and retains the account session", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    const subject = service({ enterprise, ids: [operationId] });
 
-    await expect(subject.value.acceptInvitation(invitationId, "eu")).resolves.toEqual(session("eu", euWorkspaceId));
-    expect(eu.accept).toHaveBeenCalledWith(expect.objectContaining({
+    await expect(subject.value.acceptInvitation(invitationId, "enterprise")).resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
+    expect(enterprise.accept).toHaveBeenCalledWith(expect.objectContaining({
       identity,
       operationId,
-      workspaceId: euWorkspaceId,
+      workspaceId: enterpriseWorkspaceId,
       invitationId,
       preference: {
         preferenceSubjectHandle,
@@ -470,34 +470,34 @@ describe("single-platform regional onboarding", () => {
         version: 3,
       },
     }));
-    expect(subject.bindings.row).toMatchObject({ region: "eu", workspace_id: euWorkspaceId, status: "active" });
+    expect(subject.bindings.row).toMatchObject({ region: "enterprise", workspace_id: enterpriseWorkspaceId, status: "active" });
     expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(false);
   });
 
-  it("declines an EU invitation without creating a workspace binding or session", async () => {
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    const subject = service({ eu });
+  it("declines an enterprise invitation without creating a workspace binding or session", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    const subject = service({ enterprise });
 
-    await expect(subject.value.declineInvitation(invitationId, "eu")).resolves.toBeUndefined();
-    expect(eu.decline).toHaveBeenCalledWith({ identity, invitationId });
+    await expect(subject.value.declineInvitation(invitationId, "enterprise")).resolves.toBeUndefined();
+    expect(enterprise.decline).toHaveBeenCalledWith({ identity, invitationId });
     expect(subject.bindings.row).toBeNull();
     expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(false);
   });
 
-  it("creates an EU workspace with a control-plane-generated stable ID", async () => {
+  it("creates an enterprise workspace with a control-plane-generated stable ID", async () => {
     const subject = service({ ids: [createdWorkspaceId, operationId] });
 
-    await expect(subject.value.createWorkspace("Europe Lab", "eu"))
-      .resolves.toEqual(session("eu", createdWorkspaceId));
-    expect(subject.eu.create).toHaveBeenCalledWith(expect.objectContaining({
+    await expect(subject.value.createWorkspace("Enterprise Lab", "enterprise"))
+      .resolves.toEqual(session("enterprise", createdWorkspaceId));
+    expect(subject.enterprise.create).toHaveBeenCalledWith(expect.objectContaining({
       identity,
       operationId,
       workspaceId: createdWorkspaceId,
-      name: "Europe Lab",
+      name: "Enterprise Lab",
       placementAffinity: "weur",
     }));
     expect(subject.bindings.row).toMatchObject({
-      region: "eu",
+      region: "enterprise",
       workspace_id: createdWorkspaceId,
       placement_affinity: "weur",
       status: "active",
@@ -507,36 +507,36 @@ describe("single-platform regional onboarding", () => {
   it("persists an eastern request affinity through the Global reservation and regional create RPC", async () => {
     const subject = service({ ids: [createdWorkspaceId, operationId] });
 
-    await expect(subject.value.createWorkspace("Eastern Europe Lab", "eu", { longitude: "30.5234" }))
-      .resolves.toEqual(session("eu", createdWorkspaceId));
-    expect(subject.eu.create).toHaveBeenCalledWith(expect.objectContaining({
+    await expect(subject.value.createWorkspace("Eastern Enterprise Lab", "enterprise", { longitude: "30.5234" }))
+      .resolves.toEqual(session("enterprise", createdWorkspaceId));
+    expect(subject.enterprise.create).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: createdWorkspaceId,
       placementAffinity: "eeur",
     }));
     expect(subject.bindings.row).toMatchObject({
-      region: "eu",
+      region: "enterprise",
       workspace_id: createdWorkspaceId,
       placement_affinity: "eeur",
       status: "active",
     });
   });
 
-  it("discovers then activates an existing EU membership without another Google login", async () => {
-    const eu = new FakeRegionalGateway("eu", { workspaces: [workspace("eu", euWorkspaceId)] });
-    const subject = service({ eu, ids: [operationId] });
+  it("discovers then activates an existing enterprise membership without another Google login", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    const subject = service({ enterprise, ids: [operationId] });
 
     await expect(subject.value.state()).resolves.toEqual({
-      workspace: workspace("eu", euWorkspaceId),
-      workspaces: [workspace("eu", euWorkspaceId)],
+      workspace: workspace("enterprise", enterpriseWorkspaceId),
+      workspaces: [workspace("enterprise", enterpriseWorkspaceId)],
       invitations: [],
     });
-    expect(subject.bindings.row).toMatchObject({ region: "eu", workspace_id: euWorkspaceId, status: "active" });
-    await expect(subject.value.activate("eu", euWorkspaceId)).resolves.toEqual(session("eu", euWorkspaceId));
-    expect(eu.activate).toHaveBeenCalled();
+    expect(subject.bindings.row).toMatchObject({ region: "enterprise", workspace_id: enterpriseWorkspaceId, status: "active" });
+    await expect(subject.value.activate("enterprise", enterpriseWorkspaceId)).resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
+    expect(enterprise.activate).toHaveBeenCalled();
   });
 
   it("reconciles a regional membership alongside the account's existing active binding", async () => {
-    const eu = new FakeRegionalGateway("eu", { workspaces: [workspace("eu", euWorkspaceId)] });
+    const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
     const bindings = new MemoryBindingStore({
       platform_user_id: platformUserId,
       region: "global",
@@ -546,53 +546,53 @@ describe("single-platform regional onboarding", () => {
       operation_id: operationId,
       pending_expires_at: null,
     });
-    await expect(service({ eu, bindings }).value.state()).resolves.toEqual({
-      workspace: workspace("eu", euWorkspaceId),
-      workspaces: [workspace("eu", euWorkspaceId)],
+    await expect(service({ enterprise, bindings }).value.state()).resolves.toEqual({
+      workspace: workspace("enterprise", enterpriseWorkspaceId),
+      workspaces: [workspace("enterprise", enterpriseWorkspaceId)],
       invitations: [],
     });
     expect(bindings.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ workspace_id: globalWorkspaceId, status: "inactive" }),
-      expect.objectContaining({ workspace_id: euWorkspaceId, status: "active" }),
+      expect.objectContaining({ workspace_id: enterpriseWorkspaceId, status: "active" }),
     ]));
   });
 
-  it("returns simultaneous existing Global and EU memberships in stable discovery order", async () => {
+  it("returns simultaneous existing Global and enterprise memberships in stable discovery order", async () => {
     const global = new FakeRegionalGateway("global", { workspaces: [workspace("global", globalWorkspaceId)] });
-    const eu = new FakeRegionalGateway("eu", { workspaces: [workspace("eu", euWorkspaceId)] });
-    await expect(service({ global, eu }).value.state()).resolves.toEqual({
+    const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    await expect(service({ global, enterprise }).value.state()).resolves.toEqual({
       workspace: workspace("global", globalWorkspaceId),
-      workspaces: [workspace("global", globalWorkspaceId), workspace("eu", euWorkspaceId)],
+      workspaces: [workspace("global", globalWorkspaceId), workspace("enterprise", enterpriseWorkspaceId)],
       invitations: [],
     });
   });
 
   it("does not overtake another in-flight reservation for the same account", async () => {
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
     const bindings = new MemoryBindingStore({
       platform_user_id: platformUserId,
-      region: "eu",
-      workspace_id: euWorkspaceId,
+      region: "enterprise",
+      workspace_id: enterpriseWorkspaceId,
       placement_affinity: "weur",
       status: "pending",
       operation_id: "00000000-0000-7000-8000-000000000099",
       pending_expires_at: "2026-08-01T12:02:00.000Z",
     });
-    await expect(service({ eu, bindings, ids: [operationId] }).value.acceptInvitation(invitationId, "eu"))
+    await expect(service({ enterprise, bindings, ids: [operationId] }).value.acceptInvitation(invitationId, "enterprise"))
       .rejects.toMatchObject({ status: 409, code: "workspace_setup_in_progress" });
-    expect(eu.accept).not.toHaveBeenCalled();
+    expect(enterprise.accept).not.toHaveBeenCalled();
   });
 
-  it("releases a reservation after an explicit EU business-error envelope so retry can succeed", async () => {
+  it("releases a reservation after an explicit enterprise business-error envelope so retry can succeed", async () => {
     const database = new IdentityDatabase();
     const bindings = new MemoryBindingStore();
     const global = new FakeRegionalGateway("global");
-    const eu = new FakeRawRegionalBridge({
-      region: "eu",
+    const enterprise = new FakeRawRegionalBridge({
+      region: "enterprise",
       workspaces: [],
       invitations: [invitation()],
     });
-    eu.accept.mockResolvedValueOnce({
+    enterprise.accept.mockResolvedValueOnce({
       ok: false,
       error: {
         status: 409,
@@ -601,49 +601,49 @@ describe("single-platform regional onboarding", () => {
       },
     });
     const ids = [operationId, retryOperationId];
-    const subject = new PlatformOnboardingService(environment(database, eu), auth, {
+    const subject = new PlatformOnboardingService(environment(database, enterprise), auth, {
       gateways: { global },
       bindings,
       operations: new MemoryOperationStore(),
       newId: () => ids.shift() ?? retryOperationId,
     });
 
-    await expect(subject.acceptInvitation(invitationId, "eu"))
+    await expect(subject.acceptInvitation(invitationId, "enterprise"))
       .rejects.toMatchObject({ status: 409, code: "invitation_raced" });
     expect(bindings.row).toBeNull();
 
-    await expect(subject.acceptInvitation(invitationId, "eu"))
-      .resolves.toEqual(session("eu", euWorkspaceId));
-    expect(eu.accept).toHaveBeenLastCalledWith(expect.objectContaining({
+    await expect(subject.acceptInvitation(invitationId, "enterprise"))
+      .resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
+    expect(enterprise.accept).toHaveBeenLastCalledWith(expect.objectContaining({
       operationId: retryOperationId,
-      workspaceId: euWorkspaceId,
+      workspaceId: enterpriseWorkspaceId,
     }));
     expect(bindings.row).toMatchObject({ status: "active", operation_id: retryOperationId });
   });
 
-  it("never reuses an ambiguous EU reservation based on elapsed time or for a second workspace", async () => {
+  it("never reuses an ambiguous enterprise reservation based on elapsed time or for a second workspace", async () => {
     let now = new Date(at);
     const database = new IdentityDatabase();
     const bindings = new MemoryBindingStore(null, () => now);
     const global = new FakeRegionalGateway("global");
-    const eu = new FakeRawRegionalBridge({ region: "eu", workspaces: [], invitations: [invitation()] });
-    eu.accept.mockRejectedValueOnce(new Error("RPC response lost before a regional commit"));
+    const enterprise = new FakeRawRegionalBridge({ region: "enterprise", workspaces: [], invitations: [invitation()] });
+    enterprise.accept.mockRejectedValueOnce(new Error("RPC response lost before a regional commit"));
     const ids = [operationId, freshActivationId, createdWorkspaceId, retryOperationId];
-    const subject = new PlatformOnboardingService(environment(database, eu), auth, {
+    const subject = new PlatformOnboardingService(environment(database, enterprise), auth, {
       gateways: { global },
       bindings,
       operations: new MemoryOperationStore(),
       newId: () => ids.shift() ?? retryOperationId,
     });
 
-    await expect(subject.acceptInvitation(invitationId, "eu"))
+    await expect(subject.acceptInvitation(invitationId, "enterprise"))
       .rejects.toMatchObject({ status: 503, code: "regional_onboarding_unavailable" });
     expect(bindings.row).toMatchObject({ status: "pending", operation_id: operationId });
 
     now = new Date("2026-08-01T13:00:00.000Z");
-    await expect(subject.acceptInvitation(invitationId, "eu"))
+    await expect(subject.acceptInvitation(invitationId, "enterprise"))
       .rejects.toMatchObject({ status: 409, code: "workspace_setup_in_progress" });
-    expect(eu.accept).toHaveBeenCalledTimes(1);
+    expect(enterprise.accept).toHaveBeenCalledTimes(1);
 
     await expect(subject.createWorkspace("Another Organization", "global"))
       .rejects.toMatchObject({ status: 409, code: "workspace_binding_conflict" });
@@ -651,80 +651,80 @@ describe("single-platform regional onboarding", () => {
     expect(bindings.row).toMatchObject({
       status: "pending",
       operation_id: operationId,
-      region: "eu",
-      workspace_id: euWorkspaceId,
+      region: "enterprise",
+      workspace_id: enterpriseWorkspaceId,
     });
   });
 
-  it("activates a fail-closed reservation when later discovery observes the delayed EU commit", async () => {
+  it("activates a fail-closed reservation when later discovery observes the delayed enterprise commit", async () => {
     const database = new IdentityDatabase();
     const bindings = new MemoryBindingStore();
     const global = new FakeRegionalGateway("global");
-    const eu = new FakeRawRegionalBridge({ region: "eu", workspaces: [], invitations: [invitation()] });
-    eu.accept.mockRejectedValueOnce(new Error("RPC response lost before discovery observed the commit"));
+    const enterprise = new FakeRawRegionalBridge({ region: "enterprise", workspaces: [], invitations: [invitation()] });
+    enterprise.accept.mockRejectedValueOnce(new Error("RPC response lost before discovery observed the commit"));
     const ids = [operationId, retryOperationId, freshActivationId];
-    const subject = new PlatformOnboardingService(environment(database, eu), auth, {
+    const subject = new PlatformOnboardingService(environment(database, enterprise), auth, {
       gateways: { global },
       bindings,
       operations: new MemoryOperationStore(),
       newId: () => ids.shift() ?? freshActivationId,
     });
 
-    await expect(subject.acceptInvitation(invitationId, "eu"))
+    await expect(subject.acceptInvitation(invitationId, "enterprise"))
       .rejects.toMatchObject({ status: 503, code: "regional_onboarding_unavailable" });
     expect(bindings.row).toMatchObject({ status: "pending", operation_id: operationId });
 
-    eu.discover.mockResolvedValue({
+    enterprise.discover.mockResolvedValue({
       ok: true,
-      value: { region: "eu", workspaces: [workspace("eu", euWorkspaceId)], invitations: [] },
+      value: { region: "enterprise", workspaces: [workspace("enterprise", enterpriseWorkspaceId)], invitations: [] },
     });
     await expect(subject.state()).resolves.toEqual({
-      workspace: workspace("eu", euWorkspaceId),
-      workspaces: [workspace("eu", euWorkspaceId)],
+      workspace: workspace("enterprise", enterpriseWorkspaceId),
+      workspaces: [workspace("enterprise", enterpriseWorkspaceId)],
       invitations: [],
     });
     expect(bindings.row).toMatchObject({ status: "active", operation_id: operationId });
 
-    await expect(subject.activate("eu", euWorkspaceId)).resolves.toEqual(session("eu", euWorkspaceId));
-    expect(eu.activate).toHaveBeenCalledWith(expect.objectContaining({
+    await expect(subject.activate("enterprise", enterpriseWorkspaceId)).resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
+    expect(enterprise.activate).toHaveBeenCalledWith(expect.objectContaining({
       operationId: retryOperationId,
-      workspaceId: euWorkspaceId,
+      workspaceId: enterpriseWorkspaceId,
     }));
   });
 
-  it("recovers an ambiguous invite response by discovering the committed EU membership", async () => {
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    eu.accept.mockImplementationOnce(async () => {
-      eu.discovery = { region: "eu", workspaces: [workspace("eu", euWorkspaceId)], invitations: [] };
+  it("recovers an ambiguous invite response by discovering the committed enterprise membership", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    enterprise.accept.mockImplementationOnce(async () => {
+      enterprise.discovery = { region: "enterprise", workspaces: [workspace("enterprise", enterpriseWorkspaceId)], invitations: [] };
       throw new Error("RPC response lost");
     });
-    const subject = service({ eu, ids: [operationId] });
+    const subject = service({ enterprise, ids: [operationId] });
 
-    await expect(subject.value.acceptInvitation(invitationId, "eu")).resolves.toEqual(session("eu", euWorkspaceId));
-    expect(eu.activate).toHaveBeenCalledWith(expect.objectContaining({ operationId, workspaceId: euWorkspaceId }));
+    await expect(subject.value.acceptInvitation(invitationId, "enterprise")).resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
+    expect(enterprise.activate).toHaveBeenCalledWith(expect.objectContaining({ operationId, workspaceId: enterpriseWorkspaceId }));
     expect(subject.bindings.row?.status).toBe("active");
   });
 
   it.each(["create", "accept"])(
     "recovers a lost %s response on the next login with a fresh activation operation",
     async () => {
-      const eu = new FakeRegionalGateway("eu", { workspaces: [workspace("eu", euWorkspaceId)] });
+      const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
       const bindings = new MemoryBindingStore({
         platform_user_id: platformUserId,
-        region: "eu",
-        workspace_id: euWorkspaceId,
+        region: "enterprise",
+        workspace_id: enterpriseWorkspaceId,
         placement_affinity: "weur",
         status: "active",
         operation_id: operationId,
         pending_expires_at: null,
       });
-      const subject = service({ eu, bindings, ids: [freshActivationId] });
+      const subject = service({ enterprise, bindings, ids: [freshActivationId] });
 
-      await expect(subject.value.state()).resolves.toMatchObject({ workspace: { id: euWorkspaceId } });
-      await expect(subject.value.activate("eu", euWorkspaceId)).resolves.toEqual(session("eu", euWorkspaceId));
-      expect(eu.activate).toHaveBeenCalledWith(expect.objectContaining({
+      await expect(subject.value.state()).resolves.toMatchObject({ workspace: { id: enterpriseWorkspaceId } });
+      await expect(subject.value.activate("enterprise", enterpriseWorkspaceId)).resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
+      expect(enterprise.activate).toHaveBeenCalledWith(expect.objectContaining({
         operationId: freshActivationId,
-        workspaceId: euWorkspaceId,
+        workspaceId: enterpriseWorkspaceId,
       }));
       expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(false);
     },
@@ -733,13 +733,13 @@ describe("single-platform regional onboarding", () => {
   it("replays a create request with the same client operation without duplicating the workspace", async () => {
     const subject = service({ ids: [createdWorkspaceId, freshActivationId] });
 
-    await expect(subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId))
-      .resolves.toEqual(session("eu", createdWorkspaceId));
-    await expect(subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId))
-      .resolves.toEqual(session("eu", createdWorkspaceId));
+    await expect(subject.value.createWorkspace("Enterprise Lab", "enterprise", undefined, operationId))
+      .resolves.toEqual(session("enterprise", createdWorkspaceId));
+    await expect(subject.value.createWorkspace("Enterprise Lab", "enterprise", undefined, operationId))
+      .resolves.toEqual(session("enterprise", createdWorkspaceId));
 
-    expect(subject.eu.create).toHaveBeenCalledTimes(1);
-    expect(subject.eu.activate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(subject.enterprise.create).toHaveBeenCalledTimes(1);
+    expect(subject.enterprise.activate).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: createdWorkspaceId,
     }));
     expect(subject.bindings.rows.filter((row) => row.workspace_id === createdWorkspaceId)).toHaveLength(1);
@@ -748,10 +748,10 @@ describe("single-platform regional onboarding", () => {
   it("rejects reusing a client operation for different create input", async () => {
     const subject = service({ ids: [createdWorkspaceId] });
 
-    await subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId);
-    await expect(subject.value.createWorkspace("Different Lab", "eu", undefined, operationId))
+    await subject.value.createWorkspace("Enterprise Lab", "enterprise", undefined, operationId);
+    await expect(subject.value.createWorkspace("Different Lab", "enterprise", undefined, operationId))
       .rejects.toMatchObject({ status: 409, code: "onboarding_operation_conflict" });
-    expect(subject.eu.create).toHaveBeenCalledTimes(1);
+    expect(subject.enterprise.create).toHaveBeenCalledTimes(1);
   });
 
   it("creates another workspace while an existing membership remains active", async () => {
@@ -766,8 +766,8 @@ describe("single-platform regional onboarding", () => {
     });
     const subject = service({ bindings, ids: [createdWorkspaceId] });
 
-    await expect(subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId))
-      .resolves.toEqual(session("eu", createdWorkspaceId));
+    await expect(subject.value.createWorkspace("Enterprise Lab", "enterprise", undefined, operationId))
+      .resolves.toEqual(session("enterprise", createdWorkspaceId));
     expect(subject.bindings.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ workspace_id: globalWorkspaceId, status: "active" }),
       expect.objectContaining({ workspace_id: createdWorkspaceId, status: "active" }),
@@ -787,34 +787,34 @@ describe("single-platform regional onboarding", () => {
     const global = new FakeRegionalGateway("global", {
       workspaces: [workspace("global", globalWorkspaceId)],
     });
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    const subject = service({ bindings, global, eu });
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    const subject = service({ bindings, global, enterprise });
 
-    await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
-      .resolves.toEqual(session("eu", euWorkspaceId));
+    await expect(subject.value.acceptInvitation(invitationId, "enterprise", operationId))
+      .resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
     expect(subject.bindings.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ workspace_id: globalWorkspaceId, status: "active" }),
-      expect.objectContaining({ workspace_id: euWorkspaceId, status: "active" }),
+      expect.objectContaining({ workspace_id: enterpriseWorkspaceId, status: "active" }),
     ]));
   });
 
   it("reactivates an inactive route when membership is accepted again", async () => {
     const bindings = new MemoryBindingStore({
       platform_user_id: platformUserId,
-      region: "eu",
-      workspace_id: euWorkspaceId,
+      region: "enterprise",
+      workspace_id: enterpriseWorkspaceId,
       placement_affinity: "weur",
       status: "inactive",
       operation_id: retryOperationId,
       pending_expires_at: null,
     });
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    const subject = service({ bindings, eu });
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    const subject = service({ bindings, enterprise });
 
-    await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
-      .resolves.toEqual(session("eu", euWorkspaceId));
+    await expect(subject.value.acceptInvitation(invitationId, "enterprise", operationId))
+      .resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
     expect(subject.bindings.row).toMatchObject({
-      workspace_id: euWorkspaceId,
+      workspace_id: enterpriseWorkspaceId,
       status: "active",
       operation_id: operationId,
     });
@@ -823,29 +823,29 @@ describe("single-platform regional onboarding", () => {
   it("reconciles a stale active route before accepting a new invitation to that workspace", async () => {
     const bindings = new MemoryBindingStore({
       platform_user_id: platformUserId,
-      region: "eu",
-      workspace_id: euWorkspaceId,
+      region: "enterprise",
+      workspace_id: enterpriseWorkspaceId,
       placement_affinity: "weur",
       status: "active",
       operation_id: retryOperationId,
       pending_expires_at: null,
     });
-    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    eu.activate.mockRejectedValue(new ApiError(403, "workspace_access_denied", "Workspace access is unavailable"));
-    const subject = service({ bindings, eu });
+    const enterprise = new FakeRegionalGateway("enterprise", { invitations: [invitation()] });
+    enterprise.activate.mockRejectedValue(new ApiError(403, "workspace_access_denied", "Workspace access is unavailable"));
+    const subject = service({ bindings, enterprise });
 
-    await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
-      .resolves.toEqual(session("eu", euWorkspaceId));
+    await expect(subject.value.acceptInvitation(invitationId, "enterprise", operationId))
+      .resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
 
-    expect(eu.accept).toHaveBeenCalledWith(expect.objectContaining({
+    expect(enterprise.accept).toHaveBeenCalledWith(expect.objectContaining({
       invitationId,
       operationId,
-      workspaceId: euWorkspaceId,
+      workspaceId: enterpriseWorkspaceId,
     }));
-    expect(eu.activate).not.toHaveBeenCalled();
+    expect(enterprise.activate).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the named EU bridge binding is unavailable", () => {
+  it("fails closed when the named enterprise bridge binding is unavailable", () => {
     const database = new IdentityDatabase();
     expect(() => new PlatformOnboardingService(environment(database), auth, {
       gateways: { global: new FakeRegionalGateway("global") },

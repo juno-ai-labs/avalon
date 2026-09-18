@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 import {
@@ -15,6 +16,19 @@ import {
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflowPath = join(repositoryDirectory, '.github/workflows/release-desktop-macos.yml');
+
+test('the packager passes the resolved provisioning profile as one builder argument', async () => {
+  const source = await readFile(join(repositoryDirectory, 'apps/desktop/scripts/package-macos.mjs'), 'utf8');
+  const expression = source.match(/const builderArgs = (\[[\s\S]*?\]);/u)?.[1];
+  assert.ok(expression);
+  const profile = '/runner/temp/Rally Developer ID.provisionprofile';
+  const args = runInNewContext(expression, {
+    configFile: 'electron-builder.yml',
+    stagingDirectory: '/release/staging',
+    process: { env: { RALLY_MAC_PROVISIONING_PROFILE_PATH: profile } },
+  });
+  assert.ok(args.includes(`--config.mac.provisioningProfile=${profile}`));
+});
 
 test('a new release supersedes pending ones without cancelling a running one', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
@@ -67,9 +81,12 @@ test('the macOS runner is only claimed after the frozen release commit passes Ub
   assert.match(releaseJob, /ref: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
 
   for (const step of ['Lint', 'Typecheck', 'Test', 'Run release invariants']) {
-    assert.match(verifyJob, new RegExp(`- name: ${step}`, 'u'), `${step} must run on Ubuntu`);
-    assert.doesNotMatch(releaseJob, new RegExp(`- name: ${step}`, 'u'), `${step} must not spend macOS time`);
+    assert.match(verifyJob, new RegExp(`- name: ${step}$`, 'mu'), `${step} must run on Ubuntu`);
+    assert.doesNotMatch(releaseJob, new RegExp(`- name: ${step}$`, 'mu'), `${step} must not spend macOS time`);
   }
+  const macTests = releaseJob.indexOf('run: pnpm --filter @rally/desktop test:release');
+  assert.ok(macTests !== -1 && macTests < releaseJob.indexOf('- name: Import the Developer ID identity'),
+    'Platform-specific release tests must run before signing');
 });
 
 test('the app is health-gated against the regional APIs before it is distributed', async () => {
@@ -155,7 +172,7 @@ test('the packaged Crashpad fixture cannot expire before its upload assertion', 
   );
 });
 
-test('private telemetry artifacts are published to both isolated regional telemetry buckets but excluded from the app', async () => {
+test('private telemetry artifacts are published to the configured telemetry bucket but excluded from the app', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const builder = await readFile(join(repositoryDirectory, 'apps/desktop/electron-builder.yml'), 'utf8');
   const built = workflow.indexOf('- name: Build, sign, notarize, staple, and verify');
@@ -164,8 +181,7 @@ test('private telemetry artifacts are published to both isolated regional teleme
 
   assert.match(builder, /- "!out\/\*\*\/\*\.map"/u);
   assert.match(workflow, /RALLY_GLOBAL_TELEMETRY_R2_BUCKET:/u);
-  assert.match(workflow, /RALLY_EU_TELEMETRY_R2_BUCKET:/u);
-  assert.doesNotMatch(workflow, /RALLY_(?:GLOBAL|EU)_PAYLOADS_R2_BUCKET:/u);
+  assert.doesNotMatch(workflow, /RALLY_GLOBAL_PAYLOADS_R2_BUCKET:/u);
   assert.match(workflow, /cargo install dump_syms --version 2\.3\.7 --locked/u);
   assert.match(workflow, /pnpm --filter @rally\/desktop telemetry:publish-artifacts/u);
   assert.ok(built < symbols, 'symbols must be extracted from the exact packaged application');
@@ -666,4 +682,21 @@ test('the Ubuntu verification job can write and freeze the version bump', async 
   assert.match(verifyJob, /^ {4}permissions:\n {6}contents: write$/mu);
   assert.match(verifyJob, /^ {4}outputs:\n {6}release_commit: \$\{\{ steps\.release_commit\.outputs\.sha \}\}$/mu);
   assert.match(verifyJob, /git push origin HEAD:main/u);
+});
+
+
+test('job-level environment expressions use only pre-runner contexts', async () => {
+  const directory = join(repositoryDirectory, '.github/workflows');
+  for (const file of await readdir(directory)) {
+    if (!/\.ya?ml$/u.test(file)) continue;
+    const lines = (await readFile(join(directory, file), 'utf8')).split('\n');
+    let inJobEnvironment = false;
+    for (const [index, line] of lines.entries()) {
+      if (/^ {4}env:\s*$/u.test(line)) { inJobEnvironment = true; continue; }
+      if (!inJobEnvironment) continue;
+      if (line.trim() && !/^ {6}/u.test(line)) { inJobEnvironment = false; continue; }
+      assert.doesNotMatch(line, /\$\{\{[^}]*\b(?:runner|steps|job|env)\./u,
+        `${file}:${index + 1}: job-level env cannot use a per-step context`);
+    }
+  }
 });

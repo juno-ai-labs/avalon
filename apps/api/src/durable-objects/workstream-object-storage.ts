@@ -1,6 +1,9 @@
+import type { Region } from "@rally/contracts/regions";
 import { ConversationParentKindSchema, type ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AgentCompactionStateSchema,
+  InferenceDelayStateSchema,
+  type InferenceDelayState,
   ActiveStreamCheckpointsSchema,
   ServerSocketEventSchema,
   asWorkspaceId,
@@ -79,7 +82,7 @@ interface AuthorityRow extends Record<string, SqlStorageValue> {
   workstream_key: string;
   parent_workspace_key: string;
   parent_kind: ConversationParentKind;
-  region: "global" | "eu";
+  region: Region;
   authority_mode: string;
   authority_generation: number;
 }
@@ -296,6 +299,45 @@ function readActiveCompaction(storage: DurableObjectStorage): AgentCompactionSta
   return parsed.success ? parsed.data : null;
 }
 
+/** A settled inference keeps a tombstone until its run ends, rejecting late notices. */
+function applyInferenceDelayEvent(storage: DurableObjectStorage, event: ServerSocketEvent): ServerSocketEvent {
+  if (event.type === "harness_status_changed" && event.status !== "running") {
+    storage.sql.exec(`DELETE FROM inference_delay_status`);
+  }
+  if (event.type !== "inference_delay_changed") return event;
+  const owned = first(storage.sql.exec<{ run_id: string }>(
+    `SELECT execution.run_id FROM runs execution JOIN runs root ON root.run_id = ?
+     WHERE execution.run_id = ? AND execution.legacy_attempt_id = ?
+       AND execution.status = 'running' AND root.status = 'running'
+       AND root.legacy_attempt_id = ? AND root.lease_expires_at > ?
+       AND execution.lease_expires_at > ?
+       AND (execution.run_id = root.run_id OR execution.chain_root_run_id = root.run_id)`,
+    event.harnessRunId, event.executionId, event.attemptId, event.parentAttemptId ?? event.attemptId, Date.now(), Date.now(),
+  ));
+  if (!owned) {
+    // Settlement can race lease renewal. Clear its own checkpoint even while
+    // the lease is expired, so a subsequent renewal cannot restore the notice.
+    if (!event.active) storage.sql.exec(
+      `UPDATE inference_delay_status SET active = 0
+       WHERE inference_request_id = ? AND run_id = ? AND execution_id = ? AND attempt_id = ?`,
+      event.inferenceRequestId, event.harnessRunId, event.executionId, event.attemptId,
+    );
+    return { ...event, active: false };
+  }
+  storage.sql.exec(
+    `INSERT INTO inference_delay_status
+       (inference_request_id, run_id, execution_id, root_attempt_id, attempt_id, turn_id, active)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(inference_request_id) DO UPDATE SET active = MIN(inference_delay_status.active, excluded.active)`,
+    event.inferenceRequestId, event.harnessRunId, event.executionId, event.parentAttemptId ?? event.attemptId, event.attemptId, event.turnId,
+    event.active ? 1 : 0,
+  );
+  const row = first(storage.sql.exec<{ active: number }>(
+    `SELECT active FROM inference_delay_status WHERE inference_request_id = ?`, event.inferenceRequestId,
+  ));
+  return { ...event, active: row?.active === 1 };
+}
+
 function applyActiveCompactionEvent(
   storage: DurableObjectStorage,
   event: ServerSocketEvent,
@@ -415,7 +457,7 @@ function writeActiveStreamCheckpoints(
 function insertIdentity(
   storage: DurableObjectStorage,
   identity: WorkstreamObjectIdentity,
-  region: "global" | "eu",
+  region: Region,
   now: number,
 ): void {
   const existing = first(storage.sql.exec<{
@@ -482,7 +524,7 @@ export class WorkstreamObjectStore {
   constructor(
     private readonly storage: DurableObjectStorage,
     workerVersionId: string,
-    _region: "global" | "eu",
+    _region: Region,
   ) {
     void _region;
     applyWorkstreamObjectSchema(storage, workerVersionId);
@@ -493,7 +535,7 @@ export class WorkstreamObjectStore {
     return this.ready;
   }
 
-  ensureIdentity(identity: WorkstreamObjectIdentity, region: "global" | "eu"): void {
+  ensureIdentity(identity: WorkstreamObjectIdentity, region: Region): void {
     this.storage.transactionSync(() => insertIdentity(this.storage, identity, region, Date.now()));
   }
 
@@ -617,7 +659,8 @@ export class WorkstreamObjectStore {
       ));
       const current = row?.event_sequence ?? 0;
       const sequence = Math.max(current + 1, requestedSequence ?? 0);
-      const event = ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence });
+      const parsedEvent = ServerSocketEventSchema.parse({ ...unsequencedEvent, sequence });
+      const event = applyInferenceDelayEvent(this.storage, parsedEvent);
       this.storage.sql.exec(
         `INSERT INTO realtime_state(id, event_sequence, updated_at) VALUES (1, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
@@ -638,6 +681,28 @@ export class WorkstreamObjectStore {
 
   activeStreamCheckpoints(): ActiveStreamCheckpoint[] {
     return readActiveStreamCheckpoints(this.storage);
+  }
+
+  activeInferenceDelays(): InferenceDelayState[] {
+    return this.storage.sql.exec<{
+      run_id: string; execution_id: string; root_attempt_id: string; attempt_id: string; inference_request_id: string; turn_id: string;
+    }>(
+      `SELECT delay.run_id, delay.execution_id, delay.root_attempt_id, delay.attempt_id, delay.inference_request_id, delay.turn_id
+       FROM inference_delay_status delay
+       JOIN runs execution ON execution.run_id = delay.execution_id
+       JOIN runs root ON root.run_id = delay.run_id
+       WHERE delay.active = 1 AND execution.status = 'running' AND root.status = 'running'
+         AND EXISTS (SELECT 1 FROM workstream WHERE id = 1 AND exact_state = 'running')
+         AND root.run_id = (SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
+                            ORDER BY created_at DESC, run_id DESC LIMIT 1)
+         AND root.legacy_attempt_id = delay.root_attempt_id AND root.lease_expires_at > ?
+         AND execution.legacy_attempt_id = delay.attempt_id AND execution.lease_expires_at > ?
+       ORDER BY delay.inference_request_id`, Date.now(), Date.now(),
+    ).toArray().map((row) => InferenceDelayStateSchema.parse({
+      harnessRunId: row.run_id, executionId: row.execution_id, attemptId: row.attempt_id,
+      ...(row.execution_id !== row.run_id ? { parentAttemptId: row.root_attempt_id } : {}),
+      inferenceRequestId: row.inference_request_id, turnId: row.turn_id,
+    }));
   }
 
   activeCompaction(): AgentCompactionState | null {

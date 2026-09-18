@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Walks both local regional D1 authorities from `legacy_open` to
+// Walks the configured local D1 authorities from `legacy_open` to
 // `durable_object_open`, so a freshly migrated-and-seeded local stack runs the
 // same post-cutover model production runs. Without this, local development
 // exercises the legacy path and none of the Durable-Object-authority code —

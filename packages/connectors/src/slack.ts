@@ -1,3 +1,6 @@
+import { describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
+import { RegionSchema } from "@rally/contracts/regions";
+import { nextCursorPage, paginatedResult } from "./tool-pagination";
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
@@ -154,6 +157,8 @@ function tool(
   return {
     name,
     description,
+    ...(["search", "search_messages", "read_channel", "read_thread", "list_channel_members"].includes(name)
+      ? { pagination: { cursorParameter: "cursor" } } : {}),
     capability,
     mode,
     idempotency: mode === "read" ? "safe" : "record_before_execute",
@@ -168,14 +173,15 @@ const id = { type: "string", minLength: 1 };
  * failing the call.
  *
  * Cursors used to share this and no longer do. It keeps the flat
- * `type: ["string", "null"]`, which Bind's sanitizer collapses, so a caller
- * that will not omit `channel_id` cannot spell "no filter" as a value either
- * and a `minLength: 1` floor is all it is left with. That is the same shape as
- * the cursor failure and it is deliberately not fixed here: absence means
- * "do not filter by this" rather than "start at the beginning", and what a
- * caller should be told to send instead is a decision per parameter rather than
- * a spelling change. It is counted with the rest of that backlog in
- * [`connectors.md`](../../../docs/connectors.md).
+ * `type: ["string", "null"]`. Under Bind 13 the sanitizer collapsed that to
+ * `type: "string"`, so a caller that would not omit `channel_id` could not
+ * spell "no filter" as a value either, and `send_message.thread_ts` in that
+ * shape is what a scheduled Sidekick invented values for (the Sidekick
+ * delivery PRD's `research.md` has the record). Since Bind 14 the flat form
+ * reaches the model as `anyOf` with a null branch, and
+ * `apps/api/test/tool-schema-sanitization.test.ts` asserts that for every
+ * declaration of every tool. What each of these means by `null`, "do not
+ * filter by this", "no thread", is still the description's to say.
  */
 const optionalId = { type: ["string", "null"], minLength: 1 };
 const query = { type: "string", minLength: 1 };
@@ -186,7 +192,8 @@ const boundedLimit = { type: "integer", minimum: 1, maximum: 100 };
  * The description says where the value comes from and the `anyOf` spelling
  * makes "no cursor" a value the caller can send; `GOOGLE_PAGE_TOKEN_SCHEMA` in
  * [`index.ts`](index.ts) has why neither half works alone, and why the flat
- * `type: ["string", "null"]` these used to carry never reached the model.
+ * `type: ["string", "null"]` these used to carry never reached the model under
+ * Bind 13.
  *
  * `optionalId` cannot carry any of it. It also stands in for channel and user
  * ids, which come from somewhere else entirely, so a cursor's wording on it
@@ -331,7 +338,7 @@ export const slackTools: ToolDefinition[] = [
   }, ["channel_id", "message_ts"]),
   tool("read_channel", "Read messages from a Slack conversation.", SlackCapabilities.messagesRead, "read", {
     channel_id: conversationId("The conversation to read."),
-    limit: { ...boundedLimit, description: "Maximum messages to return, newest first. Defaults to 50; follow `next_cursor` for older ones." },
+    limit: { ...boundedLimit, description: "Maximum messages to return, newest first. Defaults to 50." },
     cursor: unboundedCursor,
   }, ["channel_id"]),
   tool("read_thread", "Read a Slack message thread.", SlackCapabilities.messagesRead, "read", {
@@ -348,10 +355,10 @@ export const slackTools: ToolDefinition[] = [
     text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body, in Slack's mrkdwn: `*bold*`, `_italic_`, `` `code` ``, `<https://example.com|a link>`, `<@U0123ABCDEF>` to mention a person, and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
     thread_ts: { ...optionalId, description: "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation." },
   }, ["channel_id", "text"]),
-  tool("create_conversation", "Create a Slack channel, group DM, or direct message as the connected user or installed workspace bot.", SlackCapabilities.conversationsWrite, "write", {
-    name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$", description: "Create a channel with this name, written without the leading `#` and using only lowercase letters, digits, hyphens, and underscores, for example `launch-oct`. Send `null`, or omit it, and pass `user_ids` instead to open a direct or group message. Send exactly one of the two." },
-    user_ids: { type: "array", minItems: 1, maxItems: 8, items: id, description: "Open a direct or group message with these people, as Slack user ids such as `[\"U0123ABCDEF\"]`; get them from find_users. One id opens a one-to-one direct message and several open a group message. Pass `name` instead to create a channel; send exactly one of the two." },
-    is_private: { type: "boolean", description: "Create the channel private rather than public. Defaults to false. It applies only alongside `name`, and a channel's privacy cannot be changed back through these tools." },
+  tool("create_conversation", "Create a Slack channel or open a direct or group message as the connected user or installed workspace bot. Provide exactly one: `name` for a channel, or `user_ids` for a direct or group message.", SlackCapabilities.conversationsWrite, "write", {
+    name: { type: ["string", "null"], minLength: 1, maxLength: 80, pattern: "^[a-z0-9_-]+$", description: "Channel name without `#`, using lowercase letters, digits, hyphens, or underscores, for example `launch-oct`. Omit it when using `user_ids`." },
+    user_ids: { type: "array", minItems: 1, maxItems: 8, items: id, description: "One to eight Slack user IDs from `find_users`, for example `[\"U0123ABCDEF\"]`. One ID opens a direct message; multiple IDs open a group message. Omit it when using `name`." },
+    is_private: { type: "boolean", description: "Whether a channel created with `name` is private. Defaults to false and is ignored for direct and group messages. Channel privacy cannot be changed later through these tools." },
   }),
   tool("add_reaction", "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.", SlackCapabilities.reactionsWrite, "write", {
     channel_id: conversationId("The conversation holding the message to react to."),
@@ -363,7 +370,7 @@ export const slackTools: ToolDefinition[] = [
   }, ["user_id"]),
   tool("list_channel_members", "List members of a Slack conversation.", SlackCapabilities.usersRead, "read", {
     channel_id: conversationId("The conversation whose members to list."),
-    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum member ids to return in one page. Defaults to 200; follow `next_cursor` for the rest." },
+    limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum member ids to return in one page. Defaults to 200." },
     cursor: unboundedCursor,
   }, ["channel_id"]),
 ];
@@ -534,7 +541,7 @@ export function normalizeSlackActivity(
 
   return {
     workspaceId: connection.workspaceId,
-    region: connection.config.region === "eu" ? "eu" : "global",
+    region: RegionSchema.parse(connection.config.region ?? "global"),
     connectionId: connection.id,
     connectionScope: connection.scope,
     connectionOwnerUserId: connection.ownerUserId,
@@ -1205,7 +1212,7 @@ const SlackDirectInputSchemas = {
     thread_ts: SlackTimestampSchema.nullable().optional(),
   }),
   create_conversation: z.strictObject({
-    name: z.string().min(1).max(80).nullable().optional(),
+    name: z.string().min(1).max(80).regex(/^[a-z0-9_-]+$/u).nullable().optional(),
     user_ids: z.array(SlackIdSchema).min(1).max(8).optional(),
     is_private: z.boolean().optional(),
   }).superRefine((value, context) => {
@@ -1214,7 +1221,7 @@ const SlackDirectInputSchemas = {
     if (hasName === hasUsers) {
       context.addIssue({
         code: "custom",
-        message: "Provide either name for a channel or user_ids for a DM, but not both",
+        message: "Provide exactly one: name for a channel, or user_ids for a direct or group message",
       });
     }
   }),
@@ -1401,7 +1408,13 @@ async function slackApiResponse<M extends SlackWebApiMethod>(
   }
   const response = definition.response.safeParse(payload);
   if (!response.success) {
-    throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, response.error.flatten());
+    // Every reason helper on the API side reads `responseIssues` before
+    // falling back to `provider_error`; without it a malformed body reached
+    // the ingress job and the connection row as the word `provider_error`.
+    throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, {
+      ...response.error.flatten(),
+      responseIssues: codeShaped(describeZodIssues(response.error)),
+    });
   }
   const rawScopes = responseWithMetadata.headers.get("x-oauth-scopes");
   return {
@@ -1557,7 +1570,15 @@ function parseSlackSuccess<T extends z.ZodType>(
     );
   }
   const result = schema.safeParse(payload);
-  if (!result.success) throw new ConnectorError("provider_error", fallbackMessage, result.error.flatten());
+  // The flatten's shape is what tells a schema mismatch from a provider
+  // refusal downstream; the paths say which field the body was missing. The
+  // values, which on this surface are tokens and identity, are in neither.
+  if (!result.success) {
+    throw new ConnectorError("provider_error", fallbackMessage, {
+      ...result.error.flatten(),
+      responseIssues: codeShaped(describeZodIssues(result.error)),
+    });
+  }
   return result.data;
 }
 
@@ -1586,10 +1607,12 @@ async function slackOAuthCallbackStage<T>(
       throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
     }
     if (error instanceof z.ZodError) {
+      // The paths say which field the response was missing; the values, which
+      // on this surface are tokens and account identity, stay behind.
       throw new ConnectorError(
         "provider_error",
         "Slack returned an unexpected OAuth response",
-        { oauthStage, responseInvalid: true },
+        { oauthStage, responseInvalid: true, responseIssues: codeShaped(describeZodIssues(error)) },
       );
     }
     if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
@@ -1635,7 +1658,7 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 20,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return { output: slackSearchPage(result.results), summary: "Searched Slack messages, files, channels, and users" };
+      return nextCursorPage(name, args, slackSearchPage(result.results), "Searched Slack messages, files, channels, and users");
     }
     case "search_messages": {
       const args = SlackDirectInputSchemas.search_messages.parse(rawArgs);
@@ -1657,7 +1680,7 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 20,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return { output: slackSearchPage(result.results), summary: "Searched Slack messages" };
+      return nextCursorPage(name, args, slackSearchPage(result.results), "Searched Slack messages");
     }
     case "find_users": {
       const args = SlackDirectInputSchemas.find_users.parse(rawArgs);
@@ -1681,14 +1704,13 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 50,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return {
+      return paginatedResult(name, args, {
         output: {
           messages: result.messages,
           has_more: result.has_more ?? false,
-          next_cursor: result.response_metadata?.next_cursor || null,
         },
         summary: `Read ${result.messages.length} messages from Slack conversation ${args.channel_id}`,
-      };
+      }, "cursor", result.response_metadata?.next_cursor || null);
     }
     case "read_thread": {
       const args = SlackDirectInputSchemas.read_thread.parse(rawArgs);
@@ -1698,14 +1720,13 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 100,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return {
+      return paginatedResult(name, args, {
         output: {
           messages: result.messages,
           has_more: result.has_more ?? false,
-          next_cursor: result.response_metadata?.next_cursor || null,
         },
         summary: `Read ${result.messages.length} messages from a Slack thread`,
-      };
+      }, "cursor", result.response_metadata?.next_cursor || null);
     }
     case "read_file": {
       const args = SlackDirectInputSchemas.read_file.parse(rawArgs);
@@ -1777,13 +1798,12 @@ async function executeSlackDirectTool(
         limit: args.limit ?? 200,
         ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
-      return {
+      return paginatedResult(name, args, {
         output: {
           member_user_ids: result.members,
-          next_cursor: result.response_metadata?.next_cursor || null,
         },
         summary: `Listed ${result.members.length} Slack conversation members`,
-      };
+      }, "cursor", result.response_metadata?.next_cursor || null);
     }
   }
 }

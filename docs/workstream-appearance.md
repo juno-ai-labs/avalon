@@ -163,8 +163,6 @@ legs and asserts the merge, the refusal, and the value on both directory
 listings. Inspect the actual Electron popup in light and dark,
 including scrolling, and check another connected window and reopening.
 
-## Changelog
-
 ### 2026-09-10 — A Sidekick picks from the same palette, and the picker stopped belonging to work streams
 
 **What changed:** The Sidekick profile's hexagon became the trigger for this

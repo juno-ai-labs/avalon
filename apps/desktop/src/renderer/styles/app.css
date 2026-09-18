@@ -217,6 +217,105 @@ pre {
   animation-timeline: scroll(self inline);
 }
 
+/* The same fade, at the edges of a rail that clips its items rather than a
+   line that clips its last characters. The work-stream list and the work-stream
+   sidebar scroll vertically; the Sidekick strip under the list scrolls
+   sideways. A hard cut there is the same rendering fault the line fade exists
+   to avoid, just on the other axis of the same rails.
+
+   The mask still appears only when something is actually clipped. An
+   unconditional four-stop gradient would fade the first and last items of a
+   list that fits, which is the case the line fade's inactive timeline already
+   refuses. The cover animation is that question asked of the scroller itself:
+   no overflow, no timeline, no mask.
+
+   The two lengths are the part that has to move. At the start of the overflow
+   only the far edge should fade — items are beginning to disappear ahead, not
+   behind — and at the end only the near edge. Interpolating a three-stop
+   "far fade" into a three-stop "near fade" does not produce both fades in the
+   middle; the shared stop travels through the scroller and the list looks
+   washed out. Registered lengths grow the near fade over the first 24px of
+   travel and shrink the far fade over the last 24px, which is the same extent
+   a clipped line uses, so a row that is starting to leave the scroller fades
+   the same way its title fades when it cannot fit.
+
+   The cover holds one mask at both ends because it is still a question about
+   overflow, not a clock. The start and end animations *are* clocks, and the
+   global reduced-motion block's `0.001ms` duration would pin them to their
+   100% keyframes (near fade on, far fade off) no matter where the scroller
+   sits. Those three durations have to stay `auto` under that preference —
+   this is not motion — which is why the restore in the global reduced-motion
+   block is `!important` and why the test pins it. The line fade can live with
+   the kill switch because its two keyframes are the same value; these cannot.
+
+   Same ordering trap as the line fade, plus `animation-range`, which the
+   shorthand also resets. All three longhands stay below it.
+
+   The mask does not spare a focus ring. Tab and this rail's own
+   `scrollIntoView({ block: 'nearest' })` both park a row flush with the
+   scrollport edge, which is exactly the 24px the fade owns, so
+   `scroll-padding` on the same axis keeps the indicator out of the band. */
+@property --clipped-scroll-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --clipped-scroll-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes clipped-scroll-fade-block {
+  0%, 100% {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 var(--clipped-scroll-fade-start),
+      #000 calc(100% - var(--clipped-scroll-fade-end)),
+      transparent
+    );
+  }
+}
+
+@keyframes clipped-scroll-fade-inline {
+  0%, 100% {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--clipped-scroll-fade-start),
+      #000 calc(100% - var(--clipped-scroll-fade-end)),
+      transparent
+    );
+  }
+}
+
+@keyframes clipped-scroll-fade-start {
+  0% { --clipped-scroll-fade-start: 0px; }
+  100% { --clipped-scroll-fade-start: 24px; }
+}
+
+@keyframes clipped-scroll-fade-end {
+  0% { --clipped-scroll-fade-end: 24px; }
+  100% { --clipped-scroll-fade-end: 0px; }
+}
+
+:is(.sidebar-scroll, .workstream-context-scroll) {
+  scroll-padding-block: 24px;
+  animation: clipped-scroll-fade-block linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
+  animation-duration: auto, auto, auto;
+  animation-timeline: scroll(self block), scroll(self block), scroll(self block);
+  animation-range: normal, 0px 24px, calc(100% - 24px) 100%;
+}
+
+.sidebar .sidebar-automation-strip {
+  scroll-padding-inline: 24px;
+  animation: clipped-scroll-fade-inline linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
+  animation-duration: auto, auto, auto;
+  animation-timeline: scroll(self inline), scroll(self inline), scroll(self inline);
+  animation-range: normal, 0px 24px, calc(100% - 24px) 100%;
+}
+
 .rally-mark {
   background: currentColor;
   color: var(--av-sys-color-brand-ink);
@@ -340,6 +439,22 @@ pre {
 .icon-button-danger[data-state='open']:not(:disabled),
 .icon-button-danger:focus-visible {
   background: color-mix(in srgb, var(--av-sys-color-danger-base) 13%, var(--av-sys-color-surface-raised));
+  color: var(--av-sys-color-danger-base);
+}
+
+/* A copy control's outcome lives in its glyph: after the click the tooltip is
+   closed and the glyph is what the person is looking at, so the check and the
+   alert take a colour that says which one it is, through hover and focus alike
+   so the state does not vanish under the pointer that produced it. */
+.copy-button-copied,
+.copy-button-copied:hover:not(:disabled),
+.copy-button-copied:focus-visible {
+  color: var(--av-sys-color-success-base);
+}
+
+.copy-button-failed,
+.copy-button-failed:hover:not(:disabled),
+.copy-button-failed:focus-visible {
   color: var(--av-sys-color-danger-base);
 }
 
@@ -2607,8 +2722,9 @@ pre {
 /* Between the status dot and the name, at the row's own text colour, and sized
    through the row that owns it — a bare class here ties with `.connector-mark`
    and loses on order. The gap above spaces it from both without a rule of its
-   own. */
-.settings-connection-name .connector-mark { height: 14px; width: 14px; }
+   own. `flex: none` because a name long enough to wrap shrinks its flex
+   siblings first: the 7px dot became a 3px sliver beside a two-line name. */
+.settings-connection-name .connector-mark { flex: none; height: 14px; width: 14px; }
 .settings-connection-table td:last-child { text-align: right; }
 .settings-connection-actions { align-items: center; display: inline-flex; justify-content: flex-end; }
 .settings-connection-empty-row td { height: auto; padding: 0; }
@@ -2687,10 +2803,12 @@ pre {
 .settings-custom-mcp-header-row .form-field { margin: 0; }
 .webhook-secret-result { display: grid; gap: 10px; padding: 14px; }
 .webhook-secret-result > p { margin: 0; }
-.webhook-secret-result > .button { justify-self: start; }
 .webhook-secret-result > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); overflow-wrap: anywhere; }
-.connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 7px; width: 7px; }
-.connection-provider-dot.healthy { background: var(--av-sys-color-success-base); }
+.connection-provider-dot { background: var(--av-ref-color-neutral-7); border-radius: 50%; flex: none; height: 7px; width: 7px; }
+/* The one saturated green: `success-base` is tuned for text and fills and at
+   7px read as grey on the dark surface. The halo lifts the dot without growing
+   it, so the row's rhythm and the table's alignment stay as they were. */
+.connection-provider-dot.healthy { background: var(--av-sys-color-success-vivid); box-shadow: 0 0 0 2px color-mix(in srgb, var(--av-sys-color-success-vivid) 28%, transparent); }
 .connection-provider-dot.reconnect_required { background: var(--av-sys-color-warning-base); }
 
 .invite-form {
@@ -2954,7 +3072,15 @@ pre {
    arrow is the only thing that says this row is a substream, and at 10% it
    read as a smudge beside a title drawn in full ink. */
 .workstream-substream-arrow { color: var(--av-sys-color-text-muted); transition: opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
-.workstream-new-substream { color: var(--av-sys-color-text-muted); }
+.workstream-new-substream,
+.workstream-add-sidekick { color: var(--av-sys-color-text-muted); }
+/* The row of a substream that does not exist yet: a place held, not a
+   destination. It takes the selected background like the conversation it
+   is about to be, and none of the pointer affordances, because there is
+   nothing behind it to click through to. */
+.workstream-pending-substream { cursor: default; }
+.workstream-pending-substream:hover { background: transparent; }
+.workstream-pending-substream.is-current:hover { background: var(--av-cmp-row-background-selected); }
 .workstream-context-row:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
 .workstream-context-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; transition: flex-grow var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
 /* The navigation sidebar's row title, so the two rails read as one list. */
@@ -3249,6 +3375,17 @@ pre {
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
+.markdown-body img.markdown-link-favicon {
+  border-radius: 3px;
+  display: inline-block;
+  height: 1em;
+  margin: 0 0.3em 0 0;
+  max-width: none;
+  object-fit: contain;
+  vertical-align: -0.12em;
+  width: 1em;
+}
+.markdown-link-favicon-sentinel { display: contents; }
 /* Grok Bot keeps mentions inside the message rather than making them read like
    links: one flat rectangular chip, the identity mark, and the name. These are
    the packaged renderer's inserted-chip metrics: the negative block margins
@@ -3398,6 +3535,47 @@ pre {
   background: color-mix(in srgb, var(--av-sys-color-text-muted) 12%, transparent);
   color: var(--av-sys-color-text-muted);
 }
+
+/* Agent-requested connector action. Dimensions follow the installed Grok Bot
+   connector-card primitive; color and type stay on Rally's system tokens. */
+.connector-connection-card {
+  background: var(--av-sys-color-surface-elevated);
+  border: 1px solid var(--av-ref-color-line-3);
+  border-radius: 16px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 100%;
+  padding: 12px;
+  user-select: text;
+  width: min(100%, 720px);
+}
+.connector-connection-card-header { align-items: center; display: flex; gap: 12px; min-width: 0; }
+.connector-connection-card .provider-icon { flex: 0 0 auto; height: 40px; width: 40px; }
+.connector-connection-card .provider-icon .connector-mark { height: 24px; width: 24px; }
+.connector-connection-card-body { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
+.connector-connection-card-body > strong { font-size: 14px; font-weight: 560; line-height: 1.35; }
+.connector-connection-card-body > p {
+  color: var(--av-sys-color-text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0;
+}
+.connector-connection-card-body > small { color: var(--av-sys-color-text-disabled); font-size: 11px; line-height: 1.35; }
+.connector-connection-card-action.button { border-radius: var(--av-sys-size-radius-pill); flex: 0 0 auto; min-height: 34px; padding: 6px 14px; }
+.connector-connection-card-status {
+  align-items: center;
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 12%, transparent);
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-success-base);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 13px;
+  gap: 6px;
+  padding: 8px 14px;
+}
+.connector-connection-card > .inline-error { margin: 0 0 0 52px; }
 
 /* Citations. A chip is a mention chip's sibling in shape and its opposite in
    behaviour: a mention names an identity and never navigates, a citation names
@@ -3797,10 +3975,9 @@ pre {
 .run-failure-copy p,
 .run-stopped-copy p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .run-failure-copy code { display: block; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.run-failure-request { align-items: center; color: var(--av-sys-color-text-muted); font-size: 12px; margin-top: var(--space-1); }
 .run-failure-actions { flex-wrap: wrap; gap: var(--space-2); grid-column: 2; }
-.run-stopped-notice > .button { grid-column: 2; justify-self: start; }
-.run-failure-actions .button,
-.run-stopped-notice > .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
+.run-failure-actions .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
 /* The control rests above the composer, never in it. Both edges of the dock are
    candidates for anchoring it and only one is stable: the dock's height is the
    composer's, which grows with the draft, a queue above it or an error under it,
@@ -3871,115 +4048,6 @@ pre {
 .composer-wrap { margin: 0 auto; max-width: var(--av-cmp-feed-width); position: relative; }
 .composer-stack > .composer-wrap { margin: 0; max-width: none; width: 100%; }
 .composer-wrap > .workstream-composer { position: relative; z-index: 1; }
-.composer-queue {
-  background: var(--av-ref-color-neutral-2);
-  border: 1px solid var(--av-ref-color-line-4);
-  border-bottom: 0;
-  border-radius: var(--av-sys-size-radius-md) var(--av-sys-size-radius-md) 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  list-style: none;
-  margin: 0 10px -10px;
-  padding: 4px 4px 14px;
-  position: relative;
-  z-index: 0;
-}
-.composer-queue-row {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-height: 28px;
-  padding: 3px 6px 3px 2px;
-}
-.composer-queue-row.is-dragging { opacity: .45; }
-.composer-queue-grip {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-sm);
-  color: var(--av-sys-color-text-muted);
-  cursor: grab;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 16px;
-  justify-content: center;
-  line-height: 0;
-  opacity: 0;
-  padding: 0;
-  width: 16px;
-}
-.composer-queue-grip svg { display: block; }
-.composer-queue-row:hover .composer-queue-grip,
-.composer-queue-row:focus-within .composer-queue-grip,
-.composer-queue-row.is-dragging .composer-queue-grip { opacity: 1; }
-.composer-queue-grip:disabled { cursor: default; visibility: hidden; }
-.composer-queue-grip:active { cursor: grabbing; }
-.composer-queue-avatar {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 16px;
-  justify-content: center;
-  width: 16px;
-}
-.composer-queue-avatar .avatar-small {
-  height: 16px;
-  width: 16px;
-}
-.composer-queue-avatar .avatar-fallback { font-size: 7px; }
-.composer-queue-text {
-  color: var(--av-sys-color-text-subtle);
-  flex: 1 1 auto;
-  font-size: 12px;
-  line-height: 16px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* A queued row is one clipped line of the transcript's own Markdown renderer.
-   Flattening it here rather than in a second renderer is deliberate: the row
-   then draws the same chips, the same emphasis, and the same code spans the
-   turn will draw once it lands, and there is no parallel implementation to keep
-   in step with this one. Every block becomes inline so `nowrap` and the
-   ellipsis on the row apply to the whole message, and the prose type scale
-   gives way to the row's. */
-.composer-queue-text .markdown-body {
-  /* Restated rather than inherited: `.markdown-body` paints its own prose ink,
-     and a queued row is deliberately quieter than a turn that has landed. */
-  color: var(--av-sys-color-text-subtle);
-  display: inline;
-  font-size: inherit;
-  line-height: inherit;
-}
-.composer-queue-text .markdown-body :is(
-  p, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, blockquote, table, thead, tbody, tr, th, td, hr
-) {
-  border: 0;
-  display: inline;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
-  margin: 0;
-  padding: 0;
-}
-/* A block's neighbours would otherwise run together into one word. */
-.composer-queue-text .markdown-body :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, tr)::after {
-  content: ' ';
-  white-space: pre;
-}
-.composer-queue-text .markdown-body :is(li, ul, ol) { list-style: none; }
-/* The transcript's mention chip, in a line a little over half its usual size. */
-.composer-queue-text .mention-chip {
-  height: 1.45em;
-  padding: 1px 5px 1px 2px;
-}
-.composer-queue-text .mention-chip-avatar {
-  font-size: 5.5px;
-  height: 13px;
-  width: 13px;
-}
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: var(--space-3); }
@@ -4128,9 +4196,16 @@ pre {
 .attachment-file-open:hover:not(:disabled) .attachment-file-name { text-decoration: underline; text-underline-offset: 2px; }
 .attachment-file-icon { align-items: center; background: color-mix(in srgb, var(--av-sys-color-accent-base) 18%, var(--av-sys-color-surface-raised)); border-radius: 9px; color: var(--av-sys-color-accent-base); display: flex; flex: 0 0 auto; height: 36px; justify-content: center; width: 36px; }
 .attachment-file-details { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
-.attachment-file-name { display: flex; font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; white-space: nowrap; }
-.attachment-file-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
-.attachment-file-name > span:last-child { flex: 0 0 auto; }
+.attachment-file-name { font-size: 14px; font-weight: 540; line-height: 18px; min-width: 0; overflow-wrap: anywhere; }
+/* A name past 200 characters would otherwise grow the chip without bound;
+   capped at four lines and faded rather than cut, matching the mask
+   `.markdown-collapse.is-collapsed` uses for the same reason. */
+.attachment-file-name.is-long-name {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+  max-height: 4lh;
+  overflow: hidden;
+}
 .attachment-file-meta { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 16px; }
 .attachment-file-card.is-pending .attachment-file-icon { background: var(--av-sys-color-accent-wash); color: var(--av-sys-color-accent-base); }
 .attachment-file-icon.is-spreadsheet { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
@@ -4653,7 +4728,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* The data view is ordinary Rally UI rather than a page, so it keeps the
    gutter the full-bleed preview gives up. */
 .site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 16px; }
-.site-data-export { align-self: flex-start; }
+.site-data-toolbar { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
 /* Its own scroller: a model-designed schema can be any width, and a table that
    widened the rail would push the transcript around. The edge and the corner
    are `.inset-surface`'s; only the scrolling is this rule's. */
@@ -4859,12 +4934,75 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .run-duration { color: var(--av-ref-color-neutral-9); font-size: 9px; text-align: right; }
 .form-field { display: grid; gap: 6px; min-width: 0; }
 .dialog-body > .form-field + .form-field { margin-top: 16px; }
+/* Tailwind's preflight zeroes paragraph margins and list markers, and the
+   dialog body sets no gap of its own, so consecutive paragraphs render as one
+   wall of text and a numbered list loses its numbers. Both were being patched
+   inline, once per dialog that noticed; this is the one place they belong. */
+.dialog-body > p + p { margin-top: 10px; }
+/* A paragraph that follows a field is a paragraph, not the field's caption:
+   the copy controls that used to sit between the two carried the gap. */
+.dialog-body > .form-field + p { margin-top: 10px; }
+.dialog-body ol { list-style: decimal; margin: 10px 0; padding-inline-start: 1.5rem; }
+.dialog-body ol > li + li { margin-top: 6px; }
+/* The one consequence in a setup dialog that damages something the person is
+   not currently looking at. It reads as prose otherwise. */
+.dialog-callout {
+  background: var(--av-sys-color-surface-sunken);
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: var(--av-cmp-control-radius);
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+.dialog-callout > p { margin: 0; }
+/* Manage events: four groups — status, the actions each beside its caption,
+   the verdict, Advanced — with more space between groups than within one, so
+   a caption reads as its button's rather than as the next line of prose. */
+.installation-panel { display: grid; gap: 20px; }
+.installation-status { display: grid; gap: 4px; }
+.installation-status h3 { font-size: var(--av-cmp-control-font-size); font-weight: 600; margin: 0; }
+.installation-status p { margin: 0; }
+.installation-status-meta { color: var(--av-sys-color-text-muted); }
+.installation-actions { display: grid; gap: 10px; }
+.installation-action { align-items: center; display: grid; gap: 12px; grid-template-columns: auto minmax(0, 1fr); }
+.installation-action > p { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; }
+.installation-advanced { border-top: 1px solid var(--av-sys-color-border-subtle); display: grid; gap: 12px; padding-top: 16px; }
+.installation-advanced > section { display: grid; gap: 12px; justify-items: start; }
+.installation-advanced > section > details,
+.installation-advanced > section > p { justify-self: stretch; }
+.installation-advanced > section > p { margin: 0; }
+.installation-panel > .connection-test-outcome { margin-top: 0; }
+/* The Test verdict in Manage events: the outcome's colour on the box, the icon
+   and the heading, with the provider's sentence beneath in the body colour. */
+.connection-test-outcome {
+  align-items: flex-start;
+  border: 1px solid;
+  border-radius: var(--av-cmp-control-radius);
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+.connection-test-outcome > svg { flex: none; margin-top: 1px; }
+.connection-test-outcome > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.connection-test-outcome strong { font-size: var(--av-cmp-control-font-size); font-weight: 600; }
+.connection-test-outcome p { color: var(--av-sys-color-text-default); margin: 0; }
+.connection-test-outcome.is-passed { background: var(--av-sys-color-success-wash); border-color: var(--av-sys-color-success-edge); color: var(--av-sys-color-success-base); }
+.connection-test-outcome.is-failed { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); color: var(--av-sys-color-danger-base); }
+/* The request failed, not the connection: warning, so it cannot be read as a verdict. */
+.connection-test-outcome.is-unavailable { background: var(--av-sys-color-warning-wash); border-color: var(--av-sys-color-warning-edge); color: var(--av-sys-color-warning-base); }
 .form-field > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 20px; }
 .form-field > select { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); min-height: 36px; min-width: 0; padding: 6px 10px; width: 100%; }
-.form-field > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
+.form-field > span,
+.form-field > label { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); outline: 0; padding: 9px 10px; width: 100%; }
 .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .form-field textarea { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); line-height: 1.5; outline: 0; padding: 10px; resize: vertical; width: 100%; }
+/* A value shown to be copied: the caption spans the row, and the field shares
+   it with the copy control beside it rather than carrying a sentence under it.
+   The control is `.icon-button`'s 30px against the field's taller box, so the
+   row centres the two. */
+.copy-field { align-items: center; column-gap: 6px; grid-template-columns: minmax(0, 1fr) auto; }
+.copy-field > label { grid-column: 1 / -1; }
 .granola-key-guide { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); margin-bottom: 16px; padding: 13px 14px; }
 .granola-key-guide h3 { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); margin: 0; }
 .granola-key-guide ol { color: var(--av-sys-color-text-subtle); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 9px 0; padding-left: 19px; }
@@ -4973,351 +5111,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .project-recovery-list,
 .project-participant-list { display: grid; gap: 8px; }
 
-/* Read-only notes */
-.note-detail-screen {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
-  height: 100%;
-  min-width: 0;
-}
-.note-detail-main { display: grid; grid-template-rows: 55px minmax(0, 1fr); min-width: 0; }
-.note-detail-scroll { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
-/* `font-size` and `line-height` are the empty state's; the markdown carries its
-   own. No `color` here: `.markdown-body` sets one on itself and a declaration
-   beats inheritance, so a colour stated on this element would reach the markdown
-   not at all and the empty state — which sets `--av-sys-color-text-disabled` below — not either. */
-.note-detail-article {
-  font-size: 14px;
-  line-height: 1.68;
-  margin: 0 auto;
-  max-width: 760px;
-  padding: 58px 54px 100px;
-  width: 100%;
-}
-/* The body of a note is a `.markdown-body`, so everything about how its markdown
-   is drawn — lists, code, quotes, tables, the first/last-child margin trim —
-   comes from that container. A note reads as a document page rather than a chat
-   turn, and its heading scale is the one thing worth saying twice: 22/17/14
-   against the shared 18/16/14.5, which stays close together because a transcript
-   turn is too short for a hierarchy to be worth much. Nothing else belongs here.
-   This surface used to restate the list geometry too, and restating it is
-   precisely how it came to be missing a marker rule the shared container had.
-
-   `.markdown-body` is named in the selector so these win on **specificity**
-   rather than on sitting lower in the file than the shared scale. Written as
-   `.note-detail-article :is(h1, …)` they tied `.markdown-body h1` at (0,1,1) and
-   won only by source order — which is the precise hazard this arrangement exists
-   to avoid, so splitting the stylesheet or moving either block would have put a
-   note quietly back on the transcript's headings with nothing going red. */
-.note-detail-article .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--av-sys-color-text-default); margin: var(--av-cmp-markdown-article-heading-margin); }
-.note-detail-article .markdown-body h1 { font-size: var(--av-cmp-markdown-article-heading-1); }
-.note-detail-article .markdown-body h2 { font-size: var(--av-cmp-markdown-article-heading-2); }
-.note-detail-article .markdown-body :is(h3, h4, h5, h6) { font-size: var(--av-cmp-markdown-article-heading-3); }
-.note-detail-empty,
-.note-transcript-empty {
-  align-items: center;
-  color: var(--av-sys-color-text-disabled);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-.note-detail-empty { min-height: 52vh; }
-.note-detail-empty strong { color: var(--av-sys-color-text-subtle); margin-top: 12px; }
-.note-detail-empty p { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 5px 0 0; }
-.note-detail-state { height: 100%; position: relative; }
-.note-transcript-rail {
-  background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-cmp-surface-radius);
-  display: grid;
-  grid-template-rows: 45px minmax(0, 1fr);
-  margin: 8px 8px 8px 0;
-  min-width: 0;
-  overflow: hidden;
-}
-.note-transcript-rail > header {
-  align-items: center;
-  border-bottom: 1px solid var(--av-ref-color-line-2);
-  display: flex;
-  justify-content: space-between;
-  padding: 0 11px;
-}
-.note-transcript-rail > header > span { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 7px; }
-.note-transcript-rail h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0; }
-.note-transcript-rail small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.note-transcript-scroll { min-height: 0; overflow-y: auto; padding: 16px 14px 28px; scrollbar-gutter: stable; }
-.note-transcript-scroll > p { color: var(--av-sys-color-text-subtle); font-size: 12px; line-height: 1.58; margin: 0 0 14px; }
-.note-transcript-scroll > p:last-child { color: var(--av-sys-color-text-default); margin-bottom: 0; }
-.note-transcript-empty { font-size: var(--av-cmp-control-font-size); gap: 8px; height: 100%; }
-
-/* Dedicated meeting window */
-.meeting-surface {
-  background: var(--av-sys-color-surface-default);
-  color: var(--av-sys-color-text-default);
-  display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 68px;
-  height: 100%;
-}
-
-.meeting-titlebar {
-  align-items: center;
-  background: var(--av-cmp-sidebar-background-solid);
-  border-bottom: 1px solid var(--av-sys-color-border-default);
-  display: flex;
-  justify-content: space-between;
-  padding: 0 18px 0 82px;
-}
-
-.meeting-titlebar-copy {
-  align-items: center;
-  color: var(--av-sys-color-text-subtle);
-  display: flex;
-  font-size: var(--av-cmp-control-font-size);
-  gap: 9px;
-}
-
-.meeting-titlebar-copy > span:last-child::before {
-  color: var(--av-sys-color-text-disabled);
-  content: '\00b7';
-  margin-right: 9px;
-}
-
-.meeting-recording-dot,
-.meeting-start-dot {
-  background: var(--av-sys-color-text-disabled);
-  border-radius: 50%;
-  display: inline-block;
-  height: 8px;
-  width: 8px;
-}
-
-.meeting-recording-dot.is-active,
-.meeting-start-dot { background: var(--av-sys-color-danger-base); }
-.meeting-recording-dot.is-active { box-shadow: 0 0 0 4px var(--av-sys-color-danger-tint); }
-
-.meeting-titlebar > p {
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  margin: 0;
-}
-
-.meeting-layout {
-  display: grid;
-  gap: 18px;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  padding: 24px 26px 20px;
-}
-
-.meeting-heading { margin: 0 auto; max-width: 720px; width: 100%; }
-
-.meeting-heading input {
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-default);
-  font-size: 26px;
-  font-weight: 560;
-  letter-spacing: -.025em;
-  line-height: 1.25;
-  min-width: 0;
-  outline: 0;
-  padding: 0;
-  width: 100%;
-}
-
-.meeting-heading input:focus { box-shadow: inset 0 -1px var(--av-sys-color-border-default); }
-.meeting-heading p { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 7px 0 0; }
-.meeting-heading-meta { align-items: center; display: flex; gap: 14px; justify-content: space-between; }
-.meeting-visibility {
-  align-items: center;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  flex: 0 0 auto;
-  gap: 5px;
-  margin-top: 6px;
-}
-.meeting-visibility select {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  font-size: var(--av-cmp-control-font-size);
-  outline: 0;
-  padding: 2px 15px 2px 0;
-}
-
-.meeting-stack {
-  display: grid;
-  gap: 14px;
-  grid-template-rows: minmax(0, 1fr) minmax(168px, 30vh);
-  margin: 0 auto;
-  max-width: 720px;
-  min-height: 0;
-  width: 100%;
-}
-
-.meeting-live-notes,
-.meeting-transcript-card {
-  display: grid;
-  grid-template-rows: 42px minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-}
-
-.meeting-live-notes > header,
-.meeting-transcript-card > header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  padding: 0 8px;
-}
-
-.meeting-live-notes > header > span,
-.meeting-transcript-card > header > span { align-items: center; display: flex; gap: 8px; }
-.meeting-live-notes h2,
-.meeting-transcript-card h2 { font-size: 13px; margin: 0; }
-.meeting-live-notes .icon-button,
-.meeting-transcript-card .icon-button,
-.meeting-controls .button {
-  background: var(--av-sys-color-surface-raised);
-  border-color: var(--av-sys-color-border-default);
-  color: var(--av-sys-color-text-subtle);
-}
-.meeting-live-notes .icon-button:hover,
-.meeting-transcript-card .icon-button:hover,
-.meeting-controls .button:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
-
-.meeting-updated-at {
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  margin: 0 0 14px;
-}
-
-.meeting-notes-body,
-.meeting-transcript-body {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-/* Sizes the timestamp, the error line and the empty state; the briefing itself
-   is a `.markdown-body` and carries its own. */
-.meeting-notes-body { font-size: 14px; line-height: 1.65; padding: 12px 8px 20px; }
-.meeting-notes-body > :first-child { margin-top: 0; }
-/* The one deliberate departure from the shared renderer, for the same reason the
-   note above has one: this briefing lives in a narrow rail beside a transcript,
-   where a descending heading scale mostly wastes the width, so every level sits
-   at one size. Everything else the briefing draws is `.markdown-body`'s — which
-   is also named here, so this wins on specificity rather than on source order.
-   See the note's block for why that distinction is worth a class. */
-.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6) {
-  font-size: 15px;
-  margin: 22px 0 8px;
-}
-.meeting-summary-progress {
-  align-items: center;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  font-size: var(--av-cmp-control-font-size);
-  gap: 7px;
-  justify-content: flex-end;
-  margin-top: 18px;
-}
-
-.meeting-transcript-card {
-  background: var(--av-sys-color-surface-subtle);
-  border: 1px solid var(--av-ref-color-line-3);
-  border-radius: var(--av-cmp-surface-radius);
-}
-.meeting-transcript-card > header {
-  border-bottom: 1px solid var(--av-ref-color-line-2);
-  padding: 0 10px 0 14px;
-}
-
-.meeting-transcript-body {
-  display: flex;
-  flex-direction: column;
-  font-size: 13px;
-  line-height: 1.55;
-  padding: 14px;
-}
-.meeting-transcript-body > p {
-  color: var(--av-sys-color-text-subtle);
-  margin: 0 0 9px;
-}
-.meeting-transcript-body > p:last-child { color: var(--av-sys-color-text-default); }
-
-.meeting-empty-state {
-  align-items: center;
-  align-self: center;
-  color: var(--av-sys-color-text-disabled);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  justify-content: center;
-  margin: auto;
-  max-width: 280px;
-  text-align: center;
-}
-.meeting-empty-state strong { color: var(--av-sys-color-text-subtle); margin-top: 12px; }
-.meeting-empty-state p { font-size: 12px; margin: 5px 0 0; }
-
-.meeting-controls {
-  align-items: center;
-  background: var(--av-cmp-sidebar-background-solid);
-  border-top: 1px solid var(--av-sys-color-border-default);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  padding: 0 20px;
-}
-
-.meeting-control-status {
-  color: var(--av-sys-color-text-muted);
-  font-size: var(--av-cmp-control-font-size);
-  min-width: 0;
-}
-.meeting-control-status > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.meeting-control-status > [role='alert'] { color: var(--av-sys-color-danger-base); }
-.meeting-control-warning { color: var(--av-sys-color-warning-base); }
-.meeting-permission-settings {
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-subtle);
-  cursor: pointer;
-  font: inherit;
-  margin-left: 8px;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.meeting-permission-settings:hover { color: var(--av-sys-color-text-default); }
-.meeting-controls .meeting-start-button,
-.meeting-controls .meeting-pause-button,
-.meeting-controls .meeting-stop-button {
-  border-radius: var(--av-sys-size-radius-pill);
-  font-weight: 570;
-  min-height: 40px;
-  padding: 7px 18px;
-}
-.meeting-recording-actions { display: flex; gap: 8px; }
-.meeting-controls .meeting-start-button { background: var(--av-sys-color-text-default); color: var(--av-sys-color-text-on-inverse); }
-.meeting-controls .meeting-start-button:hover { background: var(--av-sys-color-surface-inverse-hover); color: var(--av-sys-color-text-on-inverse); }
-.meeting-controls .meeting-pause-button { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-subtle); }
-.meeting-controls .meeting-stop-button { background: var(--av-sys-color-danger-tint); border-color: var(--av-sys-color-danger-tint-strong); color: var(--av-sys-color-danger-soft); }
-
-@media (max-width: 860px) {
-  .meeting-layout { padding: 20px 18px 16px; }
-  .meeting-titlebar { padding-right: 18px; }
-  .meeting-titlebar > p { display: none; }
-  .meeting-controls { gap: 12px; grid-template-columns: minmax(0, 1fr) auto; }
-  .meeting-controls > :last-child { display: none; }
-  .meeting-control-status > span { display: block; line-height: 1.3; white-space: normal; }
-}
-
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
   .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px 18px; }
@@ -5347,6 +5140,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     scroll-behavior: auto !important;
     transition-delay: 0.001ms !important;
     transition-duration: 0.001ms !important;
+  }
+  /* The scroll-edge fade is not motion: `auto` is what lets the scroller's
+     timeline pace the near and far lengths. The kill switch above would pin
+     both animations at their 100% keyframes, so a list that overflows would
+     always fade its leading edge and never its trailing one. */
+  :is(.sidebar-scroll, .workstream-context-scroll), .sidebar .sidebar-automation-strip {
+    animation-duration: auto !important;
   }
   .status-running .status-dot { opacity: 1; }
   .plugin-face-active { opacity: 1; }
@@ -5496,45 +5296,83 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    nothing on screen — which is what the fixed-size placeholder that used to
    stand here could not do: it was one size for every message, and the moment
    the room accepted a turn the box jumped to the shape of the text it had been
-   hiding. The shimmer is the whole difference now, and it is inside the row
-   rather than around it.
+   hiding. The shimmer is the whole difference now.
 
-   `.human-message-content` and not `.human-message-bubble`: the bubble is drawn
-   only for a turn with text, and a send can be attachments alone — the composer
-   admits one and the queue's own stand-in already accounts for it. Scoped to the
-   bubble, an attachment-only turn went out with no in-flight cue at all, which
-   is less than the box it replaced said. The content wrapper is always there. */
-.human-message.is-sending .human-message-content {
-  overflow: hidden;
+   It is painted on each surface the turn draws — the bubble, and every
+   attachment tile and card — and not on the content wrapper around them. The
+   wrapper is a rectangle: it takes in the action slot laid out under the bubble
+   and the corners the bubble's radius cuts away, so a sweep across it read as a
+   grey block behind the pill rather than a light passing over it. Per surface,
+   the overlay needs no clipping box: it is inset to the surface and inherits
+   its corner, and the band travels as `background-position` over a tile four
+   times the surface's width — the construction at
+   `@keyframes plugin-activity-shimmer` — because a transform would carry the
+   overlay's rounded corners along with it and uncover the surface's own.
+
+   Every surface, and not the bubble alone: the bubble is drawn only for a turn
+   with text, and a send can be attachments alone — the composer admits one and
+   the queue's own stand-in already accounts for it. Scoped to the bubble, an
+   attachment-only turn went out with no in-flight cue at all, which is less than
+   the box it replaced said. The three attachment surfaces are positioned by
+   their own rules; the bubble is positioned here so its overlay lands on it. */
+.human-message.is-sending .human-message-bubble {
   position: relative;
 }
 
-.human-message.is-sending .human-message-content::after {
+/* The band is 12.5% of the tile — half the surface's width — with a solid core
+   of 2.5%, a tenth: the same band the transform sweep carried. Confined to the
+   middle of a tile four times the surface's width, it is clear of the surface at
+   both ends of the travel: at `100%` the tile starts 3W to the left and the band
+   ends at -0.75W, and at `16⅔%` the band starts at 1.25W, so the pause at either
+   end of the ease parks nothing on the surface. The travel stops a sixth short
+   of `0%` so that it is 2.5W, the transform sweep's: the band crosses the
+   surface at the speed, and for the share of each cycle, that it did before.
+
+   The band is upright, where the transform sweep's was tilted 15°. A tilt
+   spreads the band's edges sideways by the surface's height times the tilt's
+   tangent, and the bubble's height is unbounded against its width — a pasted
+   list of short lines is many times taller than it is wide — so no tile width
+   keeps a tilted band clear at the ends of the travel: past about five times
+   as tall as wide, with this tile, a tinted corner stayed parked through each
+   pause. Upright, the stops are in the surface's width alone and the clearance
+   holds for every shape.
+
+   The band is a twentieth of the surface's own ink, not the shimmer token. The
+   token is a dark tint for light surfaces, white in the dark theme, and a
+   person's bubble is the one surface whose fill does not follow the theme: it
+   is dark, or the sender's profile colour, in both, so the token's tint sat on
+   it at under a level in 255 and the cue was all but gone once the wrapper's
+   strip stopped carrying it. Ink is light on a dark or coloured bubble and dark
+   on a light card, so the band contrasts by construction on every surface; the
+   twentieth is the token's own alpha. */
+.human-message.is-sending :is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)::after {
+  --sweep-ink: color-mix(in srgb, currentColor 5%, transparent);
   animation: message-sending-shimmer 1.8s ease-in-out infinite;
-  background: linear-gradient(105deg, transparent 25%, var(--av-sys-color-shimmer-default) 45%, var(--av-sys-color-shimmer-default) 50%, var(--av-sys-color-shimmer-default) 55%, transparent 75%);
+  background: linear-gradient(to right, transparent 43.75%, var(--sweep-ink) 48.75%, var(--sweep-ink) 51.25%, transparent 56.25%);
+  background-size: 400% 100%;
+  border-radius: inherit;
   content: '';
   inset: 0;
   pointer-events: none;
   position: absolute;
-  transform: translateX(-125%);
 }
 
 @keyframes message-sending-shimmer {
-  100% { transform: translateX(125%); }
+  from { background-position: 100% 0; }
+  to { background-position: calc(100% / 6) 0; }
 }
 
 /* The global reduced-motion block runs every animation once at 0.001ms, and this
-   one has no fill mode, so the sweep reverts to its authored `translateX(-125%)`
-   and the wrapper's own `overflow: hidden` clips it out of existence. That would
-   leave an in-flight turn as the settled row at 0.82 — indistinguishable from a
-   turn the room has already admitted, and *less* marked than a queued one, which
-   also carries a pill. So the sweep is parked over the row instead of travelling
-   across it: the same tint, stationary, and stated as geometry rather than as an
-   animation that has been switched off. */
+   one has no fill mode, so the sweep reverts to the initial `background-position`
+   of `0%`, where the band sits off the surface's right edge and the overlay
+   paints nothing. That would leave an in-flight turn as the settled row at 0.82 —
+   indistinguishable from a turn the room has already admitted, and *less* marked
+   than a queued one, which also carries a pill. So the ink is parked over each
+   surface instead of travelling across it: the same colour, stationary, and
+   stated as geometry rather than as an animation that has been switched off. */
 @media (prefers-reduced-motion: reduce) {
-  .human-message.is-sending .human-message-content::after {
-    background: var(--av-sys-color-shimmer-default);
-    transform: none;
+  .human-message.is-sending :is(.human-message-bubble, .message-attachment-image-cell, .attachment-media-tile, .attachment-file-card)::after {
+    background: var(--sweep-ink);
   }
 }
 
@@ -5625,40 +5463,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 4px 12px var(--av-sys-space-group-gap);
   position: relative;
   transition: grid-template-rows var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
-}
-
-.sidebar-new-chat-draft {
-  align-items: center;
-  background: var(--av-cmp-row-background-hover);
-  border-radius: 8px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  font-size: 14px;
-  font-weight: 500;
-  gap: 9px;
-  line-height: 20px;
-  margin: 0 1px 12px;
-  min-height: 44px;
-  padding: 4px 8px;
-}
-
-.sidebar-new-chat-draft-icon {
-  align-items: center;
-  background: var(--av-ref-color-neutral-4);
-  border: 1px solid var(--av-ref-color-line-4);
-  border-radius: 50%;
-  color: var(--av-sys-color-text-subtle);
-  display: flex;
-  flex: 0 0 30px;
-  height: 30px;
-  justify-content: center;
-  width: 30px;
-}
-
-[data-theme='dark'] .sidebar-new-chat-draft-icon {
-  background: var(--av-sys-color-surface-raised-hover);
-  border-color: var(--av-sys-color-border-strong);
-  color: var(--av-sys-color-text-subtle);
 }
 
 .sidebar-new-button {
@@ -5966,20 +5770,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   padding: 9px;
   width: 54px;
 }
-/* The draft row, the headings and the group gaps close as the rail narrows. */
-.app-shell .sidebar .sidebar-new-chat-draft {
-  height: 44px;
-  overflow: hidden;
-  transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion);
-}
-.app-shell .sidebar.is-compact .sidebar-new-chat-draft {
-  height: 0;
-  margin-bottom: 0;
-  min-height: 0;
-  opacity: 0;
-  padding-block: 0;
-  visibility: hidden;
-}
+/* The headings and the group gaps close as the rail narrows. */
 .app-shell .sidebar .sidebar-section-heading,
 .app-shell .sidebar .sidebar-group-heading {
   overflow: hidden;
@@ -6346,10 +6137,7 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   width: 100%;
 }
 
-.workstream-screen .composer-queue {
-  background: var(--av-cmp-composer-background);
-  border-color: var(--av-cmp-composer-border-color);
-}
+
 
 /* The field is three quarters of the widest a turn is ever drawn, centred over
    the same column. Full width said nothing about the conversation above it: the
@@ -6503,23 +6291,26 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
   grid-column: 1 / -1;
 }
 
-/* Wrapped text spans the controls' own grid row, so the reserve at its foot is
-   what keeps the two apart: the 28px control, the 7px of row padding under it,
-   and 4px of air between the last line and the top of the plus. At 34px the
-   text ended flush with that top edge — legible, but the field read as one
-   block of text with buttons stuck to it. */
+/* The field keeps its own foot clear; the controls below it keep the rest.
+   This used to reserve 39px here instead — a control's height plus the row
+   padding — because the controls sat in the same grid row as the wrapped text
+   and that padding was all that held them apart. Padding inside a scroller
+   scrolls: it held on the last line of the draft and nowhere else, so the
+   moment a draft outgrew the field and the text scrolled, every line under the
+   caret ran beneath the plus button. The row below is what holds them apart
+   now, and a row cannot be scrolled into. */
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(textarea, .composer-highlight),
 :is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments :is(textarea, .composer-highlight) {
-  padding: 9px 14px 39px;
+  padding: 9px 14px 4px;
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-toolbar { display: contents; }
 
-/* Attachments and multiline text span the input across the controls' grid row.
-   Raise the controls above that shell so the textarea cannot intercept clicks. */
-:is(.workstream-screen, .workstream-launch-screen) .is-message-capsule :is(.composer-tools, .composer-submit-area) {
-  position: relative;
-  z-index: 1;
+/* Attachments and multiline text span the input across the full width, so the
+   controls take a row of their own under it rather than sharing one. */
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule[data-multiline='true'] :is(.composer-tools, .composer-submit-area),
+:is(.workstream-screen, .workstream-launch-screen) .workstream-composer.is-message-capsule.has-attachments :is(.composer-tools, .composer-submit-area) {
+  grid-row: 3;
 }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-tools {
@@ -7346,21 +7137,19 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 }
 
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
+.sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
+.sidekick-recommendation:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.sidekick-recommendation-tooltip { max-width: 280px; white-space: normal; }
+.workstream-context-sidebar.is-compact .sidekick-recommendation { display: none; }
+.sidekick-picker-search { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; padding: 10px 12px; width: 100%; }
+.sidekick-picker-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
+.sidekick-picker-list .button { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; width: 100%; }
+.sidekick-picker-list .button > span { color: var(--av-sys-color-text-muted); }
 /* The hexagon in the 36px slot every other row in this rail marks itself with,
    drawn a little inside it so the shape's own points are not the row's edge. */
 .workstream-context-sidekick-glyph { display: block; height: 28px; width: 28px; }
-/* Beside the row rather than under it, so every Sidekick occupies one row of
-   the same height whether or not it can be detached — a control on its own
-   line put a ragged gap between rows that are otherwise identical. It travels
-   the compact interval and is clipped to nothing rather than `display: none`,
-   so it fades with the copy it sits next to instead of vanishing a frame
-   ahead of the edge. */
 .sidekick-section-list > li { align-items: center; display: flex; }
 .sidekick-section-list > li > .workstream-context-row { min-width: 0; }
-.sidekick-section-remove { background: transparent; border: 0; border-radius: 6px; color: var(--av-sys-color-text-muted); flex: 0 0 auto; font: inherit; font-size: 11px; overflow: hidden; padding: 4px 6px; transition: opacity var(--sidebar-layout-motion), padding var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion), width var(--sidebar-layout-motion); }
-.sidekick-section-remove:hover { color: var(--av-sys-color-text-default); }
-.sidekick-section-remove:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: -2px; }
-.workstream-context-sidebar.is-compact .sidekick-section-remove { opacity: 0; padding: 0; visibility: hidden; width: 0; }
 
 /* The two navigation rails share square controls and symmetric gutters. */
 .workstream-context-sidebar.is-compact .workstream-context-scroll { padding-left: 20.5px; padding-right: 20.5px; }
@@ -7438,6 +7227,11 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 
 .composer-attachments .attachment-tile { height: var(--attachment-media-size); aspect-ratio: 1; width: var(--attachment-media-size); }
 .composer-attachments .attachment-file-card { min-width: 0; width: 100%; }
+/* The staged tile keeps its old fixed-height single-line ellipsis: wrapping
+   would break the fixed-height horizontal scroll strip the composer uses. */
+.composer-attachments .attachment-file-name { display: flex; overflow-wrap: normal; white-space: nowrap; }
+.composer-attachments .attachment-file-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.composer-attachments .attachment-file-name > span:last-child { flex: 0 0 auto; }
 
 .attachment-media-tile .attachment-video-play { color: var(--av-sys-color-text-default); }
 .attachment-media-tile:has(video) .attachment-video-play { color: var(--av-sys-color-text-on-media); }
@@ -7468,3 +7262,78 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 .attachment-lightbox-content.has-gallery { padding-bottom: 130px; }
 
 :is(.workstream-screen, .workstream-launch-screen) .is-message-capsule .composer-attachments { grid-column: 1 / -1; grid-row: 1; width: 100%; padding: 10px 12px 2px; }
+
+/* Ephemeral inference status, cleared as soon as first output arrives. */
+.inference-delay-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--av-sys-color-warning-base);
+  font-size: 13px;
+}
+.inference-delay-notice > svg { flex-shrink: 0; }
+
+.session-import-link-form { display: grid; gap: 10px; }
+.background-agent-count {
+  color: var(--av-sys-color-text-muted);
+  display: grid;
+  font-size: 12px;
+  grid-template-rows: 0fr;
+  padding: 0;
+  pointer-events: none;
+  transition: grid-template-rows 320ms cubic-bezier(.22, 1, .36, 1);
+}
+.background-agent-count[data-active="true"] { grid-template-rows: 1fr; }
+.background-agent-reveal { min-height: 0; overflow: hidden; }
+.background-agent-label {
+  align-items: baseline;
+  display: flex;
+  gap: .3em;
+  line-height: 18px;
+  opacity: 0;
+  padding: 0 12px 6px;
+  transform: translateY(24px);
+  transition: transform 320ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease;
+}
+.background-agent-count[data-active="true"] .background-agent-label { opacity: 1; transform: translateY(0); }
+@starting-style {
+  .background-agent-count[data-active="true"] { grid-template-rows: 0fr; }
+  .background-agent-count[data-active="true"] .background-agent-label { opacity: 0; transform: translateY(24px); }
+}
+.background-agent-shimmer {
+  animation: background-agent-shimmer 2.8s linear infinite;
+  background: linear-gradient(105deg, var(--av-sys-color-text-muted) 35%, var(--av-sys-color-text-default) 50%, var(--av-sys-color-text-muted) 65%) 100% 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+}
+.background-agent-count[data-active="false"] .background-agent-shimmer { animation-play-state: paused; }
+.background-agent-wheel {
+  --wheel-travel: 100%;
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  perspective: 80px;
+  vertical-align: bottom;
+}
+.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
+.background-agent-digit { grid-area: 1 / 1; text-align: center; }
+.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+@keyframes background-agent-shimmer { to { background-position: -100% 0; } }
+@keyframes background-agent-digit-in {
+  from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+@keyframes background-agent-digit-out {
+  from { opacity: 1; transform: translateY(0) rotateX(0); }
+  to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-agent-count, .background-agent-label { transition: none; }
+  .background-agent-shimmer, .background-agent-digit { animation: none; }
+  .background-agent-digit-out { display: none; }
+}
+@media (forced-colors: active) {
+  .background-agent-shimmer { background: none; color: CanvasText; }
+}

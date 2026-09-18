@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
 import type { AuthContext, Env } from '../env';
 import { logInfo, logWarn, diagnosticErrorCode } from '../observability/logger';
@@ -15,7 +16,7 @@ export const SearchAuthorizationTargetSchema = z.strictObject({
   kind: z.enum(['resource', 'parent', 'connection', 'member']), id: z.string(),
 });
 export const SearchAuthorizationPushJobSchema = z.strictObject({
-  type: z.literal('search_authorization_push_v1'), region: z.enum(['global', 'eu']),
+  type: z.literal('search_authorization_push_v1'), region: RegionSchema,
   timing: SearchAuthorizationTimingSchema.optional(),
   workspaceId: AuthorizationSubjectSchema.shape.workspaceId, target: SearchAuthorizationTargetSchema.optional(),
 });

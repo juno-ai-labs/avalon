@@ -44,7 +44,7 @@ describe("the seeded provider", () => {
     expect(chunks[2]).toEqual({ usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } });
   });
 
-  it("answers an ask turn with a core_request_elicitation call the tool accepts", async () => {
+  it("answers an ask turn with a request_elicitation call the tool accepts", async () => {
     const fetch = demoSeedProviderFetch(seed({
       kind: "ask",
       prompt: "Which position should I write the proposal against?",
@@ -59,7 +59,7 @@ describe("the seeded provider", () => {
     }[];
     expect(chunks[1]?.choices?.[0]?.finish_reason).toBe("tool_calls");
     const call = chunks[0]?.choices?.[0]?.delta.tool_calls?.[0];
-    expect(call?.function.name).toBe("core_request_elicitation");
+    expect(call?.function.name).toBe("request_elicitation");
     // The real schema, not a copy of what it accepted last time.
     expect(RequestElicitationInputSchema.parse(JSON.parse(call!.function.arguments))).toEqual({
       prompt: "Which position should I write the proposal against?",

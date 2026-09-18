@@ -17,6 +17,8 @@ import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
 import { ConversationService } from "../services/conversation-service";
+import { WorkstreamService } from "../services/workstream-service";
+import { SidekickAttachmentsSchema } from "@rally/contracts";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { SubstreamCreationService } from "../services/substream-creation-service";
 import {
@@ -56,6 +58,14 @@ const SocketTicketQuerySchema = z.object({
  * subscribed to through the same three routes.
  */
 export const conversationRoutes = new Hono<HonoAppEnv>();
+conversationRoutes.get("/:parentId/substreams/:substreamId/sidekicks", zValidator("param", substreamSocketParam), async (c) => {
+  const { parentId, substreamId } = c.req.valid("param");
+  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(parentId, undefined, substreamId)));
+});
+conversationRoutes.delete("/:parentId/substreams/:substreamId/sidekicks/:sidekickId", zValidator("param", substreamSocketParam.extend({ sidekickId: IdSchema })), async (c) => {
+  const { parentId, substreamId, sidekickId } = c.req.valid("param");
+  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(parentId, sidekickId, substreamId)));
+});
 conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", parentParam), zValidator("json", z.strictObject({
   operationId: IdSchema,
   // Optional because the launch surface has no title field: a substream is
@@ -67,7 +77,8 @@ conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", par
 })), async (c) => {
   const auth = getAuth(c);
   const parentId = c.req.valid("param").parentId;
-  const operation = await new SubstreamCreationService(c.env, auth).prepare(parentId, c.req.valid("json"));
+  const operation = await requestFlowSpan(c, "substream.prepare", { flow: "substream_prepare" }, (span) =>
+    new SubstreamCreationService(c.env, auth).prepare(parentId, c.req.valid("json"), span));
   const prepared = operation.preparedContext;
   if (!prepared) throw new Error("substream_preparation_missing_context");
   return c.json(SubstreamPreparationPreviewSchema.parse({
@@ -100,10 +111,18 @@ conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageL
    */
   modelOverride: AgentModelOverrideSchema.optional(),
 })), async (c) => {
+  const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
-  const result = await new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
-    c.req.valid("param").parentId, body.operationId, body.opening ?? null, body.modelOverride ?? null,
-  );
+  const result = await requestFlowSpan(c, "substream.create", { flow: "substream_create" }, (span) =>
+    new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
+      c.req.valid("param").parentId,
+      body.operationId,
+      body.opening ?? null,
+      body.modelOverride ?? null,
+      undefined,
+      span,
+      requestReceivedAt,
+    ));
   return c.json(SubstreamCreationResultSchema.parse(result));
 });
 const childParticipantBody = z.strictObject({ userId: IdSchema, operationId: IdSchema });

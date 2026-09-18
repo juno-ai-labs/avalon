@@ -118,17 +118,11 @@ async function loadVisibleRows(
     const placeholders = ids.map(() => "?").join(", ");
     const result = await database.prepare(
       `SELECT resource.*,
-              COALESCE((SELECT MAX(note.updated_at) FROM notes note
-                         WHERE note.resource_id = resource.id), resource.updated_at) AS visibility_version
+              resource.updated_at AS visibility_version
          FROM resources resource
         WHERE resource.workspace_id = ? AND resource.id IN (${placeholders})
-          AND (resource.provider != 'avalon_note' OR EXISTS (
-            SELECT 1 FROM notes note
-             WHERE note.resource_id = resource.id AND note.workspace_id = resource.workspace_id
-               AND note.archived_at IS NULL
-               AND (note.scope = 'workspace' OR note.owner_user_id = ?)
-          ))${listed}`,
-    ).bind(input.workspaceId, ...ids, principalUserId(input.principal))
+          AND resource.provider != 'avalon_note'${listed}`,
+    ).bind(input.workspaceId, ...ids)
       .all<Record<string, unknown>>();
     resources.push(...(result.results ?? []));
   }
@@ -178,10 +172,6 @@ export const ATTACHMENT_KIND_SQL = `CASE
   WHEN lower(title) GLOB '*.' || 'c' OR lower(title) GLOB '*.' || 'cc' OR lower(title) GLOB '*.' || 'cpp' OR lower(title) GLOB '*.' || 'css' OR lower(title) GLOB '*.' || 'go' OR lower(title) GLOB '*.' || 'h' OR lower(title) GLOB '*.' || 'html' OR lower(title) GLOB '*.' || 'java' OR lower(title) GLOB '*.' || 'js' OR lower(title) GLOB '*.' || 'json' OR lower(title) GLOB '*.' || 'jsx' OR lower(title) GLOB '*.' || 'log' OR lower(title) GLOB '*.' || 'py' OR lower(title) GLOB '*.' || 'rb' OR lower(title) GLOB '*.' || 'rs' OR lower(title) GLOB '*.' || 'sh' OR lower(title) GLOB '*.' || 'sql' OR lower(title) GLOB '*.' || 'toml' OR lower(title) GLOB '*.' || 'ts' OR lower(title) GLOB '*.' || 'tsx' OR lower(title) GLOB '*.' || 'txt' OR lower(title) GLOB '*.' || 'xml' OR lower(title) GLOB '*.' || 'yaml' OR lower(title) GLOB '*.' || 'yml' THEN 'text'
   ELSE 'other'
 END`;
-
-function principalUserId(principal: ExecutionPrincipal): string | null {
-  return principal.type === "user" ? principal.userId : null;
-}
 
 export async function loadWorkstreamResourceInventoryFingerprint(
   attachments: ResourceObjectPort,

@@ -1,22 +1,25 @@
-import type { AccountOnboarding, UpdateAccountOnboarding } from '@rally/contracts';
-import type { DesktopSettingsSection } from './settings';
-import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
-import type { ThemeChoice } from './themes';
-import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type {
   TelemetryEventProperties,
   WorkspaceAttention,
   WorkspaceDeparture,
   WorkspaceDepartureOutcome,
+  AccountOnboarding,
+  UpdateAccountOnboarding,
 } from '@rally/contracts';
+import type { Region } from "@rally/contracts/regions";
+import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
+import type { MessageExportRequest, MessageExportResult } from './message-export';
+import type { DesktopReleaseChannel } from './release-channels';
 import type {
   DesktopRealtimeSocketCloseInput,
   DesktopRealtimeSocketEvent,
   DesktopRealtimeSocketOpenInput,
   DesktopRealtimeSocketSendInput,
 } from './realtime-socket';
+import type { DesktopSettingsSection } from './settings';
+import type { ThemeChoice } from './themes';
 
-export type RallyRegion = 'global' | 'eu';
+export type RallyRegion = Region;
 
 /** Stable UI/cache identity for a workspace. Workspace UUIDs are only unique
  * within a region, so desktop state must never key one without its region. */
@@ -72,6 +75,10 @@ export interface DesktopLockdownSettings {
 }
 
 export interface DesktopApplicationSettings extends DesktopLockdownSettings {
+  /** Per-device update feed choice. Stable is the default. */
+  releaseChannel: DesktopReleaseChannel;
+  /** False for browser fallback surfaces that cannot configure Electron. */
+  releaseChannelAvailable: boolean;
   /** The **effective** Developer → Debug enabled preference: the stored choice
    * and the service's flag. A device whose flag is off reads `false` here
    * however `application-settings.json` reads. */
@@ -80,6 +87,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
   /** Whether the Rally status item is in the macOS menu bar. On by default. */
+  pushNotificationsEnabled: boolean;
+  pushNotificationStatus: string;
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Rally can live in at all. The
    * preference is still stored where it is not, so moving the same profile to a
@@ -124,9 +133,6 @@ export type DesktopTelemetrySemanticEventName =
   | 'automation_builder_started'
   | 'automation_opened'
   | 'workstream_resource_action_completed'
-  | 'recording_start_completed'
-  | 'recording_terminal'
-  | 'note_opened_v2'
   | 'realtime_socket_state';
 
 export type DesktopTelemetrySemanticIntent = {
@@ -232,34 +238,6 @@ export type DesktopTelemetryProductIntent =
     resourceId: string;
     workstreamId?: string;
   }
-  | {
-    kind: 'note_opened';
-    noteId: string;
-    visibility: 'private' | 'public';
-    recordingState: 'idle' | 'recording' | 'complete';
-    navigation: 'opened' | 'reopened';
-  }
-  | {
-    kind: 'note_created';
-    noteId: string;
-    visibility: 'private' | 'public';
-    noteType: 'meeting_or_voice';
-    entrypoint: 'sidebar' | 'menu_bar' | 'unknown';
-  }
-  | {
-    kind: 'note_action_completed';
-    noteId: string;
-    action: 'make_public' | 'make_private' | 'archive';
-    visibility: 'private' | 'public';
-    recordingState: 'idle' | 'recording' | 'complete';
-  }
-  | {
-    kind: 'transcription_state_changed';
-    noteId: string;
-    state: 'started' | 'paused' | 'resumed' | 'completed';
-    visibility: 'private' | 'public';
-    audioSource: 'microphone_and_system' | 'microphone_only' | 'system_only' | 'unknown';
-  }
   | DesktopTelemetrySemanticIntent;
 
 export interface DesktopJavascriptErrorCandidate {
@@ -322,27 +300,6 @@ export type DesktopMediaPermissionStatus =
   | 'restricted'
   | 'unknown';
 
-export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
-
-/**
- * Who asked a meeting window to close, which decides whether the recording
- * screen may stop and ask first.
- *
- * `user` is a close the person performed on that window — its traffic light or
- * Command-W — and a recording in progress is worth a confirmation, because the
- * window is the only place the meeting exists until finalization lands.
- * `quit` is the application shutting down, where a window that stops to ask is
- * a window that refuses to close, and a quit vetoed that way leaves Rally
- * running with no way to finish. That path finalizes and closes as it always
- * has.
- */
-export type MeetingCloseReason = 'user' | 'quit';
-
-export interface DesktopMeetingAudioPermissions {
-  microphone: DesktopMediaPermissionStatus;
-  systemAudio: DesktopMediaPermissionStatus;
-}
-
 export interface DesktopSystemAudioCaptureInfo {
   channels: 1;
   sampleRate: number;
@@ -395,9 +352,12 @@ export interface RallyDesktopBridge {
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setPushNotificationsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  openNotificationSettings: () => Promise<void>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setReleaseChannel: (channel: DesktopReleaseChannel) => Promise<DesktopApplicationSettings>;
   reportTelemetryScreen: (screen: DesktopTelemetryScreen) => Promise<void>;
   reportTelemetryProductIntent: (intent: DesktopTelemetryProductIntent) => Promise<void>;
   reportJavascriptError: (candidate: DesktopJavascriptErrorCandidate) => Promise<void>;
@@ -470,6 +430,10 @@ export interface RallyDesktopBridge {
   hasStoredCredential: () => Promise<boolean>;
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
+  /** Show the macOS Dictionary popover for the current renderer selection. */
+  showDefinitionForSelection: () => Promise<void>;
+  /** Open the macOS share sheet for the given plain text. */
+  shareText: (text: string) => Promise<void>;
   /** Let the main conversation rail borrow desktop space instead of narrowing
    * the feed whenever the display has room for it. */
   setConversationDetailsOpen: (input: { open: boolean; width: number }) => Promise<void>;
@@ -512,25 +476,9 @@ export interface RallyDesktopBridge {
    */
   openSidekicks: (target?: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
-  openMeetingNotes: (noteId?: string) => Promise<void>;
-  /**
-   * Closes the meeting window. Given a note id, the main window is raised and
-   * taken to that note on the way out — the meeting is over, and the note is
-   * the thing the person is left with.
-   */
-  closeMeetingNotes: (noteId?: string) => Promise<void>;
-  setMeetingRecordingState: (input: {
-    region: RallyRegion;
-    workspaceId: string;
-    recording: boolean;
-  }) => Promise<void>;
-  getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
-  prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
-  startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
-  stopMeetingSystemAudioCapture: () => Promise<void>;
-  onMeetingSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
-  openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
-  onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
+  startSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
+  stopSystemAudioCapture: () => Promise<void>;
+  onSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   /**
    * The settings window has been put on screen for the first time.

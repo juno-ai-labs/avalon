@@ -1,5 +1,7 @@
 import {
   WorkspaceNotificationIntentClaimResultSchema,
+  WorkspaceNotificationIntentDeliverySchema,
+  type WorkspaceNotificationIntentDelivery,
   WorkspaceNotificationIntentMaintenanceTargetSchema,
   WorkspaceNotificationIntentReapResultSchema,
   WorkspaceNotificationIntentTransitionResultSchema,
@@ -112,12 +114,13 @@ export function transitionWorkspaceNotificationIntent(
     if (input.transition === "settle") {
       applied = storage.sql.exec<{ intent_id: string }>(
         `UPDATE workstream_notification_intents
-            SET state = ?, payload_json = NULL, lease_id = NULL,
+            SET state = ?, payload_json = CASE WHEN ? THEN payload_json ELSE NULL END, lease_id = NULL,
                 lease_expires_at = NULL, last_error_code = NULL, updated_at = ?,
                 delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE NULL END
           WHERE intent_id = ? AND workspace_id = ? AND lease_id = ?
           RETURNING intent_id`,
         input.state,
+        input.state === "delivered" && input.retainPayload === true ? 1 : 0,
         at,
         input.state,
         at,
@@ -193,4 +196,12 @@ export function reapSettledWorkspaceNotificationIntents(
   return WorkspaceNotificationIntentReapResultSchema.parse({
     reapedIntentIds: rows.map((row) => row.intent_id).sort(),
   });
+}
+
+export function readNotificationIntentForDelivery(storage: DurableObjectStorage, input: { workspaceId: string; intentId: string }): WorkspaceNotificationIntentDelivery | null {
+  const row = storage.sql.exec<NotificationIntentRow>(`SELECT * FROM workstream_notification_intents
+    WHERE workspace_id = ? AND intent_id = ? AND payload_json IS NOT NULL AND state <> 'skipped'`, input.workspaceId, input.intentId).toArray()[0];
+  return row ? WorkspaceNotificationIntentDeliverySchema.parse({ intentId: row.intent_id, workstreamId: row.workstream_id, recipientUserId: row.recipient_user_id, notificationKind: row.notification_kind, workspaceId: row.workspace_id,
+    sourceGeneration: row.source_generation, requiredDirectoryVersion: row.required_directory_version,
+    payloadJson: row.payload_json }) : null;
 }

@@ -1,16 +1,16 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
 import { useState } from 'react';
-import { CirclePause, Ellipsis, History, Mail, Play, Trash2 } from 'lucide-react';
+import { Archive, CirclePause, Ellipsis, History, Mail, Play } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { DeleteAutomationDialog } from './delete-automation-dialog';
+import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 import { RelativeTime } from './relative-time';
 
-export type AutomationHeaderAction = 'pause' | 'resume' | 'delete' | 'run';
+export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
 
 export interface AutomationHeaderProps {
   automation: AutomationDetail;
@@ -25,8 +25,8 @@ export interface AutomationHeaderProps {
   error?: string | undefined;
   onPause: () => void;
   onResume: () => void;
-  /** Runs the deletion once the person has confirmed it; a rejection stays in the dialog. */
-  onDelete: () => Promise<void>;
+  /** Archives the Sidekick once confirmed. */
+  onArchive: () => Promise<void>;
   onRunNow: () => void;
   /**
    * Saves one icon or colour choice. Rejecting leaves the error in the open
@@ -70,7 +70,7 @@ export function AutomationHeader({
   error,
   onPause,
   onResume,
-  onDelete,
+  onArchive,
   onRunNow,
   onAppearanceChange,
 }: AutomationHeaderProps): React.JSX.Element {
@@ -82,7 +82,7 @@ export function AutomationHeader({
   // otherwise), so a paused one is not offered a command that always fails.
   const hasTriggers = automation.runnable ?? ((definition?.triggers.length ?? 0) > 0);
   const canRun = automation.lifecycle === 'active' && hasTriggers;
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   return (
     <div className="automation-header">
@@ -138,17 +138,18 @@ export function AutomationHeader({
                 <DropdownMenu.Item
                   className="menu-item menu-item-danger"
                   disabled={pending !== null}
-                  onSelect={() => setConfirmingDelete(true)}
+                  onSelect={() => setConfirmingArchive(true)}
                 >
-                  <Trash2 size={14} /> {automation.lifecycle === 'draft' ? 'Delete draft' : 'Delete Sidekick'}
+                  <Archive size={14} />
+                  {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
-          <DeleteAutomationDialog
-            onClose={() => setConfirmingDelete(false)}
-            onConfirm={onDelete}
-            target={confirmingDelete ? { name, status: automation.lifecycle } : null}
+          <ArchiveAutomationDialog
+            onClose={() => setConfirmingArchive(false)}
+            onConfirm={onArchive}
+            target={confirmingArchive ? { name, status: automation.lifecycle } : null}
           />
         </div>
       </div>

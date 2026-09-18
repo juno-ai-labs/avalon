@@ -1,4 +1,7 @@
+import { regionConfiguration } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { z } from 'zod';
 import type { Env } from './env';
 
@@ -15,7 +18,7 @@ import type { Env } from './env';
  * `docs/workspace-retirement.md` owns the walk.
  */
 
-export type RallyRegion = 'global' | 'eu';
+export type RallyRegion = Region;
 
 export class RegionalApiError extends Error {
   /**
@@ -29,13 +32,13 @@ export class RegionalApiError extends Error {
 }
 
 function baseUrl(env: Env, region: RallyRegion): string {
-  const base = region === 'eu' ? env.RALLY_EU_API_BASE_URL : env.RALLY_API_BASE_URL;
+  const base = region === 'global' ? env.RALLY_API_BASE_URL : env[`RALLY_${regionConfiguration(region).bindingPrefix}_API_BASE_URL`];
   if (!base) throw new RegionalApiError(503, 'regional_api_not_configured', 'The regional API base URL is not configured', true);
   return base.replace(/\/$/u, '');
 }
 
 function operatorToken(env: Env, region: RallyRegion): string {
-  const token = region === 'eu' ? env.RALLY_EU_OPERATOR_TOKEN : env.RALLY_OPERATOR_TOKEN;
+  const token = region === 'global' ? env.RALLY_OPERATOR_TOKEN : env[`RALLY_${regionConfiguration(region).bindingPrefix}_OPERATOR_TOKEN`];
   if (!token) throw new RegionalApiError(503, 'operator_token_not_configured', 'The operator credential is not configured', true);
   return token;
 }
@@ -89,9 +92,12 @@ export function relayRegionalError(error: unknown): Response {
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   if (error instanceof z.ZodError) {
+    // Which field disagrees is the one thing an operator can act on: it says
+    // whether Ace or the regional API is the one behind. Paths and issue
+    // codes only; the regional answer's values stay out of the page.
     return Response.json({
       error: 'regional_api_contract_mismatch',
-      message: 'The regional API answered in a shape this version of Ace does not recognise; Ace and the regional API may be on different versions.',
+      message: `The regional API answered in a shape this version of Ace does not recognise (${zodDiagnosticCode(error, 'regional_response')}); Ace and the regional API may be on different versions.`,
     }, { status: 502 });
   }
   return Response.json({ error: 'regional_api_unavailable', message: 'The regional API could not be reached.' }, { status: 502 });
@@ -114,4 +120,15 @@ export async function retireWorkspace(
     { method: 'POST', body: { confirmWorkspaceId: input.confirmWorkspaceId } },
     (value) => WorkspaceRetirementResultSchema.parse(value),
   );
+}
+
+export function regionalDatabase(env: Env, region: string): D1Database {
+  const db = env[`${regionConfiguration(region).bindingPrefix}_DB`];
+  if (!db) throw new Error('regional_database_unavailable');
+  return db;
+}
+export function regionalFlagQueue(env: Env, region: string): Queue {
+  const queue = env[`${regionConfiguration(region).bindingPrefix}_PRODUCT_FLAG_QUEUE`];
+  if (!queue) throw new Error('regional_queue_unavailable');
+  return queue;
 }

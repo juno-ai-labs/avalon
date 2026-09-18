@@ -24,8 +24,6 @@ boundary, or changing how a local database is created.
 | `scripts/check-d1-baseline-against-remote.mjs` | `pnpm db:baseline:verify` — compares the migration chain against every discovered hosted database, and them against each other. `-- --record` refreshes the fingerprint. |
 | `scripts/migrate-d1.mjs` | The one migrate script — every region, local or hosted. Discovers regions, plans, then hands over to Wrangler. |
 
-## How it works
-
 ### Generating one
 
 `pnpm db:baseline:create 0090_drop_legacy_product_tables.sql` applies every
@@ -108,7 +106,6 @@ and treats a config as a region when its D1 binding declares `migrations_dir`.
 Adding a region is adding its config and its `.dev.vars`; `wrangler.test.jsonc`
 binds D1 *without* a `migrations_dir` and is correctly not a region.
 
-
 ### Verifying one
 
 `pnpm db:baseline:verify` reads `sqlite_schema` from every discovered region and
@@ -135,25 +132,27 @@ asserted for **every** baseline in `packages/db/test/baseline-migration.test.ts`
 Chain equals production here, baseline equals chain there, so baseline equals
 production by composition — and each half is checked where it can be.
 
-## Invariants
-
 - **A baseline only ever applies to an empty database.** It carries no migration
   history of its own, so applying it over existing tables would merge two schemas
   with no record explaining either, and applying it over a partially migrated
   database would record every subsumed migration as applied when some had not
   been. Both are unrecoverable without dropping the database.
+
 - **The migration chain stays authoritative and complete.** Deleting a migration
   because a baseline subsumes it would leave every hosted database that has not
   run it with no description of how to get there. A baseline is an addition.
+
 - **Hosted databases never apply a baseline.** The migrate script passes
   `allowBaseline: false` for `--remote`, so the plan cannot be `baseline` — one
   line, stated once, rather than a rule living in whichever script you ran. If a
   baseline ever reached production it would collide with the schema already
   present, and the guard would refuse it — loudly, mid-deploy.
+
 - **A baseline is chosen by calculation, never by name.** Anything that reaches
   for "the baseline" — a hardcoded filename, `baselines[0]`, the manifest's only
   entry — breaks the moment a second one exists, and breaks silently, by using a
   snapshot that stops short of where it could have reached.
+
 - **The manifest's file list and digest describe the migrations on disk
   exactly.** This is what makes staleness loud. Editing a subsumed migration or
   inserting one below the boundary changes the digest and fails the suite. The
@@ -161,12 +160,10 @@ production by composition — and each half is checked where it can be.
   0090 boundary — recorded as applied on every baselined database, and still
   pending on production. That case is why the digest covers the file list and not
   only the contents.
+
 - **A failing baseline test is never fixed by regenerating.** Regenerating
   encodes whatever changed into the artifact and removes the evidence. Find out
   whether a migration was edited or a file was inserted first.
-- **Both regions share one baseline, which requires that they be identical.**
-  `pnpm db:baseline:verify` checks Global against EU for exactly this reason;
-  "both are migrated" and "both are the same" are different claims.
 
 ## Boundary
 
@@ -376,8 +373,6 @@ If `pnpm db:baseline:verify` reports a mismatch, a hosted database differs from
 the migrations. That is an incident in the schema, not in the baseline; do not
 regenerate to make it pass.
 
-## Changelog
-
 ### 2026-08-22 — Hold the config and the seeded clock to what they actually claim
 
 **What changed:** `stripJsonComments` drops trailing commas, so the JSONC
@@ -446,16 +441,6 @@ rather than read. Separately, `outOfOrder` and `unknownApplied` were written for
 established databases and production, and both were unreachable there because
 the ledger was skipped whenever user tables existed.
 
-**Considered and rejected:** *unifying the region set inside `sync-dev-env.mjs`*,
-which discovery made inconsistent with the env files it writes. That script
-carries per-region ports and `_GLOBAL`/`_EU` key suffixes a discovered region has
-no answer for, and it is on every developer's first command of the day; a
-precondition in the migrate script that names the missing file and the reason
-removes the obscure failure at a fraction of the risk. Unifying them is the real
-fix and is still owed. Also *keeping the ledger read off the warm path* for its
-one wrangler start-up: the command already spends several, and the alternative
-was two checks that could never fire.
-
 Manifest anomalies that force a chain replay — a baseline file missing from
 disk, a boundary claimed twice — are now reported rather than only dropped,
 because their symptom is a slow setup rather than an error.
@@ -518,7 +503,6 @@ read back as objects need content comparison, not `!==`. The current baseline is
 byte-identical after all five fixes: every one of these was latent, and the
 tests, not the artifact, are what changed.
 
-
 ### 2026-08-21 — One migrate script, discovered regions, and a calculated baseline
 
 **What changed:** `scripts/migrate-local-region.mjs` and the raw Wrangler remote
@@ -528,15 +512,6 @@ listed. The manifest holds a list of baselines, and which one a database gets is
 calculated — the highest boundary still describing the chain — with everything
 above it applied on top. The hosted "never baseline" rule became a parameter
 rather than a separate code path.
-
-**Why:** the first version hardcoded `["global", "eu"]` in one script and named
-one baseline out of a manifest that could only hold one. Adding a third region
-meant editing a list plus four package aliases; adding a second baseline was not
-possible at all, and the code that would have had to choose between them did not
-exist. Both are things this repository will do — a baseline is only worth having
-if it can move forward — and neither would have failed loudly: a missing region
-is a database nobody migrated, and a wrongly chosen baseline is a slow setup, not
-an error.
 
 **Considered and rejected:**
 

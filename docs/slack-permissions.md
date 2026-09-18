@@ -30,8 +30,6 @@ contracts; activation acknowledgement follows
 | `apps/api/src/services/slack-agent-service.ts` | The Agent surface, tool execution, and the event-scoped search token. |
 | `apps/api/src/routes/slack.ts` | The ingress the subscribed events arrive at. |
 
-## How it works
-
 ### The permission model
 
 - **Workspace bot installation** — a Slack administrator installs the Rally app.
@@ -80,9 +78,9 @@ Slack membership and visibility.
 | --- | --- | --- | --- |
 | `send_message` | `chat.postMessage` | `chat:write` | Sends a bot-authored channel or thread message. Rally supplies a stable `client_msg_id` for retry idempotency. |
 | `add_reaction` | `reactions.add` | `reactions:write` | Adds a bot reaction. Slack's `already_reacted` response is treated as a successful retry. |
-| `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Creates a public/private channel by name or opens a DM/MPIM for one to eight user IDs. |
+| `create_conversation` | `conversations.create` or `conversations.open` | `channels:manage`, `groups:write`, `im:write`, `mpim:write` | Accepts exactly one of a channel name or one to eight user IDs, then creates a public/private channel or opens a DM/MPIM. |
 
-These tools use Rally's normal external-write confirmation, authorization, audit,
+These tools use Rally's normal external-write execution, authorization, audit,
 and durable-receipt policies. A workspace Slack task can use them without the
 initiating member creating a personal Slack connection, but only through the
 installation belonging to the same Slack team and Rally workspace.

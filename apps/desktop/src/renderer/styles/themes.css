@@ -83,13 +83,12 @@
    * recede by darkening it, a light theme by greying it. */
   --av-sys-color-surface-canvas: #fcfcfc;
   --av-sys-color-surface-default: #fcfcfc;
-  --av-sys-color-surface-subtle: #f7f7f7;
+  --av-sys-color-surface-subtle: var(--av-ref-color-neutral-2);
   --av-sys-color-surface-sunken: #f3f3f3;
   --av-sys-color-surface-raised: #fcfcfc;
   --av-sys-color-surface-raised-hover: rgba(119, 119, 119, 0.17);
   --av-sys-color-surface-elevated: #fcfcfc;
   --av-sys-color-surface-elevated-hover: #eeeeee;
-  --av-sys-color-surface-inverse-hover: #2f2f2f;
 
   /* Text tones, strongest to faintest. */
   --av-sys-color-text-on-media: #ffffff;
@@ -130,7 +129,9 @@
 
   /* Positive state. `fill` and `fill-edge` are a filled control — a switch
    * that is on, a selected preset — which is neither the vivid hue nor the
-   * wash. */
+   * wash. `vivid` is the one saturated step, for a status indicator a few
+   * pixels across — the healthy dot beside a connection — where `base`, tuned
+   * for text and fills, read as grey. */
   --av-sys-color-success-base: #4f8271;
   --av-sys-color-success-strong: #3d6a5b;
   --av-sys-color-success-fill: #dfeae5;
@@ -138,6 +139,7 @@
   --av-sys-color-success-soft: #5e8a7a;
   --av-sys-color-success-wash: #eef4f1;
   --av-sys-color-success-edge: #cfe0d8;
+  --av-sys-color-success-vivid: #1fa85c;
 
   /* Attention short of failure. */
   --av-sys-color-warning-base: #b8860b;
@@ -205,7 +207,6 @@
 
   /* Failure and destructive action. */
   --av-sys-color-danger-tint: rgba(195, 69, 63, 0.1);
-  --av-sys-color-danger-tint-strong: rgba(195, 69, 63, 0.24);
 
   /* What sits between a layer and what it covers. */
   --av-sys-color-scrim-default: rgba(38, 36, 30, 0.34);
@@ -448,10 +449,6 @@
   --av-cmp-markdown-strong-weight: 560;
   --av-cmp-markdown-list-indent: calc(var(--av-ref-space-unit) * 6);
   --av-cmp-markdown-table-leading: 1.7;
-  --av-cmp-markdown-article-heading-1: 30px;
-  --av-cmp-markdown-article-heading-2: 23px;
-  --av-cmp-markdown-article-heading-3: 19px;
-  --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
   /* A surface that deliberately opposes the theme: light on a dark theme and
    * dark on a light one. Name a token, never a literal — the ramp inverts with
@@ -535,13 +532,12 @@
 
   --av-sys-color-surface-canvas: #070707;
   --av-sys-color-surface-default: #070707;
-  --av-sys-color-surface-subtle: #111111;
+  --av-sys-color-surface-subtle: var(--av-ref-color-neutral-2);
   --av-sys-color-surface-sunken: #070707;
   --av-sys-color-surface-raised: #2f2f2f;
   --av-sys-color-surface-raised-hover: #313131;
   --av-sys-color-surface-elevated: #2f2f2f;
   --av-sys-color-surface-elevated-hover: #3d3d3d;
-  --av-sys-color-surface-inverse-hover: #eeeeee;
 
   --av-sys-color-text-on-media: #ffffff;
   --av-sys-color-text-on-inverse: #141414;
@@ -580,6 +576,7 @@
   --av-sys-color-success-soft: #8bb9a2;
   --av-sys-color-success-wash: #0e1712;
   --av-sys-color-success-edge: #1e2f26;
+  --av-sys-color-success-vivid: #34d276;
 
   --av-sys-color-warning-base: #d9b168;
   --av-sys-color-warning-soft: #cfa961;
@@ -627,7 +624,6 @@
   --av-sys-color-workstream-unseen: #a992e0;
 
   --av-sys-color-danger-tint: rgba(204, 122, 106, 0.14);
-  --av-sys-color-danger-tint-strong: rgba(204, 122, 106, 0.3);
 
   --av-sys-color-scrim-default: rgba(6, 4, 2, 0.72);
   --av-sys-color-scrim-subtle: rgba(6, 4, 2, 0.5);
@@ -780,10 +776,6 @@
   --av-cmp-markdown-strong-weight: 560;
   --av-cmp-markdown-list-indent: calc(var(--av-ref-space-unit) * 6);
   --av-cmp-markdown-table-leading: 1.7;
-  --av-cmp-markdown-article-heading-1: 30px;
-  --av-cmp-markdown-article-heading-2: 23px;
-  --av-cmp-markdown-article-heading-3: 19px;
-  --av-cmp-markdown-article-heading-margin: 48px 0 18px;
 
   --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
   --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);

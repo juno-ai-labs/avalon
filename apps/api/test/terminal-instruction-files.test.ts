@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -116,7 +116,7 @@ describe("instruction probe", () => {
     ]);
     expect(escaped.stdout).not.toContain("planted");
     // A directory named like an instruction file is not one either.
-    rmSync(join(root, "apps"));
+    unlinkSync(join(root, "apps"));
     mkdirSync(join(root, "apps", "api", "AGENTS.md"), { recursive: true });
     const directory = run(root, "report", []);
     const asDirectory = splitInstructionProbeTrailer(directory.stdout, directory.marker).probe;
@@ -195,7 +195,7 @@ describe("resident context blocks", () => {
     expect(renderResidentContextBlock(block({ blockId: "apps/api/AGENTS.md", content: "api rules" })))
       .toBe("Instructions added from ./apps/api/AGENTS.md:\napi rules");
     expect(renderResidentContextBlock(block({ truncated: true })))
-      .toBe("Instructions added from ./AGENTS.md:\nroot rules\n[Truncated at the instruction budget; read the rest with terminal_read_file.]");
+      .toBe("Instructions added from ./AGENTS.md:\nroot rules\n[Truncated at the instruction budget; read the rest with read_file.]");
   });
 
   it("renders only system-resident blocks, root to leaf then by id, under the kind heading", () => {
@@ -236,14 +236,14 @@ describe("resident context blocks", () => {
       const omitted = present.filter((admitted) => !admitted).length;
       if (omitted > 0) {
         const named = resident.filter((_entry, index) => !present[index]!)
-          .every((entry) => rendered.includes(`Omitted: ./${entry.blockId} exceeds the instruction budget; read it with terminal_read_file`));
+          .every((entry) => rendered.includes(`Omitted: ./${entry.blockId} exceeds the instruction budget; read it with read_file`));
         expect(named || rendered.includes(omittedCountLine("repository_instructions", omitted)), `bound ${bound}`).toBe(true);
       }
     }
     expect(renderResidentContextSections(resident, bytesOf(unbounded))).toBe(unbounded);
     expect(renderResidentContextSections(resident, bytesOf(unbounded) - 1)).toContain("Omitted: ./apps/api/AGENTS.md exceeds");
     expect(renderResidentContextSections(resident, floor)).toBe(
-      [policy.heading, policy.preamble, "Omitted: 3 beyond the instruction budget; read them with terminal_read_file"].join("\n\n"),
+      [policy.heading, policy.preamble, "Omitted: 3 beyond the instruction budget; read them with read_file"].join("\n\n"),
     );
   });
 

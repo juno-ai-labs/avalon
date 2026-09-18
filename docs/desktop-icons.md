@@ -179,8 +179,6 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
-## Changelog
-
 ### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
 
 **What changed:** Replaced the compiled selectable-ID allowlist with a versioned

@@ -4,7 +4,7 @@ import { collectSettings, coreSettingsProvider, defineSetting, searchSettings, s
 
 const context: SettingsSearchContext = {
   sections: new Set(desktopSettingsSections),
-  admin: true, developer: true, menuBar: true, login: true,
+  admin: true, developer: true, menuBar: true, login: true, releaseChannel: true,
 };
 describe('settings registry', () => {
   it('makes a new definition searchable without a keyword list', () => {
@@ -23,11 +23,11 @@ describe('settings registry', () => {
   });
   it('uses availability without making disabled controls undiscoverable', () => {
     const entries = collectSettings([coreSettingsProvider], {
-      ...context, admin: false, developer: false, menuBar: false, login: false,
+      ...context, admin: false, developer: false, menuBar: false, login: false, releaseChannel: false,
       sections: new Set(['account', 'workspace', 'application']),
     });
     expect(entries.some((entry) => entry.definition.id === 'lockdown')).toBe(true);
-    for (const id of ['debug', 'telemetry', 'menuBar', 'login', 'invitations', 'inviteEmail', 'digestDays']) {
+    for (const id of ['debug', 'telemetry', 'menuBar', 'login', 'releaseChannel', 'invitations', 'inviteEmail', 'digestDays']) {
       expect(entries.some((entry) => entry.definition.id === id)).toBe(false);
     }
   });
@@ -48,7 +48,7 @@ describe('settings registry', () => {
   });
   it('preserves legacy vocabulary and English casing independent of host locale', () => {
     const entries = collectSettings([coreSettingsProvider], context);
-    for (const query of ['startup', 'data residency', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'summary', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
+    for (const query of ['startup', 'keychain', 'integrations', 'organization', 'roles', 'notifications', 'diagnostics', 'summary', 'security', 'privacy', 'developer', 'status item', 'meetings', "Mac's keystore", 'invitations']) {
       expect(searchSettings(entries, query).length, query).toBeGreaterThan(0);
     }
     expect(new Set(coreSettingsProvider.entries.map((entry) => entry.key)).size).toBe(coreSettingsProvider.entries.length);

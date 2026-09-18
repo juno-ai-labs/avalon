@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 /**
  * One supervisor object per live web artifact.
  *
@@ -129,6 +130,16 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     ) STRICT`,
     `CREATE INDEX error_log_recent_idx ON error_log(occurred_at DESC, entry_id DESC)`,
   ],
+}, { version: 2, description: "allow configured deployment identifiers", statements: [
+  "PRAGMA defer_foreign_keys = ON",
+  "CREATE TABLE \"_region_copy_artifact_state\" AS SELECT * FROM \"artifact_state\"",
+  "DELETE FROM \"artifact_state\"",
+  "DROP TABLE \"artifact_state\"",
+  "CREATE TABLE artifact_state (\n      id INTEGER PRIMARY KEY CHECK (id = 1),\n      artifact_id TEXT NOT NULL,\n      workspace_id TEXT NOT NULL,\n      workstream_id TEXT NOT NULL,\n      resource_id TEXT NOT NULL,\n      region TEXT NOT NULL,\n      current_version INTEGER NOT NULL CHECK (current_version > 0),\n      mode TEXT NOT NULL CHECK (mode IN ('static', 'active')),\n      stateful INTEGER NOT NULL CHECK (stateful IN (0, 1)),\n      manifest_json TEXT NOT NULL CHECK (json_valid(manifest_json)),\n      updated_at INTEGER NOT NULL CHECK (updated_at >= 0)\n    ) STRICT",
+  "INSERT INTO \"artifact_state\" SELECT * FROM \"_region_copy_artifact_state\"",
+  "DROP TABLE \"_region_copy_artifact_state\"",
+  "PRAGMA defer_foreign_keys = OFF"
+]
 }];
 
 /**
@@ -226,7 +237,7 @@ const ARTIFACT_STATE_ROW = z.object({
   workspace_id: z.string(),
   workstream_id: z.string(),
   resource_id: z.string(),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   current_version: z.number().int().positive(),
   mode: z.enum(["static", "active"]),
   stateful: z.number().int(),
@@ -238,7 +249,7 @@ export const ArtifactPublishSchema = z.strictObject({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
   resourceId: z.string().uuid(),
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   manifest: ArtifactManifestSchema,
 });
 export type ArtifactPublish = z.infer<typeof ArtifactPublishSchema>;

@@ -47,16 +47,22 @@ reach the ledger through the `residentContext` object-port authority.
 
 ## Sidekick durable boundaries
 
+WorkspaceDO migration 59 stores implicit agent teams, additive membership,
+delegation ownership, and message addressing references. The workspace owns
+those cross-conversation relationships; the conversation remains authoritative
+for its content and execution. [Agent communication](agent-communication.md)
+owns the typed host RPCs and storage behavior.
+
+
 Substream migration 46 adds `sidekick_skill_names`, a conversation-owned map from
 canonical Sidekick ID to a unique model-facing name. Assignment is synchronous
 and transactional. Removed Sidekicks keep their reservation so a name present in
 earlier transcript turns cannot later select a different Sidekick. Renames update
 catalog descriptions while retaining the assigned tool name.
 
-
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
-refs pinned to an execution). Only main-substream loading attaches; removal
+refs pinned to an execution). Loading attaches within the current substream; removal
 affects future executions. Future runs reauthorize attachments and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
@@ -125,7 +131,6 @@ workerd's clock; it does not identify which caller woke an instance. The edge
 strips these internal headers and records time outside acceptance, including
 constructor/readiness and queueing. See [socket timing](performance-tracing.md#what-room_upgrade-contains).
 
-
 ### Durable search delivery
 
 Transcript writes commit a coalesced search intent through SQLite triggers. SubstreamAgent alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.
@@ -160,6 +165,20 @@ canonical authorship. The message-local
 attachment JSON is immutable; the stable work-stream resource row it names may
 be renamed, watched, or otherwise updated before delivery and is reused rather
 than overwritten or treated as an admission conflict.
+
+Accepted assistant prose promotes canonical `person://` links through the same
+turn-keyed mention authority. The conversation accepts only exact links outside
+Markdown code whose IDs still name active participants; model text can point at
+an identity but cannot grant access or resurrect a removed participant. Mention
+rows, attention order, member mention state, semantic realtime, and regional
+viewer/activity effects commit with the assistant transition. Because Rally is
+the actor rather than a user identity, this path does not fabricate a human
+author for sender-attributed email or push notification. Attention order is
+conversation-wide: a Rally reply that contains an authoritative mention marks
+the thread unread for participants whose seen waterline is behind, while only
+the named participant receives the mention badge.
+The renderer binds chips to those exact stored ranges with a render-local token,
+so one authoritative occurrence cannot bless another link to the same person.
 
 Every Bind transition is committed before the adapter returns the accepted
 assistant or tool-result message to Bind. At every provider boundary the host
@@ -261,16 +280,6 @@ became typed; every object that existed before schema v39 reads
 identity migration. `substreamLoopId(parentId, substreamId)` derives the loop
 identity the same way.
 
-The name is not a residency boundary. Staging and production first restrict the
-namespace to `us` or `eu`, derive the ID from that restricted namespace, and
-only then call `get()` with the workspace's persisted first-placement affinity.
-At workspace creation, request longitude selects `wnam`/`enam` within the US
-jurisdiction or `weur`/`eeur` within the EU jurisdiction. The Global binding,
-regional workspace row, and `WorkspaceDO.workspace_identity` retain that value;
-every descendant lookup reads the regional immutable projection. The same name
-identifies a different object in an unrestricted, US, and EU namespace. Binding,
-jurisdiction, and name together determine the Durable Object identity.
-
 **The parent decides; the child holds the transcript.** A `SubstreamAgent` is
 one ordered transcript and one Bind loop. It does not decide who may read it or
 where its state rolls up; its parent does, through the contract in
@@ -280,7 +289,7 @@ where its state rolls up; its parent does, through the contract in
 | --- | --- | --- | --- |
 | `authorizeViewer({workspaceId, parentId, userId})` | `{authorized, archived}` | `scope = 'workspace'`, or the person's Main viewer row says participant; `archived` from `workstream_metadata.archived_at` | scope `workspace`, the author, the run-as principal, or, for a room's automation, `WorkspaceDO.workstreamParticipant`; `archived` when the owning room is archived; a deleted automation answers unauthorized |
 | `authority({workspaceId, parentId})` | `{exists, authorityGeneration, archived}` | from `workstream_metadata` | from the automation row; `archived` when deleted or the owning room is archived |
-| `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and delivers the provisional directory row to WorkspaceDO synchronously | inserts `conversation_children` |
+| `reserveChild({workspaceId, parentId, substreamId, kind, createdByUserId, authorityGeneration, directory?, deferDirectoryDelivery?})` | `{reserved: true, authorityGeneration}`, idempotent on `(parentId, substreamId)` | inserts `conversation_children`; for `"0"` with `directory` it also creates the provisional `workstream_metadata` row and normally delivers the provisional directory row to WorkspaceDO synchronously. The creation coordinator may defer that delivery, overlap it with child initialization, and flush it before answering. | inserts `conversation_children` |
 | `receiveChildEffects({substreamId, envelopes})` | `{accepted: [{messageId, payloadHash}]}` | shared | shared |
 | `listChildren({workspaceId, parentId})` | `{children: [{substreamId, kind, createdAt}]}`, always including `"0"` | shared | shared |
 
@@ -598,6 +607,18 @@ recovered from the same object alarm after eviction, and takes terminal receipts
 in order. A failed settlement moves only its own retry time and cannot prevent a
 pending loop input from becoming the next inference.
 
+The alarm scheduler has two distinct ready lanes. Canonical semantic realtime
+delivery remains an activation barrier because a committed predecessor must be
+visible before ephemeral output from the next execution. Authorization, search,
+and child-to-parent regional projections are cross-authority delivery instead:
+their durable outbox rows retry beside the loop and never gate its claim. The
+alarm schedules execution first, starts one serialized projection chain beside
+it, requests another projection pass after preparation, claim, and settlement
+when those phases can have committed new effects, and awaits both lanes before
+returning. The persistent loop therefore does not starve projections, Queue
+acceptance does not add to activation latency, and no second regional drain is
+performed inside the execution loop.
+
 `WorkstreamLoopWorkflow` and its binding are gone: every work-stream run
 executes inside the SubstreamAgent, and a stack whose authority is not
 `durable_object_open` is refused with `workstream_authority_not_open` rather
@@ -610,8 +631,10 @@ Workflow abstraction; the retirement changed only the work-stream-down runtime.
 the useful Agents SDK lifecycle behavior used by `SubstreamAgent`. The first reference ensures an alarm no later than 30
 seconds; nested long operations share it; the final idempotent disposer
 recomputes the alarm only from durable work. The in-isolate drain is
-deduplication only: it never suppresses persisted scheduling, and its result is
-awaited by the invocation that started it rather than left to `waitUntil`.
+deduplication only: it never suppresses persisted scheduling. Request entrypoints
+register the eager drain with the current invocation's lifecycle and arm the
+durable recovery alarm at the keep-alive horizon before returning; alarm-driven
+drains are awaited by the alarm invocation itself.
 Runtime ping/pong is handled by WebSocket auto-response and does not wake the
 object.
 
@@ -831,9 +854,22 @@ owner.
 `steer` means deliver after the current step: the in-flight provider response
 finishes, its reserved assistant turn becomes canonical, and every tool call it
 already emitted settles before pending steer inputs are promoted in arrival
-order and included in the next model request. `queue` means deliver after the
-persistent loop next becomes idle; promotion wakes that same loop rather than
-creating another one. If failure or stop prevents a steer boundary, the input
+order and included in the next model request. **An `answer`-suspend is the
+exception: the answer goes first, and the rest of the queue waits for it.** A
+tool that halts on `needs_input` withholds its result until a human answers, so
+that step never settles, and `applyBindLoopTransition` refuses the
+`protocol_user_appended` transition a steer, a queued message, or a
+resident-context delivery would need. The queue is therefore not drained in
+arrival order while a question is open: `inputsBindCanAccept` reads the withheld
+calls out of the live Bind projection and promotes the admitted answers that
+close them first — at a safe step and at activation alike. That is a reordering
+rather than a hold: the tool result an answer appends settles the batch, so the
+rest of the queue follows it in the same pass, in arrival order, and only a
+question still unanswered holds anything back. A batch withheld for any other reason keeps arrival
+order and Bind's loud refusal, because repairing one is a run's own job and a
+queue that quietly reorders itself around it would hide that. `queue` means
+deliver after the persistent loop next becomes idle; promotion wakes that same
+loop rather than creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
 While the loop is executing, Electron always admits a newly composed message
@@ -857,6 +893,15 @@ all, and that message and every message queued after it would wait for an
 unrelated request that a work stream nobody reopens never receives. Arming
 before the commit rather than after is what makes that unconditional: the worst
 an admission that then fails can cost is one wake that finds nothing to do.
+
+Successful preparation has one separate eager-wake owner. The product service
+returns its private `activationRequest`, and `SubstreamAgent` validates the loop
+and pending-input fence before moving the alarm to due now. The product's
+`finally` does not schedule the same wake again; it re-arms promptly only after a
+preparation failure, where no activation request returns and settling the failed
+head may have exposed later inputs. The pre-reservation cancellation-recovery
+alarm remains in both cases, so cancellation between durable admission and the
+outer activation call delays recovery but cannot strand the row.
 
 The claim itself expires. `activeInputPreparations` records when a preparation
 was first claimed, and past `LOOP_EXECUTION_LEASE_MS` the claim stops being
@@ -1063,10 +1108,10 @@ complete relationship map is:
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: one automation's sidebar row, fenced on the automation's own `sourceVersion` |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
-| WorkstreamDO | WorkspaceDO | typed RPC | the one synchronous parent-to-workspace delivery: the provisional directory row a `reserveChild("0")` at creation writes, because the person who created the work stream is about to open it and the Worker's visibility checks read the directory |
+| WorkstreamDO | WorkspaceDO | typed RPC | the provisional directory row a `reserveChild("0")` at creation writes. It is synchronous by default; the creation coordinator may overlap it with child initialization, but still fences its response on `flushProvisionalDirectory` because visibility checks read the directory. The alarm uses the same direct delivery if it wins that race. |
 | WorkspaceDO | AutomationDO | typed RPC | `setOwningRoomArchived`, fanned out with `Promise.allSettled` when a directory effect archives or unarchives a room that owns automations; a failed call is logged and the next archival change retries it |
 | a run's loop | AutomationDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
-| a run's loop | WorkstreamDO, then the room's SubstreamAgent `0` | typed RPC | the `sidekick_post_result` tool: `authority` for the room's generation and archive state, then `appendAutomationActivation` keyed on the run id |
+| a run's loop | WorkstreamDO, then the room's SubstreamAgent `0` | typed RPC | the `post_result` tool: `authority` for the room's generation and archive state, then `appendAutomationActivation` keyed on the run id |
 | regional Worker | regional Queue | Cloudflare Queue | a generic member-visible work-stream filter is resolved once in WorkspaceDO, then one bounded update event is published per selected work stream |
 | regional Queue Worker | SubstreamAgent("0") | typed RPC | an idempotent, receipt-backed mark-read or archive transaction against that work stream's authoritative SQLite state; membership is rechecked at delivery |
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
@@ -1181,7 +1226,7 @@ where the object landed. See
 ### Retired maintenance-window cutover
 
 The one-time D1-to-object authority cutover (drain -> import -> verify ->
-activate -> open) completed in both regions, and its machinery — the cron
+activate -> open) completed in configured deployments, and its machinery — the cron
 importer, the per-object import RPCs, and the deploy workflow's cutover steps —
 has been deleted. What deliberately survives it: the `workstream_authority_control`
 row (read on every request, fails closed when missing), the
@@ -1197,7 +1242,6 @@ misrouted product statement now fails because the table or column is absent.
 - **Exactly one object name owns each region/workspace/work-stream/substream tuple.** A second naming formula forks ordering and storage.
 - **Every callable method on these classes is fenced by the retirement gate, and an unclassified one refuses on a retired object.** `applyRetirementGate` wraps the prototype chain at module load; a method retirement's own walk needs is permitted, a Queue-delivered effect receiver answers a terminal acknowledgement, and a Queue consumer, Workflow or cron pass that meets a refusal acknowledges it. [`workspace-retirement.md`](workspace-retirement.md) owns the dispositions; read it before adding an RPC or an effect receiver to any of these classes.
 - **Every workspace-scoped stub is resolved through `durableObjectStubForWorkspace`.** It combines the hard jurisdiction lock with the parent's immutable affinity; only non-workspace regional singletons use the fallback resolver. ESLint rejects direct namespace and low-level resolver bypasses.
-- **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` and `AutomationDO` run no model and own no transcript.** Putting an agent in a parent recreates one serialization bottleneck across substreams.
 - **A conversation's parent decides who may read it; the conversation decides who may write.** The Worker asks the parent's `authorizeViewer` and seats the reader, and the socket admission carries the parent's decision down as `parentKind` and `parentArchived`. Answering a read from the conversation's participant list alone would hide an automation's chat from a workspace member the automation admits.
 - **A child never writes to *the conversation* after its parent's archive.** The parent reports `archived`, the ticket carries it, the conversation object refuses writes on that socket with `409 conversation_parent_archived`, and the Worker's `writableClient` refuses REST writes. A write path that admits on the participant row alone lets a run keep changing a room that was closed. The reader's own `member_attention` row is outside this: it records what that person has read rather than changing the room, an archived automation's conversation stays readable, and its read-state route therefore resolves a read-authorized client deliberately.
@@ -1282,6 +1326,13 @@ projection changes only, not token cadence.
 
 ## Testing
 
+`test-workers/conversation-parent-contract.test.ts` upgrades a populated v12 parent
+and exercises recommendation RPCs through the shared service. The child-tool
+regression in `test-workers/automation-do.test.ts` proves shared recommendations
+and independent local attachments end to end. Run both with
+`pnpm --filter @rally/api test:workers`; dropping the recommendation write or
+restoring main-only loading makes the corresponding regression fail.
+
 This inventory does not by itself satisfy the ordered-transcript acceptance
 contract. The PRD's focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
 maps persistent loop ownership, reserve-before-await ordering, safe controls,
@@ -1300,132 +1351,6 @@ pnpm --filter @rally/api test
 pnpm lint
 pnpm typecheck
 ```
-
-`apps/api/test/workstream-object-schema.test.ts` covers append-only object-local
-schema history and compaction singleton lifecycle. The real runtime suite uses
-`apps/api/vitest.workers.config.ts` with Cloudflare's current Vitest pool and
-`runInDurableObject`, `runDurableObjectAlarm`, `listDurableObjectIds`, and
-`evictDurableObject`. `test-workers/durable-object-runtime.test.ts` exercises
-constructor migrations, per-object SQL isolation across eviction, keep-alive
-alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
-and work-stream control sockets, foreground presence across WorkspaceDO eviction
-plus inaccessible-work-stream rejection, typed native-RPC success/conflict envelopes,
-complete initial directory delivery across all four live execution states even
-past 1,250 combined rows, presence-free proactive feed subscriptions,
-snapshot-fenced canonical transcript ranges without room-cursor movement,
-range revocation, compaction recovery, socket revocation across all current roles,
-obsolete queued run coalescing and stale-arrival rejection,
-ticket replay, and retired message-page refusal. Direct child message admission,
-its private receipt, and hibernation resend are covered in
-`test-workers/message-to-output-pipeline.test.ts`, as is the manual retry:
-one case scripts a run that answers, calls a tool, and dies on the next step, so
-the newest conversation turn is the assistant turn it failed on rather than the
-member message that started it — the shape every other retry case here misses,
-and the one that held the fence contract wrong for as long as it did. Two more
-cover a retry across runs that share a `created_at` and the diagnostics a socket
-command leaves behind when it throws something that is not an `ApiError`.
-`test-workers/participant-notification.test.ts` covers what seating somebody
-enqueues, on both the create and the add-afterwards paths, plus identity-bearing
-mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. Existing-room cases use runtime bootstrap plus the
-system-provision `provision` path;
-create-effect cases invoke `initialize` without activating its admitted run; and
-the elicitation case seeds a settled parent run. The distinct create ids still
-prevent accidental replay, while the replay case reuses `CREATE_REPLAY_ID`
-across its own two opens because replay is what it asserts.
-`test-workers/unseen-workstream-state.test.ts` covers
-self-removal, removal of another participant by a member, and the transactional
-final-participant refusal on real Durable Object SQLite. `test-workers/message-authority.test.ts` and
-`test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
-atomicity and malformed object-boundary inputs; the runtime suite proves a
-subscribed socket receives a typed external append without reconnecting.
-`apps/desktop/src/renderer/lib/transcript.test.ts` covers author, mention, and
-attachment flattening, routed identity bridging, and elicitation collapse. The
-participant-notification suite is also where the
-one trap in asserting on effects is recorded: **never assert on the child's own
-`durable_outbox` after an alarm could have fired.** A commit arms the child's
-alarm for the current instant and the alarm sends and then deletes, so an
-assertion against that table races the drain and gets quietly greener the fewer
-effects a path enqueues; an absence assertion written that way passes vacuously.
-The test Worker binds `ACTIVITY_QUEUE` as a producer only, so a drained outbox
-goes nowhere on its own. `test-workers/helpers/conversation-effects.ts` drives
-the two legs by hand instead: `pendingChildEffects` and `pendingParentEffects`
-read what an object has queued, `deliverChildEffects`, `deliverParentEffects`,
-and `deliverEffectsToWorkspace` hand exactly that to the real
-`consumeActivityQueue` and delete the rows the way a successful `sendBatch`
-would, `consumeEffectBodies` feeds arbitrary bodies to the consumer, and
-`parentStubFor` resolves a parent of either kind. What the *real* drain does
-with the rows is proved once, in `test-workers/conversation-effect-queue.test.ts`
-(a product mutation leaves a pending row, `runDurableObjectAlarm` empties the
-outbox while `projection_keys` keeps the version, the sent body reaches the
-parent and then the workspace through the consumer, two children sum into one
-viewer row, an automation's child produces no `parent_effect` row, an oversized
-envelope is dropped); every other test only needs the effects to arrive.
-`test-workers/conversation-creation.test.ts` proves the provisional directory
-row exists with the parent's first version before any alarm fires.
-`test-workers/conversation-identity-migration.test.ts` seeds a v38 root and
-proves an existing object reads `parent_kind = 'workstream'` under its unchanged
-name while a fresh object bootstrapped as `automation` refuses a different
-kind. `test-workers/conversation-parent-contract.test.ts` exercises
-`authorizeViewer` on both parents through the real ticket route, including the
-archived-parent read-only refusal on a child substream. The automation parent
-itself is covered by `test-workers/automation-do.test.ts`,
-`automation-post-result.test.ts`, and `automation-directory.test.ts`, listed in
-[`automation-lifecycle.md`](automation-lifecycle.md#testing). On Node,
-`test/conversation-effect-service.test.ts` covers the consumer's handoff of a
-parent effect into WorkspaceDO and the notification intents behind it,
-`test/workstream-socket-warm.test.ts` covers `ConversationService.socketTicket`
-and the main-substream warm-up it defers, `test/run-authority-validity.test.ts`
-covers the run's `readRunState` check, and `test/scoped-memory.test.ts` covers
-the `automation` memory scope keyed by the parent id.
-`test-workers/workstream-schema-migration.test.ts` upgrades a populated v32
-foreign-key graph through real workerd storage and proves canonical content and
-relations survive with an empty `foreign_key_check`. Node tests cover migration
-rollback, grouped-failure resume, execution-mode/hash drift and ahead versions,
-normalized product SQL, canonical replay deduplication and fenced same-row tool
-settlement, authorization — including
-the product API's session and connector principals in
-`test/workstream-room-authorization.test.ts` —
-effect idempotency, streaming checkpoints, and renderer socket switching.
-`test-workers/message-to-output-pipeline.test.ts` asserts the exact public
-canonical/pending admission envelope across first admission, pending replay,
-promotion, and external elicitation delivery while separately inspecting the
-private activation state. `test-workers/substream-message-queue.test.ts` takes
-the queue itself: three messages admitted during one run each get their own
-cycle in admission order and none of them appears in the running turn's model
-array; a drag reorders promotion rather than only the composer's list; a
-duplicate client message id admits one input and one run; and a queued message
-survives the run it waited on failing mid-stream, being stopped, and the object
-being replaced before its activation runs. Its last two cases are the
-head-of-line gate from both sides — a message admitted behind an unsettled one
-is *hidden rather than dropped* and both are delivered in order, and a
-preparation that fails terminally releases the queue behind it instead of
-holding the substream. Both suites share one deterministic OpenRouter boundary
-in `test-workers/helpers/scripted-provider.ts`; the queue suite's first shape
-used a scripted *refusal* to fail a run and quietly poisoned every later test in
-the file, because a refusal opens the provider circuit for that model across the
-isolate. Fail a run mid-stream instead when what follows it matters. `test/slack-workspace-assignment.test.ts` proves a
-connector replay returns the same pending turn and creates one deterministic
-audit row. `packages/contracts/src/index.test.ts` rejects the retired
-execution-shaped socket receipt, and
-`apps/desktop/src/renderer/lib/workspace-socket.test.tsx` proves pending state
-survives reconnect and reaches the composer acknowledgement.
-Desktop tests cover canonical range merging, paged-history retention across a
-snapshot refresh, rejection and retry of an in-flight old-fence range,
-stream-specific completion, reconnect queueing, range errors, scroll
-threshold/anchor preservation and compaction reconciliation. `scripts/durable-object-native-rpc.test.mjs`
-proves the custom lint rule rejects direct, computed, aliased, optional, and
-typed-stub internal fetches without flagging unrelated HTTP clients.
-`scripts/durable-object-sync-transaction.test.mjs` proves explicit async and
-type-resolvable indirect Promise callbacks are rejected at all three
-synchronous transaction boundaries while ordinary synchronous SQL remains
-valid. Dynamically dispatched calls whose return has been erased to `unknown`
-or `any` still require review; the rule cannot reconstruct discarded type
-information.
-`test/runtime-components.test.ts` covers US/EU resolution, location-hint
-arguments, local workerd behavior, and jurisdiction mismatch rejection.
-`pnpm test:scripts` covers the ESLint rule's direct, computed, optional, aliased,
-destructured, and typed-namespace bypass cases.
 
 Do not replace workerd lifecycle tests with hand-made state objects. Focused
 Node repository tests may use `node:sqlite`, but their `DurableObjectState`
@@ -1632,20 +1557,6 @@ tag is immutable history.
 [`durable-object-alarms.md`](durable-object-alarms.md) records what the deletion
 cost and what replaces it.
 
-## Regional impact
-
-Every object is selected through the workspace's immutable region and affinity.
-Staging and production Global objects use the US jurisdiction with `wnam` or
-`enam`; EU objects use the EU jurisdiction with `weur` or `eeur`. Creation uses
-the initiating request longitude. `wnam` and `weur` are defaults only for
-preexisting migrations, background creation, or missing Cloudflare metadata.
-Jurisdiction is a storage/execution guarantee; the hint is best effort and only
-affects the first `get()`. Product constructors verify the actual jurisdiction.
-Local workerd omits both options because it does not implement jurisdictional
-namespaces. EU D1/R2/Queues process EU workspace data. The global registry
-carries only routing/identity metadata; no transcript, token frame, connector
-payload, notification body, or full Workflow input crosses it.
-
 ## Security and trust model
 
 Socket query parameters are not credentials. The edge verifies signed tickets
@@ -1709,7 +1620,204 @@ rows retain null and their original labels; later activity revisions preserve
 the type when an older caller omits it. This lets the desktop distinguish custom
 MCP identity without trusting the saved name or reading WorkspaceDO on replay.
 
+## Active inference delay
+
+Substream migration 56 adds `inference_delay_status`, transient per-inference
+checkpoints and settlement tombstones. `inference_delay_changed` shares the
+normal sequenced, authorized conversation socket pipeline. It carries the root
+harness run, owning execution and lease attempt, parent attempt for children, inference request, turn, and
+active flag. Both root and inline child calls publish to their own conversation.
+The object checks the running root/execution and both current lease attempts before
+accepting a notice. A cleared attempt cannot become active again; terminal run
+status removes its checkpoints. First output initiates the attempt-scoped clear;
+status transport cannot block inference. Tombstones also fence activation delivery
+that finishes after its clear.
+Snapshots and resyncs use the same store query for `activeInferenceDelays`, selecting
+the current root of a running conversation and filtering out settled,
+expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
+
 ## Changelog
+
+### 2026-09-17 — Start durable loop work eagerly and overlap creation projections
+
+**What changed:** message and initialization admission still persist their loop
+input and recovery alarm, then start the singleton loop drain in the current
+Durable Object invocation. Work-stream creation can defer its provisional
+workspace-directory delivery until after the parent reservation and overlap
+that delivery with child initialization; the API awaits both before answering.
+
+**Why:** production traces placed several seconds between a committed opening
+message and the first provider request, and showed the provisional directory
+RPC serialized ahead of child initialization. Both waits were scheduling
+artifacts rather than authority work.
+
+**Considered and rejected:** removing the alarm or returning before the
+directory projection. The former loses recovery after isolate eviction; the
+latter lets a successful create response race the workspace visibility checks.
+
+**Consequences:** durable SQL remains the execution authority and the alarm the
+recovery hint. Every validated activation source starts the shared eager drain,
+which is only the healthy-path scheduler. Its recovery alarm is armed at the
+keep-alive horizon rather than due-now so it cannot race and falsely reclaim a
+healthy pre-lease drain. The ordinary
+`reserveChild` contract remains synchronously projecting by default; only the
+creation coordinator opts into deferred delivery and must call
+`flushProvisionalDirectory` before publication.
+
+### 2026-09-17 — Projection delivery no longer gates loop activation
+
+**What changed:** The SubstreamAgent alarm schedules persistent-loop execution
+before starting a sibling serialized lane for authorization, search, and
+regional projection delivery. Preparation, claim, and settlement request a new
+pass when they can have committed effects, and the alarm awaits the loop plus
+the final projection chain. The duplicate regional drain before every execution
+claim is removed. Canonical semantic realtime delivery remains ordered ahead of
+activation. Successful input preparation returns its activation request to the
+SubstreamAgent without also scheduling a due-now alarm in the product service
+when that request actually transfers activation ownership. A failure or a
+successful no-activation result re-arms if settling the preparation exposed
+more queue work; the pre-reservation cancellation-recovery alarm remains.
+
+**Why:** Queue acceptance is external projection work, not evidence that a
+durably admitted execution is ready. Awaiting it in front of every claim added
+unrelated latency to a subsequent message, while draining regional effects both
+in the alarm and inside the loop paid for the same work twice. Durable outbox
+rows already provide the recovery and retry authority. Likewise, one successful
+admission scheduled the same activation twice even though the private activation
+request already has a single owner.
+
+**Considered and rejected:** Removing the outboxes would trade a small scheduler
+duplication for lossy cross-object delivery. Starting projection sends under
+`waitUntil` without awaiting them would repeat the cancellation failure that the
+durable alarm loop exists to prevent. A per-alarm promise chain was also
+rejected: one failed pass poisoned every later pass, and a loop continuation
+could outlive the drain that owned it. Moving canonical semantic realtime into
+the concurrent lane was rejected because it could publish a new run's ephemeral
+frames ahead of committed transcript events.
+
+**Consequences, and what a future change has to respect:** Execution readiness
+and cross-authority delivery due-time are independent. Projection passes must
+remain serialized on the object, recover after a failed pass, be requested as
+executions settle only while the requesting drain still owns execution, and be
+awaited by the alarm invocation; their durable rows must remain the source of retry. Canonical
+semantic realtime is deliberately different and must retain its pre-activation
+ordering barrier unless the publication protocol itself gains an equivalent
+fence. The product may pre-arm recovery before a preparing row or re-arm after
+any settlement that returns no activation request, but successful eager
+activation stays with the SubstreamAgent that validates the returned loop/input
+fence.
+
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
+
+### 2026-09-15 — Assistant person links become authoritative mentions at acceptance
+
+**What changed:** accepting an assistant turn now scans its rendered Markdown
+prose for canonical `person://` links, resolves those IDs against active
+conversation participants, and atomically writes the turn's mention rows,
+attention ordinal, member mention state, semantic realtime reference, and
+regional viewer/activity effects. The shared parser returns exact source ranges
+and excludes fenced, indented, and inline code.
+
+**Why:** Rally emitted the correct `[@Name](person://<id>)` text in production,
+but assistant projection persisted only the text fact and blocks. The desktop
+correctly refused to dress that unauthoritative link as a mention chip, so the
+same response appeared as plain `@Name` and could not set mention attention.
+
+**Considered and rejected:** teaching the renderer to trust any model-authored
+`person://` link. That would turn text into identity authority at the least
+trusted boundary and let stale or invented IDs impersonate real mentions.
+Persisting presentation-only rows without attention and regional effects was
+also rejected because it would create a chip whose product semantics disagreed
+with the transcript authority.
+
+**Consequences, and what a future change has to respect:** model syntax remains
+only a candidate. The conversation object is the authority that validates
+current participation and commits all mention state with the accepted turn.
+Removed and unknown identities, malformed links, and links shown as code stay
+plain text. Rally-authored mentions produce mention state and activity targeting
+without inventing a human sender for sender-attributed notifications. Because
+the attention ordinal is conversation-wide, such a reply advances the thread's
+unread waterline for every participant; the mention waterline remains specific
+to the named participant.
+Rendering preserves the same occurrence boundary: matching a person ID alone is
+not authority for a different link elsewhere in the turn.
+
+### 2026-09-15 — Workstream Sidekick recommendations
+
+**What changed:** WorkstreamDO migration 13 adds explicit workspace Sidekick
+attachment IDs. Substream execution snapshots carry recommended refs, while
+each substream retains its own loaded attachments.
+
+**Why:** Recommendation belongs to the shared workstream and loading belongs
+to the conversation. Keeping one relation at each authority avoids copying
+Sidekick instructions or attachment lists into every child.
+
+**Consequences:** Existing execution snapshots accept absent recommendation
+metadata. Workstream-owned Sidekicks derive recommendation from ownership.
+
+### 2026-09-14 — Keep slowdown notices scoped to a live inference
+
+The new 30-second first-output warning must survive a socket reconnect without
+surviving the inference itself. Conversation-owned checkpoints, lease checks,
+and settlement tombstones replace a client elapsed-time guess: old callbacks
+cannot resurrect a warning, and concurrent calls clear independently. These
+rows are runtime status, never transcript history or workspace-wide broadcasts.
+Children carry their parent attempt identity because a replacement parent may
+reuse the root run ID while an old child lease is still current.
+
+### 2026-09-14 — An open question takes its answer out of turn, and parks the rest of the queue
+
+**What changed:** the pending-input queue is no longer drained in arrival order
+while the last assistant step holds an unanswered question. `inputsBindCanAccept`
+reads the withheld tool calls out of the live Bind projection, promotes the
+admitted answers that close them first, and hands Bind nothing else until the
+batch settles — at a safe step (`settlePendingSteersAtStep`) and at activation
+(`activatePendingInput`) alike. The queue is reordered behind the answer rather
+than held for a later step: the tool result settles the batch, so a queued
+message follows it in the same pass. `SubstreamAgent` no longer picks the queue head
+to activate; it asks `nextActivationInput` for the input the loop can actually
+take, and gets `undefined` while the only thing waiting is a message that would
+be refused. A host authority's derived inputs park on the same rule rather than
+being prepared and thrown out, and `nextLoopWorkAt` derives its execution lane
+from the same answer, so a parked room sleeps instead of re-arming at `now` on
+every alarm (see [`durable-object-alarms.md`](durable-object-alarms.md)).
+
+**Why:** this wedged real rooms, permanently, with no way out from the product.
+Queue a message while a run is going, have the run stop to ask a question, then
+answer it: the message was admitted first, so it was what the loop tried to
+activate, and `applyBindLoopTransition` refuses `protocol_user_appended` while a
+tool result is withheld. A pending input that throws stays where it is, so the
+queue stopped at its head and the answer behind it — admitted, committed, the
+`elicitation_requests` row already `answered` — was never promoted. The card is
+drawn from the canonical turn that promotion writes, so the question kept coming
+back every time a snapshot landed, over the answer the person had just given,
+and answering again did the same thing. The 2026-09-12 entry in
+[`agent-harness.md`](agent-harness.md) had already found the head-of-line
+blocking by reading the code and called the fix "park both kinds of input";
+parking alone is only half of it, because the input that has to move is the one
+at the back.
+
+**Considered and rejected:** telling the drain, out of band, that the batch that
+just ran opened an answer-suspend — the field the 2026-09-12 entry proposed.
+It is true at a safe step and says nothing at activation, which is where the
+loop actually was, and it is a second copy of a fact the projection already
+holds. Refusing to admit a message while a question is open: the message that
+wedged these rooms was queued *before* anyone knew a question was coming, and a
+composer that goes dead while the room waits on a human is a worse product than
+one that lets you type ahead. Reordering the queue around any withheld batch:
+a batch withheld by a crash is a run's own to repair from its tool receipts, and
+turning that loud refusal into a silent stall would cost the only signal we get.
+
+**Consequences:** promotion order is no longer admission order, so an answer's
+canonical turn can sit above a message queued before it — which is also how the
+room reads: the question, the answer, then what the person had lined up. The
+queue's own order is unchanged, and so is what the composer shows. Anything new
+that appends a user message to the projection has to go through
+`inputsBindCanAccept`, or it inherits the same wedge; the rule lives with the
+queue rather than in Bind, because Bind is right to refuse the shape and only
+the object knows which pending row would fix it. A room wedged before this
+shipped recovers on its own: the answer is still in the queue, and the next wake
+promotes it.
 
 ### 2026-09-11 — A read is acknowledged by the conversation that was read
 
@@ -1899,7 +2007,6 @@ post-commit hook for the compaction (the projection is durable before it runs).
 
 **Considered and rejected:** Remote command reauthorization, child unread aggregation into Main, and a second queue. Lifecycle retries reuse the parent's durable alarm and existing retry interval. A failed delivery remains pending; archive restoration is currently API-only.
 
-
 ### 2026-09-08 — Forward child notifications without merging attention
 
 WorkstreamDO now forwards person notifications from private children and stores
@@ -1943,7 +2050,6 @@ after removal. Reservations persist even when a Sidekick becomes unavailable;
 access still depends on the current authorized execution snapshot. The real
 workerd Sidekick load/restore test in `automation-do.test.ts` verifies that a
 renamed Sidekick retains its original name in the next execution.
-
 
 ### 2026-09-08 — Shared work-stream appearance
 
@@ -3373,7 +3479,6 @@ Their transcript anchor is reserved alongside `input_sequence` before any
 external preparation await, so completion timing cannot invert their rendered
 order or make them swap when canonicalized.
 
-
 #### Required behavior is mapped to the focused shipping contract
 
 **What changed:** The module testing section now points to the PRD's concise
@@ -3395,7 +3500,6 @@ and observable-failure gaps harder to see.
 bounded-range gaps now have named real-workerd and Desktop implementations. Existing named
 tests still require exact-head execution, and new or modified tests still
 require the repository's deliberate-break proof.
-
 
 #### Terminal receipts close execution-owned activity intervals
 
@@ -3661,7 +3765,6 @@ terminalization makes the singleton idle. A receipt cannot remain running behind
 an idle loop, a failed preview always rolls back to its status pill, and pending
 replay compares one immutable prepared value.
 
-
 #### Persistent loop state owns admission, recovery, and transcript delivery
 
 **What changed:** The cutover adds one `substream_loops` singleton, immutable
@@ -3826,7 +3929,6 @@ inside the first pending transaction, and every shipped migration through v32
 remains fingerprint-pinned. The populated v32 upgrade fixture must retain each
 seeded transcript relation and operational receipt rather than relying only on
 an empty final `foreign_key_check`.
-
 
 #### Ordered turns and explicit overlays replace compatibility messages
 
@@ -4519,7 +4621,7 @@ both mint the same identities (`participant:<work stream>:<user>:<epoch>` and
 `participant_added:<…>`), with a literal zero epoch at creation because the rows
 are inserted by the same call. The notification carries `titleIsProvisional`, and
 the Slack and email templates use it to avoid quoting a title the naming agent has
-not written yet. The two person-notification emails and both regions' Resend
+not written yet. The two person-notification emails and configured deployments' Resend
 sender display names now say Rally.
 
 **Why:** the 2026-08-22 entry below, *Being added to a work stream tells the
@@ -4623,7 +4725,6 @@ from child outbox through actual parent-row removal. Every notification branch
 must end in a terminal, deferred, or failure event with content-free IDs and a
 stable reason; Queue acknowledgement alone must never be presented as provider
 delivery.
-
 
 ### 2026-08-25 — Automation opens stay on their authorized workspace state
 
@@ -5041,7 +5142,6 @@ selected work stream's current authority. Private reader identity comes only
 from active participant rows. Direct SQL audience writes remain subject to the
 accepted-content triggers; do not replace them with a service-only check.
 
-
 ### 2026-08-24 — What a review found in the scheduling slice, and one test that was proving nothing
 
 **What changed:** five fixes, from a review of the rebased slice.
@@ -5226,7 +5326,6 @@ published terminal set, while `terminal` records the run's own state in the
 object's vocabulary. The two events answer different questions and are spelled
 accordingly.
 
-
 ### 2026-08-24 — Four regressions a review caught, and the edits that caused them
 
 **`admitRun` threw where the retired trigger had swallowed.**
@@ -5309,7 +5408,6 @@ above it, and it checks both directions against real storage — the classified
 operations move the `workstream` row, and the unclassified ones leave it byte
 for byte unchanged.
 
-
 ### 2026-08-23 — Three of the six harness-run views retire, and why the other three cannot
 
 **What changed:** migration 23 drops `_runtime_run_scopes`,
@@ -5349,7 +5447,6 @@ The value costs a vector search to compute, so the read and the write cannot be
 one operation; freezing recall exists so every replay of an attempt sees the
 same memories, which makes the row the run will actually use the only useful
 answer to give a loser.
-
 
 ### 2026-08-23 — The callers outside the runtime, and what a half-converted path costs
 
@@ -5397,7 +5494,6 @@ guard the routed version lacked — it will not report `failed` over a work stre
 some other live run still holds. That case is unreachable from where it is
 called today, because the admission immediately before it superseded everything
 else. The guard is there for when that stops being true.
-
 
 ### 2026-08-23 — Terminalization and the reaper, and the end of the changes count
 
@@ -5447,7 +5543,6 @@ for a stated reason.** `persistHarnessFinalMessage` and
 an object-local one — and is the one place a terminalization instant crosses
 back into ISO-8601 text.
 
-
 ### 2026-08-23 — The sub-agent concurrency cap is removed, not renamed
 
 **What changed:** `HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS` is gone — the env
@@ -5481,7 +5576,6 @@ makes: each block owns its own run and therefore its own chain budget, so a work
 stream with *N* blocks can reach *N* × (`maxChainRuns` - 1). If that ever needs
 bounding, bound it where blocks are dispatched rather than by reviving a
 per-child cap here.
-
 
 ### 2026-08-23 — The sub-agent family finishes, and two fences nothing was holding
 
@@ -5521,7 +5615,6 @@ the storage class in the object's words, where `stopped` is `cancelled`;
 `TERMINAL_STATUSES` in the runtime is the published spelling. Which applies
 depends on whether the value came off a `RunRow` or out of a published payload,
 and `storedRunStatus`/`publishedRunStatus` are the only sanctioned crossings.
-
 
 ### 2026-08-23 — Sub-agent admission, and a cap that stopped meaning what it says
 
@@ -5566,7 +5659,6 @@ it had just written. It now composes `inlineChildOwnership` with the write in
 one transaction, which is also why the two share a precedence rather than
 restating it.
 
-
 ### 2026-08-23 — The sub-agent's double fence, and a substream the fixture forgot
 
 **What changed:** `assertInlineChildAttemptOwned` and `recordInferenceAttempt`
@@ -5598,7 +5690,6 @@ substream, so a child sharing its parent's substream is a `UNIQUE` violation
 rather than a queued run. The first version of this change's fixture put the
 child in substream `0` and the constraint caught it; `admitInlineChildAttempt`
 must create the substream row when it converts.
-
 
 ### 2026-08-23 — The lease stops being a join, and the sidebar write it had lost
 
@@ -6290,7 +6381,6 @@ reports workerd's `rowsWritten` rather than a trigger's counter, and
 `rowsWritten` counts index writes: the workerd suite pins that at 2 for a
 one-row update of an indexed column, because a caller moving a statement off a
 view and keeping an `=== 1` check would be wrong in exactly that way.
-
 
 ### 2026-08-22 — `tool_position` is a high-water mark, not a row count
 
@@ -7073,7 +7163,7 @@ letting a failed origin-resource attach fail the create, restoring the
 contract the legacy arm kept.
 
 **Why:** Production is fully cut over — `workstream_authority_control.phase =
-'durable_object_open'` in both regions — and local development reaches the
+'durable_object_open'` in configured deployments — and local development reaches the
 same state via `pnpm db:open-authority`. The legacy arms were reachable only
 on a local stack that skipped that step, a configuration that is no longer
 supported; such calls must fail loudly, not silently run 2,000 lines of code
@@ -7102,8 +7192,6 @@ member-visible surface. The launch failure path — member-safe copy persisted,
 diagnostics logged — is pinned there too. Anything sending product SQL to D1
 outside the DO port now fails on an absent table or column and is a routing bug
 by definition, not a phase.
-
-
 
 ### 2026-08-20 — The object creation path schedules the first naming pass
 
@@ -7136,8 +7224,6 @@ test that appeared to cover it was removed rather than kept for show.
 means what it says again, and a naming failure is a logged event rather than
 a permanent shimmer.
 
-
-
 ### 2026-08-20 — The messages trigger absorbs replayed durable writes
 
 **What changed:** Schema v5 rebuilds `_runtime_messages_insert` with a second
@@ -7166,8 +7252,6 @@ conflict target survives the view-to-table column mapping.
 load-bearing and documented: an INSTEAD OF trigger owns every conflict its
 table can raise. `runtime-compat-views.test.ts` replays a durable write
 through the real trigger and fails against the bare-INSERT body.
-
-
 
 ### 2026-08-20 — Work-stream authority outranks the workspace router, and the resources view becomes selectable
 
@@ -7208,8 +7292,6 @@ this incident carried the same catch-all code. Every layer that converts an
 error into a member-safe shape now records what it stripped first — three of
 the four hours this took were spent making silent failures speak, and each
 speaking layer then named the next defect within minutes.
-
-
 
 ### 2026-08-20 — Timestamps round-trip exactly, and the pipeline is tested end to end
 
@@ -7258,8 +7340,6 @@ their next run's settlement. The dense round-trip sweep in
 `agent-run-dispatch-queue.test.ts` fails deterministically against
 truncation (248 of 500 timestamps), so the defect cannot return quietly.
 
-
-
 ### 2026-08-20 — A run whose executor is gone no longer wedges its substream
 
 **What changed:** Before a claimed dispatch starts, the drain terminalizes runs
@@ -7296,8 +7376,6 @@ the reap is safe while another run is legitimately in flight, because that run
 has a dispatch. A work stream wedged by an earlier build heals on its next
 message rather than needing an operator. `test-workers/agent-run-dispatch-reliability.test.ts`
 holds both cases against real alarms, real storage, and real eviction.
-
-
 
 ### 2026-08-20 — A leased dispatch, and an alarm derived only from the rows
 
@@ -7667,7 +7745,7 @@ defect the quarantine exists to surface).
 
 ### 2026-08-19 — The authority cutover campaign machinery is retired
 
-**What changed:** With both regions permanently at `durable_object_open`, the
+**What changed:** With configured deployments permanently at `durable_object_open`, the
 one-time campaign code is deleted: the cron importer
 (`workstream-authority-migration.ts`), the object-side import machinery
 (`workstream-authority-import.ts`, `workspace-product-import.ts`,
@@ -8168,13 +8246,6 @@ publication; main `SubstreamAgent("0")` emits fenced refresh signals and serves
 the canonical runtime SQL used by each block agent. Both agent classes share
 custom keep-alive and single-flight drain primitives.
 
-Workspace creation now derives a west/east affinity from Cloudflare request
-longitude, persists it in the Global binding, regional D1 workspace projection,
-and WorkspaceDO SQL, and supplies it to every WorkstreamDO, SubstreamAgent, and
-workspace scheduler lookup. The US/EU jurisdiction remains the hard boundary.
-The routing ESLint rule rejects both direct namespace calls and the low-level
-region-only resolver.
-
 WorkspaceDO now keeps one persistent Electron socket with a bounded SQL
 topic-version log and workspace-scoped message commands. WorkstreamDO now serves
 complete revisioned common/viewer metadata over its own hibernating socket.
@@ -8247,30 +8318,10 @@ both control objects.
 
 ### 2026-08-17 — Control/data planes use jurisdictional IDs and hinted first placement
 
-**What changed:** All workspace, work-stream, substream, scheduler, and crash
-processor lookups use one resolver that selects `jurisdiction("us")` or
-`jurisdiction("eu")`, derives the name-based ID there, and supplies a `wnam` or
-`weur` location hint on every possible first `get()`. Product object constructors
-validate `ctx.id.jurisdiction`, and ESLint rejects direct or aliased namespace
-operations. The architecture now explicitly defines parent objects as the
-control plane and direct `SubstreamAgent` traffic as the data plane.
-
-**Why:** The previous EU-only helper left Global objects unrestricted, and three
-effect-delivery paths bypassed it. Cloudflare maps the same name to different
-jurisdictional IDs and honors a hint only on the first lookup, so partial use is
-not a safety boundary. Routing data-plane streams through parents would also
-undo the sharding benefit of one agent object per substream.
-
 **Considered and rejected:** Region-prefixed names without jurisdiction locks,
 hints only on creation endpoints, and parent-proxied feed traffic. They
 respectively provide no placement guarantee, miss background first lookups, and
 make a control object the shared throughput bottleneck.
-
-**Consequences:** The maintenance import creates/populates the US/EU locked
-target graph. A preexisting unrestricted Global object is a different identity
-and cannot be a serving fallback. Hints improve initial latency but remain best
-effort; future moves require an explicit migration. Local tests validate
-arguments and invariants while skipping unsupported workerd jurisdictions.
 
 ### 2026-08-17 — Per-substream agent objects replace the one-room boundary, persistence is SQL-only, and a maintenance cutover makes object SQL authoritative
 

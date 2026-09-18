@@ -1,15 +1,9 @@
-import { workstreamRecencyAt } from '../lib/format';
-import { MemberPresentationContext } from '../lib/member-presentation';
-import { SearchModal } from './search-modal';
-import { AttachmentLightbox } from './attachment-lightbox';
-import type { AttachmentPreview } from './attachments';
-import { useContext } from 'react';
-import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
-import { desktopWorkspaceIdentityKey } from '../../common/desktop';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useEffect, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
+import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import {
   AccountSignInFailedError,
@@ -17,8 +11,11 @@ import {
   useAppSession,
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
+import { workstreamRecencyAt } from '../lib/format';
+import { MemberPresentationContext } from '../lib/member-presentation';
 import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
+import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import {
   COLLAPSED_SIDEBAR_WIDTH,
   SIDEBAR_CONTENT_MIN_WIDTH,
@@ -27,19 +24,18 @@ import {
 } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
-import { useNotesQuery } from '../lib/use-notes-query';
-import { useWorkspaceSocket } from '../lib/workspace-socket';
-import { openWorkstreamId } from '../lib/workstream-landing';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { useWorkspaceSocket } from '../lib/workspace-socket';
+import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
+import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
   evictCachedWorkstream,
-  invalidateCachedWorkstreamDetails,
   patchCachedWorkstream,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
-import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
-import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import { AttachmentLightbox } from './attachment-lightbox';
+import type { AttachmentPreview } from './attachments';
+import { SearchModal } from './search-modal';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
@@ -62,15 +58,6 @@ export function upsertProjectDirectory(
   };
 }
 
-
-/**
- * Whether the screen at this route is showing the named automation, and would
- * therefore be stranded once it stops being served. A draft and an accepted
- * automation share the one route, so this covers both.
- */
-export function showsAutomation(pathname: string, automationId: string): boolean {
-  return pathname === `/automations/${automationId}` || pathname === `/sidekicks/${automationId}`;
-}
 
 /**
  * The shell class that says the window's own buttons are painted over the page,
@@ -189,12 +176,6 @@ export function applyPinnedWorkstreamsIfCurrent(
  * `undefined` from an accidentally enabled query would look like an empty
  * sidebar rather than a bug. Invalidating one of these keys does nothing by
  * design — the socket is the only *authority* for the contents.
- *
- * `onChangeNoteScope` below patches `['notes']` directly, which is the single
- * exception and not a second authority: it holds no waterline, cannot advance
- * the ledger, and is overwritten by the push the same write earns. It is a
- * latency hedge against one visible reorder, and the push behind it is what
- * makes the row correct.
  */
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
@@ -264,15 +245,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // room for their context rail; other routes keep the original reservation.
   const sidebarCompact = sidebarCollapsed || sidebarConstrained;
   const effectiveSidebarWidth = sidebarCompact ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
-  // An archived draft is as gone as a deleted automation; the landing replaces
-  // the entry so Back cannot return to either.
-  const leaveAutomationScreen = (automationId: string): void => {
-    if (showsAutomation(location.pathname, automationId)) openFirstWorkstream();
-  };
-
   // The main pane keeps room for an inspector that is still fading out.
-  const showShellRail = RIGHT_SIDEBAR_ENABLED && (railOpen || railLeaving) && !location.pathname.startsWith('/notes/');
-  const expandForShellRail = RIGHT_SIDEBAR_ENABLED && railOpen && !location.pathname.startsWith('/notes/');
+  const showShellRail = RIGHT_SIDEBAR_ENABLED && (railOpen || railLeaving);
+  const expandForShellRail = RIGHT_SIDEBAR_ENABLED && railOpen;
   useEffect(() => {
     void desktopBridge().setConversationDetailsOpen({
       // A leaving rail remains laid out for its short cross-fade, but no longer
@@ -310,7 +285,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     return true;
   };
-  const notes = useNotesQuery();
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -513,14 +487,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 // since taken over, has nothing left to say about that row.
                 if (error instanceof AccountSignInSupersededError || switchAttemptRef.current !== attempt) return false;
                 const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
-                const message = error instanceof Error ? error.message : '';
                 const activationFailure = workspaceActivationFailureCode(error);
                 setWorkspaceErrors((current) => ({
                   ...current,
                   [targetKey]: error instanceof AccountSignInFailedError
                     ? error.message
-                    : message === 'Finish or stop the recording before switching workspaces'
-                    ? message
                     : code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied'
                     ? 'You are no longer a member of this workspace'
                     : 'Rally could not open this workspace',
@@ -555,28 +526,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // has no list yet — which also keeps the skeletons up rather than
         // claiming an empty workspace when the socket cannot connect.
         loading={workstreams.data === undefined}
-        notes={notes.data ?? []}
         projects={projects.data?.items ?? []}
         inactiveProjects={inactiveProjects.data?.items ?? []}
-        meetingRecordingAvailable={featureFlags.data?.meetingRecordingEnabled === true}
-        onArchiveNote={async (note) => {
-          if (!api) return;
-          await api.archiveNote(note.id);
-          // An archived note's resource stops being served everywhere, not just
-          // in the note queries: an open work stream it was attached to holds it
-          // in a cache that nothing else invalidates, and archiving emits no
-          // socket event to shake it loose. The note list itself is not here —
-          // the write to `notes` pushes it.
-          await Promise.all([
-            invalidateCachedWorkstreamDetails(queryClient),
-            queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
-            queryClient.invalidateQueries({ queryKey: ['resources'] }),
-          ]);
-          queryClient.removeQueries({ queryKey: ['note', note.id] });
-          // The archived note's own screen would keep reading a note the API no
-          // longer serves, so leave it the way a deleted automation does.
-          if (location.pathname === `/notes/${note.id}`) openFirstWorkstream();
-        }}
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having
@@ -622,60 +573,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             evictCachedWorkstream(queryClient, selected.id);
             openFirstWorkstream(batchArchiveSkipIds(workstreams.data ?? [], filter));
           }
-          if (accepted.archivedNoteCount > 0) {
-            // The same caches a single note's archive shakes loose, for the same
-            // reason: an archived note's resource stops being served everywhere,
-            // and a work stream it was attached to holds it in a cache no socket
-            // event reaches. The note list itself is not here — WorkspaceDO
-            // pushes it off the write that archived them.
-            //
-            // `['note']` refetches rather than predicting. Archiving one note
-            // names it, so that path can leave its route knowing what went; a
-            // batch is told only how many, and reconstructing *which* from the
-            // filter and the list as it stands now gets it wrong — a note that
-            // was recording when the archive ran, and has since stopped, reads
-            // as taken when it was skipped. A note that really went answers 404
-            // on the refetch and its own screen says so, which is the treatment
-            // an archived work stream already gets; one that survived just
-            // refreshes under the reader.
-            await Promise.all([
-              queryClient.invalidateQueries({ queryKey: ['note'] }),
-              invalidateCachedWorkstreamDetails(queryClient),
-              queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
-              queryClient.invalidateQueries({ queryKey: ['resources'] }),
-            ]);
-          }
           return accepted;
-        }}
-        onChangeNoteScope={async (note, scope) => {
-          if (!api) return;
-          const updated = await api.updateNote(note.id, { scope });
-          // The server bumps last_activity_at on any note write, and that is the
-          // sidebar's sort key. Patching the scope alone would leave the row in
-          // its old position until the next refetch moved it for no visible
-          // reason, so the timestamps travel with it.
-          //
-          // Deliberately not through `applyVersionedSidebarList`: this patch has
-          // no waterline to offer, and inventing one would corrupt the ledger
-          // that orders the real pushes. It is an optimistic local edit, valid
-          // only until WorkspaceDO re-sends the list off this same write — see
-          // the note on `useSocketOwnedList`.
-          queryClient.setQueryData<NoteSummary[]>(['notes'], (current) =>
-            current?.map((item) => item.id === updated.id ? {
-              ...item,
-              scope: updated.scope,
-              lastActivityAt: updated.lastActivityAt,
-              updatedAt: updated.updatedAt,
-            } : item),
-          );
-          queryClient.setQueryData<NoteDetail>(['note', updated.id], (current) =>
-            current ? {
-              ...current,
-              scope: updated.scope,
-              lastActivityAt: updated.lastActivityAt,
-              updatedAt: updated.updatedAt,
-            } : current,
-          );
         }}
         onChangeWorkstreamScope={async (workstream, scope) => {
           if (!api) return;
@@ -684,19 +582,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // on every PATCH, while `last_people_activity_at` is not, so the
           // sidebar's sort key is deliberately left alone here.
           patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope, updatedAt: updated.updatedAt });
-        }}
-        onDeleteAutomation={async (automation) => {
-          if (!api) return;
-          await api.deleteAutomation(automation.id);
-          // Deleting closes any run that was opened ahead of its planned time,
-          // so the work-stream list is stale too — and that one is not pushed
-          // off the automation write the way the automation list is.
-          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-          // Leaving the deleted automation's route replaces it rather than
-          // pushing, so Back cannot return to it, and the detail query goes
-          // with it so nothing can render the automation from cache.
-          leaveAutomationScreen(automation.id);
-          queryClient.removeQueries({ queryKey: ['automation', automation.id] });
         }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
@@ -729,7 +614,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           await queryClient.invalidateQueries({ queryKey: ['automation-runs', automation.id] });
           void navigate(`/automations/${automation.id}`);
         }}
-        onOpenMeetingNotes={() => desktopBridge().openMeetingNotes()}
         onPreviewWorkstreamBatch={async (filter) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           return api.previewWorkstreamBatch(filter);
@@ -777,11 +661,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           void signOut().catch(() => undefined);
         }}
         hasMoreWorkstreams={workstreams.hasMore}
-        hasMoreNotes={notes.hasMore}
         loadingMoreWorkstreams={workstreams.isFetchingMore}
-        loadingMoreNotes={notes.isFetchingMore}
         onLoadMoreWorkstreams={workstreams.fetchMore}
-        onLoadMoreNotes={notes.fetchMore}
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />

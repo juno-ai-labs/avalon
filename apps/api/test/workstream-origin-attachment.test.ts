@@ -552,7 +552,7 @@ function environment(database: DatabaseSync): Env {
       },
     }),
     WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-      extra: { reserveChild: parentReserveChild() },
+      extra: parentCreationRpcs(),
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
@@ -621,15 +621,18 @@ function environment(database: DatabaseSync): Env {
  * The parent's half of a create.
  *
  * Creation reserves the main conversation on the parent object before the child
- * is initialized, and the real `reserveChild` answers with the generation the
- * parent is at. No origin assertion reads the reservation, but a create that
- * cannot make it never reaches the attach these tests are about.
+ * is initialized, then flushes its provisional directory effects alongside
+ * initialization. No origin assertion reads those parent operations, but a
+ * create that cannot make them never reaches the attach these tests are about.
  */
-function parentReserveChild() {
-  return vi.fn(async (input: { authorityGeneration: number }) => ({
-    reserved: true as const,
-    authorityGeneration: input.authorityGeneration,
-  }));
+function parentCreationRpcs() {
+  return {
+    reserveChild: vi.fn(async (input: { authorityGeneration: number }) => ({
+      reserved: true as const,
+      authorityGeneration: input.authorityGeneration,
+    })),
+    flushProvisionalDirectory: vi.fn(async () => undefined),
+  };
 }
 
 function opportunityRequest() {

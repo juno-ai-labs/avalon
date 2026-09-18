@@ -36,8 +36,6 @@ that first needed it ships separately, calling what is here.
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |
 | `apps/ace/src/regional-api.ts`, `apps/ace/src/client/workspaces.tsx` | Ace's relay to the regional route and the workspaces tab that calls it ([`ace.md`](ace.md)). |
 
-## How it works
-
 ### The gate
 
 A Durable Object has more doors than a helper each method remembers to call can
@@ -172,51 +170,53 @@ names the roles it admits as well: the telemetry router refuses `demos`, and
 this router refuses the telemetry roles, so a token filed in the wrong secret
 is refused by role even when it verifies.
 
-## Invariants
-
 - **Unclassified is refused.** A method nobody classified refuses on a retired
   object. A new RPC is fenced the day it is written, not the day somebody
   remembers this file.
+
 - **A background caller treats a refusal as terminal.** A Queue consumer,
   Workflow or cron pass that reaches a gated object acknowledges a
   `workspace_retired` refusal rather than retrying it, through
   `isRetirementRefusal`. A new background caller that does not is the
   dead-letter loop again; `test/retirement-background-callers.test.ts` names
   each one.
+
 - **The D1 fence is written before any object is closed.** `abandoned_at` is
   what stops sign-in, the member list, invitations and discovery; the gate
   stops what reaches an object. Neither covers the other.
+
 - **A retired object can still be rebuilt.** Eviction is the steady state for a
   retired workspace, not a corner case, so every promise below — operator
   inspection, a resumable walk, a dropped effect, a quiet alarm — is worth
   nothing unless the object survives being reconstructed from storage with its
   tombstone already in it.
+
 - **A permit covers a call, not a name.** Adding a permitted entry point does not
   mean tracing its call graph and listing what it reaches.
+
 - **A dropped effect is acknowledged, never thrown.** An effect already accepted
   by the Queue answers the shape its consumer parses. Throwing would leave the
   Queue redelivering work no object will ever apply.
+
 - **A retired object arms nothing.** The alarm coordinator's mutators are inert
   rather than throwing, so a late continuation's re-arm becomes the nothing it
   should be instead of an error.
+
 - **The first tombstone wins.** A resumed retirement converges on the original
   instant rather than recording when the retry happened.
+
 - **Retirement is attributed to an internal actor**, never to the author of what
   is being closed. The tombstone records `reason: "operator_retirement"` and no
   user; the `workspace_retirement_pass` log line carries `operator_id`, and is
   the region's record of who asked (see **Operations**).
+
 - **Retirement takes any workspace id, and infers nothing.** It is an operator
   action behind Ace's Access policy, and the only protection between an operator
   and an irreversible close is the confirmation the page asks for. A gate on a
   register of demo workspaces was built and then dropped, deliberately: the
   bookkeeping bought a second mechanism for a surface one Access policy already
   admits. The walk does not check a name, a register, or anything else.
-- **The region is the running Worker's, never the caller's.** A region taken as a
-  parameter does not cross a region — it builds an EU-shaped *name* and resolves
-  it in the Global jurisdiction, creating brand-new empty objects, tombstoning
-  them, and reporting success while the real workspace stays open and serving.
-  The door adds the one check the walk does not: the id must be a workspace this
-  region's table holds.
+
 - **Every operator router names the roles it admits.** A role added to the
   credential map reaches no surface until a router names it.
 
@@ -381,15 +381,6 @@ feature's: once the graph reports closed, the walk stamps `retired_at` on the
 made — and nothing here reads it back
 ([`demo-workspaces.md`](demo-workspaces.md#data-model)).
 
-## Regional impact
-
-Retirement resolves every object through the running Worker's own region,
-refuses to take one from a caller, and refuses an id the region's `workspaces`
-table does not hold, so there is no path by which a Global invocation reaches an
-EU workspace or the reverse. Ace reaches each region's public API over HTTPS
-with that region's own operator token; the regional relay is recorded as an
-exception in [`regionalization.md`](regionalization.md).
-
 ## Security and trust model
 
 Retirement is irreversible and takes any workspace id. Nothing in this module
@@ -428,8 +419,6 @@ telemetry roles.
 - **Nothing re-invokes an interrupted walk.** See **Failure modes and limits**;
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
-
-## Changelog
 
 ### 2026-09-08 — The walk stamps the demo register
 
@@ -551,14 +540,6 @@ load; the negative tombstone answer is cached. Retirement takes its region from
 the Worker rather than the caller, reports an empty workspace complete, and
 asks each parent for its children through an RPC that answers "missing" and
 "identity mismatch" instead of throwing them.
-
-`retireWorkspaceGraph` consults no register of demo workspaces;
-`isRetirableDemoWorkspace` and its refusal are gone. `retireWorkspaceForOperator`
-refuses an id the region's `workspaces` table does not hold.
-`requireOperatorRole` takes every role a router admits, and the telemetry
-router names `support` and `security`, so `demos` is refused there. Ace holds
-one operator token per region, `RALLY_OPERATOR_TOKEN` and
-`RALLY_EU_OPERATOR_TOKEN`.
 
 The module is split out of the demo-workspace branch and lands ahead of it,
 with its own document. The route moved to `routes/workspace-operations.ts`, the

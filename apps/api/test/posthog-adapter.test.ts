@@ -646,6 +646,16 @@ describe("PostHog adapter", () => {
       .not.toHaveProperty("$set");
   });
 
+  it("discards retired meeting delivery already in flight from an old API", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(sendPostHogBatch({
+      host: "https://us.i.posthog.com", projectToken: "test", webBaseUrl: WEB_BASE.webBaseUrl,
+      rows: [row({ envelope: { ...event, name: "note_created", properties: {} } as TelemetryEnvelope })],
+    })).resolves.toEqual({ result: "delivered", requestId: null, retryAfterMs: null });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses the official batch shape and fixed configured endpoint", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, {
       status: 200,

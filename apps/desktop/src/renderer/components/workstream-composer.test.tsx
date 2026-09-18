@@ -7,6 +7,7 @@ import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { clearAllDrafts } from '../lib/draft-cache';
 import { mentionOptionCopy } from '../test/mention-option-copy';
+import { STOPPING_LABEL } from './agent-work-timing';
 import type { ComposerModelControl } from './composer-input';
 import { WorkstreamComposer } from './workstream-composer';
 
@@ -21,6 +22,7 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: () => () => undefined,
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 beforeEach(() => {
@@ -142,8 +144,8 @@ describe('WorkstreamComposer Stop action', () => {
     expect(button).not.toBeDisabled();
     act(() => { button.blur(); button.focus(); });
     expect(button).toHaveFocus();
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Stopping after this response…');
-    expect(button).toHaveAccessibleName('Stopping after this response…');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(STOPPING_LABEL);
+    expect(button).toHaveAccessibleName(STOPPING_LABEL);
     expect(button).not.toHaveAccessibleDescription();
     fireEvent.click(button);
     expect(onStop).toHaveBeenCalledTimes(1);
@@ -316,7 +318,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(composer).toHaveValue('');
   });
 
-  it('sends queue while a loop is running and does not offer a delivery dropdown', async () => {
+  it('uses safe-boundary delivery while a loop is running and does not offer a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend, false, vi.fn(), { ...workstream, harnessStatus: 'running' });
 
@@ -324,7 +326,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const composer = screen.getByLabelText('Message the work stream');
     fireEvent.change(composer, { target: { value: 'After this run' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('After this run', [], undefined, 'queue'));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('After this run', [], undefined, 'steer'));
   });
 
   it('restores a failed message unless the user has started a new draft', async () => {

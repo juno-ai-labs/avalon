@@ -27,7 +27,7 @@ function plural(count: number, noun: string, nouns = `${noun}s`): string {
 }
 
 function regionLabel(region: DirectoryRegion): string {
-  return region === 'eu' ? 'EU' : 'Global';
+  return region === 'global' ? 'Global' : region;
 }
 
 export function WorkspacesView({ retired, onRetired }: {

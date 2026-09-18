@@ -96,6 +96,18 @@ describe("skill catalog rendering", () => {
 });
 
 describe("skills in a run", () => {
+  it("recommends a catalog skill without activating its instructions", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher: typeof fetch = async (_request, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return textResponse("Done.");
+    };
+    await runHarness({ ...runInput(fetcher), skills: [{ ...triage, recommended: true }] });
+    const prompt = JSON.stringify(bodies[0]);
+    expect(prompt).toContain(`${triage.name} [Recommended]`);
+    expect(prompt).toContain("Prefer them when relevant");
+    expect(prompt).not.toContain(triage.body);
+  });
   it("advertises the catalog, loads a body on demand, and keeps it for the run", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [

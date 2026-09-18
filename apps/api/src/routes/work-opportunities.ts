@@ -69,10 +69,10 @@ workOpportunityRoutes.post(
     const auth = getAuth(c);
     const contexts = await new WorkOpportunityService(c.env, auth).recordImpressions(input.opportunityIds);
     const contextById = new Map(contexts.map((context) => [context.opportunityId, context]));
-    await Promise.all(input.opportunityIds.map(async (opportunityId, index) => {
+    for (const [index, opportunityId] of input.opportunityIds.entries()) {
       const context = contextById.get(opportunityId);
-      if (!context) return;
-      await emitProductUsageTelemetry(c.env, {
+      if (!context) continue;
+      emitProductUsageTelemetry(c.env, {
         workspaceId: auth.workspaceId,
         userId: auth.userId,
         name: "suggested_work_impression",
@@ -88,8 +88,8 @@ workOpportunityRoutes.post(
         },
         operationId: opportunityId,
         eventId: newId(),
-      }).catch(() => undefined);
-    }));
+      }, requestDeferral(c));
+    }
     return c.body(null, 204);
   },
 );
@@ -100,7 +100,7 @@ workOpportunityRoutes.delete("/:id", zValidator("param", idParam), zValidator("q
   const auth = getAuth(c);
   const context = await new WorkOpportunityService(c.env, auth).dismiss(id);
   if (context && input.surface && input.position && (!input.version || input.version === context.version)) {
-    await emitProductUsageTelemetry(c.env, {
+    emitProductUsageTelemetry(c.env, {
       workspaceId: auth.workspaceId,
       userId: auth.userId,
       name: "suggested_work_dismissed",
@@ -117,7 +117,7 @@ workOpportunityRoutes.delete("/:id", zValidator("param", idParam), zValidator("q
       },
       operationId: id,
       eventId: resourceTelemetryEventId(id, 8),
-    }).catch(() => undefined);
+    }, requestDeferral(c));
   }
   return c.body(null, 204);
 });
@@ -155,7 +155,7 @@ workOpportunityRoutes.post(
       }
     }
     if (context && surface && input.position) {
-      await emitProductUsageTelemetry(c.env, {
+      emitProductUsageTelemetry(c.env, {
         workspaceId: auth.workspaceId,
         userId: auth.userId,
         name: "suggested_work_started_v2",
@@ -171,7 +171,7 @@ workOpportunityRoutes.post(
         },
         operationId: c.req.valid("param").id,
         eventId: resourceTelemetryEventId(c.req.valid("param").id, 9),
-      }).catch(() => undefined);
+      }, requestDeferral(c));
     }
     return c.json(StartedWorkOpportunityResponseSchema.parse(started), 201);
   },

@@ -25,6 +25,8 @@ import {
 import { evictCachedWorkstream } from './workstreams-cache';
 import { retainConversationChildren } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import { retainQueryData } from './retain-query-data';
+import { isSocketTicketRequestTimeoutError } from './socket-ticket-request';
 
 type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
@@ -131,6 +133,7 @@ export function useWorkstreamControlSocket(
   initialReasonRef.current = initialReason;
   useEffect(() => {
     if (!api || !enabled) return;
+    const releaseData = retainQueryData(queryClient, [['workstream-children', workstreamId]]);
     let stopped = false;
     /**
      * The children the local cache was last told to keep. The control
@@ -142,6 +145,7 @@ export function useWorkstreamControlSocket(
     let retainedChildren: string | null = null;
     let accessRevoked = false;
     let socket: RealtimeSocket | null = null;
+    let activeTicketAbort: AbortController | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -151,6 +155,10 @@ export function useWorkstreamControlSocket(
     let protocolWarningReported = false;
     const socketTelemetry = realtimeSocketTelemetry('workstream_control');
     const isOffline = (): boolean => navigator.onLine === false;
+    const clearBackgroundCount = (): void => {
+      queryClient.setQueryData(['workstream-background-agents', workstreamId], null);
+    };
+    clearBackgroundCount();
 
     const clearReconnect = (): void => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -187,6 +195,7 @@ export function useWorkstreamControlSocket(
     };
     const applyMetadata = (metadata: WorkstreamControlMetadata): void => {
       if (metadata.id !== workstreamId) return;
+      queryClient.setQueryData(['workstream-background-agents', workstreamId], metadata.backgroundAgentCount ?? null);
       const state = metadataState(metadata);
       const applied = applyVersionedWorkstreamState(queryClient, {
         workstreamId,
@@ -229,6 +238,8 @@ export function useWorkstreamControlSocket(
       if (navigator.onLine === false) return;
       connecting = true;
       clearReconnect();
+      const ticketAbort = new AbortController();
+      activeTicketAbort = ticketAbort;
       const operationId = uuidV7();
       reportWorkstreamSocketStarted(
         workstreamId,
@@ -241,12 +252,17 @@ export function useWorkstreamControlSocket(
       );
       startedOnce = true;
       try {
-        const ticket = await api.getWorkstreamControlSocketTicket(workstreamId, operationId);
+        const ticket = await api.getWorkstreamControlSocketTicket(
+          workstreamId,
+          operationId,
+          ticketAbort.signal,
+        );
         if (stopped) return;
-        // See `workspace-socket.tsx`: an offline transition during the ticket
-        // request is invisible to the offline handler, because there was no
-        // socket to close.
+        // The offline handler normally aborts an in-flight ticket. Keep the
+        // post-ticket check for the race where the request settles immediately
+        // before that handler runs, so it still cannot dial while offline.
         if (isOffline()) {
+          clearBackgroundCount();
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           return;
         }
@@ -297,11 +313,13 @@ export function useWorkstreamControlSocket(
           socket = null;
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             accessRevoked = true;
+            clearBackgroundCount();
             socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
             evictCachedWorkstream(queryClient, workstreamId);
             return;
           }
           if (!stopped) {
+            clearBackgroundCount();
             socketTelemetry.disconnected({ attempts: attempt, retrying: !isOffline() });
           }
           scheduleReconnect();
@@ -313,16 +331,20 @@ export function useWorkstreamControlSocket(
           socketTelemetry.willClose('transport_error');
           next.close();
         });
-      } catch {
+      } catch (error) {
         if (!stopped) {
+          clearBackgroundCount();
           socketTelemetry.disconnected({
             attempts: attempt,
             retrying: !isOffline(),
-            cause: 'ticket_failed',
+            cause: isOffline()
+              ? 'offline'
+              : isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
         }
         scheduleReconnect();
       } finally {
+        if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
         connecting = false;
       }
     };
@@ -331,8 +353,11 @@ export function useWorkstreamControlSocket(
       void connect();
     };
     const offline = (): void => {
+      clearBackgroundCount();
       clearReconnect();
       clearHeartbeat();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       if (socket) socketTelemetry.willClose('offline');
       socket?.close();
     };
@@ -341,10 +366,14 @@ export function useWorkstreamControlSocket(
     void connect();
     return () => {
       stopped = true;
+      releaseData();
+      clearBackgroundCount();
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       clearReconnect();
       clearHeartbeat();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       socket?.close();
     };
   }, [api, enabled, localCacheScope, queryClient, resolvedSocketLeaseId, workstreamId]);

@@ -4,7 +4,7 @@ Every work stream, and every automation from the moment it is accepted, receives
 one permanent address
 on the domain configured when it is issued — `automation.rallywith.ai` today —
 generated from a frozen vocabulary and reserved in a single Global registry that
-both regions share. An address is never recomputed,
+configured deployments share. An address is never recomputed,
 never recycled, and never reassigned — a deleted owner leaves a tombstone rather
 than freeing the name, so a stale sender can never reach a different work stream.
 
@@ -28,8 +28,6 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
 | `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`digests.md`](digests.md). |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
-
-## How it works
 
 ### The v1 format
 
@@ -205,7 +203,7 @@ the request field, the frozen targets, the `PATCH` route, the desktop editor,
 the result email and its template and preview script, and the child's delivery
 loop. The one destination that was never chosen, the room that owns a
 `workstream`-scoped automation, is reached by the run itself through its
-`sidekick_post_result` tool; there are no delivery receipts and no
+`post_result` tool; there are no delivery receipts and no
 classifier.
 
 What replaced it is the run itself. An automation's instructions say where a
@@ -365,7 +363,7 @@ sunbird, terrapin, waxbill
 - **A run posts its own result into the owning room, once, and Rally posts
   nothing after it.** The room that owns a `workstream`-scoped automation
   travels in the task context's `sidekick.resultDelivery` as its one entry,
-  and the run's `sidekick_post_result` tool is the one way a result reaches
+  and the run's `post_result` tool is the one way a result reaches
   it. There is no result email, no receipt, and no second path.
 - **Every run lands in its own Rally work stream**, and that cannot be turned
   off; a room-owned automation's result is additionally posted to the owning
@@ -381,7 +379,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | --- | --- |
 | The create path that awaits activation | [`workstream-creation.md`](workstream-creation.md) |
 | Which connectors can carry a digest to a person | [`connectors.md`](connectors.md#delivering-a-digest-to-a-person) |
-| The Global/EU bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
+| The configured deployment bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
 | The `AutomationDO` tables the address and the receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
 | The resource aliases this generator also mints | [`agent-attachments.md`](agent-attachments.md) |
@@ -456,8 +454,6 @@ more. The headings here are `####`, nested under **The frozen v1 vocabulary**, a
 `"#### Frozen v1 adjectives ("` contains `"## Frozen v1 adjectives ("` at index 2.
 Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
-
-## Changelog
 
 ### 2026-09-03 — One admission call, no screen, no window
 

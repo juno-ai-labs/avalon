@@ -621,11 +621,10 @@ describe("workspace schema migration in workerd", () => {
         target_count: 2,
         archived_note_count: 0,
       }]);
-      // And it froze no notes for it, so even a caller that ignored the receipt
-      // would find nothing to take.
+      // The later retirement removes the obsolete note-target relation entirely.
       expect(state.storage.sql.exec(
-        `SELECT COUNT(*) AS count FROM workspace_batch_dispatch_note_targets`,
-      ).one()).toEqual({ count: 0 });
+        `SELECT name FROM sqlite_schema WHERE name = 'workspace_batch_dispatch_note_targets'`,
+      ).toArray()).toEqual([]);
       // The pending target is what a resumed dispatch re-sends; losing it would
       // silently drop half the operation across the deploy.
       expect(state.storage.sql.exec<{ workstream_id: string; dispatched_at: number | null }>(
@@ -778,6 +777,172 @@ describe("workspace schema migration in workerd", () => {
       )).toThrow();
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%_v31'`,
+      ).one()).toEqual({ count: 0 });
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
+    });
+  });
+
+  it("admits Fireflies on a populated v54 object, keeping its installation and every index the parent carried", async () => {
+    // `connector_installations` arrived in v54 with a foreign key that carries
+    // no `ON DELETE` action, so it is the one dependent the parent's implicit
+    // delete cannot empty — it aborts the drop instead. And v54's own
+    // cardinality indexes live on the table v55 replaces, so they go with it
+    // unless the rebuild puts them back. Neither failure is visible on a fresh
+    // schema: only an object that already holds an installation shows them.
+    const stub = env.MIGRATION_PROBE_DO!.getByName("populated-v54-fireflies-upgrade");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 54),
+        component: "workspace_do",
+        workerVersionId: "worker-v54",
+        now: 1_000,
+      });
+      state.storage.sql.exec(
+        `INSERT INTO workspace_identity
+           (id, workspace_id, region, placement_affinity, created_at, updated_at)
+         VALUES (1, 'workspace-1', 'global', 'wnam', 1, 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-ashby', 'workspace-1', 'ashby', 'workspace', NULL, NULL,
+                 'Ashby workspace events', '["ashby.workspace.events"]', 'plugin_ashby',
+                 'healthy', '{}', '{"region":"global"}',
+                 '2026-09-12T00:00:00.000Z', '2026-09-12T00:00:00.000Z')`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_installations
+           (connection_id, workspace_id, attempt_id, user_id, input_hash, generation, document_json)
+         VALUES ('connection-ashby', 'workspace-1', 'attempt-ashby', 'user-1', 'hash-1', 3,
+                 '{"state":"current"}')`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_installation_steps
+           (step_id, connection_id, generation, state, intent_json, created_at)
+         VALUES ('step-1', 'connection-ashby', 3, 'settled', '{"action":"inspect"}',
+                 '2026-09-12T00:00:00.000Z')`,
+      );
+
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: "workspace_do",
+        workerVersionId: "worker-current",
+        now: 2_000,
+      });
+
+      // The installation and its dispatch receipt survived the parent's
+      // replacement — the rows a cascade, or an aborted drop, would have cost.
+      expect(state.storage.sql.exec<{ document_json: string; generation: number }>(
+        `SELECT document_json, generation FROM connector_installations
+          WHERE connection_id = 'connection-ashby'`,
+      ).one()).toEqual({ document_json: '{"state":"current"}', generation: 3 });
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM connector_installation_steps WHERE step_id = 'step-1'`,
+      ).one()).toEqual({ count: 1 });
+
+      // What the widening was for, on both tables.
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-fireflies', 'workspace-1', 'fireflies', 'workspace', NULL, NULL,
+                 'Fireflies · bob@acme.test', '["fireflies.workspace.read"]', 'plugin_fireflies',
+                 'healthy', '{}', '{"region":"global"}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_oauth_attempts
+           (id, region, provider, user_id, workspace_id, status, expires_at, created_at, updated_at)
+         VALUES ('attempt-fireflies', 'global', 'fireflies', 'user-1', 'workspace-1', 'pending',
+                 '2026-09-13T01:00:00.000Z', '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      );
+
+      // Ashby's cardinality index came back with the table it sits on. Without
+      // it a second administrator creates a second live workspace connection
+      // and both receive the same provider's events.
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-ashby-2', 'workspace-1', 'ashby', 'workspace', NULL, NULL,
+                 'Ashby again', '[]', 'plugin_ashby_2', 'healthy', '{}', '{}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      )).toThrow();
+      // And Fireflies' own, in the same shape.
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-fireflies-2', 'workspace-1', 'fireflies', 'workspace', NULL, NULL,
+                 'Fireflies again', '[]', 'plugin_fireflies_2', 'healthy', '{}', '{}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      )).toThrow();
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-fireflies-personal', 'workspace-1', 'fireflies', 'personal', 'user-1',
+                 NULL, 'Fireflies personal', '["fireflies.personal.read"]',
+                 'plugin_fireflies_2', 'healthy', '{}', '{}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      );
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-fireflies-personal-2', 'workspace-1', 'fireflies', 'personal', 'user-1',
+                 NULL, 'Fireflies personal again', '[]', 'plugin_fireflies_3', 'healthy', '{}', '{}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      )).toThrow();
+      // A disabled row never blocks reconnecting.
+      state.storage.sql.exec(
+        `UPDATE connector_connections SET status = 'disabled' WHERE id = 'connection-fireflies'`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-fireflies-3', 'workspace-1', 'fireflies', 'workspace', NULL, NULL,
+                 'Fireflies reconnected', '[]', 'plugin_fireflies_4', 'healthy', '{}', '{}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      );
+
+      // Still closed vocabularies: a rebuild that dropped the CHECKs would pass
+      // every assertion above.
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, model_plugin_id, status, cursor_json,
+            config_json, created_at, updated_at)
+         VALUES ('connection-invented', 'workspace-1', 'invented', 'workspace', NULL, NULL,
+                 'Invented', '[]', 'plugin_invented', 'healthy', '{}', '{}',
+                 '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      )).toThrow();
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO connector_oauth_attempts
+           (id, region, provider, user_id, workspace_id, status, expires_at, created_at, updated_at)
+         VALUES ('attempt-invented', 'global', 'invented', 'user-1', 'workspace-1', 'pending',
+                 '2026-09-13T01:00:00.000Z', '2026-09-13T00:00:00.000Z', '2026-09-13T00:00:00.000Z')`,
+      )).toThrow();
+      // The fences come back with the tables, not just their indexes.
+      expect(() => state.storage.sql.exec(
+        `UPDATE connector_connections SET workspace_id = 'workspace-2' WHERE id = 'connection-ashby'`,
+      )).toThrow();
+
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%\\_v55%' ESCAPE '\\'`,
       ).one()).toEqual({ count: 0 });
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
       expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });

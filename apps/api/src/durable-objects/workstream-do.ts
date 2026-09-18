@@ -1,9 +1,12 @@
+import { parseRpcInput } from "../lib/rpc-input";
+import type { Region } from "@rally/contracts/regions";
 import { safeParseSocketEvent, isUnknownSocketEvent } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import {
   UserIdSchema,
+  IdSchema,
   SubstreamIdSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -25,6 +28,7 @@ import type {
   ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 import {
+  ParentEffectEnvelopeSchema,
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   isPersonNotificationEffect,
@@ -146,7 +150,7 @@ interface WorkstreamMetadataRow extends Record<string, SqlStorageValue> {
   authority_generation: number;
   workspace_id: string;
   workstream_id: string;
-  region: "global" | "eu";
+  region: Region;
   title: string;
   description: string;
   preview: string;
@@ -176,6 +180,7 @@ interface PrivateChildPreparationRow extends Record<string, SqlStorageValue> {
   capture_json: string | null;
   completed_parts_json: string;
   prepared_context_json: string | null;
+  prepared_conversation_hash: string | null;
   status: "preparing" | "prepared" | "confirming" | "ready" | "failed";
   error_code: string | null;
   created_at: number;
@@ -565,6 +570,28 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE conversation_children ADD COLUMN lifecycle_delivered_version INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE conversation_children ADD COLUMN lifecycle_not_before INTEGER NOT NULL DEFAULT 0`,
   ],
+}, { version: 11, description: "allow configured deployment identifiers", statements: [
+  "PRAGMA defer_foreign_keys = ON",
+  "CREATE TABLE \"_region_copy_workstream_metadata\" AS SELECT * FROM \"workstream_metadata\"",
+  "DELETE FROM \"workstream_metadata\"",
+  "DROP TABLE \"workstream_metadata\"",
+  "CREATE TABLE workstream_metadata (\n      id INTEGER PRIMARY KEY CHECK (id = 1),\n      workspace_id TEXT NOT NULL,\n      workstream_id TEXT NOT NULL UNIQUE,\n      region TEXT NOT NULL,\n      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),\n      revision INTEGER NOT NULL DEFAULT 0,\n      title TEXT NOT NULL,\n      description TEXT NOT NULL,\n      preview TEXT NOT NULL,\n      email_address TEXT,\n      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),\n      exact_state TEXT NOT NULL CHECK (exact_state IN (\n        'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',\n        'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',\n        'idle', 'archived', 'deleting', 'restoring'\n      )),\n      origin_type TEXT NOT NULL DEFAULT 'ad_hoc'\n        CHECK (origin_type IN ('ad_hoc', 'automation')),\n      created_by_user_id TEXT,\n      automation_subscription_id TEXT,\n      automation_run_id TEXT,\n      planned_for INTEGER CHECK (planned_for IS NULL OR planned_for >= 0),\n      title_status TEXT NOT NULL DEFAULT 'settled'\n        CHECK (title_status IN ('naming', 'automatic', 'settled')),\n      system_kind TEXT CHECK (system_kind IS NULL OR system_kind = 'digest'),\n      last_activity_at INTEGER NOT NULL CHECK (last_activity_at >= 0),\n      completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),\n      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),\n      latest_attention_ordinal INTEGER NOT NULL DEFAULT 0\n        CHECK (latest_attention_ordinal >= 0),\n      unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0\n        CHECK (unread_tracking_start_ordinal >= 0),\n      next_wakeup_due_at INTEGER CHECK (next_wakeup_due_at IS NULL OR next_wakeup_due_at >= 0),\n      next_wakeup_prompt TEXT,\n      next_terminal_action_at INTEGER\n        CHECK (next_terminal_action_at IS NULL OR next_terminal_action_at >= 0),\n      source_created_at INTEGER NOT NULL DEFAULT 0 CHECK (source_created_at >= 0),\n      source_updated_at INTEGER NOT NULL DEFAULT 0 CHECK (source_updated_at >= 0),\n      created_at INTEGER NOT NULL,\n      updated_at INTEGER NOT NULL\n    ) STRICT",
+  "INSERT INTO \"workstream_metadata\" SELECT * FROM \"_region_copy_workstream_metadata\"",
+  "DROP TABLE \"_region_copy_workstream_metadata\"",
+  "PRAGMA defer_foreign_keys = OFF"
+]
+}, {
+  version: 12, description: "freeze private child historical content before publication", statements: [
+    // Previously claimed operations had no prepared-history input. Null keeps their replay semantics.
+    `ALTER TABLE private_child_preparations ADD COLUMN prepared_conversation_hash TEXT
+      CHECK (prepared_conversation_hash IS NULL OR (length(prepared_conversation_hash) = 24 AND substr(prepared_conversation_hash, 1, 8) = 'fnv1a64:'))`,
+  ],
+}, {
+  version: 13,
+  description: "workspace Sidekicks recommended for a workstream",
+  statements: [
+    `CREATE TABLE workstream_sidekick_attachments (sidekick_id TEXT PRIMARY KEY, attached_at INTEGER NOT NULL) STRICT`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -821,6 +848,32 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     return json({ error: "not_found" }, 404);
   }
 
+  /** Internal catalog read; consumers authorize each Sidekick source. */
+  async recommendedSidekickIds(input: { workspaceId: string; parentId: string }): Promise<string[]> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }), input, "sidekick_recommendations");
+    this.assertParent(request.workspaceId, request.parentId);
+    return this.parentSql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM workstream_sidekick_attachments ORDER BY attached_at, sidekick_id`,
+    ).toArray().map((row) => row.sidekick_id);
+  }
+
+  /** The service validates workspace scope before adding a recommendation. */
+  async setSidekickRecommendation(input: { workspaceId: string; parentId: string; userId: string; sidekickId: string; attached: boolean }): Promise<string[]> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      userId: UserIdSchema, sidekickId: IdSchema, attached: z.boolean() }), input, "sidekick_recommendation");
+    this.assertParent(request.workspaceId, request.parentId);
+    if (!this.isParticipant(request.userId)) throw new Error("sidekick_attachment_participant_required");
+    if (this.metadataRow()?.archived_at !== null) throw new Error("sidekick_attachment_workstream_archived");
+    if (request.attached) {
+      this.parentSql.exec(`INSERT OR IGNORE INTO workstream_sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)`, request.sidekickId, Date.now());
+    } else {
+      this.parentSql.exec(`DELETE FROM workstream_sidekick_attachments WHERE sidekick_id = ?`, request.sidekickId);
+    }
+    return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
+  }
+
   // ---------------------------------------------------------------------------
   // The conversation-parent contract. `receiveChildEffects` and `listChildren`
   // are inherited; the three below need this object's own row.
@@ -915,16 +968,22 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     });
   }
 
+  /** Reserve against current parent authority without a caller-side preflight RPC. */
+  async reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): Promise<ConversationParentReserveChildResult> {
+    const authority = await this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
+    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
+    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
+  }
+
   /**
    * Record a child before it is addressed.
    *
    * Reserving the main conversation of a work stream that does not exist yet
-   * creates this object's row and puts a provisional directory row in the
-   * workspace synchronously, through the one parent-to-workspace RPC that is
-   * kept: the person who created the work stream is about to open it, and the
-   * Worker's visibility checks read the workspace directory. The provisional
-   * row is version 1 of this parent's projection, so the child's first real
-   * aggregate lands as version 2 and replaces it.
+   * creates this object's row and a version-one provisional directory outbox.
+   * Ordinary callers deliver it synchronously. Creation may explicitly defer
+   * that RPC, overlap it with child initialization, and then flush the exact
+   * version-one rows before answering. The child's first real aggregate lands
+   * as version 2 and replaces the provisional projection.
    */
   async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
     await this.initialized;
@@ -940,6 +999,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       } else {
         this.assertParent(request.workspaceId, request.parentId);
       }
+      if (request.kind === "child" && metadata.archived_at !== null) throw new Error("workstream_archived");
       const registered = this.registerChild(request.substreamId, request.kind, request.createdByUserId, now);
       const envelopes: ParentEffectEnvelope[] = [];
       if (registered && request.substreamId === "0" && request.directory) {
@@ -978,12 +1038,42 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       }
       return { authorityGeneration: metadata.authority_generation, envelopes };
     });
-    if (reserved.envelopes.length > 0) await this.deliverProvisionalDirectory(reserved.envelopes);
+    if (reserved.envelopes.length > 0 && !request.deferDirectoryDelivery) {
+      await this.deliverProvisionalDirectory(reserved.envelopes);
+    }
     await this.armNextAlarm();
     return ConversationParentReserveChildResultSchema.parse({
       reserved: true,
       authorityGeneration: reserved.authorityGeneration,
     });
+  }
+
+  /**
+   * Finish a deferred provisional directory delivery before the create route
+   * answers. The outbox is the authority, so retrying after an accepted
+   * delivery is a no-op and an alarm remains the recovery path.
+   */
+  async flushProvisionalDirectory(input: ConversationParentAuthorityRequest): Promise<void> {
+    await this.initialized;
+    const request = ConversationParentAuthorityRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const provisional = this.provisionalDirectoryEffects(false);
+    if (provisional.length > 0) await this.deliverProvisionalDirectory(provisional);
+    await this.armNextAlarm();
+  }
+
+  /** The reservation's exact version-one rows; no unrelated outbox cap or backoff applies. */
+  private provisionalDirectoryEffects(dueOnly: boolean, now = Date.now()): ParentEffectEnvelope[] {
+    const sql = `SELECT payload_json FROM durable_outbox
+      WHERE state IN ('pending', 'inflight')
+        AND source_version = 1
+        AND effect_kind IN ('directory_common', 'directory_user')
+        ${dueOnly ? "AND not_before <= ?" : ""}
+      ORDER BY CASE effect_kind WHEN 'directory_common' THEN 0 ELSE 1 END, message_id`;
+    const rows = dueOnly
+      ? this.parentSql.exec<{ payload_json: string }>(sql, now).toArray()
+      : this.parentSql.exec<{ payload_json: string }>(sql).toArray();
+    return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   }
 
   /** Reserve one creator-only nonzero child and its immutable preparation receipt. */
@@ -1065,7 +1155,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     input: ClaimPrivateChildConfirmationRequest,
   ): Promise<PrivateChildPreparationOperation> {
     await this.initialized;
-    const request = ClaimPrivateChildConfirmationRequestSchema.parse(input);
+    const request = parseRpcInput(ClaimPrivateChildConfirmationRequestSchema, input, "private_child_confirmation");
     this.assertParent(request.workspaceId, request.parentId);
     this.state.storage.transactionSync(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
@@ -1073,10 +1163,13 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       if (!this.canRead(request.actorUserId)) throw new Error("private_child_confirmation_forbidden");
       if (operation.status === "failed") throw new Error("private_child_preparation_failed");
       if (operation.status === "preparing") throw new Error("private_child_context_not_prepared");
+      if (operation.status !== "prepared" && operation.preparedConversationHash !== (request.preparedConversationHash ?? null)) {
+        throw new Error("private_child_initialization_conflict");
+      }
       if (operation.status === "prepared") {
         this.parentSql.exec(
-          `UPDATE private_child_preparations SET status = 'confirming', updated_at = ? WHERE operation_id = ?`,
-          Date.now(), request.operationId,
+          `UPDATE private_child_preparations SET status = 'confirming', prepared_conversation_hash = ?, updated_at = ? WHERE operation_id = ?`,
+          request.preparedConversationHash ?? null, Date.now(), request.operationId,
         );
       }
     });
@@ -1317,6 +1410,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       sourceThroughTurnId: request.sourceThroughTurnId,
       recipe: request.recipe,
       status: row.status,
+      preparedConversationHash: row.prepared_conversation_hash,
       capture: row.capture_json ? JSON.parse(row.capture_json) : null,
       completedParts: JSON.parse(row.completed_parts_json),
       preparedContext: row.prepared_context_json ? JSON.parse(row.prepared_context_json) : null,
@@ -1735,6 +1829,10 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     now: number,
   ): void {
     if (substreamId === "0") return;
+    if (effect.backgroundAgent) {
+      this.parentSql.exec("UPDATE workstream_metadata SET revision = revision + 1, updated_at = ? WHERE id = 1", now);
+      return;
+    }
     const changed = this.parentSql.exec<{ substream_id: string }>(
       `UPDATE conversation_children SET title = ?, updated_at = ?
         WHERE substream_id = ? AND kind = 'child' AND title IS NOT ?
@@ -1744,10 +1842,21 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     if (changed) this.advancePrivateChildrenVersionsFor(substreamId, now);
   }
 
-  protected override afterChildEffects(): Promise<void> {
-    // Everyone reading *this* work stream hears now, over the control socket.
-    // Every other surface hears through the outbox, the Queue, and WorkspaceDO.
-    return this.broadcastMetadata();
+  protected override async afterChildEffects(): Promise<void> {
+    const row = this.metadataRow();
+    if (row?.archived_at != null) {
+      // The durable archive is the retry authority. Every owned worker uses
+      // this same parent, including recursively delegated workers. A shared
+      // Sidekick has a different parent and is not part of this traversal.
+      for (const child of this.childRegistry()) {
+        const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+          row.workspace_id, conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id),
+            row.workstream_id, asSubstreamId(child.substreamId)));
+        await stub.stopOwnedAgent();
+      }
+    }
+    // Everyone reading this workstream hears through the existing control socket.
+    await this.broadcastMetadata();
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
@@ -1804,10 +1913,22 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    */
   protected override runDueAlarmWork(): Promise<void> {
     return Promise.all([
-      this.drainParentOutbox(),
+      this.drainParentOutboxWithCreationFence(),
       this.drainPrivateChildMembershipEffects(),
       this.drainPrivateChildLifecycleEffects(),
     ]).then(() => undefined);
+  }
+
+  /**
+   * A deferred creation projection still has to reach WorkspaceDO directly if
+   * its recovery alarm wins the race with the create coordinator. Version one
+   * is uniquely the provisional row; later aggregate projections use the
+   * ordinary Queue outbox.
+   */
+  private async drainParentOutboxWithCreationFence(): Promise<void> {
+    const provisional = this.provisionalDirectoryEffects(true);
+    if (provisional.length > 0) await this.deliverProvisionalDirectory(provisional);
+    await this.drainParentOutbox();
   }
 
   private async acceptSocket(request: Request): Promise<Response> {
@@ -2069,6 +2190,12 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       titleStatus: row.title_status,
       exactState: row.exact_state,
       harnessStatus: harnessStatus(row.exact_state),
+      backgroundAgentCount: this.parentSql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM substream_directory
+          WHERE substream_id <> '0' AND json_extract(effect_json, '$.backgroundAgent') = 1
+            AND json_extract(effect_json, '$.state') = 'running'
+            AND json_extract(effect_json, '$.archivedAt') IS NULL`,
+      ).one().n,
       latestAttentionSequenceNumber: row.latest_attention_ordinal,
       unreadTrackingStartSequenceNumber: row.unread_tracking_start_ordinal,
       lastActivityAt: iso(row.last_activity_at),

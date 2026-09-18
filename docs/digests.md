@@ -28,8 +28,6 @@ mention, or changing what a connector can deliver to a person.
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 
-## How it works
-
 ### Why a second activity table exists
 
 `WorkspaceDO.workspace_connector_events` is provider ingest authority. It is
@@ -666,7 +664,7 @@ entry point, and nothing else resolves audience correctly.
 - **A resolution to disabled logs at `info`, not the `debug` every other
   outcome uses.** No `digest_deliveries` row is written when the flag skips an
   occurrence, by design, so the log line is the only trace an operator has
-  that the switch took effect — `debug` sits below both regions' configured
+  that the switch took effect — `debug` sits below configured deployments' configured
   production level and would leave the skip invisible.
 
 ## Testing
@@ -693,7 +691,25 @@ visible change to the email template is looked at through
 [Looking at it](#looking-at-it), which also names the two rendering failures the
 preview does *not* reproduce on its own.
 
+## Device notification transport
+
+Mention and seating intents now also enqueue regional Apple push when the
+recipient's flag is enabled and a live device exists. Slack still sends;
+email is sent only when Slack did not send and push was not enqueued. Both the
+intent processor and push consumer use `notificationDeliveryContext`, preserving
+existing audience and projection semantics. [Apple push](push-notifications.md)
+owns device registration, provider delivery and retry receipts.
+
 ## Changelog
+
+### 2026-09-14 — Share notification eligibility with Apple push
+
+Push now consumes the same durable intents and eligibility function as Slack and
+email. Successfully queued push keeps the payload until the existing intent
+retention expires, because clearing it at producer settlement would strand an
+asynchronous delivery. Slack remains independent; email is the fallback when
+neither Slack nor push accepts the notification.
+
 
 ### 2026-09-09 — Seek directly to the activity cursor
 
@@ -1178,14 +1194,6 @@ required settlement work must never be placed after an uncaught analytics read.
 `digest_schedules.system_workstream_id`. Nothing else — no code, no other
 schema, and none of the work streams it named.
 
-**Why:** This is the second half of the two-phase drop the entry below left open,
-and the only thing it was ever waiting on was a deployment. The rule is that a
-migration lands before either Worker deploys, so a column may only be dropped
-once every *live* Worker already ignores it. `0068` shipped in #119 and both
-regional Workers went live behind it — Global at 05:51:53 UTC, EU nine seconds
-earlier — so the Worker running while this migration lands is one that never
-touches the column. The condition is met, and the phasing has no further purpose.
-
 Leaving it indefinitely was the alternative and is worse than it looks. A column
 the code no longer maintains still reads as *the current work stream* to whoever
 finds it next, and it points at work streams that were real when they were
@@ -1265,7 +1273,7 @@ it: the branch it routes into is what keeps the events.
 occurrence and recorded on the new `digest_deliveries.workstream_id`, rather than
 in one shared by every digest a person ever receives.
 `digest_schedules.system_workstream_id` stops being read or written, but is
-deliberately **not** dropped in the same change: migrations for both regions land
+deliberately **not** dropped in the same change: migrations for configured deployments land
 before either Worker deploys, so the previous Worker is still selecting and
 writing that column while the new schema is live, and dropping it would turn
 digest firing, the cron reconciler and the settings read into `no such column`
@@ -1391,26 +1399,6 @@ real answer for a whole class of existing rows, and picking `0` instead would
 have cost a second backfill (`WHERE source_kind <> 'activity'`) rather than
 nothing. What nobody asked was what the *old code* would write through it, and
 for twenty-three seconds that was the only thing the default governed.
-
-**Considered and rejected:** Flipping it to `DEFAULT 0`, which was the first
-instinct and is wrong twice over. It buys almost nothing: every deployed version
-from here on sets `digestible` explicitly, so no future deployment window can
-produce a defaulted row, and the only remaining reader of the default is a raw
-`INSERT` that no code path performs. And it is not a one-line change — SQLite
-cannot alter a column default, so it means rebuilding `activity_events`, which
-means staging every `activity_event_targets` row around a parent drop that would
-otherwise cascade them away, and restoring `sqlite_sequence` by hand because
-`log_sequence` is `AUTOINCREMENT` and a rebuild of an empty table resets the
-counter to zero. The EU copy of this table is empty today, so that reset would
-have reissued sequences beneath cursors already stored in `digest_deliveries` —
-the exact failure the `AUTOINCREMENT` comment in `0059` exists to prevent. A
-rebuild of the log to change a default that will never again be read is a large
-risk for no benefit.
-
-Also considered: correcting the six rows in a migration. There is no structural
-marker that identifies them — only a production timestamp, which would be wrong
-in the EU database and wrong in every fresh deployment. They are a one-off
-correction against one region's data, not a schema change.
 
 **Consequences:** The default is now load-bearing documentation rather than a
 safety net: anything that inserts into `activity_events` outside

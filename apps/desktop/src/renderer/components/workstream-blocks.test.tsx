@@ -14,6 +14,8 @@ import {
 } from './workstream-blocks';
 import { SpeechPlaybackProvider, type SpeechApi, type SpeechPlayer } from './speech-playback';
 
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 const copyText = vi.hoisted(() => vi.fn());
 const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
   async () => ({ saved: true }),
@@ -21,6 +23,9 @@ const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => 
 const desktopServicesAvailable = vi.hoisted(() => vi.fn(() => true));
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
 const setWindowTheme = vi.hoisted(() => vi.fn(async () => undefined));
+const getRuntimeConfig = vi.hoisted(() => vi.fn(async () => ({ platform: 'darwin' })));
+const showDefinitionForSelection = vi.hoisted(() => vi.fn(async () => undefined));
+const shareText = vi.hoisted(() => vi.fn(async () => undefined));
 const initializeMermaid = vi.hoisted(() => vi.fn());
 const mermaidRender = vi.hoisted(() => vi.fn());
 const getMermaidDiagram = vi.hoisted(() => vi.fn(async () => ({ db: {} })));
@@ -33,11 +38,22 @@ const readMermaidThemeConfig = vi.hoisted(() => vi.fn(
     themeVariables: { primaryColor: 'token' },
   }),
 ));
+const optionalAppSession = vi.hoisted(() => vi.fn<() => { api: { getFavicon: ReturnType<typeof vi.fn> } } | null>(() => null));
 
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent, setWindowTheme }),
+  desktopBridge: () => ({
+    copyText,
+    exportMessage,
+    reportTelemetryProductIntent,
+    setWindowTheme,
+    getRuntimeConfig,
+    showDefinitionForSelection,
+    shareText,
+  }),
+  desktopRuntimeConfig: getRuntimeConfig,
   desktopServicesAvailable,
 }));
+vi.mock('../lib/favicon-api', () => ({ useFaviconApi: () => optionalAppSession()?.api ?? null }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
     <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
@@ -54,7 +70,11 @@ vi.mock('./markdown-mermaid-theme', () => ({
   readMermaidThemeConfig,
 }));
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  optionalAppSession.mockReturnValue(null);
+});
 
 const baseMessage: Message = {
   id: 'message-human',
@@ -434,21 +454,56 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Client-only mention rendering')).toBeInTheDocument();
   });
 
-  it('gives an attachment-only turn the same in-flight wrapper as one with text', () => {
+  it('renders the surface the in-flight sweep keys on for an attachment-only turn', () => {
     // The bubble is drawn only for a turn with text, and a send can be
-    // attachments alone. The shimmer hangs off the content wrapper so that turn
-    // is not the one message that goes out saying nothing about itself.
+    // attachments alone. The in-flight sweep is painted per surface — the
+    // bubble, and each attachment tile or card — so the card is the one surface
+    // this turn has for it. jsdom applies no stylesheet, so what is proved here
+    // is the markup: the article is marked in flight and the card is rendered
+    // inside it. That the sweep is keyed on the card is `app.css`'s selector
+    // list, covered by the screenshot pass rather than by this test.
     render(
       <MessageBlock
         {...actions}
         currentUserId="user-adam"
-        message={{ ...baseMessage, deliveryState: 'sending', text: '' }}
+        loadAttachmentContent={async () => new Blob(['text'])}
+        message={{
+          ...baseMessage,
+          deliveryState: 'sending',
+          text: '',
+          attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }],
+        }}
+        onOpenAttachment={vi.fn()}
       />,
     );
 
     const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight).toHaveClass('is-sending');
     expect(inFlight.querySelector('.human-message-bubble')).not.toBeInTheDocument();
-    expect(inFlight.querySelector('.human-message-content')).toBeInTheDocument();
+    expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
+  });
+
+  it('renders both the bubble and the attachment card for an in-flight turn with text and a file', () => {
+    // The sweep is painted per surface, so a turn with words and a file has
+    // two, and a render that fell back to one or the other would still pass
+    // the two single-surface cases above.
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        loadAttachmentContent={async () => new Blob(['text'])}
+        message={{
+          ...baseMessage,
+          deliveryState: 'sending',
+          attachments: [{ id: 'file', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 4, contentAvailable: true, createdAt: baseMessage.createdAt }],
+        }}
+        onOpenAttachment={vi.fn()}
+      />,
+    );
+
+    const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight.querySelector('.human-message-bubble')).toBeInTheDocument();
+    expect(inFlight.querySelector('.attachment-file-card')).toBeInTheDocument();
   });
 
   it('names the signed-in person over their own prompt, like every other turn', () => {
@@ -625,18 +680,19 @@ describe('MessageBlock markdown', () => {
 
   it('still resolves a stored bare person: mention to a chip', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
+    const link = `[@Ada Lovelace](person:${personId})`;
     const message: Message = {
       ...baseMessage,
       id: 'message-person-mention-legacy',
       authorType: 'agent',
       author: undefined,
-      text: `Ask [@Ada Lovelace](person:${personId}) for a review.`,
+      text: `Ask ${link} for a review.`,
       mentions: [{
         type: 'person',
         personId,
         displayName: 'Ada Lovelace',
         startOffset: 4,
-        endOffset: 65,
+        endOffset: 4 + link.length,
       }],
     };
 
@@ -661,6 +717,33 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByText('@Grace Hopper')).toHaveClass('mention-text-fallback');
     expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '@Grace Hopper' })).not.toBeInTheDocument();
+  });
+
+  it('does not let one authoritative range bless another link to the same person', () => {
+    const personId = '00000000-0000-7000-8000-000000000043';
+    const canonical = `[@Grace Hopper](person://${personId})`;
+    const other = `[not a canonical mention](person://${personId})`;
+    const text = `${canonical} then ${other}`;
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention-occurrence',
+      authorType: 'agent',
+      author: undefined,
+      text,
+      mentions: [{
+        type: 'person',
+        personId,
+        displayName: 'Grace Hopper',
+        startOffset: 0,
+        endOffset: canonical.length,
+      }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelectorAll('.mention-chip')).toHaveLength(1);
+    expect(screen.getByText('not a canonical mention')).toHaveClass('mention-text-fallback');
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('renders connection mentions as chips from their stored offsets', () => {
@@ -782,6 +865,43 @@ describe('MessageBlock markdown', () => {
     expect(container.querySelectorAll('br')).toHaveLength(3);
     expect(screen.getByRole('link', { name: 'site' })).toHaveAttribute('href', 'https://example.com');
     expect(container.querySelector('.mention-text-fallback')).toHaveTextContent('@Ada Lovelace');
+  });
+
+  it('linkifies a naked HTTP URL and decorates it and a named HTTP link with their favicons', async () => {
+    const getFavicon = vi.fn(async () => new Blob([png], { type: 'image/png' }));
+    optionalAppSession.mockReturnValue({ api: { getFavicon } });
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:favicon');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+    const { unmount } = render(
+      <MarkdownBody>{'Read https://docs.svix.com and [Svix documentation](http://www.svix.com/docs).'}</MarkdownBody>,
+    );
+
+    expect(screen.getByRole('link', { name: 'https://docs.svix.com' }))
+      .toHaveAttribute('href', 'https://docs.svix.com');
+    expect(screen.getByRole('link', { name: 'Svix documentation' }))
+      .toHaveAttribute('href', 'http://www.svix.com/docs');
+    await waitFor(() => expect(document.querySelectorAll('.markdown-link-favicon')).toHaveLength(2));
+    expect(getFavicon).toHaveBeenCalledWith('docs.svix.com');
+    expect(getFavicon).toHaveBeenCalledWith('www.svix.com');
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it('requests every HTTP link favicon when the message renders', async () => {
+    const getFavicon = vi.fn(async () => null);
+    optionalAppSession.mockReturnValue({ api: { getFavicon } });
+
+    render(<MarkdownBody>{'[](https://empty.example) [\u200b](https://zero-area.example) [Documentation](https://docs.example.com)'}</MarkdownBody>);
+
+    await waitFor(() => expect(getFavicon).toHaveBeenCalledTimes(3));
+    expect(getFavicon).toHaveBeenCalledWith('empty.example');
+    expect(getFavicon).toHaveBeenCalledWith('zero-area.example');
+    expect(getFavicon).toHaveBeenCalledWith('docs.example.com');
   });
 
   it('keeps a multiline connector mention as a chip', () => {
@@ -1382,7 +1502,13 @@ describe('MessageBlock markdown', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('const ready = true;'));
-    expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
+    // The control says so, and the same click is the retry.
+    const failed = await screen.findByRole('button', { name: 'Copy failed — click to retry' });
+    expect(failed).toBeEnabled();
+    const writes = copyText.mock.calls.length;
+    fireEvent.click(failed);
+    await screen.findByRole('button', { name: 'Code copied' });
+    expect(copyText.mock.calls).toHaveLength(writes + 1);
   });
 });
 
@@ -1525,6 +1651,161 @@ describe('MessageBlock speech action', () => {
 
     expect(stop).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Speak response' })).toBeVisible();
+  });
+});
+
+describe('MessageBlock text context menu', () => {
+  const write = vi.fn<(items: ClipboardItemStub[]) => Promise<void>>(async () => undefined);
+  const writeText = vi.fn<(text: string) => Promise<void>>(async () => undefined);
+
+  class ClipboardItemStub {
+    readonly items: Record<string, Blob>;
+    constructor(items: Record<string, Blob>) {
+      this.items = items;
+    }
+  }
+
+  beforeEach(() => {
+    write.mockReset();
+    writeText.mockReset();
+    shareText.mockReset().mockResolvedValue(undefined);
+    showDefinitionForSelection.mockReset().mockResolvedValue(undefined);
+    getRuntimeConfig.mockReset().mockResolvedValue({ platform: 'darwin' });
+    reportTelemetryProductIntent.mockReset().mockResolvedValue(undefined);
+    desktopServicesAvailable.mockReturnValue(true);
+    vi.stubGlobal('ClipboardItem', ClipboardItemStub);
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: { write, writeText },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const agent: Message = {
+    ...baseMessage,
+    id: 'message-agent-menu',
+    authorType: 'agent',
+    author: undefined,
+    text: 'The **settled** answer.',
+  };
+
+  async function openBodyMenu(body: Element): Promise<void> {
+    fireEvent.contextMenu(body);
+    await screen.findByRole('menuitem', { name: /^Copy$/ });
+  }
+
+  it('copies formatted HTML of the whole assistant body when nothing is selected', async () => {
+    const { container } = render(<MessageBlock {...actions} message={agent} />);
+    await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Copy$/ }));
+    await waitFor(() => expect(write).toHaveBeenCalledOnce());
+    const item = write.mock.calls[0]?.[0]?.[0];
+    expect(item).toBeDefined();
+    expect(await item!.items['text/html']!.text()).toContain('<strong>settled</strong>');
+    expect(await item!.items['text/plain']!.text()).toContain('settled');
+    expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: agent.id, workstreamId: agent.workstreamId,
+    });
+  });
+
+  it('copies the stored markdown source from assistant and human bodies', async () => {
+    const { container, rerender } = render(<MessageBlock {...actions} message={agent} />);
+    await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy as markdown' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('The **settled** answer.'));
+
+    rerender(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
+    await openBodyMenu(screen.getByLabelText('Message from Adam').querySelector('.markdown-body')!);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy as markdown' }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(baseMessage.text));
+  });
+
+  it('toggles Speak and Stop speaking through the same voice mutex as the action row', async () => {
+    const players: SpeechPlayer[] = [];
+    const streamMessageSpeech = vi.fn(async () => new ReadableStream<Uint8Array>());
+    const hanging = (): SpeechPlayer => {
+      const player: SpeechPlayer = {
+        prepare: vi.fn(async () => undefined),
+        play: vi.fn(async () => new Promise<void>(() => undefined)),
+        stop: vi.fn(),
+      };
+      players.push(player);
+      return player;
+    };
+    const first: Message = { ...agent, id: 'message-speech-one', text: 'First answer.' };
+    const second: Message = { ...agent, id: 'message-speech-two', text: 'Second answer.' };
+    const { container } = render(
+      <SpeechPlaybackProvider api={{ streamMessageSpeech }} createPlayer={hanging}>
+        <MessageBlock {...actions} message={first} />
+        <MessageBlock {...actions} message={second} />
+      </SpeechPlaybackProvider>,
+    );
+
+    const articles = container.querySelectorAll('.agent-message');
+    fireEvent.contextMenu(articles[0]!.querySelector('.markdown-body')!);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Speak response' }));
+    await waitFor(() => expect(streamMessageSpeech).toHaveBeenCalledWith('First answer.', expect.any(AbortSignal)));
+    expect(screen.getByRole('button', { name: 'Stop speaking' })).toBeVisible();
+
+    fireEvent.contextMenu(articles[1]!.querySelector('.markdown-body')!);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Speak response' }));
+    await waitFor(() => expect(streamMessageSpeech).toHaveBeenCalledWith('Second answer.', expect.any(AbortSignal)));
+    expect(players[0]!.stop).toHaveBeenCalled();
+    expect(screen.getAllByRole('button', { name: 'Speak response' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Stop speaking' }).closest('.message-block')).toHaveAttribute(
+      'id',
+      'message-message-speech-two',
+    );
+  });
+
+  it('offers Look Up and Share on macOS desktop, and not without the bridge', async () => {
+    const { container, rerender } = render(<MessageBlock {...actions} message={agent} />);
+    await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
+    await screen.findByRole('menuitem', { name: 'Look Up' });
+    expect(screen.getByRole('menuitem', { name: 'Look Up' })).toHaveAttribute('data-disabled');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Share' }));
+    await waitFor(() => expect(shareText).toHaveBeenCalledWith('The settled answer.'));
+
+    desktopServicesAvailable.mockReturnValue(false);
+    rerender(<MessageBlock {...actions} message={agent} />);
+    fireEvent.contextMenu(container.querySelector('.agent-message .markdown-body')!);
+    expect(screen.queryByRole('menuitem', { name: 'Look Up' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Share' })).not.toBeInTheDocument();
+  });
+
+  it('does not put the menu on a glance or a still', () => {
+    const { container, rerender } = render(<MarkdownBody glance telemetry={{ messageId: 'g', workstreamId: 'w' }}>{'Glance'}</MarkdownBody>);
+    fireEvent.contextMenu(container.querySelector('.markdown-body')!);
+    expect(screen.queryByRole('menuitem', { name: /^Copy$/ })).not.toBeInTheDocument();
+    rerender(<MarkdownBody still telemetry={{ messageId: 's', workstreamId: 'w' }}>{'Still'}</MarkdownBody>);
+    fireEvent.contextMenu(container.querySelector('.markdown-body')!);
+    expect(screen.queryByRole('menuitem', { name: /^Copy$/ })).not.toBeInTheDocument();
+  });
+
+  it('hides Speak while an assistant turn is still streaming', async () => {
+    const { container } = render(
+      <SpeechPlaybackProvider api={{ streamMessageSpeech: vi.fn(async () => new ReadableStream<Uint8Array>()) }}>
+        <MessageBlock {...actions} message={{ ...agent, streaming: true, text: 'Partial **answer**.' }} />
+      </SpeechPlaybackProvider>,
+    );
+    await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
+    expect(screen.queryByRole('menuitem', { name: 'Speak response' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Copy$/ })).toBeVisible();
+  });
+
+  it('names Speak on a human turn Speak, not Speak response', async () => {
+    render(
+      <SpeechPlaybackProvider api={{ streamMessageSpeech: vi.fn(async () => new ReadableStream<Uint8Array>()) }}>
+        <MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />
+      </SpeechPlaybackProvider>,
+    );
+    await openBodyMenu(screen.getByLabelText('Message from Adam').querySelector('.markdown-body')!);
+    expect(screen.getByRole('menuitem', { name: /^Speak$/ })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Speak response' })).not.toBeInTheDocument();
   });
 });
 
@@ -1781,7 +2062,7 @@ describe('MessageBlock plugin activity rows', () => {
 
   it('draws a company mark in the row\'s own colour, as real markup', () => {
     // The mark is a React component, so nothing is injected as HTML, and the
-    // monochrome variant paints in `currentColor` — which is what keeps eight
+    // monochrome variant paints in `currentColor` — which is what keeps ten
     // companies legible on four grounds without per-theme artwork.
     const { container } = render(<MessageBlock {...actions} message={pluginRow('message-granola', {
       groupKey: 'name:Granola', name: 'Granola', icon: 'granola', active: false, durationMs: 3_000,

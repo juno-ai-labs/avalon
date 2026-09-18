@@ -73,7 +73,7 @@ function sse(events: readonly Record<string, unknown>[]): Response {
 }
 
 /**
- * The `core_request_elicitation` call an `ask` turn makes, in the exact shape
+ * The `request_elicitation` call an `ask` turn makes, in the exact shape
  * `RequestElicitationInputSchema` accepts. Getting this wrong is silent: the
  * tool rejects the arguments, no elicitation opens, and Bind is told to try
  * again — against a seam that refuses the second request.
@@ -84,7 +84,7 @@ function elicitationCall(turn: Extract<DemoSeedTurn, { kind: "ask" }>, seed: Dem
     id: `demo-seed-${seed.actionId}`,
     type: "function" as const,
     function: {
-      name: "core_request_elicitation",
+      name: "request_elicitation",
       arguments: JSON.stringify({
         prompt: turn.prompt,
         responseType: "radio",

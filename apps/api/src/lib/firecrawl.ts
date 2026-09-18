@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 
 export const DEFAULT_FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v2";
 export const FIRECRAWL_CACHE_MAX_AGE_MS = 172_800_000;
@@ -51,6 +52,16 @@ const scrapeResponseSchema = z.object({
   }),
 });
 
+const brandingResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    branding: z.object({
+      images: z.object({ favicon: z.string().nullish() }).nullish(),
+    }).nullish(),
+    metadata: scrapeMetadataSchema,
+  }),
+});
+
 const errorEnvelopeSchema = z.object({
   success: z.literal(false).optional(),
   error: z.string().optional(),
@@ -87,6 +98,12 @@ export interface FirecrawlScrapeOutput {
   creditsUsed?: number;
   proxyUsed?: string;
   cacheState?: string;
+}
+
+export interface FirecrawlBrandingOutput {
+  faviconUrl: string | null;
+  url: string | null;
+  statusCode: number;
 }
 
 export interface FirecrawlCallOptions {
@@ -170,6 +187,15 @@ export class FirecrawlClient {
     };
   }
 
+  /** Capture source bytes as text without Markdown conversion or cached page content. */
+  async scrapeSource(url: string, options: FirecrawlCallOptions = {}): Promise<{ body: string; url: string | null; statusCode: number }> {
+    const response = await this.request("/scrape", {
+      url, formats: ["rawHtml"], onlyMainContent: false, removeBase64Images: false,
+      proxy: "auto", timeout: SCRAPE_TIMEOUT_MS, maxAge: 0, storeInCache: false,
+    }, z.object({ success: z.literal(true), data: z.object({ rawHtml: z.string().min(1), metadata: scrapeMetadataSchema }) }), options.signal);
+    return { body: response.data.rawHtml, url: response.data.metadata.url ?? null, statusCode: response.data.metadata.statusCode ?? 0 };
+  }
+
   async scrape(
     input: FirecrawlScrapeInput,
     options: FirecrawlCallOptions = {},
@@ -197,6 +223,29 @@ export class FirecrawlClient {
       ...(metadata.creditsUsed == null ? {} : { creditsUsed: metadata.creditsUsed }),
       ...(metadata.proxyUsed == null ? {} : { proxyUsed: metadata.proxyUsed }),
       ...(metadata.cacheState == null ? {} : { cacheState: metadata.cacheState }),
+    };
+  }
+
+  /** Resolve a page's browser mark without returning or retaining its content. */
+  async scrapeBranding(url: string, options: FirecrawlCallOptions = {}): Promise<FirecrawlBrandingOutput> {
+    const response = await this.request(
+      "/scrape",
+      {
+        url,
+        formats: ["branding"],
+        onlyMainContent: false,
+        proxy: "auto",
+        timeout: SCRAPE_TIMEOUT_MS,
+        maxAge: 0,
+        storeInCache: false,
+      },
+      brandingResponseSchema,
+      options.signal,
+    );
+    return {
+      faviconUrl: response.data.branding?.images?.favicon ?? null,
+      url: response.data.metadata.url ?? response.data.metadata.sourceURL ?? null,
+      statusCode: response.data.metadata.statusCode ?? 0,
     };
   }
 
@@ -253,7 +302,7 @@ export class FirecrawlClient {
         throw new FirecrawlError(
           "parse",
           response.status,
-          "Firecrawl returned an unexpected response shape",
+          `Firecrawl returned invalid fields: ${describeZodIssues(parsed.error)}`,
           undefined,
           parsed.error.issues,
         );

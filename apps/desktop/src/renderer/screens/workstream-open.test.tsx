@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -75,6 +75,7 @@ import { patchCachedWorkstreamAppearance, setCachedWorkstreams } from '../lib/wo
 import { workstreamFeedSourceQueryKey } from '../lib/telemetry';
 import { substreamInitialContextQueryKey } from '../lib/use-workstream-socket';
 import { desktopBridge } from '../lib/platform';
+import { STOPPING_LABEL } from '../components/agent-work-timing';
 import { WorkstreamScreen } from './workstream';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 
@@ -152,7 +153,7 @@ describe('socket-first work-stream open', () => {
     session.current = null;
     api.getWorkspaceMembers.mockResolvedValue([]);
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening: vi.fn(),
@@ -265,7 +266,7 @@ describe('socket-first work-stream open', () => {
     scrollTranscriptToEnd.mockImplementationOnce(() => { screen.getByRole('log').scrollTop = 1400; });
     const loadTranscriptRange = vi.fn().mockResolvedValue(undefined);
     retainedSocket.mockReturnValue({
-      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null,
+      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange,
     });
     const boot = historyBoot();
@@ -286,7 +287,7 @@ describe('socket-first work-stream open', () => {
     const loadA = vi.fn(() => new Promise<void>(resolve => { resolveA = resolve; }));
     const loadB = vi.fn(() => new Promise<void>(resolve => { resolveB = resolve; }));
     retainedSocket.mockImplementation((_api, id) => ({
-      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null,
+      state: 'connected', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange: id === other ? loadB : loadA,
     }));
     const boots = [historyBoot(), historyBoot(other)];
@@ -319,7 +320,7 @@ describe('socket-first work-stream open', () => {
   it('shows reconnect status at an unloaded edge and resumes when connected', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('offline test'));
-    const socket = { state: 'connecting', workspaceSocketState: 'connected', activeCompaction: null,
+    const socket = { state: 'connecting', workspaceSocketState: 'connected', activeCompaction: null, activeInferenceDelays: [],
       sendReady: false, requestSnapshot: vi.fn(), loadTranscriptRange };
     retainedSocket.mockReturnValue(socket);
     const boot = historyBoot();
@@ -343,7 +344,7 @@ describe('socket-first work-stream open', () => {
     });
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('Newer gap unavailable'));
     retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
-      activeCompaction: null, sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
+      activeCompaction: null, activeInferenceDelays: [], sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
     renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
@@ -377,7 +378,7 @@ describe('socket-first work-stream open', () => {
       });
     });
     retainedSocket.mockReturnValue({ state: 'connected', workspaceSocketState: 'connected',
-      activeCompaction: null, sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
+      activeCompaction: null, activeInferenceDelays: [], sendReady: true, requestSnapshot: vi.fn(), loadTranscriptRange });
     const cache = renderScreen(cache => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
@@ -398,7 +399,7 @@ describe('socket-first work-stream open', () => {
     }];
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('History unavailable'));
     retainedSocket.mockReturnValue({
-      activeCompaction: null, state: 'connected', workspaceSocketState: 'connected',
+      activeCompaction: null, activeInferenceDelays: [], state: 'connected', workspaceSocketState: 'connected',
       requestSnapshot: vi.fn(), sendReady: true, loadTranscriptRange,
     });
     renderScreen((cache) => {
@@ -526,6 +527,68 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId]))
       .toMatchObject({ title: 'Check the pricing page', titleStatus: 'naming' }));
     expect(client.getQueryData(['substream-ordered-transcript', workstreamId, childId])).toBeDefined();
+  });
+
+  it('holds a row in the rail for the substream being created, from the keystroke that creates it', async () => {
+    // The wait is the two round trips of creation, and until this the rail said
+    // nothing about it: the conversation on screen had no row, and the plus row
+    // it was opened from was the only thing still claiming to be where the
+    // reader was.
+    const childId = '00000000-0000-7000-8000-000000000676';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    let confirm: () => void = () => undefined;
+    api.confirmSubstream.mockReturnValue(new Promise((resolve) => {
+      confirm = () => resolve({
+        substreamId: childId,
+        title: 'Check the pricing page',
+        opening: { turnId: 'turn-child-8', clientMessageId: 'client-8', createdAt: '2026-08-26T14:05:00.000Z' },
+      });
+    }));
+    openConversation(2);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull();
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the pricing page' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'New substream' })).not.toHaveAttribute('aria-current');
+    confirm();
+    // Gone once the substream exists: from here the rail draws the child's own
+    // row from the parent's directory.
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull());
+  });
+
+  it('drops the creating row as soon as the reserved child is published to the rail', async () => {
+    // Readiness publishes the child from inside the confirmation, so the real
+    // row can reach the rail before the response that navigates does. The
+    // reserved id preparation answered with is what keeps that from being two
+    // rows for one conversation.
+    const childId = '00000000-0000-7000-8000-000000000677';
+    api.prepareSubstream.mockResolvedValue({ operationId: 'op', substreamId: childId, title: 'New substream', context: { parts: [] } });
+    // Never resolves: the window under test is the one before confirmation
+    // answers, which is the only time both rows could be drawn.
+    api.confirmSubstream.mockReturnValue(new Promise(() => undefined));
+    const boot = conversationBoot(1);
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [
+        { substreamId: childId, title: 'Retry budget failures', createdByUserId: null, createdAt: '2026-08-26T14:05:00.000Z', updatedAt: '2026-08-26T14:05:00.000Z' },
+      ] });
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New substream' }));
+    const composer = await screen.findByRole('textbox', { name: 'What should this substream work on?' });
+    fireEvent.change(composer, { target: { value: 'Check the retry budget' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.confirmSubstream).toHaveBeenCalled());
+    const sidebar = screen.getByRole('complementary', { name: 'Work-stream sidebar' });
+    await waitFor(() => expect(sidebar.querySelector('.workstream-pending-substream')).toBeNull());
+    expect(within(sidebar).getAllByRole('button', { name: /Retry budget failures/ })).toHaveLength(1);
   });
 
   it('shows no branch context when the substream is started from the sidebar', async () => {
@@ -688,7 +751,11 @@ describe('socket-first work-stream open', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to work stream' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, newcomer.id));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Manage work-stream participants' })).toHaveAccessibleDescription('Parent member, New member'));
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New member participant actions' })).toBeVisible();
+    await waitFor(() => expect(
+      screen.getAllByRole('button', { hidden: true, name: 'Manage work-stream participants' })[0],
+    ).toHaveAccessibleDescription('Parent member, New member'));
     expect(client.getQueryData<WorkstreamDetail>(['substream-workstream', workstreamId, childId])?.participants).toEqual([]);
   });
 
@@ -743,11 +810,13 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Add New member to substream' }));
     await waitFor(() => expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator, New member'));
-    fireEvent.click(manage);
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'New member participant actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from substream' }));
     await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
     await waitFor(() => expect(manage).toHaveAccessibleDescription('Creator'));
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add New member to substream' })).toBeVisible();
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([creator, newcomer]);
     expect(api.addParticipant).not.toHaveBeenCalled();
     expect(api.removeParticipant).not.toHaveBeenCalled();
@@ -796,7 +865,7 @@ describe('socket-first work-stream open', () => {
   it('requests a replacement snapshot when a retained socket outlives its base caches', async () => {
     const requestSnapshot = vi.fn();
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot,
       retryOpening: vi.fn(),
@@ -831,6 +900,68 @@ describe('socket-first work-stream open', () => {
     });
 
     await waitFor(() => expect(scrollTranscriptToEnd).toHaveBeenCalledTimes(1));
+  });
+
+  // The unit tests below this file cover `conversationShowsStoppingRow` and the
+  // activity slot's order separately, and both stayed green through a version
+  // of this change that rendered the acknowledgement where a scrolled-up reader
+  // could never see it. Nothing joined the decision to a rendered surface, so
+  // the one user-visible thing the change exists for was the part not covered.
+  describe('a pending stop is acknowledged above the composer', () => {
+    function stoppingScreen(overrides: Partial<WorkstreamBoot> = {}): void {
+      const boot = recoveryBoot({ harnessStatus: 'running', stopRequested: true, ...overrides });
+      const { transcript, ...detail } = boot;
+      renderScreen((queryClient) => {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+        queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
+      });
+    }
+
+    it('names the wait, in the dock rather than in the scrolling transcript', async () => {
+      stoppingScreen();
+      await act(async () => Promise.resolve());
+
+      const row = screen.getByRole('status', { name: STOPPING_LABEL });
+      expect(row).toBeVisible();
+      // The placement is the fix, not a detail of it: `.transcript-scroll` stops
+      // following once the reader scrolls up, so an acknowledgement inside it is
+      // below the fold for exactly the person who pressed Stop while reading
+      // history. Asserting the text alone passes in the box that hides it.
+      expect(row.closest('.composer-dock')).not.toBeNull();
+      expect(row.closest('.transcript-scroll')).toBeNull();
+    });
+
+    it('says nothing once the run it was waiting on has settled', async () => {
+      stoppingScreen({ harnessStatus: 'stopped' });
+      await act(async () => Promise.resolve());
+
+      expect(screen.queryByRole('status', { name: STOPPING_LABEL })).not.toBeInTheDocument();
+    });
+  });
+
+  it.each(['running', 'completed', 'different-run'] as const)('scopes the slowdown notice to the active response: %s', async (phase) => {
+    const runId = '00000000-0000-7000-8000-000000000651';
+    const delay = {
+      harnessRunId: runId, executionId: runId,
+      attemptId: '00000000-0000-7000-8000-000000000652',
+      inferenceRequestId: '00000000-0000-7000-8000-000000000653', turnId: 'turn:delay',
+    };
+    retainedSocket.mockReturnValue({
+      activeCompaction: null, activeInferenceDelays: [delay, { ...delay, inferenceRequestId: '00000000-0000-7000-8000-000000000654' }],
+      createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+      sendReady: true, state: 'connected', workspaceSocketState: 'connected',
+    });
+    const { transcript, ...detail } = recoveryBoot({
+      harnessStatus: phase === 'completed' ? 'completed' : 'running',
+      latestHarnessRunId: phase === 'different-run' ? '00000000-0000-7000-8000-000000000655' : runId,
+    });
+    renderScreen((client) => {
+      client.setQueryData(['workstream', workstreamId], detail);
+      client.setQueryData(['ordered-transcript', workstreamId], transcript);
+    });
+    await act(async () => Promise.resolve());
+    expect(screen.queryAllByText('The model is currently slowed down. Responses might take longer.'))
+      .toHaveLength(phase === 'running' ? 1 : 0);
   });
 
   it('does not flash the empty invitation while a new run is scheduled', async () => {
@@ -880,6 +1011,7 @@ describe('socket-first work-stream open', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to work stream' }));
     expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine participant actions' }), {
       button: 0,
@@ -891,10 +1023,88 @@ describe('socket-first work-stream open', () => {
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
   });
 
+  it('keeps the participant dialog open after an add so another person can be added', async () => {
+    const adam = {
+      id: '00000000-0000-7000-8000-000000000651',
+      name: 'Adam',
+      email: 'adam@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const katherine = {
+      id: '00000000-0000-7000-8000-000000000652',
+      name: 'Katherine',
+      email: 'katherine@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const jordan = {
+      id: '00000000-0000-7000-8000-000000000653',
+      name: 'Jordan',
+      email: 'jordan@example.test',
+      timezone: 'America/Los_Angeles',
+      status: 'active' as const,
+    };
+    const detail = recoveryBoot({ participants: [adam] });
+    api.getWorkspaceMembers.mockResolvedValue([adam, katherine, jordan]);
+    api.addParticipant
+      .mockResolvedValueOnce({ ...detail, participants: [adam, katherine] })
+      .mockResolvedValueOnce({ ...detail, participants: [adam, katherine, jordan] });
+
+    renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
+    });
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to work stream' }));
+    await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, katherine.id));
+    const dialog = screen.getByRole('dialog', { name: 'Add a participant' });
+    expect(dialog).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add Jordan to work stream' }));
+    await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, jordan.id));
+    expect(api.addParticipant).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+  });
+
+  it('closes the participant dialog when the current person leaves a workspace-scoped room', async () => {
+    const adam = {
+      id: '00000000-0000-7000-8000-000000000651',
+      name: 'Adam',
+      email: 'adam@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const katherine = {
+      id: '00000000-0000-7000-8000-000000000652',
+      name: 'Katherine',
+      email: 'katherine@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    session.current = {
+      user: { id: adam.id, name: adam.name, email: adam.email },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    const detail = recoveryBoot({ participants: [adam, katherine], scope: 'workspace' });
+    api.getWorkspaceMembers.mockResolvedValue([adam, katherine]);
+    api.removeParticipant.mockResolvedValue(undefined);
+    const client = renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
+    });
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage work-stream participants' }))[0]!);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from work stream' }));
+    await waitFor(() => expect(api.removeParticipant).toHaveBeenCalledWith(workstreamId, adam.id));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a participant' })).not.toBeInTheDocument());
+    expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([katherine]);
+  });
+
   it('retries the authoritative socket after the first attempt fails', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening,
@@ -913,7 +1123,7 @@ describe('socket-first work-stream open', () => {
 
   it('shows the terminal error after all three timed opening attempts expire', async () => {
     retainedSocket.mockReturnValue({
-      activeCompaction: null,
+      activeCompaction: null, activeInferenceDelays: [],
       createMessage: vi.fn(),
       openingError: 'The live connection timed out after 3 attempts.',
       requestSnapshot: vi.fn(),
@@ -932,7 +1142,7 @@ describe('socket-first work-stream open', () => {
   it('paints a remembered transcript with a connecting card and blocks sending until the live snapshot lands', async () => {
     const createMessage = vi.fn();
     const socket = {
-      activeCompaction: null, createMessage, requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+      activeCompaction: null, activeInferenceDelays: [], createMessage, requestSnapshot: vi.fn(), retryOpening: vi.fn(),
       sendReady: true, state: 'connecting', workspaceSocketState: 'connecting',
     };
     retainedSocket.mockReturnValue(socket);
@@ -971,7 +1181,7 @@ describe('socket-first work-stream open', () => {
   it('keeps the remembered transcript and offers a retry on the card when the cached open times out', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
-      activeCompaction: null, createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening,
+      activeCompaction: null, activeInferenceDelays: [], createMessage: vi.fn(), requestSnapshot: vi.fn(), retryOpening,
       openingError: 'The live connection timed out after 3 attempts.',
       sendReady: false, state: 'unavailable', workspaceSocketState: 'connecting',
     });

@@ -1,3 +1,5 @@
+import { regionalBindings } from "../lib/regional-bindings";
+import { isConfiguredRegion } from "@rally/contracts/regions";
 import {
   ConnectorError,
   verifyLinearWebhook,
@@ -164,7 +166,7 @@ export class LinearRoutingService {
     const verified = await this.verifyIngress(bytes, headers);
     const regions = await this.activeRegions(verified.organizationId);
     if (regions.length === 0) {
-      // Do not retain possibly EU-resident payloads in Global. A non-200 asks
+      // Do not retain possibly regional-resident payloads in Global. A non-200 asks
       // Linear to retry after the regional OAuth callback records its route.
       throw new ApiError(503, "linear_route_pending", "The Linear organization route is not ready yet");
     }
@@ -195,8 +197,9 @@ export class LinearRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ProviderWebhookService(this.env).ingestLinear(rawBody, headers);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_LINEAR_BRIDGE) {
-      return unwrapLinearRpcResult(await this.env.EU_LINEAR_BRIDGE.ingestLinear({
+    const bridge = regionalBindings(this.env, region).linear;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      return unwrapLinearRpcResult(await bridge.ingestLinear({
         rawBody: exactArrayBuffer(rawBody),
         headers,
       }));
@@ -272,7 +275,7 @@ function validateRoute(input: LinearRouteInput): void {
   if (!input.organizationId || input.organizationId.length > 200) {
     throw new ApiError(422, "invalid_linear_organization", "The Linear organization identity is invalid");
   }
-  if (!input.workspaceId || !input.connectionId || !["global", "eu"].includes(input.region)) {
+  if (!input.workspaceId || !input.connectionId || !isConfiguredRegion(input.region)) {
     throw new ApiError(422, "invalid_linear_route", "The Linear connection route is invalid");
   }
 }

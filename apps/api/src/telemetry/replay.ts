@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import { TelemetryEnvelopeSchema } from '@rally/contracts/telemetry';
 import { newId } from '@rally/db';
 import { z } from 'zod';
@@ -19,7 +20,7 @@ type ReplayResultCode =
   | 'invalid_state';
 
 interface ReplayRow {
-  route: 'global' | 'eu';
+  route: Region;
   envelope_json: string;
   subject_user_id: string | null;
   delivery_state: string;
@@ -45,7 +46,7 @@ export async function replayTelemetryEvent(
   let result: ReplayResultCode;
   if (principal.role !== 'security') result = 'denied';
   else if (!row) result = 'not_found';
-  else if (row.route !== env.AVALON_REGION || env.AVALON_REGION !== 'global') result = 'wrong_region';
+  else if (row.route !== env.AVALON_REGION) result = 'wrong_region';
   else if (Date.parse(row.delete_at) <= now.getTime()) result = 'expired';
   else if (row.delivery_state === 'suppressed') result = 'suppressed';
   else {

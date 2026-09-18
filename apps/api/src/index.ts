@@ -1,3 +1,5 @@
+export { AshbyRegionalBridge } from "./ashby-regional-bridge";
+export { AshbyRoutingBridge } from "./ashby-routing-bridge";
 import workerEvents from "./worker-events";
 
 export { SubstreamAgent } from "./durable-objects/substream-agent";

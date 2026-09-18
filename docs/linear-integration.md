@@ -32,8 +32,6 @@ than in a test.
 | `config/provider-apps/linear.json` | The production resource manifest — what is registered today. |
 | `config/provider-apps/linear-native-agent.preview.json` | A future update to that same app. Not a second app. |
 
-## How it works
-
 ### Two surfaces on one app
 
 | Surface | Capability kind | Production state | Purpose |
@@ -45,12 +43,11 @@ Public installation and Linear Integration Directory publication are separate
 milestones. The app can be made installable by outside Linear workspaces before
 applying for directory review.
 
-### One app, two regions
+### One app, configured deployments
 
 The single app registers both regional OAuth callbacks:
 
 - `https://api.rallywith.ai/connections/linear/callback`
-- `https://eu.api.rallywith.ai/connections/linear/callback`
 
 It has one webhook:
 
@@ -185,7 +182,7 @@ order:
 
 1. Change the connector's native runtime state to `operational` after the
    acceptance suite passes.
-2. Set `LINEAR_NATIVE_AGENT_ENABLED=true` in both regional Workers and build the
+2. Set `LINEAR_NATIVE_AGENT_ENABLED=true` in configured regional Workers and build the
    desktop app with `VITE_LINEAR_NATIVE_AGENT_ENABLED=true`.
 3. Update the registered public app from the resource manifest to the preview
    manifest.
@@ -229,7 +226,7 @@ scope mapping, the routing, and the native-agent gate. It does not own:
 | The registry, manifests, and adapter rules every connector obeys | [`connectors.md`](connectors.md) |
 | The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
 | Which Linear activity types a person hears about in a digest | [`connector-digestibility.md`](connector-digestibility.md) |
-| The Global/EU boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
+| The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The flag that gates the native-agent surface | [`feature-flags.md`](feature-flags.md) |
 | Credential encryption and webhook verification rules | [`security.md`](security.md) |
 
@@ -284,8 +281,6 @@ Before applying for Linear Integration Directory review:
   documentation.
 - Native-agent directory claims remain absent until the operational acceptance gate
   passes.
-
-## Changelog
 
 ### 2026-08-25 — The provider manifest completed Linear's Rally identity cut-over
 

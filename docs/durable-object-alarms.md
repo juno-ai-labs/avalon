@@ -38,8 +38,6 @@ remain separate from this effect-ordering fence.
 | `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for the parent outbox, whose deadline stays derived. |
 | `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and the same derived parent-outbox lane `WorkstreamDO` has. |
 
-## How it works
-
 ### Two kinds of wake reason
 
 An object declares what it wants woken for in one of two ways, and the base
@@ -130,8 +128,11 @@ before a full re-arm.
 The first arm defaults to the bounded recovery re-derivation and the second to
 the exact post-work answer. Both are hooks for one case: an object whose alarm
 *is* the worker for a reason it derives. `SubstreamAgent` is the one — its
-execution lane is derived from the persistent-loop singleton, immutable pending
-inputs, and subordinate execution receipts, while its external-settlement lane
+execution lane is derived from the persistent-loop singleton, the pending input
+the loop can actually take (`nextActivationInput`, not merely the oldest one:
+a room parked on an open question has input it may not hand Bind, and waking on
+that re-arms at `now` for as long as the question stays open), and subordinate
+execution receipts, while its external-settlement lane
 is derived independently from the oldest terminal receipt whose
 `external_settled_at` is null. While the alarm is servicing either lane,
 immediately re-deriving the same due row would hand the work straight back.
@@ -502,8 +503,6 @@ completion or failure names the phase active when the continuation ended. Do
 not join on workspace ids or alarm keys within these phase rows: neither is
 emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
-
-## Changelog
 
 ### 2026-09-11 — Unfurl expiry uses the sweep's timestamp format
 

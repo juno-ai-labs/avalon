@@ -30,7 +30,7 @@ Two consequences for a per-tenant design:
    workspace count the prototype will see, and D1 pricing is rows read/written
    plus storage — a thousand mostly idle databases cost roughly what one does.
 2. **The 10 GB per-database cap moves from per-region to per-tenant.** Today
-   both regions' entire product state shares one 10 GB ceiling each; one
+   configured deployments' entire product state shares one 10 GB ceiling each; one
    database per workspace gives every workspace its own 10 GB, with the 1 TB
    account total as the new aggregate ceiling.
 
@@ -121,19 +121,17 @@ Relevant properties:
   list the supported extensions: the "FTS5 module for full-text search
   (including `fts5vocab`)", the JSON extension, and math functions — so
   D1-style FTS5 full-text search carries over to Durable Object SQLite.
+
 - **This is the primitive D1 is built on.** A D1 database *is* a SQLite-backed
   Durable Object plus an HTTP/binding front end and dashboard tooling
   ([Cloudflare blog](https://blog.cloudflare.com/sqlite-in-durable-objects/)).
   Choosing DO SQLite per tenant is choosing D1's engine while replacing its
   per-database tooling with code.
+
 - **Synchronous SQL, colocated with compute.** `ctx.storage.sql.exec()` runs
   in-process with implicit write coalescing; there is no per-query network hop
   once execution is inside the object.
-- **Objects are addressed by name and pinned by jurisdiction.**
-  `idFromName(...)` plus `namespace.jurisdiction("eu")` — the exact mechanism
-  `apps/api/src/lib/durable-object-namespace.ts` already uses for
-  `WorkstreamRoom` and `WorkspaceScheduler` — creates and keeps an object
-  inside the EU jurisdiction.
+
 - **The community-standard migration pattern** is versioned migrations applied
   in the object constructor inside `blockConcurrencyWhile`, tracked per object
   ([Cloudflare's own guidance](https://blog.cloudflare.com/sqlite-in-durable-objects/),

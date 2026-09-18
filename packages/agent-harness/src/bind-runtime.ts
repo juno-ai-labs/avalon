@@ -1,3 +1,5 @@
+import { createLoopCheckpoint, parseLoopCheckpoint, advanceLoopCheckpoint } from "@juno-ai/bind/session";
+import { INFERENCE_TTFT_TIMEOUT_MS } from "./inference-delay";
 import {
   detectCompletionDefect,
   createTurnTextStream,
@@ -570,7 +572,7 @@ export const TRANSPORT_RETRY_MAX_DELAY_MS = 30_000;
 function planWorstCaseMs(plan: RoutePlan, config: RunHarnessInput["config"]): number {
   const candidates = plan.stages.reduce((total, stage) => total + stage.candidates.length, 0);
   const perCandidateMs = (config.requestEstablishmentTimeoutMs ?? 30_000)
-    + (config.ttftTimeoutMs ?? 120_000);
+    + (config.ttftTimeoutMs ?? INFERENCE_TTFT_TIMEOUT_MS);
   return Math.max(1, candidates) * perCandidateMs;
 }
 
@@ -578,8 +580,8 @@ function planWorstCaseMs(plan: RoutePlan, config: RunHarnessInput["config"]): nu
  * Whether waiting `delayMs` and replaying the whole plan can still fit in what
  * the run has left.
  *
- * A bounded caller — the inline child at 90s, the meeting-notes final pass at
- * 120s — can otherwise have the retry *manufacture* the deadline it defers to:
+ * A bounded caller, such as an inline child, can otherwise have the retry
+ * *manufacture* the deadline it defers to:
  * the run sleeps, re-requests, crosses its wall clock mid-attempt, and
  * `timedOut` outranks the provider arm, so an outage is reported as
  * `run_wall_time_limit_exceeded`. That points the reader at Avalon's ceiling
@@ -642,7 +644,14 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   const signal = deadline?.withExternal(input.signal)
     ?? input.signal
     ?? new AbortController().signal;
-  const state: ToolLoopState = {
+  const savedState = input.checkpoints?.start ? parseLoopCheckpoint(input.checkpoints.start).state : null;
+  const state: ToolLoopState = savedState ? {
+    messages: savedState.messages, inputTokens: savedState.inputTokens, outputTokens: savedState.outputTokens,
+    costCents: savedState.costCents, lastPromptTokens: savedState.lastPromptTokens, lastOutputTokens: savedState.lastOutputTokens,
+    hasFreshTokenCount: savedState.hasFreshTokenCount, toolCalls: savedState.toolCalls,
+    ...(savedState.endedTurnViaTool === undefined ? {} : { endedTurnViaTool: savedState.endedTurnViaTool }),
+    ...(savedState.suspended ? { suspended: savedState.suspended } : {}),
+  } : {
     messages: [],
     inputTokens: 0,
     outputTokens: 0,
@@ -1076,7 +1085,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         "Bind loop requires host recovery of incomplete model protocol",
       );
     }
-    state.messages.push(...healed.messages);
+    if (input.checkpoints?.start) {
+      if (await hashBindLoop(state.messages) !== healedHash) throw new Error("checkpoint_host_projection_mismatch");
+    } else state.messages.push(...healed.messages);
     const contextWindowTokensByModel = input.compaction
       ? await resolveOpenRouterContextWindows(input, signal)
       : new Map<string, number>();
@@ -1346,7 +1357,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       }));
     };
 
-    const result = await runToolLoop({
+    const checkpointStart = input.checkpoints ? input.checkpoints.start ?? createLoopCheckpoint({
+      executionId: input.harnessRunId, messages: state.messages, maxIterations,
+      bindings: input.checkpoints.bindings,
+    }) : null;
+    let checkpoint = checkpointStart;
+    const loopParams: ToolLoopParams = {
       state,
       activePlugins: runtime.active,
       maxIterations,
@@ -1934,7 +1950,23 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           costCents: state.costCents,
           toolCalls: state.toolCalls,
         })),
-    });
+    };
+    const result = input.checkpoints && checkpointStart ? await runToolLoop(loopParams, {
+      iterationsUsed: checkpointStart.iterationsUsed,
+      onBoundary: async (boundary) => {
+        if (!bindLoopProjection || !checkpoint) throw new Error("checkpoint_projection_missing");
+        checkpoint = advanceLoopCheckpoint(checkpoint, boundary, checkpointStart, await input.checkpoints!.captureBindings());
+        const projection = { loopId: bindLoopProjection.loopId, generation: bindLoopProjection.generation,
+          stateRevision: bindLoopProjection.stateRevision, lastModelTurnIndex: bindLoopProjection.lastModelTurnIndex,
+          lastAssistantReservation: bindLoopProjection.lastAssistantReservation, systemProjection: bindLoopProjection.systemProjection };
+        await input.checkpoints!.commit({ loop: checkpoint,
+          projection: { ...projection, messages: projectBindLoopMessages(bindLoopProjection).slice(1).map((message) => ({ ...message })) },
+          activationHints: [...runtime.active], skillActivationHints: [...runtime.skills.activeRefs],
+        });
+        return "continue";
+      },
+    }) : await runToolLoop(loopParams);
+
     await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("iteration_boundary"));
     const resultStats = terminalCompactionInputTokens === 0 && terminalCompactionOutputTokens === 0
       ? result.stats
@@ -2232,6 +2264,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             args.onOutputProgress?.(Math.max(1, Math.ceil(delta.length / 4)));
             await streamEventChain;
           };
+          const onInferenceDelay = (active: boolean) => args.input.onInferenceDelay?.({
+            inferenceRequestId, turnId: args.turnId, active,
+          });
           const rawResult = candidate.providerId === AZURE_PROVIDER
             ? await new AzureOpenAIClient({
                 ...args.input.config.azure!,
@@ -2252,6 +2287,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 includeWebSearch: false,
                 reasoningEffort,
                 signal: args.signal,
+                onInferenceDelay,
               }, handleDelta)
             : await new OpenRouterClient({
                 ...args.input.config,
@@ -2266,6 +2302,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 reasoningEffort,
                 trace,
                 signal: args.signal,
+                onInferenceDelay,
               }, handleDelta);
           const result = normalizeRoutedResult(
             candidate,
@@ -2935,7 +2972,9 @@ function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
     modeByWireName.set(wireName, harnessTool.definition.mode);
     defined.push(defineTool({
       name: harnessTool.definition.name,
-      description: harnessTool.definition.description,
+      description: harnessTool.definition.longRunning
+        ? `${harnessTool.definition.description}\nThis call may take a while. Consider delegating it to keep the participant conversation available. If you are already a background agent, or the call returns without waiting, use it directly when appropriate.`
+        : harnessTool.definition.description,
       schema: z.unknown(),
       rawJsonSchema: harnessTool.definition.inputSchema,
       annotations: {

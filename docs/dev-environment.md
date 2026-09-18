@@ -79,14 +79,11 @@ pnpm env:sync
 ```
 
 `scripts/sync-dev-env.mjs` defaults `APP_ENV=development` and
-`RALLY_DEV_AUTH=true` and generates stable per-region signing and encryption
-material, so the API runs without an `.env.local` at all. Copy the example file
-when you want provider keys, or when you are running the desktop client — the
-renderer reads `VITE_API_GLOBAL_URL` and `VITE_API_EU_URL` from it.
-The desktop's “Use local development account” action stores both the seeded
-workspace credential and a separate Global identity credential. That mirrors a
-real signed-in account closely enough for the workspace menu to discover,
-activate, and create workspaces without returning to sign-in.
+`RALLY_DEV_AUTH=true` and generates stable signing and encryption material for
+each configured deployment. Copy the example when running the desktop client;
+its Global endpoint is `VITE_API_GLOBAL_URL`. The local development sign-in
+stores the seeded workspace credential and a separate Global identity credential
+so workspace discovery, activation, and creation use the ordinary account flow.
 
 ## 2. Create and seed the local database
 
@@ -95,8 +92,8 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-Both commands cover Global and EU. `db:migrate` also applies the content-free
-platform D1 migration chain into both regional local-state directories, so the
+Both commands cover configured deployments. `db:migrate` also applies the content-free
+platform D1 migration chain into the configured local-state directories, so the
 shared `PLATFORM_DB` binding has the same route table whichever local Worker
 opens it. Run them before starting a Worker: the migration and seed tooling
 writes to the same `.wrangler/state/<region>` SQLite files that a running
@@ -117,6 +114,13 @@ After the Workers are running (§3), open the authority:
 pnpm db:open-authority
 ```
 
+This advances the configured local authorities to `durable_object_open` and
+imports `packages/db/seed-product.json` through each Worker's development seed
+route. The Workers must be running for the product import. The command is
+idempotent and repairs partial imports; rerun it after starting a missing Worker.
+For a custom local port, set `PUBLIC_API_BASE_URL_GLOBAL` and run the command
+through `pnpm exec dotenv -e .env.local -- pnpm db:open-authority`.
+
 The bootstrap's workspace-route upsert deliberately keeps a no-op `WHERE`
 between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
 parses the `ON` as a possible join clause and rejects the fresh post-retirement
@@ -126,77 +130,24 @@ seed before product fixtures reach the Durable Objects.
 storage API. It does not recreate the retired message tables or their runtime
 views merely to import development fixtures.
 
-This walks both **Global and EU** authorities to `durable_object_open`, so the
-local stack serves the same post-cutover Durable-Object model production runs,
-and seeds the product fixtures from `packages/db/seed-product.json` into both
-regions' Durable Objects through their Worker dev-only seed routes — which is
-why the Workers must be up first; run without them, the walk completes and the
-script says to re-run for the import. Opening both is required to exercise a
-real cross-region desktop switch; leaving EU at `legacy_open` makes its product
-preflight honestly return maintenance after activation. Skipping this step
-leaves local development on the unsupported legacy path, where none of the
-object-authority code executes — the gap that once hid a defect failing every
-production harness run. The script is idempotent and re-runs repair partial
-imports.
-
 ## 3. Start the API Workers
 
 **Inside a sandbox, use `dev:api:local`, not `dev:api`.**
 
 ```bash
-pnpm dev:api:local       # both regions, remote bindings disabled
+pnpm dev:api:local       # configured deployments, remote bindings disabled
 ```
 
-If that command exits without either Worker binding a port, read the
-container-flag note below before debugging anything else.
+`scripts/dev-regional-api.mjs` reads configured deployments and local ports from
+`config/regions.json`. It starts each Wrangler session after the preceding one
+is ready to avoid concurrent builds of the shared Container image. Each session
+loads the API, document-processing, and Terminal configs; Global also loads its
+private telemetry-delivery service. The runner forwards termination signals to
+its children.
 
-`scripts/dev-regional-api.mjs` starts Global first and waits for Wrangler's
-ready signal before starting EU. The Workers then run concurrently as before.
-`pnpm env:sync` writes the EU Worker's local URL into Global's
-`EU_PUBLIC_API_BASE_URL`; the control plane uses it to validate the route in an
-EU session instead of comparing that local session with the production host.
-Each regional command supplies the API, document-processing, and Terminal
-provider configs to one Wrangler multi-Worker session; Global also supplies its
-private telemetry-delivery config. Local calls therefore use the same typed
-Service Bindings as production without loading provider modules from a request
-handler.
-This short serialization is required because both regional configs build the
-same crash-symbolicator Container image; concurrent Wrangler image builds can
-remove one another's transient local tag and leave both Workers unable to start.
-The runner forwards `SIGINT`/`SIGTERM` to both child processes.
-
-Both `dev:local` scripts pass `--enable-containers=false`. Building that
-Container image needs a Docker daemon, and the sandbox image has none, so
-Wrangler aborts before either Worker binds its port:
-
-```
-failed to connect to the docker API at unix:///var/run/docker.sock
-```
-
-Because `concurrently` runs with `-k`, the symptom is again "no server at all"
-rather than "no container". Nothing in the product reaches a container instance
-during ordinary local work, so disabling them costs nothing here; `pnpm dev:api`
-still builds the image and is the path to use when the symbolicator itself is
-what you are working on.
-
-**That flag does not survive a multi-config session in every wrangler, and
-`dev:api:local` is one.** The symptom is `Preparing container image(s)…`
-followed by the Docker error above, in spite of `--enable-containers=false`; the
-Workers never bind their ports, so the whole command fails rather than starting
-without containers. The EU command passes three `--config` files — the API,
-document-processing, and Terminal Workers — while Global passes those plus its
-private telemetry-delivery Worker. Auxiliary configs can lose the flag: the same
-command with one `--config` is ready in about two seconds and builds no image.
-`"dev": { "enable_containers": false }` in the config is ignored the same way,
-in the main config and across the multi-config session. Observed on
-4.126.0, which the `wrangler: latest` in `apps/api/package.json` resolved to at
-the time of writing — check which version you have before assuming the note
-still applies, and delete it once a newer one honours the flag.
-
-Until then, and where one region is enough — anything that does not cross into
-EU, and does not call the document-processing, Terminal, or telemetry-delivery
-Workers over their service bindings — run Global on its own config, where the
-flag is honoured and nothing on disk changes:
+Local mode passes `--enable-containers=false`; building the crash symbolicator
+otherwise needs Docker. Use `pnpm dev:api` when testing that container itself.
+For an API-only session, the equivalent command is:
 
 ```bash
 pnpm --filter @rally/api exec -- wrangler dev --local \
@@ -206,22 +157,7 @@ pnpm --filter @rally/api exec -- wrangler dev --local \
 ```
 
 The `--` matters: without it pnpm 11.13.0 takes `--env-file` as its own option,
-swallows the path, and the run dies at `node: .dev.vars.global: not found`
-before wrangler sees any of it.
-
-`pnpm db:open-authority` then seeds Global and says to re-run for EU, which is
-the same "start the Workers and re-run" message it gives for any region that is
-down. Where both regions are needed, the local workaround is to delete the
-`containers` array from `wrangler.global.jsonc` and `wrangler.eu.jsonc` for the
-session; the
-`CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions come up
-normally. **That edit must not be committed, and while it is in place
-`pnpm test` is red** — `apps/api/test/crash-symbolicator-config.test.ts` asserts
-the exact `containers` entry in both files, deliberately, so that an accidental
-commit fails the gate rather than silently shipping a deploy with no
-symbolicator. A red `crash symbolicator deployment` suite while this workaround
-is applied is that guard working; restore the configs rather than changing the
-test.
+swallows the path, and fails before Wrangler sees it.
 
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
@@ -233,10 +169,8 @@ sandbox egress policy, that session fails:
           Error reloading remote server: Proxy response (403) !== 200 when HTTP Tunneling
 ```
 
-Both Workers then exit non-zero, and because `concurrently` runs with `-k` the
-healthy region is torn down with the failed one, so the symptom is "no server at
-all" rather than "no AI binding". `wrangler dev --local` disables remote bindings
-and both regions start in about two seconds.
+The affected Worker exits when that proxy cannot be established.
+`wrangler dev --local` disables remote bindings and avoids the proxy session.
 
 What that costs: `env.AI` is unavailable, so Cloudflare-backed PDF OCR cannot
 run. Memory embeddings use OpenRouter instead, but `env.MEMORY_INDEX`
@@ -250,12 +184,7 @@ uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
 fallback rather than a degradation — see
 [the feature-flag document](feature-flags.md#local-development).
 
-Verify both regions:
-
-```bash
-curl -s http://127.0.0.1:8787/health   # Global
-curl -s http://127.0.0.1:8788/health   # EU
-```
+Verify configured deployments:
 
 Expect `"ok": true` with D1, R2, Durable Objects, Queues, and Workflows
 available. The provider checks report `not configured` until you supply keys;
@@ -333,23 +262,29 @@ workspace with its work streams, automations, and onboarding checklist.
   a real run gets: no live transcript, no finalization, no stop-and-send. The
   composer's dictation states are covered by
   `components/workstream-composer-dictation.test.tsx`, which drives the hook
-  through a double; a real-window check of how one of those states *looks* means
-  putting the rendered composer into it from the CDP side, the way the streaming
-  turn above is played in.
-- **A real streaming turn.** A local run has no provider credentials, so a run
-  fails with `harness_execution_failed` rather than streaming, and anything that
-  depends on tokens arriving over time cannot be exercised the ordinary way. A
-  turn can still be played into the live screen: wrap `window.WebSocket` in the
-  renderer to capture the sockets the app opens, take the one whose URL ends in
-  `/substreams/0` — the work-stream socket carries metadata, the substream
-  socket carries the transcript — and dispatch `MessageEvent`s onto it carrying
-  `stream_started` and then `stream_delta` frames in the shape
-  `@rally/contracts` accepts. Two traps: `sequence` must exceed the room's
-  current one or `applyEvent` discards the frame as replay, and an in-page
-  `setInterval` is throttled to once a second when the window is occluded, so
-  drive the tokens from the CDP side and call `Page.bringToFront` first. A
-  trackpad gesture over the result is `Input.dispatchMouseEvent` with
-  `type: 'mouseWheel'`.
+  through a double; those states are asserted there rather than in a window,
+  for the reason the entry below gives.
+- **A real streaming turn, and anything a run has to produce.** `.env.local`
+  ships `OPENROUTER_API_KEY` empty, so a run reaches the provider and fails —
+  `harness_execution_failed`, with `Cannot read properties of undefined
+  (reading 'trim')` in the Worker log where the key is read. Nothing a model
+  decides can be staged here: no streaming tokens, and no elicitation, which
+  means no answered question and no pending answer either.
+- **Playing frames into the live screen from the CDP side.** This does not work
+  and the recipe that said to wrap `window.WebSocket` in the renderer was
+  wrong: the renderer opens no sockets. The Node main process owns them and
+  hands frames to the renderer over `window.rally.onRealtimeSocketEvent`
+  ([`websocket-architecture.md`](websocket-architecture.md)), and that bridge is
+  `contextBridge`-exposed — `window.rally` is non-writable, non-configurable and
+  frozen, per [the security model](security.md), so an evaluated script can
+  neither replace a method nor reach the listener the app registered. Wrapping
+  `window.WebSocket` on new document and reloading leaves the capture array
+  empty, which is the check to repeat before believing otherwise. Anything that
+  needs synthetic frames has to be played in from the main process; a state a
+  component can simply be *given* belongs in a component test instead.
+- **The native iOS client.** The sandbox image has no Xcode or iOS SDK.
+  `apps/ios` is archived on a Mac (`docs/ios-client.md`, `apps/ios/README.md`).
+  `pnpm test:scripts` still checks the packaging invariants on Linux.
 - **The macOS menu bar status item, and the windowless half of a login launch.**
   The item is created only on darwin, and there is no menu bar to draw it into
   here. The launch skips its window only when a status item is actually present,
@@ -374,15 +309,15 @@ an older worktree so the smoke test sees both fixtures.
 | --- | --- |
 | Install dependencies | `pnpm install --frozen-lockfile` |
 | Sync development Worker vars | `pnpm env:sync` |
-| Migrate both regions and their local platform bindings | `pnpm db:migrate` |
+| Migrate configured deployments and their local platform bindings | `pnpm db:migrate` |
 | Regenerate the D1 baseline | `pnpm db:baseline:create <through-migration.sql>` |
 | Check the baseline against the hosted databases | `pnpm db:baseline:verify` |
-| Seed both regions | `pnpm db:seed` |
-| Start both Workers (sandbox) | `pnpm dev:api:local` (see the [container-flag note](#3-start-the-api-workers) if neither region binds a port) |
-| Start both Workers (workstation) | `pnpm dev:api` |
+| Seed configured deployments | `pnpm db:seed` |
+| Start the configured Workers (sandbox) | `pnpm dev:api:local` (see the [container-flag note](#3-start-the-api-workers) if neither region binds a port) |
+| Start the configured Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
-| EU health | `curl -s http://127.0.0.1:8788/health` |
 | Desktop client, headless | see [§4](#4-run-the-desktop-client-headlessly) |
+| iOS client (Mac + Xcode 26) | `open apps/ios/Rally.xcodeproj` — see [`ios-client.md`](ios-client.md) |
 | Lint / typecheck / test | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Lint, ignoring the cache | `pnpm lint:fresh` |
 
@@ -532,7 +467,6 @@ right for a solo run and are deliberately left alone.
 ESLint excludes nested `.claude/worktrees/` checkouts: each owns its own config
 and should run its own gates. Walking one from its parent can also make
 TypeScript ESLint infer two conflicting configuration roots.
-
 
 `node_modules`, `.env.local`, `apps/api/.dev.vars.*`, and `.wrangler/state/` are
 all ignored by Git and are not carried across. A new checkout needs the full

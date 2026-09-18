@@ -1,14 +1,4 @@
-import { SidekickAttachmentsSchema, type SidekickAttachment } from '@rally/contracts';
-import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
-import { OnboardingJourneySchema, type UpdateOnboardingJourney } from '@rally/contracts';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
-import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
-import {
-  SubstreamCreationResultSchema,
-  SubstreamPreparationPreviewSchema,
-  type SubstreamCreationResult,
-  type SubstreamPreparationPreview,
-} from '@rally/contracts/substream-creation';
+import { SessionImportPreviewSchema, type SessionImportPreview, type SessionImportPreviewRequestSchema } from "@rally/contracts";
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
@@ -25,10 +15,6 @@ import {
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
-  NoteDetailSchema as WireNoteDetailSchema,
-  NoteCursorSchema as WireNoteCursorSchema,
-  NoteSummarySchema as WireNoteSummarySchema,
-  NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
@@ -73,18 +59,36 @@ import {
   type UpdateProjectPresentationRequest,
   type UpdateProjectAudienceRequest,
   type WorkstreamAppearancePatch,
+  ConnectionTestResponseSchema,
+  ConnectorInstallationMutationResponseSchema,
+  ConnectorInstallationReadResponseSchema,
+  ConnectorInstallationSetupResponseSchema,
+  OnboardingJourneySchema,
+  SidekickAttachmentsSchema,
+  type SidekickAttachment,
+  type UpdateOnboardingJourney,
 } from '@rally/contracts';
+import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
+import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { SearchResponseSchema, type SearchRequest, type SearchResponse } from '@rally/contracts/search';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
+import {
+  SubstreamCreationResultSchema,
+  SubstreamPreparationPreviewSchema,
+  type SubstreamCreationResult,
+  type SubstreamPreparationPreview,
+} from '@rally/contracts/substream-creation';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
+import { logDebug } from '../../common/logger';
+import { requestSocketTicket } from './socket-ticket-request';
 import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
-import { logDebug } from '../../common/logger';
-import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
+import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type {
   AgentModelOverride,
   AutomationDeliveryTargetType,
@@ -98,9 +102,6 @@ import type {
   DigestSchedule,
   ElicitationData,
   HarnessStatus,
-  NoteDetail,
-  NoteSummary,
-  NoteTranscriptSegment,
   Participant,
   Region,
   SocketTicket,
@@ -210,10 +211,6 @@ export interface MentionIdentity {
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
-const wireNotePageSchema = z.object({
-  items: z.array(WireNoteSummarySchema),
-  nextCursor: WireNoteCursorSchema.nullable(),
-});
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
@@ -559,6 +556,7 @@ export function redactQuery(path: string): string {
 
 export class RallyApi {
   private readonly pendingRunKeys = new Map<string, string>();
+  private readonly faviconRequests = new Map<string, Promise<Blob | null>>();
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
   private renewalInFlight: Promise<string | null> | null = null;
@@ -911,12 +909,22 @@ export class RallyApi {
     await this.requestVoid(`/onboarding/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal): Promise<SidekickAttachment[]> {
-    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
   }
 
-  async removeAttachedSidekick(workstreamId: string, sidekickId: string): Promise<SidekickAttachment[]> {
-    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
+  async removeAttachedSidekick(workstreamId: string, sidekickId: string, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
+  }
+
+  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal): Promise<SidekickAttachment[]> {
+    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
+  }
+
+  async setRecommendedSidekick(workstreamId: string, sidekickId: string, attached: boolean, substreamId = '0'): Promise<SidekickAttachment[]> {
+    return (await this.request(`/workstreams/${encodeURIComponent(workstreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}?substreamId=${encodeURIComponent(substreamId)}`, {
+      method: attached ? 'PUT' : 'DELETE', schema: SidekickAttachmentsSchema,
+    })).items;
   }
 
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
@@ -1026,8 +1034,17 @@ export class RallyApi {
     return mapAutomationDetail(raw);
   }
 
-  async deleteAutomation(id: string): Promise<void> {
-    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  async archiveAutomation(id: string): Promise<void> {
+    const path = `/sidekicks/${encodeURIComponent(id)}`;
+    try {
+      await this.requestVoid(`${path}/archive`, { method: 'POST' });
+    } catch (error) {
+      // During a rolling API deployment, the previous Worker knows the same
+      // retained tombstone only as DELETE. A route miss proves the POST did
+      // not reach a mutation; every domain 404 remains a real archive failure.
+      if (!(error instanceof ApiError && error.status === 404 && error.code === 'not_found')) throw error;
+      await this.requestVoid(path, { method: 'DELETE' });
+    }
   }
 
   /**
@@ -1087,16 +1104,6 @@ export class RallyApi {
       createdAt: response.workstream.createdAt,
       harnessRunId: response.harnessRunId,
     };
-  }
-
-  /** One page of the note list, newest first; `before` resumes after a cursor. */
-  async getNotes(
-    input: { limit: number; before?: string } = { limit: 250 },
-    signal?: AbortSignal,
-  ): Promise<{ items: NoteSummary[]; nextCursor: string | null }> {
-    const query = new URLSearchParams({ limit: String(input.limit) });
-    if (input.before) query.set('before', input.before);
-    return this.request(`/notes?${query.toString()}`, { schema: wireNotePageSchema, signal });
   }
 
   createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
@@ -1175,59 +1182,6 @@ export class RallyApi {
     );
   }
 
-  createNote(id: string, title: string): Promise<NoteDetail> {
-    return this.request('/notes', {
-      method: 'POST',
-      body: { id, title, scope: 'personal' },
-      schema: WireNoteDetailSchema,
-    });
-  }
-
-  getNote(id: string, signal?: AbortSignal): Promise<NoteDetail> {
-    return this.request(`/notes/${encodeURIComponent(id)}`, { schema: WireNoteDetailSchema, signal });
-  }
-
-  updateNote(
-    id: string,
-    input: {
-      title?: string;
-      manualNotes?: string;
-      scope?: 'personal' | 'workspace';
-      recordingStatus?: 'idle' | 'recording' | 'complete';
-      recordedMs?: number;
-      startedAt?: string | null;
-      endedAt?: string | null;
-    },
-  ): Promise<NoteDetail> {
-    return this.request(`/notes/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: input,
-      schema: WireNoteDetailSchema,
-    });
-  }
-
-  archiveNote(id: string): Promise<void> {
-    return this.requestVoid(`/notes/${encodeURIComponent(id)}/archive`, { method: 'POST' });
-  }
-
-  appendNoteTranscriptSegment(
-    id: string,
-    input: {
-      clientSegmentId: string;
-      startOffsetMs: number;
-      endOffsetMs: number;
-      capturedAt: string;
-      speakerLabel?: string | null;
-      text: string;
-    },
-  ): Promise<NoteTranscriptSegment> {
-    return this.request(`/notes/${encodeURIComponent(id)}/segments`, {
-      method: 'POST',
-      body: { ...input, speakerLabel: input.speakerLabel ?? null },
-      schema: WireNoteTranscriptSegmentSchema,
-    });
-  }
-
   /**
    * The server-decided values this device is allowed to see, for the signed-in
    * person. The main process polls the same route for Application → Developer;
@@ -1236,29 +1190,6 @@ export class RallyApi {
    */
   clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
     return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
-  }
-
-  /**
-   * `refreshSeconds` is the cadence this meeting settled on. It travels with
-   * the request so the briefing is written for the schedule the client is
-   * actually keeping, rather than for whatever the flag says when the server
-   * happens to read it.
-   */
-  generateNoteNotes(
-    id: string,
-    mode: 'live' | 'final' = 'live',
-    transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
-    refreshSeconds?: number,
-  ): Promise<NoteDetail> {
-    return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
-      method: 'POST',
-      body: {
-        mode,
-        transcriptStatus,
-        ...(refreshSeconds === undefined ? {} : { refreshSeconds }),
-      },
-      schema: WireNoteDetailSchema,
-    });
   }
 
   async renameWorkstream(id: string, title: string): Promise<WorkstreamSummary> {
@@ -1402,6 +1333,17 @@ export class RallyApi {
     return page.items.map(mapWorkstreamSummary);
   }
 
+  async previewSessionImport(input: z.infer<typeof SessionImportPreviewRequestSchema>): Promise<SessionImportPreview> {
+    return this.request('/workstreams/import/preview', { method: 'POST', body: input, schema: SessionImportPreviewSchema });
+  }
+
+  async importSession(preview: SessionImportPreview, clientMessageId: string): Promise<string> {
+    const result = await this.request('/workstreams/import', {
+      method: 'POST', body: { ...preview, clientMessageId }, schema: createWorkstreamResponseSchema,
+    });
+    return result.workstream.id;
+  }
+
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
@@ -1469,7 +1411,11 @@ export class RallyApi {
     };
   }
 
-  async messageMentionPayload(text: string, selected: MentionIdentity[] = []): Promise<Array<{
+  async messageMentionPayload(
+    text: string,
+    selected: MentionIdentity[] = [],
+    existingRoster?: readonly WorkspaceMember[],
+  ): Promise<Array<{
     type: 'person' | 'connector';
     userId: string | null;
     connectorType: string | null;
@@ -1481,7 +1427,7 @@ export class RallyApi {
     // front of it. `person://` covers durable mention Markdown that is pasted
     // or replayed; `@` covers composer and hand-typed mentions.
     if (!text.includes('@') && !text.includes('person://')) return [];
-    const members = await this.getWorkspaceMembers();
+    const members = existingRoster ?? await this.getWorkspaceMembers();
     // People only, and only here: what a name in the text resolves to has to
     // agree with what the composer that wrote it offered and highlighted.
     // The work stream's connections were discovered here too, so a hand-typed
@@ -1491,7 +1437,26 @@ export class RallyApi {
     const discovered = members
       .filter((member) => (member.status ?? 'active') === 'active')
       .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
-    return resolveMentionPayload(text, selected, discovered);
+    const resolved = resolveMentionPayload(text, selected, discovered);
+    // Workspace socket invalidation normally keeps the shared roster current.
+    // If a supplied snapshot cannot resolve any person at all, refresh once so
+    // a newly added member is not silently sent as plain text. Selected chips
+    // remain authoritative here; the server still validates their membership.
+    if (existingRoster !== undefined
+      && !resolved.some((mention) => mention.type === 'person')
+      && !selected.some((mention) => mention.type === 'person')) {
+      const freshMembers = await this.getWorkspaceMembers();
+      const freshDiscovered = freshMembers
+        .filter((member) => (member.status ?? 'active') === 'active')
+        .map((member) => ({
+          type: 'person' as const,
+          label: member.name,
+          userId: member.id,
+          connectorType: null,
+        }));
+      return resolveMentionPayload(text, selected, freshDiscovered);
+    }
+    return resolved;
   }
 
   async uploadResource(
@@ -1595,6 +1560,31 @@ export class RallyApi {
       ...(signal ? { signal } : {}),
     });
     if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
+  getFavicon(hostname: string): Promise<Blob | null> {
+    const normalized = hostname.toLowerCase();
+    const pending = this.faviconRequests.get(normalized);
+    if (pending) return pending;
+    const request = this.fetchFavicon(normalized)
+      .finally(() => this.faviconRequests.delete(normalized));
+    this.faviconRequests.set(normalized, request);
+    return request;
+  }
+
+  private async fetchFavicon(hostname: string): Promise<Blob | null> {
+    const path = `/favicons/${encodeURIComponent(hostname)}`;
+    const headers = new Headers({ Accept: "image/*" });
+    const response = await this.traced(path, "GET", undefined, headers, () => this.execute(path, {
+      method: "GET",
+      headers,
+    }));
+    if (response.status === 404) return null;
+    if (!response.ok) return this.throwResponseError(response);
+    if (!response.headers.get("content-type")?.startsWith("image/")) {
+      throw new ApiError("The favicon response was not an image.", 502, "invalid_response");
+    }
     return response.blob();
   }
 
@@ -1871,27 +1861,45 @@ export class RallyApi {
     afterSequence?: number,
     speculative = false,
     signal?: AbortSignal,
+    timeoutMs?: number,
   ): Promise<SocketTicket> {
     const queryParams = new URLSearchParams();
     if (afterSequence !== undefined) queryParams.set('afterSequence', String(afterSequence));
     if (speculative) queryParams.set('speculative', 'true');
     const encodedQuery = queryParams.toString();
     const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
-    return this.request(
-      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
-      { schema: socketTicketSchema, signal, ...(requestId ? { requestId } : {}) },
+    return requestSocketTicket(
+      (attemptSignal) => this.request(
+        `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
+        { schema: socketTicketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
+      ),
+      { ownerSignal: signal, timeoutMs },
     );
   }
 
-  getWorkspaceSocketTicket(): Promise<SocketTicket> {
-    return this.request('/workspace/socket', { schema: socketTicketSchema });
+  getWorkspaceSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
+    return requestSocketTicket(
+      (attemptSignal) => this.request('/workspace/socket', {
+        schema: socketTicketSchema,
+        signal: attemptSignal,
+      }),
+      { ownerSignal: signal },
+    );
   }
 
-  getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
-    return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
-      schema: socketTicketSchema,
-      ...(requestId ? { requestId } : {}),
-    });
+  getWorkstreamControlSocketTicket(
+    id: string,
+    requestId?: string,
+    signal?: AbortSignal,
+  ): Promise<SocketTicket> {
+    return requestSocketTicket(
+      (attemptSignal) => this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
+        schema: socketTicketSchema,
+        signal: attemptSignal,
+        ...(requestId ? { requestId } : {}),
+      }),
+      { ownerSignal: signal },
+    );
   }
 
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
@@ -1963,7 +1971,7 @@ export class RallyApi {
   }
 
   async startProviderConnection(
-    provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
+    provider: 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
@@ -2072,14 +2080,57 @@ export class RallyApi {
     return mapConnection(response.connection);
   }
 
-  async createGranolaWorkspaceConnection(apiKey: string): Promise<WorkstreamConnection> {
+  async replaceInstallationApiKey(connectionId: string, apiKey: string) {
+    return this.request(`/connections/${connectionId}/installation/api-key`, {
+      method: 'POST', body: { apiKey }, schema: ConnectorInstallationMutationResponseSchema,
+    });
+  }
+
+  async createAshbyWorkspaceConnection(apiKey: string, idempotencyKey: string) {
+    return this.request('/connections/ashby/workspace', {
+      method: 'POST', body: { apiKey, idempotencyKey },
+      schema: ConnectorInstallationSetupResponseSchema,
+    });
+  }
+
+  /**
+   * The response carries the endpoint URL and signing secret the administrator
+   * has to paste into Fireflies, and it is the only time Rally will hand them
+   * over. Nothing here writes either to disk.
+   */
+  async createFirefliesWorkspaceConnection(apiKey: string, idempotencyKey: string) {
+    reportTelemetryProductIntent({
+      kind: 'connector_setup_requested_v2', connector: 'fireflies', scope: 'workspace',
+      method: 'api_key', capabilityCount: telemetryCountBucket(1),
+    });
+    return this.request('/connections/fireflies/workspace', {
+      method: 'POST', body: { apiKey, idempotencyKey },
+      schema: ConnectorInstallationSetupResponseSchema,
+    });
+  }
+
+  async connectorInstallation(connectionId: string) {
+    return this.request(`/connections/${connectionId}/installation`, {
+      schema: ConnectorInstallationReadResponseSchema,
+    });
+  }
+
+  async changeConnectorInstallation(connectionId: string, input: {
+    action: 'repair' | 'disconnect' | 'forget_cleanup' | 'reconcile' | 'rotate'; key?: string; providerId?: string;
+  }) {
+    return this.request(`/connections/${connectionId}/installation`, {
+      method: 'POST', body: input, schema: ConnectorInstallationMutationResponseSchema,
+    });
+  }
+
+  async createGranolaWorkspaceConnection(apiKey: string, idempotencyKey: string): Promise<WorkstreamConnection> {
     reportTelemetryProductIntent({
       kind: 'connector_setup_requested_v2', connector: 'granola', scope: 'workspace',
       method: 'api_key', capabilityCount: telemetryCountBucket(1),
     });
     const response = await this.request('/connections/granola/workspace', {
       method: 'POST',
-      body: { apiKey, capabilities: ['granola.workspace.read'] },
+      body: { apiKey, idempotencyKey, capabilities: ['granola.workspace.read'] },
       schema: z.object({ connection: WireConnectionSchema }),
     });
     return mapConnection(response.connection);
@@ -2135,7 +2186,7 @@ export class RallyApi {
 
   async reconnectConnection(
     id: string,
-    provider?: 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    provider?: 'ashby' | 'fireflies' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace' = 'you',
     capabilityCount = 0,
   ): Promise<ConnectorOAuthStart> {
@@ -2162,6 +2213,12 @@ export class RallyApi {
     return this.request(`/connections/oauth-attempts/${encodeURIComponent(attemptId)}`, {
       schema: WireConnectorOAuthAttemptSchema,
       signal,
+    });
+  }
+
+  async testConnection(id: string) {
+    return this.request(`/connections/${encodeURIComponent(id)}/test`, {
+      method: 'POST', schema: ConnectionTestResponseSchema,
     });
   }
 

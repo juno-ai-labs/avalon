@@ -262,8 +262,6 @@ can tell why.
     schedules belong to automations, which already own calendar arithmetic,
     timezone policy, and missed-occurrence behavior. Rejected.
 
-## Product behavior
-
 ### An automation the work stream owns
 
 Automation scope gains a third value, `workstream`. Its owning work stream is
@@ -1130,8 +1128,6 @@ None yet.
     (non-goal 5) can be added later without revisiting this, because manifests
     own the event vocabulary.
 
-## Data model
-
 ### The scope, and where automations actually live
 
 **There is no D1 work here, and an earlier revision of this PRD had a whole
@@ -1463,21 +1459,6 @@ workspace as the automation, so appending an activation is an in-region
 object-to-object hop; exposing a run's work stream is a flag on a row in the
 same region's WorkspaceDO; and a Slack channel is reached through the workspace's
 own connection from the Worker that holds it.
-
-**The Global email-address registry stays untouched**, which is worth stating
-because an earlier revision of this section had to say the opposite: while
-`expose_workstream` created a work stream, it inherited creation's dependency on
-that Global registry, so an EU automation's delivery could fail on a Global
-outage. Surfacing an existing run's work stream registers nothing — that room
-got whatever address it was going to get when the run was provisioned.
-
-**The classifier's decision is inference**, and EU inference is deliberately not
-archived to the lakehouse. So "why was this occurrence classified `done`" is
-answerable from the run's stored `disposition_reason` in both regions, and from
-the raw inference record only in Global. That is why the reason is a column on
-the run rather than something reconstructed from a ledger:
-[`runbook.md`](../../runbook.md) has no EU fallback to offer, and an operator in
-the EU needs the answer from the same place either way.
 
 ## Security and trust model
 

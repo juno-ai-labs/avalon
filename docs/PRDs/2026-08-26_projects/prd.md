@@ -109,8 +109,6 @@ authorized resources to each work stream.
    archiving. It does not permanently delete a project or its membership
    history.
 
-## Product behavior
-
 ### The sidebar
 
 The sidebar places **Projects** immediately below **Actions** and above
@@ -1214,21 +1212,9 @@ creates empty project tables.
 
 Projects live entirely in the workspace's existing region and Durable Object
 placement. Project names, icons, colors, participants, resource relationships,
-and ordering do not cross between Global and EU. Both regions ship the same
+and ordering do not cross between configured deployments. Configured deployments ship the same
 schema and behavior. The Global identity registry gains no project data and
 there is no cross-region project lookup.
-
-Default-resource delivery is split by region because each Queue consumer must
-bind and call only that region's `WorkspaceDO`, `WorkstreamDO`, and
-`SubstreamAgent` namespaces. Global and EU use the same logical
-`PROJECT_RESOURCE_QUEUE` producer binding in code, backed by separate
-region-named primary, dead-letter, and terminal failure Queues in deployment.
-Both regional Wrangler configurations declare their producer, primary
-consumer, DLQ failure consumer, terminal DLQ, and every dead-letter edge;
-deployment preflight rejects an unpaired or multiply consumed Queue. The region
-is still present in every message and is validated by the consumer. A failed EU
-delivery retries or dead-letters in EU; it never falls back to Global, and the
-reverse is also true.
 
 All multi-work-stream audience fan-out follows the same regional rule through
 the logical `PROJECT_AUDIENCE_QUEUE` binding and separate region-named

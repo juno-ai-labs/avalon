@@ -1,4 +1,11 @@
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
+import type { Region } from "@rally/contracts/regions";
+import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
+import {
+  automaticApplicationIcon,
+  parseApplicationIconId,
+  type DesktopApplicationIconState,
+} from '../../common/application-icons';
 import type {
   RallyDesktopBridge,
   DesktopApplicationSettings,
@@ -7,17 +14,15 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../../common/desktop';
-import {
-  automaticApplicationIcon,
-  parseApplicationIconId,
-  type DesktopApplicationIconState,
-} from '../../common/application-icons';
+import { defaultDesktopReleaseChannel } from '../../common/release-channels';
 
 export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
 
 let browserSession: DesktopSession | null = null;
 let browserRefreshToken: string | null = null;
 const browserApplicationSettings: DesktopApplicationSettings = {
+  releaseChannel: defaultDesktopReleaseChannel,
+  releaseChannelAvailable: false,
   lockdownMode: false,
   lockdownAvailable: false,
   debugEnabled: false,
@@ -27,7 +32,7 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // A tab has no status item. The preference reads as on so the desktop and the
   // browser agree about what the stored default is, and unavailable so the
   // toggle is offered nowhere it cannot work.
-  menuBarEnabled: true,
+  pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
   menuBarAvailable: false,
   menuBarPresent: false,
   // A tab is not a login item either. Both read as unavailable so neither
@@ -47,7 +52,7 @@ const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicatio
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
 const browserAuthAttempts = new Map<string, {
   apiBaseUrl: string;
-  region: 'global' | 'eu';
+  region: Region;
   verifier: string;
   expiresAt: number;
 }>();
@@ -62,7 +67,7 @@ function randomBase64Url(size: number): string {
   return base64Url(crypto.getRandomValues(new Uint8Array(size)));
 }
 
-async function createBrowserAuthAttempt(apiBaseUrl: string, region: 'global' | 'eu'): Promise<DesktopAuthAttempt> {
+async function createBrowserAuthAttempt(apiBaseUrl: string, region: Region): Promise<DesktopAuthAttempt> {
   if (region !== 'global' || normalizeApiBaseUrl(apiBaseUrl) !== normalizeApiBaseUrl(browserGlobalApiBaseUrl())) {
     throw new Error('Rally sign-in must use the Global identity service.');
   }
@@ -130,9 +135,10 @@ function browserGlobalApiBaseUrl(): string {
   return import.meta.env.VITE_API_GLOBAL_URL ?? 'http://127.0.0.1:8787';
 }
 
-function browserApiBaseUrl(region: 'global' | 'eu'): string {
+function browserApiBaseUrl(region: Region): string {
   if (region === 'global') return browserGlobalApiBaseUrl();
-  return import.meta.env.VITE_API_EU_URL ?? 'http://127.0.0.1:8788';
+  const config = regionConfiguration(region);
+  return import.meta.env[`VITE_API_${config.bindingPrefix}_URL`] ?? config.localApiUrl;
 }
 
 function normalizeApiBaseUrl(value: unknown): string | null {
@@ -164,7 +170,7 @@ async function browserOnboardingRequest<T>(
 async function browserOnboardingSession(
   path: string,
   body: unknown,
-  expected: { region: 'global' | 'eu'; workspaceId?: string },
+  expected: { region: Region; workspaceId?: string },
 ): Promise<DesktopSession> {
   // Regional databases use a local shadow user ID linked to the immutable
   // Global platform identity. The verified email is the stable value that is
@@ -195,10 +201,7 @@ const browserBridge: RallyDesktopBridge = {
       appVersion: 'development',
       isPackaged: false,
       platform: 'browser',
-      api: {
-        global: import.meta.env.VITE_API_GLOBAL_URL ?? 'http://127.0.0.1:8787',
-        eu: import.meta.env.VITE_API_EU_URL ?? 'http://127.0.0.1:8788',
-      },
+      api: Object.fromEntries(configuredRegions.map((region) => [region, browserApiBaseUrl(region)])),
       webBaseUrl: import.meta.env.VITE_PUBLIC_WEB_BASE_URL ?? 'http://127.0.0.1:5174',
       devAuthEnabled: import.meta.env.DEV,
     } as RuntimeConfig;
@@ -235,6 +238,8 @@ const browserBridge: RallyDesktopBridge = {
     }
     return { ...browserApplicationSettings };
   },
+  async setPushNotificationsEnabled() { return this.getApplicationSettings(); },
+  async openNotificationSettings() {},
   async setMenuBarEnabled() {
     throw new Error('The menu bar item is available only in the Rally desktop app.');
   },
@@ -243,6 +248,9 @@ const browserBridge: RallyDesktopBridge = {
   },
   async setProductAnalyticsEnabled() {
     throw new Error('Product analytics is managed in the Rally desktop app.');
+  },
+  async setReleaseChannel() {
+    throw new Error('Update channels are available only in the Rally desktop app.');
   },
   async reportTelemetryScreen() {
     // Public-site/browser telemetry is outside this feature's V1 scope.
@@ -443,6 +451,12 @@ const browserBridge: RallyDesktopBridge = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async showDefinitionForSelection() {
+    // Dictionary is a macOS main-process affordance; a tab has none.
+  },
+  async shareText() {
+    // The system share sheet is a macOS main-process affordance; a tab has none.
+  },
   async setConversationDetailsOpen() {
     // A browser tab cannot resize its own top-level window. The attached rail
     // still opens inside the viewport, which is the browser-safe fallback.
@@ -495,44 +509,13 @@ const browserBridge: RallyDesktopBridge = {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;
   },
-  async openMeetingNotes(noteId) {
-    const target = new URL(window.location.href);
-    target.search = new URLSearchParams({
-      surface: 'meeting',
-      noteId: noteId ?? crypto.randomUUID(),
-    }).toString();
-    target.hash = '/meeting';
-    window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
-  },
-  async closeMeetingNotes(noteId) {
-    // A browser tab has no sibling window to hand the note to; the opener may
-    // not even be reachable. Closing is the whole of what this can do here.
-    void noteId;
-    window.close();
-  },
-  async setMeetingRecordingState() {
-    // Browser development has no main-process workspace switch coordinator.
-  },
-  async getMeetingAudioPermissions() {
-    return { microphone: 'unknown', systemAudio: 'unknown' };
-  },
-  async prepareMeetingAudioPermissions() {
-    return { microphone: 'unknown', systemAudio: 'unknown' };
-  },
-  async startMeetingSystemAudioCapture() {
+  async startSystemAudioCapture() {
     throw new Error('Native computer audio capture is available only in the Rally desktop app.');
   },
-  async stopMeetingSystemAudioCapture() {
+  async stopSystemAudioCapture() {
     // No native capture exists in a browser tab.
   },
-  onMeetingSystemAudioData() {
-    return () => undefined;
-  },
-  async openMeetingAudioSettings() {
-    // Browser permission recovery is owned by the browser chrome rather than
-    // an operating-system settings pane Rally can open directly.
-  },
-  onMeetingCloseRequested() {
+  onSystemAudioData() {
     return () => undefined;
   },
   onSettingsSectionRequested() {
@@ -583,6 +566,20 @@ export function desktopBridge(): RallyDesktopBridge {
   if (window.rally) return window.rally;
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') return browserBridge;
   throw new Error('Rally desktop services did not load. Reopen the application.');
+}
+
+let runtimeConfigPromise: Promise<RuntimeConfig> | null = null;
+
+/**
+ * One `getRuntimeConfig()` for the window. Platform cannot change for the
+ * life of the process, so each feed body must not open its own IPC.
+ */
+export function desktopRuntimeConfig(): Promise<RuntimeConfig> {
+  runtimeConfigPromise ??= desktopBridge().getRuntimeConfig().catch((error: unknown) => {
+    runtimeConfigPromise = null;
+    throw error;
+  });
+  return runtimeConfigPromise;
 }
 
 /**

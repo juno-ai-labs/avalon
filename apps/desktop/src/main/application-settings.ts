@@ -3,10 +3,17 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { defaultThemeChoice, parseThemeChoice, type ThemeChoice } from '../common/themes';
+import {
+  defaultDesktopReleaseChannel,
+  parseDesktopReleaseChannel,
+  type DesktopReleaseChannel,
+} from '../common/release-channels';
 
 const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 
 export interface StoredApplicationSettings {
+  pushNotificationsEnabled: boolean;
+  pushInstallationId: string | null;
   lockdownMode: boolean;
   debugEnabled: boolean;
   /** Whether the Rally status item is in the macOS menu bar. */
@@ -25,6 +32,8 @@ export interface StoredApplicationSettings {
   productAnalyticsPreferenceVersion: number;
   /** A durable offline mutation. Both enable and disable fail closed while set. */
   productAnalyticsPreferencePending: boolean;
+  /** Which server-owned desktop release pointer this Mac follows. */
+  releaseChannel: DesktopReleaseChannel;
   /**
    * The theme *choice* the renderer last drew, mirrored here for one purpose: a
    * window's `backgroundColor` has to be chosen before any renderer exists to
@@ -46,6 +55,8 @@ interface StoredApplicationSettingsFile extends StoredApplicationSettings {
 }
 
 export const defaultStoredApplicationSettings: StoredApplicationSettings = {
+  pushNotificationsEnabled: true,
+  pushInstallationId: null,
   lockdownMode: false,
   debugEnabled: false,
   menuBarEnabled: true,
@@ -53,6 +64,7 @@ export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   productAnalyticsEnabled: true,
   productAnalyticsPreferenceVersion: 0,
   productAnalyticsPreferencePending: false,
+  releaseChannel: defaultDesktopReleaseChannel,
   themeChoice: defaultThemeChoice,
 };
 
@@ -62,6 +74,8 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
   }
   const candidate = value as {
     version?: unknown;
+    pushNotificationsEnabled?: unknown;
+    pushInstallationId?: unknown;
     lockdownMode?: unknown;
     debugEnabled?: unknown;
     menuBarEnabled?: unknown;
@@ -69,6 +83,7 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
     productAnalyticsEnabled?: unknown;
     productAnalyticsPreferenceVersion?: unknown;
     productAnalyticsPreferencePending?: unknown;
+    releaseChannel?: unknown;
     themeChoice?: unknown;
   };
   if (candidate.version !== 1 || typeof candidate.lockdownMode !== 'boolean') {
@@ -77,6 +92,8 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
   // Preferences written before the Developer section carry no debug field. An
   // unreadable value falls back to off rather than discarding Lockdown mode.
   return {
+    pushNotificationsEnabled: candidate.pushNotificationsEnabled !== false,
+    pushInstallationId: typeof candidate.pushInstallationId === "string" ? candidate.pushInstallationId : null,
     lockdownMode: candidate.lockdownMode,
     debugEnabled: candidate.debugEnabled === true,
     // The menu bar item ships on, so a file written before it existed — and any
@@ -93,6 +110,7 @@ export function parseStoredApplicationSettings(value: unknown): StoredApplicatio
       ? candidate.productAnalyticsPreferenceVersion
       : 0,
     productAnalyticsPreferencePending: candidate.productAnalyticsPreferencePending === true,
+    releaseChannel: parseDesktopReleaseChannel(candidate.releaseChannel) ?? defaultDesktopReleaseChannel,
     // A file written before themes existed, or naming one this build removed,
     // means the design Rally shipped with, following the Mac.
     themeChoice: parseThemeChoice(candidate.themeChoice) ?? defaultThemeChoice,

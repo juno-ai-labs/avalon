@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/env';
@@ -21,9 +22,9 @@ function env(overrides: Partial<Env> = {}): Env {
     APP_VERSION: 'test',
     ASSETS: { fetch: vi.fn(async () => new Response('asset')) },
     RALLY_API_BASE_URL: 'https://api.rally.test',
-    RALLY_EU_API_BASE_URL: 'https://eu.api.rally.test',
+    RALLY_ENTERPRISE_API_BASE_URL: 'https://enterprise.api.rally.test',
     RALLY_OPERATOR_TOKEN: 'operator-token-for-tests',
-    RALLY_EU_OPERATOR_TOKEN: 'eu-operator-token-for-tests',
+    RALLY_ENTERPRISE_OPERATOR_TOKEN: 'enterprise-operator-token-for-tests',
     ...overrides,
   });
 }
@@ -63,13 +64,13 @@ describe('the retirement route', () => {
     const response = await worker.fetch!(new Request(`https://ace.internal.rallywith.ai/api/workspaces/${WORKSPACE_ID}/retire`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ region: 'eu', confirmWorkspaceId: WORKSPACE_ID }),
+      body: JSON.stringify({ region: 'enterprise', confirmWorkspaceId: WORKSPACE_ID }),
     }), env(), context);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(receipt);
-    expect(regional).toHaveBeenCalledWith(`https://eu.api.rally.test/internal/workspaces/${WORKSPACE_ID}/retire`, expect.objectContaining({
+    expect(regional).toHaveBeenCalledWith(`https://enterprise.api.rally.test/internal/workspaces/${WORKSPACE_ID}/retire`, expect.objectContaining({
       method: 'POST',
-      headers: expect.objectContaining({ authorization: 'Bearer eu-operator-token-for-tests' }),
+      headers: expect.objectContaining({ authorization: 'Bearer enterprise-operator-token-for-tests' }),
       body: JSON.stringify({ confirmWorkspaceId: WORKSPACE_ID }),
     }));
   });
@@ -97,12 +98,17 @@ describe('the retirement route', () => {
       method: 'POST', headers, body: JSON.stringify({ region: 'global', confirmWorkspaceId: WORKSPACE_ID }),
     }), env(), context);
     expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toMatchObject({ error: 'regional_api_contract_mismatch' });
+    // Which field disagrees is what tells an operator whether Ace or the
+    // regional API is the one behind; the answer's values stay off the page.
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'regional_api_contract_mismatch',
+      message: expect.stringContaining('regional_response_invalid:'),
+    });
   });
 
   it('answers a directory that did not answer with a sentence, never the bare internal error', async () => {
     const broken = createTestD1Database({ prepare: () => { throw new Error('D1_ERROR: no such table'); } });
-    const response = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/directory/workspaces?q=alto'), env({ GLOBAL_DB: broken, EU_DB: broken }), context);
+    const response = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/directory/workspaces?q=alto'), env({ GLOBAL_DB: broken, ENTERPRISE_DB: broken }), context);
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({
       error: 'directory_unavailable',

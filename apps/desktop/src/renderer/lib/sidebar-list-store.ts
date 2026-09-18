@@ -1,6 +1,6 @@
-import type { QueryClient } from '@tanstack/react-query';
 import type { ProjectSnapshot } from '@rally/contracts';
-import type { AutomationSummary, NoteSummary } from './types';
+import type { QueryClient } from '@tanstack/react-query';
+import type { AutomationSummary } from './types';
 
 /**
  * The one receiver for the sidebar's two pushed lists.
@@ -16,22 +16,18 @@ import type { AutomationSummary, NoteSummary } from './types';
  * that earned it, so a strictly-greater test is a total order here. Equal is
  * not newer: a resumed automation writes its subscription and then its email
  * route, and only the second of those two pushes carries a higher number.
- *
- * "Both producers" means both *versioned* ones. An optimistic local patch —
- * `onChangeNoteScope` in the app shell is the only one — writes its list entry
- * directly, because it has no waterline to be ordered by and inventing one
- * would corrupt this ledger. Such a patch is not an authority: the push the
- * same write earns arrives behind it and replaces what it wrote.
  */
 
-export type SidebarList = 'automations' | 'notes';
+export type SidebarList = 'automations';
 type SidebarWaterline = SidebarList | 'projects';
 
 /** The cache entries the shell reads these lists under. */
 export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
-  notes: ['notes'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
+
+export const PROJECTS_QUERY_KEY = ['projects'] as const;
+export const INACTIVE_PROJECTS_QUERY_KEY = ['projects-inactive'] as const;
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
@@ -58,7 +54,6 @@ function pinWaterlineLedger(queryClient: QueryClient): void {
 
 interface SidebarListItems {
   automations: AutomationSummary[];
-  notes: NoteSummary[];
 }
 
 /**
@@ -88,49 +83,6 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   return true;
 }
 
-/**
- * Apply one pushed page of notes, keeping whatever the reader has scrolled to.
- *
- * A push carries the newest page, not the list. Replacing on every push was
- * right while the list was capped and unpaged; now a reader can be holding four
- * pages, and replacing would snap them back to one with no way to tell why.
- *
- * So a page that ends the list (`nextCursor === null`) replaces, and a page
- * that is only the head merges — with the rows it *covers* rebuilt from it, not
- * merely added to. That second part is what removes an archived note: within
- * the range this page spans, the page is authoritative, so a held row inside
- * that range and absent from it is gone. Below the range nothing can be
- * concluded from this push, and those rows are corrected by the refetch that
- * walks every loaded page.
- *
- * Rows are ordered `(lastActivityAt, id)` descending, so "covered" is "sorts at
- * or above the page's last row".
- */
-export function applyVersionedNotePage(
-  queryClient: QueryClient,
-  waterline: number,
-  items: NoteSummary[],
-  nextCursor: string | null | undefined,
-): boolean {
-  if (nextCursor == null) {
-    return applyVersionedSidebarList(queryClient, 'notes', waterline, items);
-  }
-  const held = queryClient.getQueryData<NoteSummary[]>(SIDEBAR_LIST_QUERY_KEYS.notes) ?? [];
-  const last = items.at(-1);
-  if (!last) return applyVersionedSidebarList(queryClient, 'notes', waterline, items);
-  const covered = new Set(items.map((note) => note.id));
-  const below = held.filter((note) => !covered.has(note.id) && sortsBelow(note, last));
-  return applyVersionedSidebarList(queryClient, 'notes', waterline, [...items, ...below]);
-}
-
-/** Strictly older than `boundary` in the list's `(lastActivityAt, id)` order. */
-function sortsBelow(note: NoteSummary, boundary: NoteSummary): boolean {
-  if (note.lastActivityAt !== boundary.lastActivityAt) {
-    return note.lastActivityAt < boundary.lastActivityAt;
-  }
-  return note.id < boundary.id;
-}
-
 /** Apply the project directory only when its WorkspaceDO waterline is newer. */
 export function applyVersionedProjectSnapshot(
   queryClient: QueryClient,
@@ -145,7 +97,7 @@ export function applyVersionedProjectSnapshot(
     SIDEBAR_LIST_WATERLINES_KEY,
     (current = {}) => ({ ...current, projects: snapshot.active.waterline }),
   );
-  queryClient.setQueryData(['projects'], snapshot.active);
-  queryClient.setQueryData(['projects-inactive'], snapshot.inactive);
+  queryClient.setQueryData(PROJECTS_QUERY_KEY, snapshot.active);
+  queryClient.setQueryData(INACTIVE_PROJECTS_QUERY_KEY, snapshot.inactive);
   return true;
 }

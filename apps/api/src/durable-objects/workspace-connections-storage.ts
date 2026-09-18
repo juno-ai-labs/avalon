@@ -17,7 +17,7 @@ import {
 
 interface AttemptRow extends Record<string, SqlStorageValue> {
   id: string;
-  provider: "google" | "github" | "granola" | "linear" | "notion" | "slack";
+  provider: "ashby" | "custom_mcp" | "google" | "github" | "granola" | "linear" | "notion" | "slack";
   status: "pending" | "succeeded" | "denied" | "failed";
   connection_id: string | null;
   error_code: string | null;
@@ -352,12 +352,22 @@ export function claimWorkspaceWebhookReceipt(
       request.receivedAt,
       request.expiresAt,
     ).toArray()[0];
+    let firstObservedAt: string | undefined;
+    if (request.eventIdentity) {
+      const accepted = storage.sql.exec<{ occurred_at: number }>(
+        "SELECT occurred_at FROM workspace_connector_events WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?",
+        request.connectionId, request.eventIdentity.providerEventId, request.eventIdentity.eventType).toArray()[0];
+      const receipt = storage.sql.exec<{ received_at: string }>("SELECT received_at FROM webhook_receipts WHERE connection_id = ? AND signature_hash = ?",
+        request.connectionId, request.signatureHash).toArray()[0];
+      firstObservedAt = accepted ? new Date(accepted.occurred_at).toISOString() : receipt?.received_at ?? request.receivedAt;
+    }
     if (claimed?.id === request.receiptId) {
       return WorkspaceWebhookReceiptClaimResultSchema.parse({
         outcome: "claimed",
         receiptId: claimed.id,
+        ...(firstObservedAt ? { firstObservedAt } : {}),
       });
     }
-    return WorkspaceWebhookReceiptClaimResultSchema.parse({ outcome: "duplicate" });
+    return WorkspaceWebhookReceiptClaimResultSchema.parse({ outcome: "duplicate", ...(firstObservedAt ? { firstObservedAt } : {}) });
   });
 }

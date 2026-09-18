@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
@@ -10,12 +10,15 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(),
   getConversation: vi.fn(),
   getAttachedSidekicks: vi.fn(),
+  getRecommendedSidekicks: vi.fn(),
   getWorkstreamSidekicks: vi.fn(),
+  removeAttachedSidekick: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
+const currentSession = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api, session: null }),
+  useAppSession: () => ({ api, session: currentSession() }),
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
@@ -60,11 +63,14 @@ vi.mock('../lib/use-transcript-follow', () => ({
 import { WorkstreamScreen } from './workstream';
 import { ApiError } from '../lib/api';
 import { useUiStore } from '../lib/ui-store';
+import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000901';
+const childId = '00000000-0000-7000-8000-000000000902';
 
-function boot(): WorkstreamBoot {
+function boot(participant = false): WorkstreamBoot {
   return {
     id: workstreamId,
     title: 'Investigate ENG-142',
@@ -83,7 +89,7 @@ function boot(): WorkstreamBoot {
     participantUserIds: [],
     participantExtraCount: 0,
     createdAt: '2026-09-10T14:00:00.000Z',
-    participants: [],
+    participants: participant ? [{ id: 'person', name: 'Person', email: 'person@example.com', role: 'member', timezone: 'UTC' }] : [],
     viewers: [],
     resources: [],
     connections: [],
@@ -106,17 +112,21 @@ function boot(): WorkstreamBoot {
   };
 }
 
-function renderScreen(): void {
+function renderScreen(participant = false): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  const { transcript, ...detail } = boot();
+  const { transcript, ...detail } = boot(participant);
   queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
   queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
+  queryClient.setQueryData(workstreamDetailQueryKey(workstreamId, childId), detail);
+  queryClient.setQueryData(orderedTranscriptQueryKey(workstreamId, childId), transcript);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+          <Link to={`/workstreams/${workstreamId}?substream=${childId}`}>Switch child</Link>
+          <Link to={`/workstreams/${workstreamId}`}>Switch main</Link>
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
           </Routes>
@@ -138,9 +148,11 @@ function renderScreen(): void {
 describe('a work stream\u2019s own Sidekicks when the viewer may not list them', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentSession.mockReturnValue(null);
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
     api.getWorkspaceMembers.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     api.getAttachedSidekicks.mockResolvedValue([
       { id: 'attached-1', name: 'Editorial guidance', description: 'Write clearly.', available: true },
@@ -157,6 +169,38 @@ describe('a work stream\u2019s own Sidekicks when the viewer may not list them',
   });
 
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it('does not carry a removal error into another substream', async () => {
+    currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.removeAttachedSidekick.mockRejectedValue(new Error('Removal failed in main.'));
+    renderScreen(true);
+    fireEvent.contextMenu(await screen.findByRole('button', { name: 'Editorial guidance' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove' }));
+    expect(await screen.findByText('Removal failed in main.')).toBeVisible();
+    expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', '0');
+    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
+    expect(await screen.findByRole('button', { name: 'Editorial guidance' })).toBeVisible();
+    expect(screen.queryByText('Removal failed in main.')).not.toBeInTheDocument();
+  });
+
+  it('keeps recommendations shared and loaded rows local when switching substreams', async () => {
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockResolvedValue([{ id: 'shared', name: 'Shared guide', description: '', available: true }]);
+    api.getAttachedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([
+      { id: substreamId === childId ? 'child-local' : 'main-local', name: substreamId === childId ? 'Child guide' : 'Main guide', description: '', available: true },
+    ]));
+    renderScreen();
+    expect(await screen.findByRole('button', { name: 'Main guide' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Shared guide' })).toHaveAttribute('aria-description', 'Recommended Sidekick');
+    fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
+    expect(await screen.findByRole('button', { name: 'Child guide' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Main guide' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Shared guide' })).toBeVisible();
+    fireEvent.click(screen.getByRole('link', { name: 'Switch main' }));
+    expect(await screen.findByRole('button', { name: 'Main guide' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Child guide' })).not.toBeInTheDocument();
+  });
 
   it('reads a refusal as a room with none, and still lists what the conversation loaded', async () => {
     api.getWorkstreamSidekicks.mockRejectedValue(

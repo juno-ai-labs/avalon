@@ -27,13 +27,20 @@
     "./citations": "./src/citations.ts",
     "./message-mentions": "./src/message-mentions.ts",
     "./search": "./src/search.ts",
-    "./private-access": "./src/private-access.ts"
+    "./tool-pagination": "./src/tool-pagination.ts",
+    "./push-notifications": "./src/push-notifications.ts",
+    "./private-access": "./src/private-access.ts",
+    "./regions": "./src/regions.ts",
+    "./zod-diagnostics": "./src/zod-diagnostics.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "avalon-connector-ashby-global",
+  "main": "src/ashby-ingress-worker.ts",
+  "compatibility_date": "2026-08-31",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "ashby.rallywith.ai", "custom_domain": true }],
+  "vars": { "PROVIDER_WEBHOOK_MAX_BYTES": "2000000" },
+  "services": [
+    { "binding": "GLOBAL_ASHBY_ROUTER", "service": "avalon-api-global", "entrypoint": "AshbyRoutingBridge" },
+    { "binding": "GLOBAL_ASHBY_BRIDGE", "service": "avalon-api-global", "entrypoint": "AshbyRegionalBridge" }
+  ],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
