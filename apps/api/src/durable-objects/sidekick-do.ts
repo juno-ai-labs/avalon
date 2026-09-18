@@ -2046,7 +2046,7 @@ export class SidekickDO extends ConversationParentDurableObject {
   private assertViewer(row: AutomationRow, actor: AutomationActor): void {
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     // A null role is the existing guest workspace relationship, not workspace-wide visibility.
-    if ((row.scope === "workspace" && actor.actorRole !== null)
+    if ((row.scope === "workspace" && actor.actorRole != null)
       || row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
     if (row.scope === "workstream" && actor.participantOfOwningWorkstream) return;
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");

@@ -1444,3 +1444,17 @@ describe("AutomationDO", () => {
       .toEqual({ state: "completed", lifecycle: "active" });
   });
 });
+
+
+it("requires an explicit workspace role for unrelated workspace Sidekick viewers", async () => {
+  await createDraft();
+  await runInDurableObject(automationStub(), (instance: AutomationDO) => {
+    const stored = instance['row']();
+    if (!stored) throw new Error("Sidekick fixture missing");
+    const row = { ...stored, scope: "workspace" as const };
+    const outsider = { userId: asUserId(crypto.randomUUID()), participantOfOwningWorkstream: false };
+    expect(() => instance['assertViewer'](row, outsider)).toThrow("This Sidekick does not exist");
+    expect(() => instance['assertViewer'](row, { ...outsider, actorRole: null })).toThrow("This Sidekick does not exist");
+    expect(() => instance['assertViewer'](row, { ...outsider, actorRole: "member" })).not.toThrow();
+  });
+});

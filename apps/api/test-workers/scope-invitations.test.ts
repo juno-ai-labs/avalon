@@ -443,3 +443,18 @@ it("rechecks management authority after profile reads interleave with suspension
   } finally { release(); }
   expect(await listing).toEqual({ status: "denied", reason: "sharing_required" });
 });
+
+
+it("refuses unconfigured sharing before a legacy authority handoff", async () => {
+  await runInDurableObject(room(), async (instance, state) => {
+    state.storage.sql.exec("DELETE FROM child_participant_migrations WHERE substream_id=?", childId);
+    const original = instance['env'];
+    instance['env'] = new Proxy(original, { get: (target, key, receiver) =>
+      key === 'BROWSER_APP_ORIGIN' ? undefined : Reflect.get(target, key, receiver) });
+    try {
+      expect(await instance.createScopeInvitations(invitation())).toEqual({ status: "denied", reason: "configuration_required" });
+      expect(state.storage.sql.exec("SELECT 1 FROM child_participant_migrations WHERE substream_id=?", childId).toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM scope_invitations").toArray()).toEqual([]);
+    } finally { instance['env'] = original; }
+  });
+});

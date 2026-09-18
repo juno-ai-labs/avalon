@@ -1,3 +1,4 @@
+import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
 import { privateAccessEdge } from './services/private-access-edge';
@@ -192,6 +193,7 @@ export default {
         reapExpiredSessions(env),
         dispatchWorkspaceRelationshipChanges(env),
         recoverEmailLoginDeliveries(env),
+        purgeExpiredEmailLoginChallenges(env),
         processTelemetry(env),
       ]);
     })());
