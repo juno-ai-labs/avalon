@@ -26,6 +26,8 @@ it("forwards same-origin cookie requests through the configured regional service
     cookie: "__Host-rally-browser-global=prior", origin: "https://browser.example.test", body: '{"proof":"one-use"}' });
   expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
 });
 
 it("refuses arbitrary regional hosts and non-browser API surfaces", async () => {
@@ -59,4 +61,12 @@ it("requires the same browser origin and an upgrade for socket forwarding", asyn
   for (const origin of [undefined, "https://elsewhere.example.test"]) {
     expect((await exports.default.fetch(url, { headers: { Upgrade: "websocket", ...(origin ? { Origin: origin } : {}) } })).status).toBe(403);
   }
+});
+
+it("sandboxes uploaded HTML documents without buffering or changing the resource", async () => {
+  const response = await exports.default.fetch("https://browser.example.test/regional/global/browser/api/workspace/resources/document/preview");
+  expect(response.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(response.headers.get("content-type")).toBe("text/html");
+  expect(await response.text()).toBe('<script>document.body.textContent="untrusted"</script>');
 });

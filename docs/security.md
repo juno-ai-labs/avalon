@@ -988,6 +988,13 @@ parser before navigation. Only the main app gains Push Notifications and
 Associated Domains entitlements; helpers retain their existing entitlement set.
 [Apple push](push-notifications.md) owns provisioning and release verification.
 
+The lite browser host adds `Content-Security-Policy: sandbox; default-src 'none'`
+and `X-Content-Type-Options: nosniff` to forwarded HTTP responses. Uploaded documents
+therefore cannot execute with the application's cookie origin when opened directly;
+XHR/blob readers retain their existing behavior. Chrome cookie writers use a
+regional Web Lock so an older renewal cannot replace a later login cookie.
+[Browser client](browser-client.md) owns these host-specific boundaries.
+
 ## Changelog
 
 ### 2026-09-16 — Bind sessions to membership instances

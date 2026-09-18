@@ -1,3 +1,4 @@
+import { desktopBridge } from '../lib/platform';
 import { SidekickSection, type SidekickRow } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -598,7 +599,7 @@ function InspectorDetail({
         )}
         {sourceActions && (
           <div className="inspector-detail-actions">
-            {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
+            {resource.canonicalUrl && <Button onClick={() => void desktopBridge().openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
             {refreshable && onRefreshResource && (
               <Button
                 disabled={refreshingResourceId === resource.id}

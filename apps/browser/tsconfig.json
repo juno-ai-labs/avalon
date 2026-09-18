@@ -18,6 +18,7 @@
   ],
   "exclude": [
     "src/client.tsx",
-    "src/conversation.tsx"
+    "src/conversation.tsx",
+    "src/entry.tsx"
   ]
 }
