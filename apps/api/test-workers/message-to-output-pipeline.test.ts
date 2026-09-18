@@ -2406,6 +2406,7 @@ describe("a member's message travels the whole pipeline", () => {
         }));
     });
 
+    const activationStartedAt = Date.now();
     const result = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -2418,13 +2419,16 @@ describe("a member's message travels the whole pipeline", () => {
       },
     });
     expect(result.status).toBe(200);
-    // Preparation pre-arms one recoverability alarm before its durable row.
+    const activationSettledAt = Date.now();
     // The public product endpoint must route the returned request through the
-    // single outer activation owner, which pulls that recovery wake due now.
+    // single outer activation owner. The invocation starts the drain directly,
+    // so its one alarm write stays at the 30-second eviction-recovery horizon
+    // instead of racing the healthy drain with a due-now wake.
     expect(alarmWrites).toBe(1);
     expect(activationCalls).toBe(1);
     expect(activationAlarm).not.toBeNull();
-    expect(activationAlarm!).toBeLessThanOrEqual(Date.now() + 1_000);
+    expect(activationAlarm!).toBeGreaterThanOrEqual(activationStartedAt + 30_000);
+    expect(activationAlarm!).toBeLessThanOrEqual(activationSettledAt + 30_000);
   });
 
   it("message writes are idempotent across the whole path", async () => {
