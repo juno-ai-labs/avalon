@@ -91,7 +91,11 @@ and it decides nothing.
 
 `rescore.ts` re-derives that objective from stored runs without calling the
 provider, which is what made the price list a thing that can change without
-re-running the population.
+re-running the population. Nothing derived is *stored*: a report in `reports/`
+holds the provider's answer for each case and nothing computed from it, because a
+stored score is wrong the moment the price list or the gate rule moves — and both
+have moved here. `scoreCase` in [`run.ts`](run.ts) is the one place the derivation
+lives, and it runs at read time.
 
 ## Running it
 
