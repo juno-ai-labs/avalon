@@ -139,7 +139,15 @@ export class SubstreamCreationService {
     // Recheck authority after inference, before exposing the captured content.
     await span.step("substream.prepare.authority.recheck", () => this.parent(parentId));
     try {
-      await span.step("substream.prepare.child.warm", () => childWarmup.get());
+      const warmed = await span.step("substream.prepare.child.warm", () => childWarmup.get());
+      logStructuredEvent(this.env, "info", "substream_child_warmed", {
+        operation_id: operation.operationId,
+        workspace_id: this.auth.workspaceId,
+        workstream_id: parentId,
+        substream_id: reservedSubstreamId,
+        object_id: warmed.objectId,
+        authority_mode: warmed.authorityMode,
+      });
     } catch (error) {
       logStructuredEvent(this.env, "warn", "substream_child_warm_failed", {
         operation_id: operation.operationId,

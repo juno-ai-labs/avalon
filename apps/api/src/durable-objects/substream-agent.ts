@@ -1234,8 +1234,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * after the other. Deliberately without side effects — it must stay something
    * that is free to call on an object nobody has asked for yet.
    */
-  async wake(): Promise<void> {
+  async wake(): Promise<{
+    objectId: string;
+    authorityMode: "unclaimed" | "preparing" | "authoritative";
+  }> {
     await this.storageReady;
+    const root = this.state.storage.sql.exec<{ authority_mode: "preparing" | "authoritative" }>(
+      `SELECT authority_mode FROM workstream WHERE id = 1`,
+    ).toArray()[0];
+    return {
+      objectId: this.state.id.toString(),
+      authorityMode: root?.authority_mode ?? "unclaimed",
+    };
   }
 
   async applyPrivateChildLifecycle(input: {
