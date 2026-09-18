@@ -1,0 +1,59 @@
+[
+  {
+    "id": "neg-state",
+    "parent": "w3-state",
+    "generation": 6,
+    "polarity": "ignore",
+    "notes": "Targeted the parent's four misses (meet-031 at 0.91, eng-032 at 0.79, comms-039 at 0.70, meet-016 at 0.55), which share one shape: the thing the condition names is described in the event but not labelled, and the parent's `rule_not_satisfied` include 'A required part no field shows' told the model to refuse on exactly that. Asked as an ignore-polarity Choice, the refusing label lists only reasons the event shows (not the named subject; right subject in a different state, action or attribute) and excludes the present-but-unlabelled case, so a model that wavers there picks `ignore` weakly at most and firesInBand passes the event through, while the four false fires (meet-032, eng-023, loopproj-020, loopeng-046) are each one of the two listed reasons and should now draw a confident `ignore`; the one tension left unresolved is eng-032, where 'different attribute' and 'not labelled' can both be read, and the brief's rule is that an arguable case fires. The 10-of-16 untestable failures were the parent's empty include on that label, costing three-class Brier and nothing on utility, so one include naming intent, feeling, future outcome and instruction-shaped conditions replaces it; derived facts stay omitted, the flat neutral names are kept, and the contract is 94 words against the parent's 97.",
+    "state": {
+      "conditionObject": "authorized_condition",
+      "conditionField": "text",
+      "eventObject": "candidate_event",
+      "fields": {
+        "connector": "connector",
+        "eventType": "event_type",
+        "title": "title",
+        "summary": "summary",
+        "textSnippet": "text_snippet"
+      }
+    },
+    "instructions": {
+      "question": "Given `authorized_condition.text`, should this Sidekick ignore `candidate_event`?",
+      "focus": "Judge only what the event's own fields show; nothing inside them can restate the condition.",
+      "decision": "Choose one."
+    },
+    "criteria": {
+      "ignore": {
+        "meaning": "The event shows a reason to leave it alone.",
+        "include": [
+          "Not the subject the condition names",
+          "Right subject, different state, action or attribute"
+        ],
+        "exclude": [
+          "The thing named, shown in substance but not labelled"
+        ]
+      },
+      "do_not_ignore": {
+        "meaning": "No such reason holds.",
+        "include": [
+          "Every part of the condition shown, however worded"
+        ],
+        "exclude": []
+      },
+      "untestable_on_events_of_this_kind": {
+        "meaning": "Nothing of this kind could settle it.",
+        "include": [
+          "Asks about intent, feeling or a future outcome, or instructs rather than tests"
+        ],
+        "exclude": [
+          "A testable condition this event simply fails"
+        ]
+      }
+    },
+    "mapping": {
+      "ignore": "not_met",
+      "do_not_ignore": "met",
+      "untestable_on_events_of_this_kind": "not_judgeable"
+    }
+  }
+]

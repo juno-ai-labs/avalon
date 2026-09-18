@@ -317,6 +317,34 @@ re-scored under a new price list without calling the provider, which is what mak
 "what would this have ranked under the corrected objective" a minute's work rather
 than a re-run with fresh sampling noise on top.
 
+**A price list fixes the decision rule, so derive it before arguing about the
+threshold.** Writing `p` for the probability the classifier's positive answer is
+right and `c`, `f`, `m` for the weights on a correct decision, a false positive and
+a miss, acting beats not acting when `p > (c − f) / (2c − f − m)`. Rally's semantic
+trigger gate prices those at 1, 0 and −2, so its optimal gate fires whenever a
+calibrated P(match) exceeds **0.25** and never lower. That number settles an
+argument that otherwise has no floor: "a miss is expensive, so err towards acting"
+is true, and it stops being true at one in four, because below that the cases being
+picked up are mostly negatives and three cheap errors cost as much as the expensive
+one they avoid. The confidence a Choice reports is not `p` and is usually not
+calibrated, so the operating point still comes from a sweep — but the derived
+number tells you which direction a sweep result can be trusted in.
+
+**Inverting the question to change which way uncertainty falls is worth trying and
+did not work here.** A positive question fires on a confident yes, so every
+hesitant right answer is scored as the expensive error. Asking the negative
+question instead — "should this be ignored?", refusing only on a confident yes —
+inverts that, and on the semantic trigger corpus it did exactly what it was
+designed to do: misses fell to near zero and recall reached 99%. It lost anyway,
+for two reasons worth knowing in advance. The bill was 60 to 75 unwanted
+invocations per 151 cases, which is what firing at P(match) ≈ 0.05 costs against a
+derived floor of 0.25. And the negation **damaged the label itself**: compared at a
+threshold of zero, where the fall-through is inactive and only the question
+differs, three-class accuracy fell 10 to 16 points and the fire-decision Brier
+roughly doubled. The model is worse at the discrimination when asked to find a
+reason to refuse than when asked to find a reason to act, and that is not a wording
+problem another generation fixes.
+
 ## Measure latency end to end
 
 JEV reports provider evaluation time, but the user pays end-to-end request
