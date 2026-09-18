@@ -283,13 +283,32 @@ export type EngineeringArtifactTargetLookup = z.infer<
   typeof EngineeringArtifactTargetLookupSchema
 >;
 
+/**
+ * `sidekickId` and `artifactId` are **optional and omitted**, not nullable like
+ * the two ids above them, and that asymmetry is load-bearing rather than
+ * untidy.
+ *
+ * This object is `strict`, and the MCP Worker parses every regional SQL
+ * response through it. `.github/workflows/deploy-api.yml` deploys the regional
+ * Workers first and the MCP last, so mid-rollout an upgraded bridge answers an
+ * MCP still running the previous build of this schema. A required key — even a
+ * nullable one — is an unknown key to that build, and strict parsing would
+ * reject it: every existing SQL tool would fail for the length of the window.
+ * Omitting the key instead leaves the three pre-existing results byte-identical
+ * to what the old schema expects, while an older region that does not send them
+ * still parses here.
+ *
+ * So a result carries only the id naming the kind of object it ran against.
+ * Making these required, or adding the next object kind's id as a required
+ * field, reintroduces the same rollout break.
+ */
 export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema.nullable(),
   substreamId: SubstreamIdSchema.nullable(),
-  sidekickId: AutomationIdSchema.nullable(),
-  artifactId: ArtifactIdSchema.nullable(),
+  sidekickId: AutomationIdSchema.optional(),
+  artifactId: ArtifactIdSchema.optional(),
   result: InspectionSqlResultSchema,
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;

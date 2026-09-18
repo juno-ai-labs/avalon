@@ -467,8 +467,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.workspaceId,
         workstreamId: null,
         substreamId: null,
-        sidekickId: null,
-        artifactId: null,
         result: await workspace.runInspectionSql(request.query),
       },
     });
@@ -490,8 +488,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: route.workspace_id,
         workstreamId: route.workstream_id,
         substreamId: null,
-        sidekickId: null,
-        artifactId: null,
         result: await workstream.runInspectionSql(request.query),
       },
     });
@@ -523,8 +519,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.workspaceId,
         workstreamId: request.workstreamId,
         substreamId: request.substreamId,
-        sidekickId: null,
-        artifactId: null,
         result: await substream.runInspectionSql(request.query),
       },
     });
@@ -551,7 +545,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workstreamId: null,
         substreamId: null,
         sidekickId: request.sidekickId,
-        artifactId: null,
         result: await sidekick.runInspectionSql(request.query),
       },
     });
@@ -581,7 +574,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.workspaceId,
         workstreamId: null,
         substreamId: null,
-        sidekickId: null,
         artifactId: request.artifactId,
         result: await artifact.runInspectionSql(request.query),
       },
