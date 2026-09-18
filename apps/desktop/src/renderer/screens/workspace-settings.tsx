@@ -809,6 +809,19 @@ export function WorkspaceSettingsScreen({
       void queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] });
     },
   });
+  // Promotion and demotion are the same write, so they are the same mutation:
+  // a `promote`/`demote` pair would be two pending states and two error slots
+  // for one field with two values.
+  const setMemberRole = useMutation({
+    mutationFn: (input: { userId: string; role: 'admin' | 'member' }) =>
+      api!.setWorkspaceMemberRole(input.userId, input.role),
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+      // The viewer may have just demoted themselves, and `workspace` is where
+      // the role that draws these controls comes from.
+      queryClient.invalidateQueries({ queryKey: ['workspace'] }),
+    ]),
+  });
   const revokeInvitation = useMutation({
     mutationFn: (id: string) => api!.revokeWorkspaceInvitation(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
@@ -1305,16 +1318,48 @@ export function WorkspaceSettingsScreen({
                       <span><strong>{member.name}</strong><small>{member.email}</small></span>
                       <div className="settings-member-actions">
                         <Badge className="role-badge">{member.accessClass === 'guest' ? 'Guest' : member.role ?? 'member'}</Badge>
+                        {/*
+                          * Two promotions meet on this row and neither is the
+                          * other: a guest holds no role at all and is made a
+                          * member first, while a member is handed the same
+                          * powers the viewer is using right now. The owner has
+                          * no control beside them either way — their role is
+                          * the one the server refuses to reassign, so drawing a
+                          * button that can only fail is worse than drawing none.
+                          */}
                         {isAdmin && member.accessClass === 'guest' && member.incarnation && member.revision && (
                           <Button disabled={promoteGuest.isPending} aria-label={`Make ${member.name} a member`}
                             onClick={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
                             Make member
                           </Button>
                         )}
+                        {isAdmin && member.role !== 'owner' && member.status !== 'invited'
+                          && member.accessClass !== 'guest' && (
+                          <Button
+                            // The visible label is the same on every row, which is
+                            // all a sighted reader needs — the row it sits in says
+                            // who it acts on. A screen reader announces the button
+                            // alone, so the accessible name carries the person.
+                            // The email is in it because two people can share a
+                            // display name, and the roster is exactly where that
+                            // collision shows up.
+                            aria-label={member.role === 'admin'
+                              ? `Remove administrator access from ${member.name} (${member.email})`
+                              : `Make ${member.name} (${member.email}) an administrator`}
+                            disabled={setMemberRole.isPending}
+                            onClick={() => setMemberRole.mutate({
+                              userId: member.id,
+                              role: member.role === 'admin' ? 'member' : 'admin',
+                            })}
+                          >
+                            {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+                {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
                   description={`${promotion?.name ?? 'This guest'} will gain normal workspace membership. Existing conversations and contributions stay with their account.`}>
@@ -1344,7 +1389,7 @@ export function WorkspaceSettingsScreen({
                         <span><SettingLabel setting={settings.inviteRole} /></span>
                         <select onChange={(event) => setRole(event.target.value as 'admin' | 'member')} value={role}>
                           <option value="member">Member</option>
-                          {workspace.currentUser.role === 'owner' && <option value="admin">Administrator</option>}
+                          <option value="admin">Administrator</option>
                         </select>
                       </label>
                       <Button className="button-primary" disabled={!email.trim() || createInvitation.isPending} type="submit">
