@@ -4,8 +4,9 @@ Scoped invitations offer Main, individual children or a workstream to verified
 email recipients. The invitation and resulting grants live in the same
 WorkstreamDO. The [lite browser entry](browser-client.md) accepts invitations through this
 protocol. The shared email panel creates and revokes pending invitations from
-the browser conversation header or native participant dialog. The same panel manages direct accepted grants. Remaining participant-writer
-and lifecycle integration are still in progress.
+the browser conversation header or native participant dialog. The same panel manages direct accepted grants. Participant mutations use the
+parent grant ledger after first-share handoff; transcript execution stays in the
+conversation owner.
 
 ## Where the code lives
 

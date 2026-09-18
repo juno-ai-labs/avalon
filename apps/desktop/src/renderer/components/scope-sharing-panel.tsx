@@ -71,13 +71,17 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
       ? 'At least one participant must retain access.' : 'You can no longer remove this share. Refresh and try again.');
   }, onSuccess: refresh });
   const pending = invite.isPending || revoke.isPending || removeGrant.isPending;
-  return <section className="scope-sharing-panel" aria-label="Share by email">
+  const loadingInvitations = invitationQueries.some((query) => query.isPending);
+  const loadingGrants = grantQueries.some((query) => query.isPending);
+  const refreshing = options.isFetching || invitationQueries.some((query) => query.isFetching) || grantQueries.some((query) => query.isFetching);
+  return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={options.isPending || loadingInvitations || loadingGrants}>
     <form onSubmit={(event) => { event.preventDefault(); setNotice(null); invite.mutate(); }}>
       <h3>Invite by email</h3>
       <label>Email addresses<textarea aria-label="Email addresses" value={emails} disabled={pending}
         onChange={(event) => setEmails(event.target.value)} placeholder="person@example.com" rows={2} /></label>
-      <fieldset disabled={pending}>
+      <fieldset disabled={pending || options.isPending}>
         <legend>Access</legend>
+        {options.isPending && <p role="status">Loading sharing options…</p>}
         {options.data?.completeWorkstreamTargets ? <label className="scope-sharing-choice">
           <input type="checkbox" checked={completeWorkstream} onChange={(event) => setCompleteWorkstream(event.target.checked)} />
           Complete workstream, including existing restricted substreams
@@ -97,6 +101,9 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
     </form>
     {notice ? <p role="status">{notice}</p> : null}
     {invite.error || revoke.error || removeGrant.error ? <InlineError>{invite.error?.message ?? revoke.error?.message ?? removeGrant.error?.message}</InlineError> : null}
+    <h3>Invitations</h3>
+    {loadingInvitations && <p role="status">Loading invitations…</p>}
+    {!loadingInvitations && invitationQueries.every((query) => query.isSuccess && query.data.status === 'ready') && invitations.length === 0 && <p>No invitations for the selected scopes.</p>}
     {invitationQueries.some((query) => query.isError) ? <p role="alert">Unable to load invitations. <button type="button" onClick={() => { void refresh(); }}>Retry</button></p> : null}
     {invitations.length > 0 ? <ul aria-label="Invitations">
       {invitations.map((invitation) => <li key={invitation.id}>
@@ -106,8 +113,10 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
     </ul> : null}
     <h3>Direct shares in selected scopes</h3>
     <p>Removing one share leaves access from other shares intact.</p>
+    {loadingGrants && <p role="status">Loading direct shares…</p>}
+    {!loadingGrants && grantQueries.every((query) => query.isSuccess && query.data.status === 'ready') && grants.length === 0 && <p>No direct shares for the selected scopes.</p>}
     {grantQueries.some((query) => query.isError) ? <p role="alert">Unable to load direct shares.</p> : null}
-    <button type="button" disabled={pending} onClick={() => { void refresh(); }}>Refresh shares</button>
+    <button type="button" disabled={pending || refreshing} onClick={() => { void refresh(); }}>Refresh shares</button>
     {grants.length > 0 ? <ul aria-label="Direct shares">{grants.map((entry) => {
       const label = options.data?.scopes.find((scope) => scopeKey(scope.target) === scopeKey(entry.grant.target))?.title ?? 'Selected scope';
       const person = entry.name ?? entry.email ?? 'Former member';

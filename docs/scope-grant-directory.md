@@ -30,6 +30,8 @@ The WorkspaceDO index supplies candidates only. Directory reads admit each candi
 at its canonical parent concurrently and preserve ordering. A final relationship
 incarnation/revision check fences the combined response. Main-derived titles and
 appearance are withheld for child-only shares; workspace identity remains visible.
+The response preserves parent archive state separately from each conversation,
+so clients do not offer a child restore while its parent is archived.
 
 ## Invariants
 

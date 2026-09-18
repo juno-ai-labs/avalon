@@ -639,6 +639,7 @@ export class WorkspaceService {
     }
     // The membership trigger records a durable relationship delivery. Promotion
     // preserves the incarnation, so its delivery refreshes views without logout.
+    await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId });
     return result.relationship;
   }
 
