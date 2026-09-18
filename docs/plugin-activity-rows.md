@@ -33,7 +33,7 @@ them.
 | `apps/desktop/src/renderer/lib/types.ts` | `WorkTotal` — the one shape a settled total has, carried by `workSummary` in a message header and by `workAccordion` on the row over the run, so the total can move between them without the two drifting apart. `WorkSpan` — when a row's work happened, carried by `workSpans`, which is what a stretch of several rows is added up by. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it; `WorkAccordionBlock` is the closed row a reported-on stretch becomes, and `WorkAccordionRow` draws what is inside it through those same two blocks. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
-| `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
+| `packages/ui/src/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row; `.work-accordion` and its toggle. |
 | `apps/desktop/src/renderer/components/message-feed.tsx` | Holds which rows a reader has opened, above the virtual window, and hands it to every row as `RowDisclosure`. |
 
 ### What the transcript carries

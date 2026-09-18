@@ -61,10 +61,8 @@ import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
-import {
-  MigratableDurableObject,
-  type DurableObjectMigrationPlan,
-} from "./migratable-durable-object";
+import { InternallyInspectableDurableObject } from "./internally-inspectable-durable-object";
+import { type DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -298,7 +296,17 @@ export interface ArtifactSessionCheck {
   manifest?: ArtifactManifest;
 }
 
-export class ArtifactHostDO extends MigratableDurableObject<Env> {
+/**
+ * Inspectable rather than merely migratable, which is the one thing about this
+ * declaration that is not obvious. The base above `MigratableDurableObject`
+ * adds `runInspectionSql`, the unrestricted operator SQL RPC the engineering
+ * MCP reaches through the private regional bridge — this object is not a
+ * scheduled authority, so it does not pick the RPC up from the scheduler the
+ * way WorkspaceDO and its siblings do, and inheriting it is deliberate.
+ * `docs/engineering-mcp.md` owns what that RPC admits; it reaches this
+ * supervisor's own database and never the facet's.
+ */
+export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly initialized: Promise<void>;
   /**
