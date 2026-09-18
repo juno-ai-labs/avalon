@@ -159,11 +159,11 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
     )`),

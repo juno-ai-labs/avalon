@@ -175,6 +175,14 @@ this field existed are not rewritten.
 
 ### Access
 
+The lite browser uses the existing browser platform adapter to open an authorized
+site in another tab. It does not require the Electron-only native preview bridge.
+Artifact open, error, and data API routes accept both member and guest workspace
+relationships; `ArtifactOpenService` applies the same resource authorization to
+both. A guest receives viewer identity only for a resource exposed in their
+shared scope. This does not change public content serving below.
+
+
 Artifact content is public by default. A direct browser, crawler, or unfurler
 can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
 current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
@@ -195,8 +203,8 @@ This makes the handler's check an authorization boundary rather than a
 guessable-URL convention. The site-building skill teaches this shape explicitly.
 
 `POST /resources/:id/artifact/open` mints a single-use code against current
-work-stream visibility — asked of `WorkstreamDO` rather than inferred, because
-that fact lives in its own SQL. A resource that does not exist and one the
+canonical resource access — current membership plus an accessible conversation
+attachment, including a child-only grant. Legacy parent visibility is insufficient. A resource that does not exist and one the
 caller cannot see produce the same 404, so the endpoint is not an existence
 oracle. **The code never travels in a request URL.** The desktop lands on
 `/__rally/open#<code>`, where a Rally-served bootstrap page reads
@@ -384,8 +392,9 @@ facet that holds a stateful artifact's data. It does not own:
   ordinary resource row; [`agent-attachments.md`](agent-attachments.md) and the
   versioning layer own those, and this module adds a resource type and an
   attachment kind to them.
-- **Work-stream visibility.** It is not a D1 fact and never travels on the
-  revocation queue — `WorkstreamDO` answers it, and the supervisor asks.
+- **Resource visibility.** The canonical authorization service composes current
+  membership, conversation grants and attachment exposure; the supervisor asks
+  it before serving an authenticated request.
   [`access-revocation.md`](access-revocation.md) owns why those two mechanisms
   must never be merged.
 - **The Terminal sandbox.** [`terminal-workspaces.md`](terminal-workspaces.md)
@@ -406,12 +415,12 @@ facet that holds a stateful artifact's data. It does not own:
   per-artifact log (50 entries), which no client surface currently reads (see
   the changelog entry for 2026-09-10), so recovering it means asking for it
   back into chat.
-- **A viewer loses work-stream visibility.** Their next eligible request loses
+- **A viewer loses resource visibility.** Their next eligible request loses
   its Rally identity and receives the anonymous public representation. A
   protected active site's own early header guard then returns 401; a public site
   continues serving it. `VISIBILITY_CACHE_MS` bounds how long a removed viewer
   may still receive identity and **ships at the open value of zero** — every
-  request re-asks `WorkstreamDO` — because that security window is the team's
+  request rechecks canonical resource admission — because that security window is the team's
   number to set rather than this code's to guess.
 - **Viewer identity cannot be checked.** Identity is an optional enhancement to
   public serving, so a failed visibility hop falls back to the anonymous
@@ -511,9 +520,27 @@ container, since the rows were written by model code and page visitors while the
 host class that reads them is Rally's and cannot be shadowed; and the serving
 Worker's waistline is deliberately minimal. Artifact content is intentionally
 public unless its active handler requires the trusted viewer header; error logs,
-data tools, publication, and revision remain work-stream-authorized. A
+and inspection data require canonical resource access; publication and revision
+retain their execution-scope authorization. A
 compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
+
+## Changelog
+
+### 2026-09-17 — Admit artifact viewers through shared resource authority
+
+Child-only guests need access to sites attached to their shared conversation,
+while workspace-public parent visibility must not expose unrelated artifacts.
+Opening and inspecting a site now use canonical resource authorization, and the
+supervisor repeats that decision for viewer sessions. A failed authority check
+cannot reuse an earlier allowed answer; the serving Worker handles unavailable
+identity through its existing anonymous-serving policy. Public site behavior is
+unchanged. Keep session revocation and resource exposure as separate authorities.
+
+The open/error/data HTTP routes admit guest workspace relationships before the
+existing resource proof. Using the member-only accessor rejected the guest before
+that proof could run. The browser uses the existing external-navigation adapter;
+no native preview or new site authorization layer is required.
 
 ### 2026-09-13 — The revision loop's import half is connected
 

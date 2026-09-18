@@ -1,3 +1,4 @@
+import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import type { SqlStorageCursor, SqlStorageValue } from "@cloudflare/workers-types";
 import {
   WorkstreamAppearanceSchema,
@@ -394,21 +395,26 @@ export class WorkstreamIdentityStorage {
     addedByUserId: string | null;
     reason: string;
     now: number;
-  }): { userId: string; outcome: ParticipantAdmission; participationReason: string; addedAt: number }[] {
-    return this.storage.transactionSync(() => input.userIds.map((userId) => {
-      const seated = this.seat({
-        userId,
-        addedByUserId: input.addedByUserId ?? userId,
-        reason: input.reason,
-        now: input.now,
+  }): { userId: string; outcome: ParticipantAdmission; participationReason: string; addedAt: number }[] | null {
+    return this.storage.transactionSync(() => {
+      // Report the handoff in the existing admission RPC. Ordinary connector
+      // turns must not resolve a parent just to discover the local writer.
+      if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) return null;
+      return input.userIds.map((userId) => {
+        const seated = this.seat({
+          userId,
+          addedByUserId: input.addedByUserId ?? userId,
+          reason: input.reason,
+          now: input.now,
+        });
+        return {
+          userId,
+          outcome: seated.outcome,
+          participationReason: seated.participationReason,
+          addedAt: seated.addedAt,
+        };
       });
-      return {
-        userId,
-        outcome: seated.outcome,
-        participationReason: seated.participationReason,
-        addedAt: seated.addedAt,
-      };
-    }));
+    });
   }
 
   /**
@@ -480,41 +486,46 @@ export class WorkstreamIdentityStorage {
    * batch, and the reason it was a batch: the promotion and the demotion are
    * one fact about who this work stream belongs to, and a work stream with two
    * creators or none is what a partial application leaves behind.
+   *
+   * After participant handoff this method changes attribution only. The caller
+   * admits through the parent grant ledger; source participant writes stay fenced.
    */
   adoptCreator(input: {
     userId: string;
     previousAssignedUserId: string | null;
     mayCorrectVerifiedCreator: boolean;
     now: number;
-  }): { outcome: "adopted" | "seated" } {
+  }): { outcome: "adopted" | "seated" | "unchanged"; participantAuthority: "legacy" | "grants" } {
     return this.storage.transactionSync(() => {
       const root = this.identity();
       if (!root) throw new Error("workstream_identity_target_missing");
       const previousCreator = root.created_by_user_id;
+      const participantAuthority = new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null
+        ? "legacy" as const : "grants" as const;
       const makeCreator = previousCreator === null || (
         input.mayCorrectVerifiedCreator
         && input.previousAssignedUserId !== null
         && previousCreator === input.previousAssignedUserId
       );
-      this.seat({
+      if (participantAuthority === "legacy") this.seat({
         userId: input.userId,
         addedByUserId: input.userId,
         reason: "explicit",
         now: input.now,
       });
-      if (!makeCreator) return { outcome: "seated" as const };
+      if (!makeCreator) return { outcome: participantAuthority === "legacy" ? "seated" as const : "unchanged" as const, participantAuthority };
       this.sql.exec(
         `UPDATE workstream SET created_by_user_id = ?, updated_at = ? WHERE id = 1`,
         input.userId,
         input.now,
       );
-      this.sql.exec(
+      if (participantAuthority === "legacy") this.sql.exec(
         `UPDATE participants SET participation_reason = 'creator', updated_at = ?
           WHERE user_id = ?`,
         input.now,
         input.userId,
       );
-      if (previousCreator !== null && previousCreator !== input.userId) {
+      if (participantAuthority === "legacy" && previousCreator !== null && previousCreator !== input.userId) {
         this.sql.exec(
           `UPDATE participants SET participation_reason = 'explicit', updated_at = ?
             WHERE user_id = ? AND participation_reason = 'creator'`,
@@ -522,7 +533,7 @@ export class WorkstreamIdentityStorage {
           previousCreator,
         );
       }
-      return { outcome: "adopted" as const };
+      return { outcome: "adopted" as const, participantAuthority };
     });
   }
 
