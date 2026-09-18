@@ -425,6 +425,33 @@ to review rather than less.
 **Changes:** Nothing in the agreed scope. Rollout's "ship workspace scope first,
 personal MCP second if sequencing demands" is answered: it did not.
 
+### 2026-09-18 — The workspace scope is withdrawn, and the event-subscription step with it
+
+**Decided:** Fireflies connects personally only. The adapter declares
+`connectableScopes: ["personal"]`, the setup route and its two-stage dialog are
+deleted, and the **Manage events** window is not offered for it. Connections
+made while the scope was open keep their tools, their webhook ingress and their
+activity; `supportedScopes` still carries `workspace` so they do.
+
+**Why:** One administrator-pasted key is every member's read of every meeting
+that key can see — including calls whose participants never agreed to that — and
+Fireflies publishes no field saying what the key covers, so Rally cannot state
+the blast radius even to the person pasting it. No new workspace connector of
+that shape is being taken until the authorization model says who may read which
+meeting. The setup it removes also walked an administrator through ticking event
+subscriptions in Fireflies and, in **Advanced**, reading signing-key rotation
+guidance: which events a connector needs is the connector's to know, and key
+rotation is a webhook console rather than a product surface.
+
+**Changes:** The workspace scope in *Connecting — workspace scope* is withdrawn
+rather than deferred: reversing this needs an authorization model for who may
+read a workspace connection's meetings, not a scheduling decision. Design
+decision 1's two-scope split and the 2026-09-13 entry *Both scopes ship
+together* are superseded for connecting; the workspace adapter itself, its
+tools and its ingress are unchanged and still serve existing connections.
+The workspace half of *Acceptance* can only be exercised against a connection
+that already exists.
+
 ## Key design decisions
 
 1. **Mirror Granola's two-scope split, and adopt the connector installation

@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ConnectorOAuthProvider, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
   workspaceTargetsEqual,
@@ -25,6 +25,9 @@ import type {
 import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
+import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
+import { CollaborationSessionProvider, type PendingConnectorOAuth } from './collaboration-session';
+export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
@@ -53,16 +56,6 @@ const connectorProviderNames = {
 export interface PendingInvitation {
   token: string;
   region: Region;
-}
-
-export interface PendingConnectorOAuth {
-  source?: 'onboarding' | 'conversation';
-  connectorId?: string;
-  scope?: 'personal' | 'workspace';
-  attemptId: string;
-  provider: ConnectorOAuthProvider;
-  region: Region;
-  workspaceId: string;
 }
 
 /** The account menu's directory; whoever restores the account identity invalidates it. */
@@ -170,6 +163,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'onDeepLink'
   | 'onSessionChanged'
   | 'openExternal'
+  | 'openSidekicks'
   | 'openSettings'
   | 'refreshSession'
   | 'reselectActiveWorkspace'
@@ -1219,7 +1213,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     ],
   );
 
-  return <AppSessionContext.Provider value={value}>{children}</AppSessionContext.Provider>;
+  const createSidekick = useCallback(() => bridge.openSidekicks(NEW_SIDEKICK_TARGET), [bridge]);
+  const connectorSetup = useMemo(() => ({ pendingConnectorOAuth, setPendingConnectorOAuth,
+    openExternal: (url: string) => bridge.openExternal(url) }), [bridge, pendingConnectorOAuth]);
+  return <AppSessionContext.Provider value={value}>
+    <CollaborationSessionProvider api={api} session={session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
+  </AppSessionContext.Provider>;
 }
 
 export function useAppSession(): AppSessionValue {

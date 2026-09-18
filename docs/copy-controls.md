@@ -47,8 +47,8 @@ before it has something to say.
 
 `CopyField` is the composition for a value shown to be copied rather than read:
 a `<label>` over a read-only `<input>`, the control in the same grid row, and
-`secret` to mask the value. The Fireflies setup and the inbound-webhook result
-both render two of them, an endpoint and a secret.
+`secret` to mask the value. The inbound-webhook result renders two of them, an
+endpoint and a secret.
 
 ## Invariants
 
@@ -70,8 +70,8 @@ both render two of them, an endpoint and a secret.
   keeps every control showing an outcome for the same time.
 - **A copy is never silent.** The glyph, the name, and the live region change
   together. A control that can fail without saying so is the defect this
-  replaced: the Fireflies dialog's secret cannot be read back off the screen,
-  so a failed copy there had to be a thing the administrator is shown.
+  replaced: a one-time secret cannot be read back off the screen, so a failed
+  copy there had to be a thing the administrator is shown.
 - **The control is an icon, and the label is its tooltip.** A text button
   saying "Copy endpoint" under a field captioned "Endpoint URL" was the shape
   this replaced everywhere it appeared.
@@ -107,9 +107,9 @@ provider above it.
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.test.tsx` | The control: an icon named by its label with a tooltip, the outcome in its name, class and live region, the failed state's retry, and `CopyField`'s read-only and masked fields. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.node.test.ts` | Nothing goes round it: the bridge's direct callers are the menu items, and the hook is the only timer. |
 
-The surfaces' own tests — the Fireflies setup, the inbound-webhook dialog, the
-invite link, the inspector rail, the run-failure notice, the site detail, the
-code block — assert on the control by its accessible name.
+The surfaces' own tests — the inbound-webhook dialog, the invite link, the
+inspector rail, the run-failure notice, the site detail, the code block —
+assert on the control by its accessible name.
 
 ### 2026-09-13 — One icon control for every copy affordance
 

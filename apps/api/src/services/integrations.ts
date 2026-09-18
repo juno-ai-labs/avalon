@@ -159,7 +159,11 @@ import {
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
-import { createAgentInferenceLogger, logAgentInferencePrepared } from "./agent-inference-logging";
+import {
+  createAgentInferenceLogger,
+  logAgentInferencePrepared,
+  type AgentInferencePreparationBreakdown,
+} from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -2649,13 +2653,16 @@ export async function runWorkstreamHarness(
     const authority = await readRunAuthority(env, input);
     return { ...authority, readyAtMs: Date.now() };
   });
-  const persistedHostOutcomePreparation = new Preparation(() => loadPersistedHarnessHostOutcome(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    input,
-  ));
+  const persistedHostOutcomePreparation = new Preparation(() =>
+    loadPersistedHarnessHostOutcome(
+      createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+      input,
+    ));
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  let recommendationRead: Promise<string[]> | undefined;
-  const readRecommendations = () => recommendationRead ??= recommendedSidekickRefs(env, input);
+  const recommendationState: { preparation: Preparation<string[]> | null } = { preparation: null };
+  const readRecommendations = () => (
+    recommendationState.preparation ??= new Preparation(() => recommendedSidekickRefs(env, input))
+  ).get();
   const sidekickSourcesPreparation = new Preparation(async () => {
     const { principalIsGuest } = await authorityPreparation.get();
     return resolveSidekickSkills(env, input, principalIsGuest,
@@ -2748,7 +2755,9 @@ export async function runWorkstreamHarness(
   const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
   runDefinitionPreparation.get();
   inventoryPreparation.get();
+  const leaseHeartbeatStartedAtMs = Date.now();
   await liveness.pulse("run_start", true);
+  const leaseHeartbeatMs = Date.now() - leaseHeartbeatStartedAtMs;
   const promptPreparation = new Preparation(() => loadRunPromptContext(
     env, input, attemptLease, workstream, runDefinitionPreparation,
   ));
@@ -2760,6 +2769,7 @@ export async function runWorkstreamHarness(
   toolsPreparation.get();
   const requiresCanonicalBootstrap = !runtime.persistentLoop
     || runtime.persistentLoop.projection === null;
+  const transcriptBootstrapStartedAtMs = Date.now();
   const orderedTranscript = createTranscriptObjectPort(
     env,
     input.workspaceId,
@@ -2811,6 +2821,7 @@ export async function runWorkstreamHarness(
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
+  const transcriptBootstrapMs = Date.now() - transcriptBootstrapStartedAtMs;
   const rawModelMessages = [
     ...renderSubstreamInitialContext(initialContext),
     ...(priorCompaction?.messages ?? []),
@@ -3081,6 +3092,24 @@ export async function runWorkstreamHarness(
     initialAuthorityReadyAtMs,
     harnessInputsReadyAtMs,
     preparationFinishedAtMs: inferencePreparationFinishedAtMs,
+    breakdown: {
+      initialIdentityRunMs: Math.max(identityPreparation.elapsedMs ?? 0, initialRunPreparation.elapsedMs ?? 0),
+      persistedOutcomeMs: persistedHostOutcomePreparation.elapsedMs ?? 0,
+      initialRunAuthorityMs: authorityPreparation.elapsedMs ?? 0,
+      sidekickAuthorityMs: sidekickSourcesPreparation.elapsedMs ?? 0,
+      sidekickRecommendationsMs: recommendationState.preparation?.elapsedMs ?? 0,
+      leaseHeartbeatMs,
+      runContextMs: promptPreparation.elapsedMs ?? 0,
+      memoryContextMs: promptContext.memoryContextMs,
+      transcriptBootstrapMs,
+      toolInventoryMs: inventoryPreparation.elapsedMs ?? 0,
+      toolConstructionMs: toolsPreparation.elapsedMs ?? 0,
+      attachmentReplayMs: attachmentGroundingPreparation.elapsedMs ?? 0,
+      transcriptBootstrapRequired: requiresCanonicalBootstrap,
+      sidekickSnapshotReused: storedSidekickSkills !== null,
+      sidekickRecommendationsRead: recommendationState.preparation !== null,
+      memoryRecallRequired: promptContext.memoryRecallRequired,
+    } satisfies AgentInferencePreparationBreakdown,
   });
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
@@ -4517,6 +4546,8 @@ async function loadRunPromptContext(
   systemPrompt: string;
   additionalMessages: ModelMessage[];
   memoryContextHash: string | null;
+  memoryContextMs: number;
+  memoryRecallRequired: boolean;
 }> {
   // An automation the room does not own sends its own result outward, so its
   // result is read wherever it sent it, not in Rally, and nothing sends its
@@ -4696,14 +4727,15 @@ async function loadRunPromptContext(
       eventCount: digestWindow.eventCount,
     }), "digest_delivery", input.digestDeliveryId);
   }
-  const frozenMemory = recallsMemoryAtAdmission
-    ? await freezeRunMemoryContext(
+  const memoryContextPreparation = recallsMemoryAtAdmission
+    ? new Preparation(() => freezeRunMemoryContext(
         env,
         input,
         lease,
         memoryQueryParts.filter(Boolean).join("\n\n"),
-      )
+      ))
     : null;
+  const frozenMemory = memoryContextPreparation ? await memoryContextPreparation.get() : null;
   if (frozenMemory && frozenMemory.results.length > 0) {
     additionalMessages.push(modelDerivative({
       role: "user",
@@ -4742,6 +4774,8 @@ async function loadRunPromptContext(
       : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
+    memoryContextMs: memoryContextPreparation?.elapsedMs ?? 0,
+    memoryRecallRequired: recallsMemoryAtAdmission,
   };
 }
 

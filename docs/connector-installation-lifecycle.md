@@ -98,14 +98,21 @@ stays unknown. Neither a stale replacement nor a disabled connection can regain
 ordinary credentials. Explicit Test still runs repair before healthCheck; this
 credential replacement does not make automatic health or inventory a repair path.
 
-For providers without verified signing cutover, the UI describes the supported
-manual replacement: disconnect, finish removal of exact registrations, then
-connect again. It explicitly names the intervening delivery gap. Automatic
-rotation is reserved for facets with authenticated cutover evidence. The guidance
-control performs no request; it cannot turn a current installation into action
-required merely because somebody reads the instructions.
+For providers without verified signing cutover, replacement is manual:
+disconnect, finish removal of exact registrations, then connect again, with a
+delivery gap in between. That sequence is no longer written on screen — an
+administrator reading a product's settings is not being asked to run a webhook
+console — so it lives here instead. Automatic rotation is reserved for facets
+with authenticated cutover evidence.
 
 ### The all-manual provider
+
+**Fireflies accepts no new workspace connection.** One administrator's key is
+every member's read of every meeting it can see, so the scope is closed in
+`connectableScopes`; [`connectors.md`](connectors.md#fireflies) has why. The
+installations behind that door keep running, which is why this section is
+written in the present tense — but nothing creates another, and the desktop
+offers no **Manage events** window over one.
 
 Fireflies is the worked example of a provider that can automate none of this.
 It exposes no webhook create, inspect, update or delete operation anywhere in
@@ -264,10 +271,11 @@ single-count setup telemetry through real workspace and regional storage.
 `packages/connectors/src/ashby.test.ts` covers scope separation, dynamic tool
 inventory, conservative writes, signatures, pings, and the normalized allowlist.
 `connector-installation-fireflies.test.ts` drives the all-manual path end to end
-on real workerd: a rejected key reserving nothing, the one-time endpoint and
-secret, the installation moving from action required to current on its first
-verified delivery, unsigned/mis-signed/stale/unsubscribed posts writing nothing
-and verifying nothing, a replayed delivery admitting once, and the region gate.
+on real workerd, over an installation it seeds the way setup left one before the
+scope closed: the installation moving from action required to current on its
+first verified delivery, unsigned/mis-signed/stale/unsubscribed posts writing
+nothing and verifying nothing, a replayed delivery admitting once, the region
+gate, and the refusal of a new workspace connection by route and by service.
 `packages/connectors/src/fireflies.test.ts` covers the tool wire shapes and
 bounds, the provider's in-body error codes, and signature verification.
 

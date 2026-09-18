@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '../App';
 import { installTheme } from '../lib/theme';
-import '@rally/ui/styles/app.css';
+import '../styles/app.css';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Rally renderer root is missing');

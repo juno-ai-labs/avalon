@@ -26,8 +26,8 @@ import {
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
-import type { DesktopSession } from '../../common/desktop';
-import { useAppSession } from '../lib/app-session';
+import type { ClientSession } from '@rally/contracts/client-session';
+import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -76,7 +76,7 @@ import {
   type WorkstreamMessageDeliveryMode,
 } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { useWorkspaceSocket } from '../lib/workspace-socket';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import {
@@ -124,7 +124,7 @@ export function acceptedMessageOverlayDeliveryState(
   return requestedMode === 'steer' ? 'steer_pending' : 'queue_pending';
 }
 
-export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
+export function workspaceMemberFromSession(session: ClientSession | null): WorkspaceMember | undefined {
   if (!session?.workspace) return undefined;
   return {
     id: session.user.id,
@@ -133,6 +133,7 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
     timezone: session.user.timezone ?? 'America/Los_Angeles',
     ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
     role: session.workspace.role,
+    ...(session.workspace.accessClass ? { accessClass: session.workspace.accessClass } : {}),
   };
 }
 
@@ -331,7 +332,9 @@ export function AddParticipantDialog({
   onAdd,
   onRemove,
   onOpenChange,
+  sharing,
 }: {
+  sharing?: React.ReactNode;
   current: WorkspaceMember[];
   privateSubstream?: boolean;
   error?: string | undefined;
@@ -356,20 +359,21 @@ export function AddParticipantDialog({
   return (
     <Modal
       description={privateSubstream
-        ? 'Added participants can read this substream, including its inherited context. They must already have access to the parent work stream; adding them here does not grant that access.'
-        : 'Opening or viewing never adds someone as a participant. Add them explicitly here.'}
+        ? 'Added participants can read this substream and its shared context. This does not grant access to the parent work stream.'
+        : 'Add people to the main conversation. Opening or viewing never adds someone as a participant.'}
       onOpenChange={onOpenChange}
       open={open}
       title="Add a participant"
     >
       {error ? <InlineError>{error}</InlineError> : null}
+      {sharing}
       <div className="member-action-list">
         {listed.map((member) => {
           const isParticipant = currentById.has(member.id);
           if (!isParticipant) {
             return (
               <button
-                aria-label={`Add ${member.name} to ${privateSubstream ? 'substream' : 'work stream'}`}
+                aria-label={`Add ${member.name} to ${privateSubstream ? 'substream' : 'main conversation'}`}
                 className="member-action-row"
                 disabled={pending}
                 key={member.id}
@@ -403,7 +407,7 @@ export function AddParticipantDialog({
                       disabled={current.length <= 1 || pending}
                       onSelect={() => onRemove(member)}
                     >
-                      Remove from {privateSubstream ? 'substream' : 'work stream'}
+                      Remove from {privateSubstream ? 'substream' : 'main conversation'}
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
@@ -699,6 +703,10 @@ export function RunFailureNotice({
 }
 
 /** Hoisted for identity: a `?? []` per render would re-key the citation lookup. */
+const NO_MEMBERS: WorkspaceMember[] = [];
+
+const NO_WORKSPACE_PRESENCE: Record<string, string[]> = {};
+
 const NO_RESOURCES: WorkstreamDetail['resources'] = [];
 
 /**
@@ -708,9 +716,13 @@ const NO_RESOURCES: WorkstreamDetail['resources'] = [];
  */
 export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
+  sidekicks?: SidekickRow[] | undefined;
+  sidekicksError?: string | undefined;
+  loadSidekickOptions: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
   openParticipantDialog: () => void;
+  openResource: (resourceId: string, returnFocus: HTMLElement) => void;
   openRail: (variant: RailVariant) => void;
   rename: (title: string) => Promise<void>;
 }
@@ -730,6 +742,7 @@ export interface ConversationSurfaceProps {
   substreamId: string;
   /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
   workstreamContext?: WorkstreamDetail;
+  sidebarScope?: "workstream" | "conversation";
   onStartSubstream?: (throughTurnId: string) => void;
   /**
    * A substream being written in front of this conversation.
@@ -766,6 +779,7 @@ export function ConversationSurface({
   parentId: id,
   substreamId,
   workstreamContext,
+  sidebarScope = "workstream",
   renderHeader,
   renderSidebar,
   onStartSubstream,
@@ -784,8 +798,9 @@ export function ConversationSurface({
 
   const requestedSearch = useRef<string | null>(null);
 
-  const { api, session } = useAppSession();
-  const { presenceUserIdsByWorkstream } = useWorkspaceSocket();
+  const { api, session } = useCollaborationSession();
+  const workspaceSocket = useOptionalWorkspaceSocket();
+  const presenceUserIdsByWorkstream = workspaceSocket?.presenceUserIdsByWorkstream ?? NO_WORKSPACE_PRESENCE;
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
@@ -1069,22 +1084,25 @@ export function ConversationSurface({
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, id);
+  const isGuest = session?.workspace?.accessClass === 'guest';
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api && !isGuest),
     staleTime: 60_000,
   });
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api && !isGuest),
     // OAuth completion publishes the workspace socket's
     // `connector_connections` topic. Its invalidation refetches this active
     // query, which lets an in-feed connection card become Connected without a
     // focus heuristic or polling loop.
     staleTime: 60_000,
   });
+  const visibleMembers = isGuest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
+  const visibleConnections = isGuest ? routedDetail?.connections : connections.data;
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -1134,8 +1152,8 @@ export function ConversationSurface({
   const canonicalTranscript = useMemo(() => orderedTranscriptMessages(
     orderedTranscript.data,
     id,
-    members.data ?? [],
-  ), [id, members.data, orderedTranscript.data]);
+    visibleMembers,
+  ), [id, visibleMembers, orderedTranscript.data]);
   const backgroundAgents = useQuery({
     queryKey: ['workstream-background-agents', id], queryFn: skipToken,
     initialData: null as number | null,
@@ -1514,7 +1532,7 @@ export function ConversationSurface({
   // have to show the new title without a refetch round trip.
   const renameWorkstream = useMutation({
     mutationFn: async (title: string) => {
-      if (substreamId === '0') return api!.renameWorkstream(id, title);
+      if (substreamId === '0' && session?.workspace?.accessClass !== 'guest') return api!.renameWorkstream(id, title);
       await api!.renameSubstream(id, substreamId, title);
       return undefined;
     },
@@ -1631,6 +1649,9 @@ export function ConversationSurface({
     queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
     enabled: Boolean(api && id && parentKind === 'workstream'),
   });
+  // Guest recommendations already include eligible owned sources as minimal
+  // summaries. The member-only authoring directory is neither needed nor allowed.
+  const readOwnedSidekickDetails = session?.workspace?.accessClass !== 'guest';
   const ownedSidekicks = useQuery({
     queryKey: ['workstream-sidekicks', id],
     // A person viewing a room they do not participate in may not list what it
@@ -1641,21 +1662,27 @@ export function ConversationSurface({
       if (error instanceof ApiError && error.status === 403) return [];
       throw error;
     }),
-    enabled: Boolean(api && id && parentKind === 'workstream'),
+    enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails),
   });
   const recommendedSidekicks = useQuery({
-    queryKey: ['recommended-sidekicks', id],
-    queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal),
+    queryKey: ['recommended-sidekicks', id, substreamId],
+    queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
     enabled: Boolean(api && id && parentKind === 'workstream'),
+  });
+  const recommendationOptions = useQuery({
+    queryKey: ['sidekick-recommendation-options', id, substreamId],
+    queryFn: ({ signal }) => api!.getSidekickRecommendationOptions(id!, substreamId, signal),
+    enabled: false,
   });
   const removeSidekick = useMutation({
     mutationKey: ['remove-sidekick', id, substreamId],
-    mutationFn: async ({ sidekickId, recommendation, workstreamId, substreamId: targetSubstreamId }: { sidekickId: string; recommendation: boolean; workstreamId: string; substreamId: string }) => {
+    mutationFn: async ({ sidekickId, recommendation, attached = false, workstreamId, substreamId: targetSubstreamId }: { sidekickId: string; recommendation: boolean; attached?: boolean; workstreamId: string; substreamId: string }) => {
       if (recommendation) {
-        await api!.setRecommendedSidekick(workstreamId, sidekickId, false, targetSubstreamId);
+        await api!.setRecommendedSidekick(workstreamId, sidekickId, attached, targetSubstreamId);
       } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
     },
-    onSuccess: (_result, { workstreamId }) => {
+    onSettled: (_result, _error, { workstreamId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
       void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
     },
@@ -1825,7 +1852,7 @@ export function ConversationSurface({
       const createdAt = new Date().toISOString();
       // Rendered text, not sent text: `createMessage` below is given the draft
       // the person typed, and the room does this same rewrite on its own copy.
-      const rendered = optimisticMentionRendering(text, mentions, members.data ?? []);
+      const rendered = optimisticMentionRendering(text, mentions, visibleMembers);
       const optimistic = createTextMessage({
         id: clientId,
         clientMessageId: clientId,
@@ -1860,7 +1887,7 @@ export function ConversationSurface({
       if (parentKind === 'workstream' && substreamId !== '0') {
         for (const userId of confirmedParticipantUserIds) {
           await api.addSubstreamParticipant(id, substreamId, userId);
-          const member = members.data?.find((person) => person.id === userId);
+          const member = visibleMembers.find((person) => person.id === userId);
           if (member) cacheAddedParticipant(substreamId, member);
         }
       }
@@ -2062,11 +2089,11 @@ export function ConversationSurface({
     ...detail,
     viewers: workstreamPresenceViewers(
       detail.participants,
-      members.data ?? [],
+      visibleMembers,
       presenceUserIdsByWorkstream[id] ?? [],
     ),
   };
-  const sidebarDetail = workstreamContext?.id === id ? workstreamContext : {
+  const sidebarDetail = sidebarScope === "conversation" ? displayedDetail : workstreamContext?.id === id ? workstreamContext : {
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
   const resourceManagementDetail = resourcePreview?.workstreamScoped ? sidebarDetail : displayedDetail;
@@ -2077,37 +2104,41 @@ export function ConversationSurface({
     // A failed owned read is not a pending one: the attachments answered, and
     // hiding them because the other half failed takes down a list that worked.
     // The error still travels beside the rows that did arrive.
-    owned: ownedSidekicks.isError ? [] : ownedSidekicks.data,
+    owned: !readOwnedSidekickDetails || ownedSidekicks.isError ? [] : ownedSidekicks.data,
     attached: attachedSidekicks.isError ? [] : attachedSidekicks.data,
     recommended: recommendedSidekicks.isError ? [] : recommendedSidekicks.data,
     ...(detail.participants.some((person) => person.id === session?.user.id)
       ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
       : {}),
-    ...(sidebarDetail.participants.some((person) => person.id === session?.user.id)
-      ? { onRemoveRecommendation: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: true, workstreamId: id!, substreamId }) }
-      : {}),
+    recommendationOptions: recommendationOptions.data,
+    managementOptionsPending: !recommendationOptions.data && !recommendationOptions.isError,
+    onChangeRecommendation: (sidekickId, attached) => removeSidekick.mutate({ sidekickId, attached,
+      recommendation: true, workstreamId: id!, substreamId }),
   });
-  const sidekicksError = ownedSidekicks.error?.message
+  const sidekicksError = (readOwnedSidekickDetails ? ownedSidekicks.error?.message : undefined)
     ?? attachedSidekicks.error?.message
     ?? recommendedSidekicks.error?.message
+    ?? recommendationOptions.error?.message
     ?? removeSidekick.error?.message;
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
 
   return (
-    <ConnectorConnectionsProvider connections={connections.data}>
+    <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout">
       {renderSidebar?.({
         sidekicks: sidekickRows,
+        loadSidekickOptions: () => { void recommendationOptions.refetch(); },
         sidekicksError,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId('0'); setParticipantDialogOpen(true); },
+        openParticipantDialog: () => { setParticipantDialogSubstreamId(sidebarScope === 'workstream' ? '0' : substreamId); setParticipantDialogOpen(true); },
+        openResource: sidebarScope === 'workstream' ? openWorkstreamResourceDetails : openResourceDetails,
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        openArtifact: sidebarCitations.openPreview,
+        openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
       })}
     <div className={clsx(
@@ -2141,7 +2172,7 @@ export function ConversationSurface({
         error={substreamLaunch.error}
         launching={substreamLaunch.launching}
         {...(api ? { loadAttachmentContent } : {})}
-        members={members.data ?? []}
+        members={visibleMembers}
         onCancel={substreamLaunch.onCancel}
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={setAttachmentPreview}
@@ -2152,9 +2183,13 @@ export function ConversationSurface({
       /> : <>
       {renderHeader?.({
         detail: displayedDetail,
+        sidekicks: sidekickRows,
+        loadSidekickOptions: () => { void recommendationOptions.refetch(); },
+        sidekicksError,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
         openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
+        openResource: openResourceDetails,
         openRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
       })}
@@ -2311,7 +2346,7 @@ export function ConversationSurface({
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
-            members={members.data ?? []}
+            members={visibleMembers}
             /* Locked, because a pin is written once when the conversation is
                created and nothing afterwards edits it. What it names is the
                latest run's model first and the pin only as a fallback: an
@@ -2379,7 +2414,7 @@ export function ConversationSurface({
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
         error={addParticipant.error?.message ?? removeParticipant.error?.message}
-        members={members.data ?? []}
+        members={visibleMembers}
         onAdd={(member) => {
           removeParticipant.reset();
           addParticipant.mutate({ member, target: participantDialogSubstreamId });
