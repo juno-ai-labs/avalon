@@ -47,6 +47,44 @@ everything above it that can return.
 
 ---
 
+## A Sidekick triggered only on `resource_watch` may never start
+
+**Severity:** wrong-answer
+
+**Observed** — `resource_watch` is a submittable trigger: it is in the
+`submit_draft` type enum with its own `resourceId`
+(`packages/agent-harness/src/index.ts:2444`), defined in the trigger union
+(`packages/contracts/src/index.ts:1205`) and mapped through
+(`index.ts:2992`). But `SidekickDO`'s accept path builds it nothing. The
+schedule loop handles `interval` and returns early on anything that is not
+`calendar` (`apps/api/src/durable-objects/sidekick-do.ts:1913-1933`), and
+`isExternalEventTrigger` covers only `connector_activity`,
+`semantic_activity` and `webhook` (`contracts/src/index.ts:1238`), so no
+evaluator is built either.
+
+**Why it is suspicious** — a draft whose only trigger is `resource_watch`
+appears to be accepted and activated with nothing armed to start it: the
+silent inertness the `eventTypes` schema description warns about elsewhere,
+but reached through a trigger kind rather than a mistyped event name. The
+`resource_watches` table and its polling in
+`apps/api/src/services/workspace-schedule-execution.ts` are a different
+mechanism with its own writers, and nothing found so far connects a
+Sidekick's trigger to it.
+
+**What would settle it** — accept a Sidekick whose only trigger is
+`resource_watch`, change the watched resource, and see whether a run starts.
+If none does, either wire the trigger or refuse it at submission, because a
+trigger the draft tool offers and the accept path drops is worse than one
+that does not exist. If one does start, find the writer that arms it and
+record it here before deleting this entry.
+
+**Noticed while** adding the `polling-for-events` skill, which is the one
+place that talks a model through "tell me when this thing changes" — the
+request most likely to reach for this trigger. The skill steers off it in
+the meantime, which is a workaround, not the fix.
+
+---
+
 ## The work-stream composer's own length refusal is unexercised
 
 **Severity:** coverage-gap
