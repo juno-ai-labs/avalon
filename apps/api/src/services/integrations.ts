@@ -164,7 +164,7 @@ import {
   logAgentInferencePrepared,
   type AgentInferencePreparationBreakdown,
 } from "./agent-inference-logging";
-import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
+import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import {
   AGENT_MODEL_FLAG_KEYS,
   resolveWorkstreamModelRouting,
@@ -1599,6 +1599,13 @@ export async function classifyWorkstreamMessage(
   },
 ): Promise<AddressingClassification> {
   const traceId = crypto.randomUUID();
+  const diagnostics = createClassifierDiagnosticSink(env, {
+    role: "addressing_classifier",
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    traceId,
+    defer: input.defer,
+  });
   let typesafeStatus: "not_attempted" | "success" | "failure" = "not_attempted";
   let openRouterStatus: "not_attempted" | "success" | "failure" = "not_attempted";
   const outcome = (): string => {
@@ -1641,8 +1648,10 @@ export async function classifyWorkstreamMessage(
         environment: env.APP_ENV,
         ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
       },
-      // Both cascade stages share one diagnostic sink, so a JEV failure remains
-      // visible even when the OpenRouter fallback returns a usable decision.
+      // Both cascade stages share one sink, so a JEV failure remains visible
+      // even when the OpenRouter fallback returns a usable decision. The stage
+      // bookkeeping above is addressing's own; the logging and archival half is
+      // every classifier's, and lives in `classifier-diagnostics.ts`.
       onDiagnostic: (diagnostic) => {
         const provider = diagnostic.provider ?? "openrouter";
         if (provider === "typesafe" && diagnostic.stage === "complete") {
@@ -1654,42 +1663,7 @@ export async function classifyWorkstreamMessage(
         if (provider === "openrouter" && diagnostic.stage === "complete") {
           openRouterStatus = diagnostic.success ? "success" : "failure";
         }
-        logStructuredEvent(
-          env,
-          diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
-          "structured_inference",
-          {
-            workspace_id: input.workspaceId,
-            workstream_id: input.workstreamId,
-            trace_id: diagnostic.traceId,
-            inference_request_id: diagnostic.inferenceRequestId,
-            role: "addressing_classifier",
-            stage: diagnostic.stage,
-            schema_name: diagnostic.schemaName,
-            provider,
-            model: diagnostic.model,
-            attempt: diagnostic.attempt,
-            fallback_attempt: diagnostic.fallbackAttempt,
-            repair_attempt: diagnostic.repairAttempt,
-            latency_ms: diagnostic.latencyMs,
-            response_bytes: diagnostic.responseBytes,
-            input_tokens: diagnostic.inputTokens,
-            output_tokens: diagnostic.outputTokens,
-            success: diagnostic.success,
-            failure_kind: diagnostic.failureKind,
-            provider_error_code: diagnostic.providerError?.code,
-            provider_error_provider: diagnostic.providerError?.providerName,
-            provider_error_detail: diagnostic.providerError?.detail,
-            validation_issues: diagnostic.validationIssues,
-          },
-        );
-        input.defer(captureStructuredInferenceDiagnostic(env, {
-          source: "addressing_classifier",
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          traceId,
-          requestId: traceId,
-        }, diagnostic));
+        diagnostics.record(diagnostic);
       },
     });
     logStructuredEvent(env, "info", "addressing_classifier_outcome", {
