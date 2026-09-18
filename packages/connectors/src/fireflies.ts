@@ -586,6 +586,17 @@ export function createFirefliesConnector(config: FirefliesConnectorConfig): Conn
       [FirefliesCapabilities.workspaceRead]: ["workspace"],
       [FirefliesCapabilities.personalRead]: ["personal"],
     },
+    // Personal only. The workspace connection is one administrator's API key
+    // that every member of the workspace reads through, so connecting it hands
+    // the whole company every transcript the key can see — including calls
+    // whose participants never agreed to that — and Fireflies publishes no
+    // field that says what the key covers, so Rally cannot even state the
+    // blast radius. New ones are refused until the authorization model says
+    // who may read which meeting. `supportedScopes` deliberately still carries
+    // `workspace`: connections made before this keep their tools, their
+    // webhook ingress and their installation rather than failing closed on a
+    // key somebody already pasted.
+    connectableScopes: ["personal"],
     // As Granola: the webhook belongs to the workspace install, and
     // `normalize` refuses a personal connection.
     activityConnectionScopes: ["workspace"],

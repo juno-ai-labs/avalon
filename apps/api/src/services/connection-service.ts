@@ -22,6 +22,7 @@ import {
   assertGitHubCapabilitiesGranted,
   isFirefliesEventType,
   connectorCapabilitySupportsScope,
+  connectorScopeIsConnectable,
   createWebhookSecret,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
@@ -894,6 +895,12 @@ export class ConnectionService {
     const adapter = this.registry().get(provider);
     if (!adapter.manifest.supportedScopes.includes(input.scope)) {
       throw new ApiError(422, "invalid_connector_scope", `${adapter.manifest.displayName} does not support ${input.scope} connections`);
+    }
+    // Asked of every provider rather than of the one that closed a scope: the
+    // desktop stops offering the button, and this is what a client built
+    // before it, or anything else holding the route, is answered with.
+    if (!connectorScopeIsConnectable(adapter, input.scope)) {
+      throw new ApiError(422, "connector_scope_not_connectable", `${adapter.manifest.displayName} is not accepting new ${input.scope} connections`);
     }
     const supported = new Set(adapter.manifest.capabilities.map((capability) => capability.id));
     const capabilities = provider === "slack" && input.scope === "workspace"
@@ -2283,6 +2290,9 @@ export class ConnectionService {
     const adapter = this.registry().get(input.provider);
     const management = adapter.installationManagement;
     if (!management) throw new ApiError(422, "installation_unavailable", "Workspace installation is unavailable");
+    if (!connectorScopeIsConnectable(adapter, "workspace")) {
+      throw new ApiError(422, "connector_scope_not_connectable", `${adapter.manifest.displayName} is not accepting new workspace connections`);
+    }
     const events = input.provider === "ashby" ? AshbyEventSelectionSchema.parse(input.events ?? [...management.events]).sort() : [...management.events];
     const id = newId(); const at = nowIso(); const apiKey = input.apiKey.trim();
     if (!apiKey) throw new ApiError(422, "api_key_required", "Enter a provider API key");
