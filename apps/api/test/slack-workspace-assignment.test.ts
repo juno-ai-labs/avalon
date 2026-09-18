@@ -933,7 +933,7 @@ describe("Slack connector principal delivery", () => {
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       SUBSTREAM_AGENTS: substreamAgents,
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: parentCreationRpcs(),
+        extra: { ...parentCreationRpcs(), admitConnectorParticipants: async () => ({ status: "legacy" }) },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
@@ -1591,7 +1591,7 @@ describe("Slack public channel membership", () => {
         },
       }),
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: parentCreationRpcs(),
+        extra: { ...parentCreationRpcs(), admitConnectorParticipants: async () => ({ status: "legacy" }) },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
@@ -2582,6 +2582,10 @@ function slackMembershipEnvironment(
     PUBLIC_API_BASE_URL: "https://api.with-avalon.test",
     WORKSTREAM_EMAIL_ADDRESS_KEY: "test-workstream-email-address-key",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, objectStores ? { objectStores } : {}),
+    // Real parent grant initialization is covered in workerd conversation-creation.
+    WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+      ...parentCreationRpcs(), admitConnectorParticipants: async () => ({ status: "legacy" }),
+    } }),
     // The typed ingress methods and the runtime SQL port both answer from the
     // real workspace object, so every WorkspaceDO-authority table lives in
     // one store the way production has it.

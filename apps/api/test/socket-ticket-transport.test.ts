@@ -67,7 +67,7 @@ function upgradeRequest(protocols?: string[]): Request {
 }
 
 describe("socket ticket transport", () => {
-  it("forwards the verified session identity, but not the bearer ticket, to the room", async () => {
+  it.each(["member", null] as const)("forwards the verified session identity with role %s, but not the bearer ticket, to the room", async (role) => {
     const sessionId = "00000000-0000-7000-8000-000000000701";
     const userId = asUserId("00000000-0000-7000-8000-000000000702");
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000703");
@@ -82,7 +82,7 @@ describe("socket ticket transport", () => {
       expect(request.headers.get("x-avalon-socket-speculative")).toBeNull();
       expect(request.headers.get("x-rally-socket-admission-version")).toBe("1");
       expect(request.headers.get("x-rally-socket-admission-authority-generation")).toBe("7");
-      expect(request.headers.get("x-rally-socket-admission-role")).toBe("member");
+      expect(request.headers.get("x-rally-socket-admission-role")).toBe(role ?? "null");
       expect(request.headers.get("x-rally-socket-analytics-workspace-id")).toBe("analytics-workspace");
       expect(request.headers.get("x-avalon-socket-admission-role")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
@@ -102,11 +102,11 @@ describe("socket ticket transport", () => {
       userId,
       workspaceId,
       region: "global",
-      role: "member",
+      role,
     }, { kind: "workstream", id: workstreamId }, "0", undefined, 42, true, {
       admission: {
         authorityGeneration: 7,
-        role: "member",
+        role,
         analyticsWorkspaceId: "analytics-workspace",
         parentArchived: false,
       },

@@ -24,6 +24,7 @@ import {
   SLACK_WORKSPACE_OBJECT_METHODS,
   testWorkspaceObjectBinding,
 } from "./helpers/workspace-object-rpcs";
+import type { Env } from "../src/env";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 
 /**
@@ -183,6 +184,9 @@ describe("who may continue a Slack work stream", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
+      WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+        idFromName: () => { throw new Error("Ordinary connector admission must not resolve a parent"); },
+      }),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
         extra: {
           publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
@@ -196,6 +200,7 @@ describe("who may continue a Slack work stream", () => {
     await admitConnectorAudience(env, {
       workspaceId: WORKSPACE,
       workstreamId,
+      eventId: "audience-event",
       userIds: [TAYLOR],
       addedByUserId: TAYLOR,
     });

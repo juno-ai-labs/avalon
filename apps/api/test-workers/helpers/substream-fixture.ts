@@ -69,14 +69,14 @@ export async function seedWorkspaceControlPlane(
     )`),
     database.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`)
       .bind(input.workspaceId),
-    database.prepare(`CREATE TABLE workspace_members (
+    database.prepare(`CREATE TABLE workspace_members (revision INTEGER NOT NULL DEFAULT 1, access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
-      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      role TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
     database.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`)
       .bind(input.workspaceId, input.userId),
-    database.prepare(`CREATE TABLE sessions (
+    database.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
     )`),

@@ -25,12 +25,12 @@ const auth: AuthContext = {
 
 /**
  * The Worker resolves who the caller is to the automation from the workspace
- * directory. A room's automation is managed by the room's participants, and
+ * directory for routing and the canonical owner for management authority, and
  * the room being archived does not end that: the object is the one that says
  * what the archive forbids, and it can only say so if the caller reaches it.
  */
 describe("resolving the actor for a room's automation", () => {
-  it("counts a participant of the archived owning room as its manager", async () => {
+  it("preserves canonical management standing for an archived owning room", async () => {
     const participantReads: Array<Record<string, unknown>> = [];
     const resumes: Array<{ actor: { participantOfOwningWorkstream: boolean } }> = [];
     const env = createTestEnv({
@@ -40,11 +40,14 @@ describe("resolving the actor for a room's automation", () => {
         idFromName: (name: string) => createTestDurableObjectId(name),
         get: () => ({
           automationOwner: async () => ({ owningWorkstreamId: ROOM_ID }),
-          workstreamParticipant: async (request: Record<string, unknown>) => {
+        }),
+      }),
+      WORKSTREAM_DOS: createCloudflareTestBinding<Env["WORKSTREAM_DOS"]>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          readManagementAccess: async (request: Record<string, unknown>) => {
             participantReads.push(request);
-            // What WorkspaceDO answers for an archived room's participant with
-            // and without the archive included.
-            return { participant: request.includeArchived === true };
+            return { allowed: true, writable: false, grantIds: [], workspaceMemberAccess: false };
           },
         }),
       }),
@@ -62,9 +65,8 @@ describe("resolving the actor for a room's automation", () => {
 
     expect(participantReads).toEqual([{
       workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
+      parentId: ROOM_ID,
       userId: USER_ID,
-      includeArchived: true,
     }]);
     expect(resumes).toEqual([expect.objectContaining({
       automationId: AUTOMATION_ID,

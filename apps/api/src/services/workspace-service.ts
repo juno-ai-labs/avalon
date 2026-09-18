@@ -1,3 +1,4 @@
+import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
 import { PersonalPresentationSchema } from '@rally/contracts';
 import {
@@ -20,7 +21,7 @@ import {
   sendWorkspaceInvitationResolutionEmail,
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
-import { publishAccessRevocation } from "./access-revocation";
+import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
@@ -221,6 +222,7 @@ export async function acceptInvitationForUser(
        WHERE i.id = ? AND i.accepted_at = ? AND i.accepted_by_user_id = ?
          AND i.revoked_at IS NULL
        ON CONFLICT(workspace_id, user_id) DO UPDATE SET
+         access_class = 'member',
          role = CASE
            WHEN workspace_members.role = 'owner' THEN 'owner'
            WHEN workspace_members.role = 'admin' THEN 'admin'
@@ -450,8 +452,8 @@ export class WorkspaceService {
       throw new ApiError(403, "forbidden", "Only an owner or admin can remove a member");
     }
     const member = await this.env.DB.prepare(
-      `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
-    ).bind(this.auth.workspaceId, userId).first<{ role: string }>();
+      `SELECT role, incarnation, revision FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(this.auth.workspaceId, userId).first<{ role: string | null; incarnation: string; revision: number }>();
     if (!member) throw new ApiError(404, "member_not_found", "That person is not in this workspace");
     if (member.role === "owner" && this.auth.role !== "owner") {
       throw new ApiError(403, "forbidden", "Only an owner can remove an owner");
@@ -472,7 +474,7 @@ export class WorkspaceService {
     // Either lost race removes nothing and answers 409.
     const removal = await this.env.DB.prepare(
       `DELETE FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND role = ?
+        WHERE workspace_id = ? AND user_id = ? AND role IS ? AND incarnation = ? AND revision = ?
           AND EXISTS (
             SELECT 1 FROM workspace_members actor
              WHERE actor.workspace_id = ? AND actor.user_id = ?
@@ -483,6 +485,8 @@ export class WorkspaceService {
       this.auth.workspaceId,
       userId,
       member.role,
+      member.incarnation,
+      member.revision,
       this.auth.workspaceId,
       this.auth.userId,
       this.auth.role,
@@ -497,15 +501,7 @@ export class WorkspaceService {
         "The workspace membership changed while this removal was in flight. Check it and try again.",
       );
     }
-    await publishAccessRevocation(this.env, {
-      reason: "workspace_membership_removed",
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(userId),
-      // No session: the membership is gone, so none of their windows is
-      // admissible any longer.
-      sessionId: null,
-    });
-    await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [userId] });
+    await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId });
   }
 
   /**
@@ -565,8 +561,7 @@ export class WorkspaceService {
       ]);
       const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
       if (abandoned) {
-        await this.publishOwnMembershipRevocation();
-        await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [this.auth.userId] });
+        await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId });
         return { outcome: "abandoned" };
       }
       throw new ApiError(
@@ -592,11 +587,10 @@ export class WorkspaceService {
                AND active_owner.status = 'active' AND active_owner.role = 'owner'
            )
          )
-       RETURNING user_id`,
-    ).bind(this.auth.workspaceId, this.auth.userId).first<{ user_id: string }>();
+       RETURNING user_id, incarnation`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{ user_id: string; incarnation: string }>();
     if (departure) {
-      await this.publishOwnMembershipRevocation();
-      await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [this.auth.userId] });
+      await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId });
       return { outcome: "left" };
     }
 
@@ -631,18 +625,27 @@ export class WorkspaceService {
     );
   }
 
-  private async publishOwnMembershipRevocation(): Promise<void> {
-    await publishAccessRevocation(this.env, {
-      reason: "workspace_membership_removed",
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      sessionId: null,
+
+
+  async promoteGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {
+    if (this.auth.role !== "owner" && this.auth.role !== "admin") {
+      throw new ApiError(403, "forbidden", "Only an owner or admin can promote a guest");
+    }
+    const result = await promoteWorkspaceGuest(this.env.DB, {
+      ...input, userId, workspaceId: this.auth.workspaceId, actorUserId: this.auth.userId,
     });
+    if (result.status !== "promoted") {
+      throw new ApiError(409, "workspace_relationship_changed", "This person's workspace access changed. Refresh and try again.");
+    }
+    // The membership trigger records a durable relationship delivery. Promotion
+    // preserves the incarnation, so its delivery refreshes views without logout.
+    await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId });
+    return result.relationship;
   }
 
   async listMembers() {
     const result = await this.env.DB.prepare(
-      `SELECT u.id, u.email, u.name, u.avatar_url, u.presentation_json, u.timezone, u.created_at, m.role, m.status, m.joined_at
+      `SELECT u.id, u.email, u.name, u.avatar_url, u.presentation_json, u.timezone, u.created_at, m.role, m.access_class, m.incarnation, m.revision, m.status, m.joined_at
        FROM workspace_members m JOIN users u ON u.id = m.user_id
        WHERE m.workspace_id = ? AND m.status != 'suspended'
        ORDER BY u.name COLLATE NOCASE`,
@@ -659,7 +662,10 @@ export class WorkspaceService {
         timezone: String(row.timezone),
         createdAt: String(row.created_at),
       },
-      role: String(row.role),
+      role: row.role == null ? null : String(row.role),
+      incarnation: String(row.incarnation),
+      revision: Number(row.revision),
+      ...(row.access_class === "guest" ? { accessClass: "guest" as const } : {}),
       status: String(row.status),
       joinedAt: row.joined_at == null ? null : String(row.joined_at),
     }));

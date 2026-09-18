@@ -37,6 +37,8 @@ export const ConversationParentAuthorizeViewerRequestSchema = z.strictObject({
   ...ParentAddressed,
   userId: UserIdSchema,
   substreamId: SubstreamIdSchema.optional(),
+  /** Require completed canonical grant authority; never fall back to a legacy roster. */
+  requireGrantAuthority: z.boolean().optional(),
 });
 export const ConversationParentAuthorizeViewerResultSchema = z.strictObject({
   authorized: z.boolean(),

@@ -188,6 +188,9 @@ export interface Env {
   TURNSTILE_SECRET_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
+  /** Explicit email sign-in policy; unset keeps the new entrypoint unavailable. */
+  EMAIL_LOGIN_POLICY_JSON?: string;
+  BROWSER_APP_ORIGIN?: string;
   RESEND_NOTIFICATION_FROM_EMAIL?: string;
   RESEND_RECEIVING_API_KEY?: string;
   RESEND_WEBHOOK_SIGNING_SECRET?: string;
@@ -277,6 +280,8 @@ export interface Env {
 }
 
 export interface IdentityAuthContext {
+  /** Current relationship, read from D1; never trusted from token claims. */
+  accessClass?: "member" | "guest";
   sessionId: string;
   userId: UserId;
   workspaceId: WorkspaceId | null;
@@ -318,9 +323,11 @@ export interface IdentityAuthContext {
   analyticsWorkspaceId?: string | null;
 }
 
+/** Workspace-bound identity; a null role is a guest, never member authority.
+ * Product access is decided by the addressed scope, not by this type. */
 export interface AuthContext extends IdentityAuthContext {
   workspaceId: WorkspaceId;
-  role: "owner" | "admin" | "member";
+  role: "owner" | "admin" | "member" | null;
 }
 
 export interface AppVariables {
