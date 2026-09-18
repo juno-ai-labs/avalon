@@ -1298,13 +1298,17 @@ export function WorkspaceSettingsScreen({
                       <span className="settings-member-actions">
                         <Badge className="role-badge">{member.role ?? 'member'}</Badge>
                         {/*
-                          * The owner has no control beside them: their role is the
-                          * one the server refuses to reassign, so drawing a button
-                          * that can only fail is worse than drawing none. Everybody
-                          * else an administrator is looking at can be handed the
-                          * same powers the viewer is using right now.
+                          * The owner has no control beside them: their role is
+                          * the one the server refuses to reassign, so drawing a
+                          * button that can only fail is worse than drawing none.
+                          * A guest has none either — a guest holds no role at
+                          * all, and the way to give them one is to promote them
+                          * to a member first. Everybody else an administrator is
+                          * looking at can be handed the same powers the viewer
+                          * is using right now.
                           */}
-                        {isAdmin && member.role !== 'owner' && member.status !== 'invited' && (
+                        {isAdmin && member.role !== 'owner' && member.status !== 'invited'
+                          && member.accessClass !== 'guest' && (
                           <Button
                             // The visible label is the same on every row, which is
                             // all a sighted reader needs — the row it sits in says

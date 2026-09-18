@@ -1,3 +1,4 @@
+import { ScopeGrantSchema } from "./scope-grants";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
@@ -176,8 +177,14 @@ export const ConversationEffectSchema = z.discriminatedUnion("kind", [
 ]);
 export type ConversationEffect = z.infer<typeof ConversationEffectSchema>;
 
+export const ScopeGrantDirectoryEffectSchema = z.strictObject({
+  kind: z.literal("scope_grant_directory"),
+  grant: ScopeGrantSchema,
+});
+
 /** Effects a parent may forward to the workspace: the child kinds plus its own row. */
 export const ParentEffectSchema = z.discriminatedUnion("kind", [
+  ScopeGrantDirectoryEffectSchema,
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   AutomationDirectoryEffectSchema,

@@ -10,6 +10,7 @@
     "./deferred-zod-schema": "./src/deferred-zod-schema.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
+    "./scope-grants": "./src/scope-grants.ts",
     "./substream-creation": "./src/substream-creation.ts",
     "./conversation-effects": "./src/conversation-effects.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
@@ -31,7 +32,9 @@
     "./push-notifications": "./src/push-notifications.ts",
     "./private-access": "./src/private-access.ts",
     "./regions": "./src/regions.ts",
-    "./zod-diagnostics": "./src/zod-diagnostics.ts"
+    "./zod-diagnostics": "./src/zod-diagnostics.ts",
+    "./browser-session": "./src/browser-session.ts",
+    "./client-session": "./src/client-session.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

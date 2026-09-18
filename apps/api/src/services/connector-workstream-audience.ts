@@ -1,4 +1,7 @@
-import { ParticipantSchema, type ExternalActor, type Scope } from "@rally/contracts";
+import { ConnectorParticipantAdmissionSchema } from "@rally/contracts/scope-grants";
+import { workstreamDOName } from "../durable-objects/names";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { asWorkspaceId, asWorkstreamId, ParticipantSchema, type ExternalActor, type Scope } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
@@ -115,7 +118,7 @@ export async function resolveConnectorAudience(
         verifiedEmail: member.verifiedEmail ?? null,
       })),
     );
-    resolved = identities.map((identity) => identity?.userId ?? null);
+    resolved = identities.map((identity) => identity?.accessClass === "guest" ? null : identity?.userId ?? null);
   } catch (error) {
     // Audience discovery is best effort, but its query is deliberately one
     // operation: one D1 outage produces one bounded log rather than one per
@@ -135,24 +138,24 @@ export async function resolveConnectorAudience(
 /**
  * Put the people a connector conversation resolved to into the work stream.
  *
- * Idempotent, and safe to call on every inbound message rather than only on the
- * first: the upsert lands on the row a participant already has. It is also what
+ * Migrated workstreams receipt each inbound event in the parent grant ledger;
+ * retrying that event cannot undo a later removal. It is also what
  * makes a *private* connector work stream readable at all by the member who
  * just spoke in it — the ordinary read rule is "an active participant, and
  * nobody else", so a reply from somebody the room has never seen has to admit
  * them before the message can be written under their own authority.
  *
- * A member who was explicitly removed from the work stream is brought back by
- * the upsert. That is deliberate for the arrival path — they are speaking in
- * the conversation this work stream *is* — and it is why removal from a
- * connector-born work stream is a weaker statement than removal from one
- * somebody started in Avalon.
+ * A new event may bring an ordinary member back after removal: they are
+ * speaking in the source conversation. An old event cannot. Guests need an
+ * explicit share and never acquire a new grant through connector mapping.
+ * Unmigrated workstreams retain their legacy roster writer until handoff.
  */
 export async function admitConnectorAudience(
   env: Env,
   input: {
     workspaceId: string;
     workstreamId: string;
+    eventId: string;
     userIds: readonly string[];
     /** Who is credited with the addition; the arriving member, when it is theirs. */
     addedByUserId: string | null;
@@ -179,6 +182,16 @@ export async function admitConnectorAudience(
     reason: "explicit",
     now: Date.now(),
   });
+  if (seated === null) {
+    const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, input.workspaceId,
+      workstreamDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), asWorkstreamId(input.workstreamId)));
+    const admission = await parent.admitConnectorParticipants(ConnectorParticipantAdmissionSchema.parse({
+      workspaceId: input.workspaceId, parentId: input.workstreamId, eventId: input.eventId,
+      userIds, addedByUserId: input.addedByUserId,
+    }));
+    if (admission.status !== "ready") throw new Error("connector_participant_admission_pending");
+    return;
+  }
   // The `JOIN workstreams` here proved nothing the object does not already
   // know: it re-checked that the participant's work stream belongs to this
   // workspace, which is the identity check the port makes before dispatching.
@@ -247,4 +260,29 @@ export function connectorMessagePrincipal(input: {
   return input.linkedUserId
     ? { type: "user", userId: input.linkedUserId }
     : { type: "workspace", workspaceId: input.workspaceId };
+}
+
+/** Attribution is local; admission follows whichever authority owns participants. */
+export async function reconcileConnectorWorkstreamCreator(
+  env: Env,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    assignmentId: string;
+    userId: string;
+    previousAssignedUserId: string | null;
+    mayCorrectVerifiedCreator: boolean;
+  },
+): Promise<void> {
+  const adoption = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).adoptCreator({
+    userId: input.userId,
+    previousAssignedUserId: input.previousAssignedUserId,
+    mayCorrectVerifiedCreator: input.mayCorrectVerifiedCreator,
+    now: Date.now(),
+  });
+  if (adoption.participantAuthority === "grants") {
+    await admitConnectorAudience(env, { workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+      eventId: JSON.stringify(["connector-creator-adoption", input.assignmentId, input.userId]),
+      userIds: [input.userId], addedByUserId: input.userId });
+  }
 }

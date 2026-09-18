@@ -88,9 +88,12 @@ export class AuthorizationService {
 class AuthorizationBatch {
   private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkstreamDO['readAuthorizationFacts']>>>>();
   private readonly automations = new Map<string, Promise<Awaited<ReturnType<AutomationDO['readAuthorizationFacts']>>>>();
+  private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<AutomationDO['authorizeViewer']>> & { validatedAt: number }>>();
   private readonly identities = new Map<string, Promise<Awaited<ReturnType<ReturnType<typeof createIdentityObjectPort>['readAuthorizationFacts']>>>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
-  private readonly memberships = new Map<string, Promise<{ active: boolean; validatedAt: number }>>();
+  private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
+  private guest = false;
+  private readonly parentScopes = new Map<string, Set<string>>();
   constructor(private readonly env: Env) {}
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
@@ -110,16 +113,31 @@ class AuthorizationBatch {
     const membership = await ownerEvidence(this.memberships, JSON.stringify([subject.workspaceId, subject.userId]), async () => {
       const validatedAt = Date.now();
       const row = await this.env.DB.prepare(
-        "SELECT 1 AS active FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
-      ).bind(subject.workspaceId, subject.userId).first<{ active: number }>();
-      return { active: Boolean(row), validatedAt };
+        "SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
+      ).bind(subject.workspaceId, subject.userId).first<{ access_class: "member" | "guest" }>();
+      return { active: Boolean(row), guest: row?.access_class === "guest", validatedAt };
     });
+    this.guest = membership.guest;
     const membershipEvidence = { owner: `workspace:${subject.workspaceId}/member:${subject.userId}`,
-      revision: membership.active ? 'active' : 'inactive', validatedAt: membership.validatedAt };
+      revision: membership.active ? (membership.guest ? 'guest:active' : 'member:active') : 'inactive', validatedAt: membership.validatedAt };
     const resourceIds = requested.flatMap((entry) => entry.resource.kind === 'resource' ? [entry.resource.resourceId] : []);
     const facts = membership.active && resourceIds.length
       ? await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds }) : [];
     const factsById = new Map(facts.map((value) => [value.resourceId, value]));
+    // Gather the whole batch before reading an owner, including attachment locations.
+    const addScope = (parentId: string, substreamId: string) => {
+      const scopes = this.parentScopes.get(parentId) ?? new Set<string>();
+      scopes.add(substreamId);
+      this.parentScopes.set(parentId, scopes);
+    };
+    for (const resource of resources) {
+      if (resource.kind === 'conversation') addScope(resource.parentId, resource.substreamId);
+    }
+    for (const resourceFacts of facts) {
+      if (resourceFacts.exists) {
+        for (const location of resourceFacts.locations) addScope(location.parentId, location.substreamId);
+      }
+    }
     const connectionIds = requested.flatMap((entry) => entry.resource.kind === 'connection' ? [entry.resource.connectionId] : []);
     const connections = membership.active && connectionIds.length
       ? await workspace.authorizationConnectionFacts({ workspaceId: subject.workspaceId, userId: subject.userId, connectionIds }) : [];
@@ -146,14 +164,26 @@ class AuthorizationBatch {
 
   private async conversation(subject: AuthorizationSubject, resource: Extract<AuthorizationResource, { kind: 'conversation' }>): Promise<AuthorizationDecision> {
     if (!subject.userId) return { status: 'denied', reason: 'outside_delegation', evidence: [] };
-    const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId, substreamIds: [resource.substreamId] };
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, subject.workspaceId,
-      workstreamDOName(this.env.AVALON_REGION, subject.workspaceId, asWorkstreamId(resource.parentId)));
+    const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId, substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId) };
     const workstream = await ownerEvidence(this.parents, JSON.stringify([subject, resource.parentId]), async () => {
-      const facts = await parent.readAuthorizationFacts({ ...request, substreamIds: [] });
-      return facts.exists ? { ...facts, validatedAt: Math.min(facts.validatedAt, facts.main.validatedAt) } : facts;
+      const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, subject.workspaceId,
+        workstreamDOName(this.env.AVALON_REGION, subject.workspaceId, asWorkstreamId(resource.parentId)));
+      const facts = await parent.readAuthorizationFacts(request);
+      return facts.exists && facts.authority === "legacy" ? { ...facts, validatedAt: Math.min(facts.validatedAt, facts.main.validatedAt) } : facts;
     });
     if (workstream.exists) {
+      const scope = workstream.scopes.find((value) => value.substreamId === resource.substreamId);
+      if (scope || workstream.authority === "grants") {
+        if (!scope) return unavailable();
+        const evidence = { owner:resource.parentId,revision:scope.revision,validatedAt:workstream.validatedAt };
+        if (!scope.access.allowed && scope.access.reason === "not_found") return { status:"not_found",resource,evidence:[evidence] };
+        if (!scope.access.allowed && scope.access.reason === "not_ready") return { status:"unavailable",reason:"projection_incomplete",retryable:true };
+        return evaluateReadPolicy(fact(scope.access.allowed,"not_participant",evidence),Date.now());
+      }
+      if (workstream.authority !== "legacy") return unavailable();
+      if (this.guest) return evaluateReadPolicy(fact(false,'not_participant',{
+        owner:resource.parentId,revision:'legacy',validatedAt:workstream.validatedAt,
+      }),Date.now());
       const child = workstream.children.find((value) => value.substreamId === resource.substreamId);
       const mainEvidence = { owner: `${resource.parentId}/0`, revision: workstream.main.revision, validatedAt: workstream.main.validatedAt };
       const childEvidence = { owner: resource.parentId, revision: JSON.stringify([workstream.generation, child?.version]), validatedAt: workstream.validatedAt };
@@ -167,11 +197,18 @@ class AuthorizationBatch {
     const automation = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, subject.workspaceId,
       automationDOName(this.env.AVALON_REGION, subject.workspaceId, asAutomationId(resource.parentId)));
     const facts = await ownerEvidence(this.automations, JSON.stringify([subject, resource.parentId, resource.substreamId]),
-      () => automation.readAuthorizationFacts(request));
+      () => automation.readAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }));
     if (!facts.exists) return { status: 'not_found', resource,
       evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: Math.min(workstream.validatedAt, facts.validatedAt) }] };
     const evidence = { owner: resource.parentId, revision: facts.revision, validatedAt: facts.validatedAt };
     if (!facts.children.includes(resource.substreamId)) return { status: 'not_found', resource, evidence: [evidence] };
+    if (this.guest) {
+      const userId = subject.userId;
+      const admission = await ownerEvidence(this.automationViewers, JSON.stringify([subject, resource.parentId, resource.substreamId]),
+        async () => ({ ...await automation.authorizeViewer({ workspaceId: subject.workspaceId, parentId: resource.parentId,
+          userId, substreamId: resource.substreamId, requireGrantAuthority: true }), validatedAt: Date.now() }));
+      return evaluateReadPolicy(fact(admission.authorized, 'not_participant', evidence), Date.now());
+    }
     const policies = [fact(facts.scope === 'workspace' || facts.author || facts.executor, 'not_participant', evidence)];
     if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
       const owningWorkstreamId = facts.owningWorkstreamId;
@@ -209,7 +246,7 @@ class AuthorizationBatch {
       fact(facts.noteAllowed && facts.draftAllowed, 'resource_not_shared', evidence),
     ] };
     const baseDecision = evaluateReadPolicy(base, Date.now());
-    if (baseDecision.status !== 'allowed' || !facts.requiresAttachment) return baseDecision;
+    if (baseDecision.status !== 'allowed' || (!facts.requiresAttachment && (!this.guest || facts.owned))) return baseDecision;
     let incomplete = false;
     for (const location of facts.locations) {
       // Do not await a top-level batch that may itself contain this conversation.

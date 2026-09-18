@@ -72,6 +72,7 @@ import {
 } from "./connector-actor-identity";
 import {
   admitConnectorAudience,
+  reconcileConnectorWorkstreamCreator,
   connectorWorkstreamScope,
   resolveConnectorAudience,
   type ConnectorConversationMember,
@@ -114,7 +115,6 @@ import {
   // actually answers with.
   type WorkspaceSlackSession,
 } from "../durable-objects/workspace-slack-protocol";
-import { createIdentityObjectPort } from "../runtime/identity-port";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -1152,9 +1152,10 @@ export class SlackAgentService {
       }),
     );
     for (const session of assigned.sessions) {
-      await reconcileSlackWorkstreamIdentity(this.env, {
+      await reconcileConnectorWorkstreamCreator(this.env, {
         workspaceId: session.workspaceId,
         workstreamId: session.workstreamId,
+        assignmentId: JSON.stringify(["slack", session.id]),
         userId,
         previousAssignedUserId: session.previousAssignedUserId,
         mayCorrectVerifiedCreator: method === "explicit_link"
@@ -1637,6 +1638,7 @@ export class SlackAgentService {
     const identity = await this.linkedIdentity(teamId, slackUserId);
     let actor: ExternalActor | null = null;
     let matchedWorkspaceUserId: string | null = identity?.auth.userId ?? null;
+    let mayJoinWorkstream = identity?.auth.role != null;
     let matchedVerification: ConnectorActorVerification | null = identity ? "account_link" : null;
     if (!identity) {
       if (source.channelResolutionFailure) {
@@ -1670,6 +1672,7 @@ export class SlackAgentService {
       actor = externalIdentity.actor;
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
       matchedVerification = externalIdentity.matchedVerification;
+      mayJoinWorkstream = externalIdentity.mayJoinWorkstream;
     }
     const reactionSource = activationInvocation ? slackAgentReactionSource(activationInvocation) : null;
     let placedReaction: string | null = null;
@@ -1742,6 +1745,7 @@ export class SlackAgentService {
               identity,
               actor,
               matchedWorkspaceUserId,
+              mayJoinWorkstream,
               matchedVerification,
               teamId,
               token,
@@ -1835,7 +1839,8 @@ export class SlackAgentService {
         await admitConnectorAudience(this.env, {
           workspaceId: connection.workspace_id,
           workstreamId: session.workstream_id,
-          userIds: matchedWorkspaceUserId ? [matchedWorkspaceUserId] : [],
+          eventId: clientMessageId,
+          userIds: mayJoinWorkstream && matchedWorkspaceUserId ? [matchedWorkspaceUserId] : [],
           addedByUserId: matchedWorkspaceUserId,
         });
         // Each message runs as whoever sent it: a linked member's own
@@ -1886,6 +1891,7 @@ export class SlackAgentService {
     actor: ExternalActor | null;
     matchedWorkspaceUserId: string | null;
     matchedVerification: ConnectorActorVerification | null;
+    mayJoinWorkstream: boolean;
     teamId: string;
     token: string;
     slackUserId: string;
@@ -1958,7 +1964,7 @@ export class SlackAgentService {
           // The Slack member is not a linked Avalon identity, but when the
           // installation resolves them to a workspace member the work stream
           // is theirs rather than ownerless.
-          creatorUserId: input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
+          creatorUserId: !input.mayJoinWorkstream || input.matchedWorkspaceUserId === null ? null : asUserId(input.matchedWorkspaceUserId),
           participantUserIds: audience.userIds,
           scope,
           slackOrigin: input.slackOrigin,
@@ -1996,7 +2002,7 @@ export class SlackAgentService {
         at,
       }),
     ).session;
-    if (!input.identity && input.matchedWorkspaceUserId) {
+    if (!input.identity && input.mayJoinWorkstream && input.matchedWorkspaceUserId) {
       // The recorded method has to name the mapping that actually resolved the
       // member: it is what a later assignment consults before overwriting.
       await this.assignWorkspaceSessions(
@@ -2539,6 +2545,7 @@ export class SlackAgentService {
     actor: ExternalActor;
     matchedWorkspaceUserId: string | null;
     matchedVerification: ConnectorActorVerification | null;
+    mayJoinWorkstream: boolean;
   }> {
     const result = await slackApi(token, "users.info", { user: slackUserId }, AbortSignal.timeout(10_000));
     if (!validSlackHuman(result.user, teamId) || result.user.id !== slackUserId) {
@@ -2562,6 +2569,7 @@ export class SlackAgentService {
       actor,
       matchedWorkspaceUserId: identity?.userId ?? null,
       matchedVerification: identity?.verification ?? null,
+      mayJoinWorkstream: identity !== null && identity.accessClass !== "guest",
     };
   }
 
@@ -3438,29 +3446,6 @@ export class SlackAgentService {
 
 }
 
-async function reconcileSlackWorkstreamIdentity(
-  env: Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    userId: string;
-    previousAssignedUserId: string | null;
-    mayCorrectVerifiedCreator: boolean;
-  },
-): Promise<void> {
-  // The read that decided whether the creator seat was open, the participant
-  // upsert, the promotion and the demotion of the previous holder were four
-  // statements across two tables. They are one operation on the authority that
-  // owns both, because they are one fact about who this work stream belongs to
-  // — and a work stream with two creators or none is what a partial batch
-  // leaves behind.
-  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).adoptCreator({
-    userId: input.userId,
-    previousAssignedUserId: input.previousAssignedUserId,
-    mayCorrectVerifiedCreator: input.mayCorrectVerifiedCreator,
-    now: Date.now(),
-  });
-}
 
 const SlackResponseMessageSchema = z.strictObject({
   response_type: z.enum(["ephemeral", "in_channel"]),

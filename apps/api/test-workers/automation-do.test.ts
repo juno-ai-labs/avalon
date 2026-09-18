@@ -540,6 +540,13 @@ describe("AutomationDO", () => {
     await agents.send({ agentId: started.agentId, message: 'Detach that recommendation.', attachmentIds: [] },
       { ...toolContext, effectIntentId: crypto.randomUUID() });
     await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
+    const managementResults = provider.calls.flatMap((call) => call.messages)
+      .filter((message) => message.role === 'tool' && 'tool_call_id' in message
+        && ['call-sidekick_attach', 'call-sidekick_detach'].includes(String(message.tool_call_id)));
+    expect(managementResults.length).toBeGreaterThan(0);
+    for (const message of managementResults) {
+      expect(JSON.parse(promptText(message.content)), promptText(message.content)).toMatchObject({ success: true });
+    }
     expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
     expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
     expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
@@ -610,8 +617,11 @@ describe("AutomationDO", () => {
     await automationStub().saveDefinition({ ...addressed(), draft: { ...DEFINITION, definitionVersion: 2, triggers: [] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
     const request = { ...addressed(), principalUserId: AUTHOR_ID, conversationParentId: AUTOMATION_ID, audienceScope: "personal" as const, audienceUserIds: [AUTHOR_ID] };
     expect(await automationStub().readSkillSource({ ...request, audienceUserIds: [AUTHOR_ID, OUTSIDER_ID] })).toBeNull();
+    expect(await automationStub().readSkillSummary({ ...request,audienceUserIds:[AUTHOR_ID,OUTSIDER_ID] })).toBeNull();
+    expect(await automationStub().readSkillSummary(request)).toEqual({ id:AUTOMATION_ID,name:DEFINITION.name,description:DEFINITION.description,available:true });
     await runInDurableObject(automationStub(), (_instance, state) => { state.storage.sql.exec(`UPDATE automation SET loadable = 0`); });
     expect(await automationStub().readSkillSource(request)).toBeNull();
+    expect(await automationStub().readSkillSummary(request)).toMatchObject({ id:AUTOMATION_ID,available:false });
     await runInDurableObject(automationStub(), (_instance, state) => { state.storage.sql.exec(`UPDATE automation SET loadable = 1`); });
     expect((await automationStub().readSkillSource(request))?.loadable).toBe(true);
   });
@@ -1432,5 +1442,19 @@ describe("AutomationDO", () => {
     expect(await consumeEffectBodies(TEST_ENV, [regression])).toEqual({ acked: 1, retried: 0 });
     expect(await automationStub().readRunState({ ...addressed(), runId: started.runId }))
       .toEqual({ state: "completed", lifecycle: "active" });
+  });
+});
+
+
+it("requires an explicit workspace role for unrelated workspace Sidekick viewers", async () => {
+  await createDraft();
+  await runInDurableObject(automationStub(), (instance: AutomationDO) => {
+    const stored = instance['row']();
+    if (!stored) throw new Error("Sidekick fixture missing");
+    const row = { ...stored, scope: "workspace" as const };
+    const outsider = { userId: asUserId(crypto.randomUUID()), participantOfOwningWorkstream: false };
+    expect(() => instance['assertViewer'](row, outsider)).toThrow("This Sidekick does not exist");
+    expect(() => instance['assertViewer'](row, { ...outsider, actorRole: null })).toThrow("This Sidekick does not exist");
+    expect(() => instance['assertViewer'](row, { ...outsider, actorRole: "member" })).not.toThrow();
   });
 });

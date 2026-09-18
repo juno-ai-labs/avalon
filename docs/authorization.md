@@ -22,6 +22,69 @@ participants or become a new canonical owner of memberships.
 
 ## How it works
 
+### Scope grant foundation
+
+`packages/contracts/src/scope-grants.ts` defines member/guest workspace access
+classes, exact conversation/workstream grant addresses and restricted/inheriting
+child audiences. `services/scope-grant-policy.ts` evaluates these authoritative
+facts. Guests never receive the implicit workspace-public member rule. A direct
+child grant needs no Main grant; a Main grant does not confer parent management.
+Overlapping direct and inherited grants remain independent. Suspension overrides
+them all, while archive preserves reading and disables mutation.
+
+First-share preparation starts the addressed participant handoff after canonical
+participant checks. Once that conversation completes its handoff, parent viewer checks and canonical authorization
+reads use its scope grants. Unmigrated conversations retain the existing behavior
+below until their own handoff. [Scoped invitations](scope-invitations.md) owns
+sharing and handoff behavior; [browser sessions](browser-sessions.md) owns cookie transport.
+
+WorkstreamDO migration 14 installs `scope-grant-storage.ts`'s local tables and
+adds child audience with `restricted` as the preserving default. Mutations use
+expected-revision checks and immutable operation receipts. Grant changes,
+receipts and pending delivery intents commit in one synchronous transaction.
+Every grant binds the recipient's current membership incarnation. Removing and
+recreating a relationship never revives grants issued to its previous incarnation;
+promotion preserves the incarnation and grants. A fresh sharing operation must
+explicitly grant the new relationship. Revoked rows remain tombstones, so a delayed
+activation cannot recreate access. Frozen legacy imports retain the incarnation
+mapping recorded when the migration began; replay cannot rebind that snapshot.
+Reusing an operation ID with different input fails; retrying the original input
+returns its original result without reapplying it. Delivery acknowledgement is
+for one exact revision. The storage class alone is not an authorization boundary.
+
+WorkstreamDO's `readScopeAccess` RPC loads the current D1 relationship and reads
+its local scope grants, target readiness and lifecycle. `mutateScopeGrant` admits
+the authenticated actor against that same scope and requires an active recipient
+for additions. Implicit workspace-public member reading does not authorize
+sharing. All local facts are read after the external relationship reads, with no
+await between the local decision and the write. Expected denials are typed RPC
+results, distinct from transport failures. Abandoned workspaces have no usable
+relationship. Migrated conversation reads recheck this relationship and scope after the D1
+await. Pending handoff refuses admission to the addressed conversation until its
+source freezes and the parent commits the roster transfer; unrelated conversations
+keep their existing path. A failed transfer resumes through the durable alarm.
+Falling back to a legacy roster after source authority freezes would create two
+competing authorities, so recovery retains this availability tradeoff. The canonical resolver requests the
+exact conversation, so an independent migrated child does not read Main's agent
+or require its participation. Its evidence includes relationship incarnation,
+relationship revision and the current participant projection revision. Main and
+child socket admission compare that version against the local applied projection;
+explicit grants use the applied projection, while Main retains parent-authorized
+implicit workspace-member access with version zero. The private-child membership
+table no longer authorizes migrated children. Socket preparation carries the same parent-issued
+revision. Public conversation snapshots, feed tickets, read-state and child title
+changes accept guest identities only through `requireGrantAuthority` parent
+admission. Unmigrated workstreams and Sidekick authoring conversations refuse
+that requirement. Workspace-public legacy visibility never admits a guest here.
+
+Pure policy tests run with `pnpm --filter @rally/api exec vitest run
+test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run
+in real workerd with `pnpm --filter @rally/api test:workers
+test-workers/scope-grant-storage.test.ts`.
+`test-workers/scope-grant-authority.test.ts` additionally drives real WorkstreamDO
+RPC with D1 relationships, including child-only sharing, implicit-member denial,
+inheritance and lifecycle/relationship rejection.
+
 A trusted request creates one `AccessContext`. Addresses identify a workspace
 and either a conversation `(parentId, substreamId)`, a resource ID, or a memory
 scope ID. `checkMany()` returns one exact decision per candidate;
@@ -35,12 +98,36 @@ An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
 Member proofs include a canonical regional workspace-membership observation,
-shared within one authorization batch. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
+shared within one authorization batch. Each batch gathers conversation IDs from
+its requests and resource locations before loading a parent, preserving one parent
+RPC across multiple substreams. A mixed response carries migrated scope decisions
+alongside legacy facts; each conversation uses its own authority. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
 For member reads, a work stream's main SubstreamAgent owns its scope and roster.
 WorkstreamDO adds its canonical private-child membership and ready-state facts.
 An automation supplies its own scope, author, executor and child registry; an
 owning work stream's canonical roster supplies inherited access. Archived work
 streams remain readable. Deleted automations are absent.
+
+Guest membership is observed explicitly from `workspace_members.access_class` in
+each canonical batch. Guests cannot use a legacy conversation scope/roster or
+Sidekick authoring fallback. For a non-owned resource, a guest always needs a
+canonical attachment in an authorized migrated conversation, including resources
+whose provider ordinarily makes them workspace-wide for members. Their own upload
+drafts retain the existing ownership rule. Connector execution capability checks
+remain separate from this resource metadata/content disclosure decision.
+
+Guests can upload and delete their own unsent drafts through the ordinary resource
+routes. Exact Main/child attachment mutations admit the target conversation.
+Guest attachment also checks the source resource once after loading its metadata,
+immediately before committing its link, through the existing resource authorizer.
+Product dispatch has already reloaded the current relationship; it does not trust
+a caller-supplied guest/member classification. Ordinary members keep the existing
+attachment path and personal-connection ownership check, without the added
+resource-authorizer round trip on project defaults or origin attachment. Guest
+metadata stays inside the mutation until its source check succeeds; a known
+resource ID is insufficient for a guest. Upload drafts must be sent with a message; existing
+attachment routes accept uploads after publication. Revoking the conversation
+also refuses subsequent attachment mutations.
 
 WorkspaceDO supplies resource existence, connection ownership, note visibility,
 upload ownership and draft status. A resource requiring an attachment is resolved
@@ -49,6 +136,37 @@ checked against both conversation authority and the canonical attachment
 inventory. The reverse index is discovery, never sufficient proof of a grant.
 This removes the member search path's serial scan of all work streams and all
 children. Content and search passages still come from canonical source records.
+
+Public resource metadata, content, version reads and previews admit workspace-bound
+guests through this same policy; the byte handlers recheck after storage awaits.
+Resources attached to workstream-owned Sidekick conversations reuse that
+Sidekick's viewer admission, including its owning workstream management grant.
+Guest admission observations are shared only within the current authorization
+batch, like other owner observations. Skill visibility alone does not expose a
+Sidekick's resources; existing member authorization remains on its original path.
+
+Explicit resource refresh and artifact open/error/data routes also admit guests.
+Refresh runs the existing resource read proof before loading metadata or invoking
+its connector, including the no-connection case. Artifact routes delegate to
+`ArtifactOpenService` for the same canonical resource proof. Workspace-wide
+listing and connector resource resolution remain member-gated pending their
+scoped integrations. Watch/unwatch routes use the existing writable Main
+conversation admission: watches deliver updates to Main, so a Main or complete
+workstream grant can manage them, while a child-only grant cannot. The existing
+watch service still requires an attachment in Main and preserves connector scope.
+Resource mutations are
+scoped as described above: own draft upload/deletion, message publication and
+exact-conversation attachment/detachment are guest-enabled; broader management
+operations remain member-gated.
+
+### Invitation admission
+
+[Scoped invitations](scope-invitations.md) use the same current grant policy for
+every target at creation and acceptance. A verified mailbox match is necessary
+but insufficient: the sharer's membership incarnation and sharing authority must
+remain valid, the recipient relationship must be active, and local invitation
+revocation must not have won. Acceptance and target grant operations commit in
+one WorkstreamDO transaction. Replays return the receipt without reapplying grants.
 
 ### Evidence and read lifetime
 
@@ -292,6 +410,23 @@ reports unfinished observations explicitly, and deletes its synthetic key afterw
 placement hints with results. Visibility times include polling resolution and use
 Worker timestamps; they are not exact replication timestamps. Remove probe deployments
 after the experiment. Pair these results with mutation-to-write-ack queue events.
+
+## Changelog
+
+### 2026-09-16 — Bind shared scopes to the workspace relationship
+
+Guest collaboration requires independent Main, child and workstream grants;
+workspace membership alone would expose unrelated conversations. Migrated scopes
+now use canonical grant and resource-attachment proofs, while legacy scopes remain
+member-only until handoff. Grants bind the recipient's membership incarnation,
+not just their permanent user ID: otherwise removal and reinvitation silently
+restore old shares. Promotion preserves that binding. Import receipts preserve
+the original incarnation snapshot, and fresh re-sharing recomputes all affected
+participant projections so old sibling grants cannot reappear. Public resource
+reads, explicit refresh, artifact access, and scoped draft/attachment mutations use these proofs; workspace-wide
+management and browser presentation are still separate integrations. Parent reads
+remain batched across substreams so resource/tool checks do not introduce an RPC
+per attachment location; partially migrated parents return both kinds of evidence.
 
 ### 2026-09-10 — Republish a durable decision after a cached KV miss
 

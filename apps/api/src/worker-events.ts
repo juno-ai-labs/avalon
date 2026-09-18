@@ -1,3 +1,5 @@
+import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
+import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
 import { privateAccessEdge } from './services/private-access-edge';
 import { isDurableObjectMigrationCommandQueue } from "@rally/contracts/durable-object-migrations";
@@ -17,6 +19,7 @@ import {
   isProductFeatureFlagQueue,
 } from "./queues/product-feature-flag-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
+import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import {
   isAnalyticsLakehouseQueue,
@@ -188,6 +191,9 @@ export default {
         recoverPendingActivityQueue(env),
         reconcileDigestDefaults(env),
         reapExpiredSessions(env),
+        dispatchWorkspaceRelationshipChanges(env),
+        recoverEmailLoginDeliveries(env),
+        purgeExpiredEmailLoginChallenges(env),
         processTelemetry(env),
       ]);
     })());

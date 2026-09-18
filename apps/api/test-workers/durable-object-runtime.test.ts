@@ -15,6 +15,7 @@ import {
 } from "@rally/contracts";
 import {
   conversationEffectHash,
+  ParentEffectEnvelopeSchema,
   type ConversationEffect,
   type ConversationEffectEnvelope,
   type ParentEffect,
@@ -53,7 +54,6 @@ import {
 } from "./helpers/substream-fixture";
 import {
   consumeEffectBodies,
-  deliverEffectsToWorkspace,
   deliverEffectsToWorkspaceInOrder,
   deliverParentEffectsInOrder,
 } from "./helpers/conversation-effects";
@@ -114,7 +114,7 @@ async function seedOpenAuthority(): Promise<void> {
       abandoned_at TEXT
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE workspace_members (
+    env.DB.prepare(`CREATE TABLE workspace_members (incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -124,7 +124,7 @@ async function seedOpenAuthority(): Promise<void> {
     )`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, USER_ID),
-    env.DB.prepare(`CREATE TABLE sessions (
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL,
@@ -715,12 +715,29 @@ describe("Durable Objects in the Workers runtime", () => {
     const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
       workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
-    // The child's row is not due yet, so its alarm leaves it; the parent's
-    // would be, so that one is held for the walk below.
-    await holdActivityQueue(parent);
-    const delivered = await deliverEffectsToWorkspace(env, child);
-    expect(delivered.child.map((envelope) => envelope.messageId)).toEqual([common.messageId]);
-    expect(delivered.parent.map((envelope) => envelope.effect.kind)).toEqual(["directory_common"]);
+    // Apply and capture the parent's forwarding row inside one object input.
+    // Returning from receiveChildEffects arms an immediately-due alarm; if a
+    // test reads the outbox in a later input, the alarm can legitimately win
+    // and send the row to this test Worker's producer-only queue. Keeping this
+    // walk atomic removes that scheduler race while still exercising the real
+    // parent projection and workspace consumer.
+    const parentEnvelopes = await runInDurableObject(parent, async (instance, state) => {
+      await (instance as WorkstreamDO).receiveChildEffects({ substreamId: "0", envelopes: [common] });
+      const rows = state.storage.sql.exec<{ message_id: string; payload_json: string }>(
+        `SELECT message_id, payload_json FROM durable_outbox
+          WHERE json_extract(payload_json, '$.kind') = 'parent_effect'
+          ORDER BY created_at, message_id`,
+      ).toArray();
+      for (const row of rows) {
+        state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, row.message_id);
+      }
+      return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
+    });
+    expect(parentEnvelopes.map((envelope) => envelope.effect.kind)).toEqual(["directory_common"]);
+    await expect(consumeEffectBodies(env, parentEnvelopes)).resolves.toEqual({ acked: 1, retried: 0 });
+    await runInDurableObject(child, (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM durable_outbox WHERE message_id = ?`, common.messageId);
+    });
     await expect(workspace.lookupWorkstreamDirectory({
       workspaceId: WORKSPACE_ID,
       workstreamIds: [WORKSTREAM_ID],
@@ -1920,15 +1937,19 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  it("distinguishes an inactive session from access revocation", async () => {
+  it.each(["revocation", "membership replacement"])("distinguishes an inactive session from access revocation after %s", async (change) => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
     const socket = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060b");
-    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
-      .bind("2026-08-24T20:00:00.000Z", SESSION_ID)
-      .run();
+    if (change === "revocation") {
+      await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+        .bind("2026-08-24T20:00:00.000Z", SESSION_ID).run();
+    } else {
+      await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement-membership' WHERE workspace_id=? AND user_id=?")
+        .bind(WORKSPACE_ID,USER_ID).run();
+    }
     try {
       const closed = nextClose(socket);
       socket.send(JSON.stringify({
