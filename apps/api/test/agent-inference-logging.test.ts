@@ -295,36 +295,42 @@ describe("agent inference logging", () => {
     const { env, put } = fixture({ beforePut: async () => {} });
     env.LOG_LEVEL = "info";
     const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    const requestReceivedAt = 1_700_000_000_000;
+    const now = vi.spyOn(Date, "now").mockReturnValue(requestReceivedAt + 100);
     const deferred: Promise<unknown>[] = [];
     const logger = createAgentInferenceLogger(env, {
       workspaceId: "workspace-1",
       workstreamId: "workstream-1",
       requestId: "run-1",
       source: "workstream",
-      requestReceivedAt: Date.now() - 100,
+      requestReceivedAt,
       journey: "message_send",
     }, (promise) => deferred.push(promise));
 
-    await logger.onRequest(request);
-    await logger.onRequest({
-      ...request,
-      inferenceRequestId: "00000000-0000-7000-8000-000000000091",
-      turnId: "run-1:turn:2",
-    });
-    await Promise.all(deferred);
+    try {
+      await logger.onRequest(request);
+      await logger.onRequest({
+        ...request,
+        inferenceRequestId: "00000000-0000-7000-8000-000000000091",
+        turnId: "run-1:turn:2",
+      });
+      await Promise.all(deferred);
 
-    expect(logged.mock.calls.filter(([entry]) => (
-      entry as { event?: string }
-    ).event === "agent_inference_started")).toHaveLength(1);
-    const records = put.mock.calls.map((call) => JSON.parse(String(call[1])) as {
-      metadata: Record<string, unknown>;
-    });
-    expect(records[0]?.metadata).toMatchObject({
-      journey: "message_send",
-      requestToInferenceStartMs: expect.any(Number),
-    });
-    expect(records[1]?.metadata).not.toHaveProperty("requestToInferenceStartMs");
-    logged.mockRestore();
+      expect(logged.mock.calls.filter(([entry]) => (
+        entry as { event?: string }
+      ).event === "agent_inference_started")).toHaveLength(1);
+      const records = put.mock.calls.map((call) => JSON.parse(String(call[1])) as {
+        metadata: Record<string, unknown>;
+      });
+      expect(records[0]?.metadata).toMatchObject({
+        journey: "message_send",
+        requestToInferenceStartMs: 100,
+      });
+      expect(records[1]?.metadata).not.toHaveProperty("requestToInferenceStartMs");
+    } finally {
+      now.mockRestore();
+      logged.mockRestore();
+    }
   });
 
   it("does not emit a new inference-start SLO row for a recovered attempt", async () => {
