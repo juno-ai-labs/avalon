@@ -382,9 +382,11 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships three skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The latter two are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships four unowned skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, and — scoped to the Sidekicks plugin by its `ownerPlugin` — `polling-for-events`. The latter two are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
-All three are offered to every production run the API starts. Nothing is withheld by surface. A skill
+`polling-for-events` is the answer to a request that has no webhook behind it — "tell me when a note is added", "summarise each meeting once it is done". Most connections declare no event Rally can subscribe to, so the Sidekick has to look on a timer, and the skill carries the two things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins) and the keyed memory table that stops a run re-reporting what the last one already saw. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
+
+All of them are offered to every production run the API starts, subject to that one owner filter. Nothing is withheld by surface. A skill
 is advice, and what a surface may *do* is settled in the tool loop. Offering is
 not activation: a run sees only the catalog line until it loads one, and loading
 grants no authority. It is an ordinary `HarnessSkill` and not a second source:
@@ -1274,6 +1276,35 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-18 — Watching for events becomes a loadable skill, not policy
+
+**What changed:** `polling-for-events` joined `BUILT_IN_SKILLS` with
+`ownerPlugin: "rally:sidekicks"`. It teaches a run to prefer a connector's
+declared event type, to fall back to an `interval` trigger no faster than every
+ten minutes when there is none, and to key a memory table on the item's own id
+so a later run skips what an earlier one already reported.
+
+**Why:** People ask for event-driven behaviour — "tell me whenever a note is
+added in Granola", "check whether I have new email" — and Rally has no webhook
+path for most connectors, so the honest answer is polling. Left to itself a
+model picks a cadence from the person's urgency rather than from what a watch
+costs, and writes a run with no memory, which then reports the same items every
+tick. Putting the guidance in the standing system prompt was rejected: it is
+irrelevant to almost every turn, and the prompt is charged to all of them. A
+skill is read only by the run that is actually drafting a watcher.
+
+**What a future change has to respect:** the ten-minute floor is a number the
+team set on the 2026-09-17 design call, not a measurement and not a guess made
+here — it is a floor rather than an interval, and the body says in as many words
+that slower is fine and the person's own cadence wins. Do not turn it into a
+fixed cadence, and do not lower it without the team. The `ownerPlugin` is what
+keeps the skill out of an automation occurrence's catalog; a change that drops
+it offers a run holding a frozen trigger context a procedure for drafting
+Sidekicks it cannot draft. This skill teaches the model to *ask* for a poller
+through the Sidekick it drafts; the developer-written, high-water-line poller
+that emits internal events (the Google connector's) is a different mechanism and
+is not what this describes.
 
 ### 2026-09-11 — Trigger content carries a source label again
 
