@@ -20,10 +20,11 @@ properties without knowing which appearance is active.
 | `config/design-tokens/themes/dark.json` | The same for dark. |
 | `config/design-tokens/theme.schema.json` | Validates an appearance file. |
 | `scripts/build-theme-assets.mjs` | Generates the renderer stylesheet and remote-font manifest. |
-| `apps/desktop/src/renderer/styles/themes.css` | Generated light and dark custom-property blocks. |
-| `apps/desktop/src/renderer/styles/app.css` | Component and layout rules expressed through semantic tokens. |
+| `packages/ui/src/styles/themes.css` | Generated light and dark custom-property blocks. |
+| `packages/ui/src/styles/app.css` | Component and layout rules expressed through semantic tokens. |
 | `apps/desktop/src/common/themes.ts` | The shared `system | light | dark` preference and resolver. |
-| `apps/desktop/src/renderer/lib/theme.ts` | Applies the resolved appearance, persists the preference, follows macOS, and synchronizes windows. |
+| `packages/ui/src/lib/theme.ts` | Shared appearance, device preference, and system appearance watcher. |
+| `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
@@ -178,6 +179,22 @@ manifest. It cannot execute code. The retired animated appearance-document
 scheme and iframe are absent from the renderer CSP and Electron protocol
 registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
+
+## Changelog
+
+### 2026-09-17 — Share theme presentation between desktop and browser
+
+**What changed:** The shared UI package owns generated/component styles, bundled
+fonts and theme type definitions. The generator and desktop use those files;
+the next stack layer extracts the appearance runtime and native reporting adapter.
+
+**Why:** The browser and desktop must receive the same appearance changes.
+
+**Considered and rejected:** A separate browser stylesheet would drift; a shared
+runtime that calls Electron would break browser startup.
+
+**Consequences:** New tokens and appearance changes update the shared source,
+not the desktop import wrappers. Native window synchronization remains desktop-only.
 
 ### 2026-09-16 — One saturated success step for the status dot
 

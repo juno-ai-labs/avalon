@@ -34,10 +34,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tokensDirectory = join(root, 'config', 'design-tokens');
 const themesDirectory = join(tokensDirectory, 'themes');
 const desktopSource = join(root, 'apps', 'desktop', 'src');
-export const stylesheetPath = join(desktopSource, 'renderer', 'styles', 'themes.css');
+const sharedUiSource = join(root, 'packages', 'ui', 'src');
+export const stylesheetPath = join(sharedUiSource, 'styles', 'themes.css');
 export const manifestPath = join(desktopSource, 'common', 'theme-assets.ts');
 /** Where a `bundled` font source resolves to, and what `themes.css` points at. */
-export const fontsDirectory = join(desktopSource, 'renderer', 'fonts');
+export const fontsDirectory = join(sharedUiSource, 'fonts');
 const fontsHrefPrefix = '../fonts/';
 
 /** The custom property a token path is written to. */
@@ -211,7 +212,7 @@ function fontHref(font, theme) {
     if (!existsSync(file)) {
       throw new Error(
         `${theme}: ${font.family} names the bundled font ${font.src.bundled}, `
-        + 'which is not in apps/desktop/src/renderer/fonts',
+        + 'which is not in packages/ui/src/fonts',
       );
     }
     return `${fontsHrefPrefix}${font.src.bundled}`;
