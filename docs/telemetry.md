@@ -219,9 +219,32 @@ recorded before the builder's retirement carry it, and no current client
 reports it. The entry points `sidebar_automation` and `automation_run_list`
 name how the page was reached. On the API, a run's outcome and its
 `agent_tool_started` events carry the automation id, the run id, and the
-trigger kind from the run's `automationRun` reference; the compiler-turn,
-revision, template, and overview-reopen measurements went with the builder.
-Dimensions stay closed and content-free.
+trigger kind from the run's `automationRun` reference; the compiler-turn and
+create-ready-revision measurements went with the builder and are marked
+`retired` in the registry. Dimensions stay closed and content-free.
+
+`SidekickDO` is the authoritative producer for what a Sidekick's configuration
+turns out to be. Its first `apply` — the moment a ready definition becomes the
+one that runs, not the earlier row insert behind "New Sidekick" — emits
+`automation_created_v2`; every later publication and each pause, resume,
+manual run, draft discard and delete emits `automation_action_completed_v2`.
+The object produces both rather than the route or the service, because
+`POST /sidekicks/:id/accept` reaches `apply` directly while a drafting
+conversation reaches it through `saveDefinition`, and a Worker-side producer
+would measure one and miss the other.
+
+`automation_created_v2.triggerTypes` is the only place a Sidekick's trigger
+*kind* reaches analytics. `run_terminal` carries no trigger shape of the
+automation's own, and its `automation_trigger_type` collapses
+`connector_activity` and `semantic_activity` into one `external_event`, so
+that field cannot answer which trigger shapes people configure and this one
+can. Three of the contract's fields are constants the closed shipped schema
+requires and the current product no longer varies: `creationMethod` is always
+`custom` since the template gallery was retired, `deliveryTargetTypes` is
+always empty since an automation gained no destinations of its own, and
+`result` on the action contract is always `success` because a refusal throws
+out of the object before reaching the producer. Narrowing any of them is a new
+schema version, not an edit.
 
 The regional agent runtime emits `agent_tool_started` only after the canonical
 execution plan has been durably admitted and replay/ambiguity checks have passed.
@@ -517,8 +540,8 @@ Run focused suites from their package directories:
 ```bash
 pnpm --filter @rally/contracts test
 pnpm --filter @rally/db test
-pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/product-usage-deferral.test.ts test/tool-usage-telemetry.test.ts test/run-outcome-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts test-workers/runtime-deferral.test.ts
+pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/product-usage-deferral.test.ts test/tool-usage-telemetry.test.ts test/run-outcome-telemetry.test.ts test/telemetry-api-producers.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts test-workers/runtime-deferral.test.ts test-workers/automation-do.test.ts
 pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts src/main/main-process-network-recovery.test.ts src/main/renderer-crash-recovery.test.ts src/main/renderer-window-availability.test.ts src/main/telemetry-wiring.test.ts
@@ -529,6 +552,11 @@ pnpm --filter @rally/site build
 ```
 
 Contract tests enforce registry exhaustiveness and prohibited negative space.
+`telemetry-api-producers.test.ts` additionally holds every API-authoritative
+product contract to having a producer, a retirement marker, or a ledger row.
+The test Worker runs as `APP_ENV: "test"`, which `context.environment` does not
+admit, so a suite that wants to observe an API producer on workerd overrides it
+first; `automation-do.test.ts` does, and says why.
 SQLite fixtures apply every migration and advance fake clocks across absolute
 deadlines. API tests use fake telemetry-delivery Service Bindings and R2 bindings and inspect
 exact destination payloads. A real-workerd test proves typed nested rows cross
@@ -1886,6 +1914,59 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-18 — A retirement that stopped at the producers, and the check that now catches one
+
+**What changed:** The registry gained `retired: { since, reason }`, and
+`automation_draft_turn_completed`, `automation_draft_ready` and
+`note_summary_generation_completed` carry it. `SidekickDO` became the producer
+for `automation_created_v2` (its first `apply`) and
+`automation_action_completed_v2` (every later publication, pause, resume,
+manual run, draft discard and delete), through
+`apps/api/src/telemetry/automation-lifecycle.ts`. A new test requires every
+API-authoritative product contract to have a producer under `apps/api/src`, a
+retirement marker, or a row in its ledger of known gaps.
+
+**Why:** The 2026-09-03 entry below records a deliberate decision to drop the
+compiler-turn and create-ready-revision measurements with the builder. Nothing
+carried that decision into the registry, and two contracts nobody decided
+about — `automation_created_v2` and `automation_action_completed_v2` — went
+with them as collateral, because their producers lived in the wizard and
+subscription paths the durable-lifecycle cutover deleted. All four stopped
+arriving on 2026-08-26/27 and stayed declared. The cost was specific:
+`triggerTypes` is the only place a Sidekick's trigger *kind* reaches
+analytics, so for three weeks no query could say whether a `semantic_activity`
+Sidekick existed in production — which is how the gap was found, by somebody
+needing that answer for a different question.
+
+**Considered and rejected:** *Retiring all four.* It is the tidier reading of
+the 2026-09-03 decision, and it leaves the trigger-shape question permanently
+unanswerable; the two contracts that lost producers without a decision are the
+two worth restoring. *A new `sidekick_published` contract* with only the fields
+the current product varies. Cleaner, and it abandons the four production
+occurrences already in PostHog and the saved queries over them for three
+constants that are true — `creationMethod: "custom"`, `deliveryTargetTypes: []`
+and `result: "success"` are what actually happened, not padding. *Deleting the
+retired entries outright.* The registry is the ingestion admission schema, and
+delivery parses before it filters, so an unregistered name in one pending row
+stalls the whole drain. *Classifying refused actions* so `result` varies. It
+means catching and rethrowing inside five lifecycle methods for an
+observation, which is the one thing telemetry may not risk.
+
+**Consequences:** A producer removed from now on retires its contract in the
+same change or the suite fails — [`adding-new-instrumented-event.md`](adding-new-instrumented-event.md#5-retiring-an-event)
+is the procedure, including when an entry may be deleted rather than marked.
+The ledger in `telemetry-api-producers.test.ts` names six more API contracts
+that are declared and unproduced and were not investigated here;
+`connector_activity_ingested` is the largest, at 11,647 production events
+through 2026-08-19 and none since. A gap that gains a producer fails the test
+too, so the ledger can only shrink. Two constraints the check ran into and did
+not fix: the test Worker's `APP_ENV: "test"` is outside the closed
+`context.environment` enum, so every API envelope is refused on workerd unless
+a suite overrides it, which is why a green suite never noticed; and a retired
+contract that a released client can still replay needs naming in the
+suppression predicate as well as marking, because the marker suppresses
+nothing.
 
 ### 2026-09-17 — Product actions no longer await observational telemetry
 

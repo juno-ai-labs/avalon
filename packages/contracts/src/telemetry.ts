@@ -78,6 +78,31 @@ export const TELEMETRY_APPLICATION_ICON_IDS = [
 ] as const;
 export type TelemetryApplicationIconId = typeof TELEMETRY_APPLICATION_ICON_IDS[number];
 
+/**
+ * Why a registered contract has no producer any more.
+ *
+ * The registry is both the catalogue and the ingestion admission schema, so a
+ * contract cannot simply be deleted the day its producer goes: an envelope a
+ * released client still spools, or one already accepted and waiting for
+ * delivery, fails `TelemetryEnvelopeSchema` with `telemetry_event_unregistered`
+ * the moment its entry is gone — and delivery parses before it filters, so one
+ * such row stalls the whole drain rather than itself. The entry therefore
+ * stays and says so here instead.
+ *
+ * This marker is declarative. It does not suppress anything: an event that
+ * must also be discarded on the way to a destination is named in the
+ * suppression predicate the collector, the spool, the lakehouse and the
+ * PostHog adapter all read, the way the retired meeting events are.
+ * `docs/adding-new-instrumented-event.md` owns when a contract may be removed
+ * outright rather than marked.
+ */
+export interface TelemetryRetirement {
+  /** `YYYY-MM-DD`, the day the last producer left the tree. */
+  since: string;
+  /** What removed it, in one sentence, so nobody re-derives the answer. */
+  reason: string;
+}
+
 interface TelemetryRegistryEntry {
   name: string;
   schemaVersion: 1;
@@ -97,6 +122,8 @@ interface TelemetryRegistryEntry {
   regionalRetention: "90-days" | "13-months";
   destination: "posthog" | "internal-only";
   compatibilityNote: string;
+  /** Set only when the contract is registered but nothing produces it. */
+  retired?: TelemetryRetirement;
 }
 
 type RegistryInput = Omit<TelemetryRegistryEntry, "schemaVersion" | "sampleRate" | "compatibilityNote"> & {
@@ -257,6 +284,7 @@ function productEvent<
   identityScopes: TScopes;
   properties: TProperties;
   priority?: "critical" | "high" | "normal" | "low";
+  retired?: TelemetryRetirement;
 }) {
   const propertyClassifications = memoizedValue(() => Object.fromEntries(
     Object.keys(input.properties.unwrap().shape).map((key) => [key, "product" as const]),
@@ -1167,6 +1195,10 @@ export const TELEMETRY_EVENTS = {
       connectorMentionCount: resourceCount,
       readyToCreate: z.boolean(),
     })),
+    retired: {
+      since: "2026-08-28",
+      reason: "Dropped with the automation builder by the 2026-08-28 durable-lifecycle cutover, recorded in docs/telemetry.md under 2026-09-03. The draft compiler this counted turns for is an ordinary conversation under SidekickDO now: no compiler turn, no turn number, and no separate draft to number them against. Authoring turns are runs, which `run_terminal` measures.",
+    },
   }),
   automation_draft_ready: productEvent({
     name: "automation_draft_ready",
@@ -1184,11 +1216,30 @@ export const TELEMETRY_EVENTS = {
       pluginCount: resourceCount,
       deliveryTargetTypes: z.array(automationDeliveryTargetType).max(2),
     })),
+    retired: {
+      since: "2026-08-28",
+      reason: "Dropped with the automation builder by the 2026-08-28 durable-lifecycle cutover, recorded in docs/telemetry.md under 2026-09-03. A Sidekick keeps one id from its first authoring turn through acceptance, so no draft becomes ready separately from the automation; a ready definition applies in the same call, and `automation_created_v2` reports that publication with the same trigger, connector and plugin dimensions.",
+    },
   }),
+  /**
+   * Emitted on a Sidekick's *first* publication, not on the row insert.
+   *
+   * "New Sidekick" inserts an empty object with no definition and no triggers;
+   * what a reader means by a created automation is the one that will run, and
+   * that is the first `SidekickDO.apply`. Three fields are constants since the
+   * August cutover and are kept because the shipped schema is closed:
+   * `creationMethod` is always `custom` (the template gallery is retired),
+   * `deliveryTargetTypes` is always empty (an automation has no destinations of
+   * its own), and `draftId`/`templateId` are never set (one id runs from the
+   * first authoring turn through acceptance). `triggerTypes` is the reason this
+   * contract exists: it is the only place a Sidekick's trigger *kind* reaches
+   * analytics, and the lakehouse's `automation_trigger_type` collapses
+   * `connector_activity` and `semantic_activity` into one `external_event`.
+   */
   automation_created_v2: productEvent({
     name: "automation_created_v2",
-    definition: "The regional API durably created or subscribed to an automation with bounded configuration dimensions.",
-    productQuestion: "Which automation creation methods and configurations survive the authoritative server write?",
+    definition: "The regional API durably published an automation's first ready definition, with bounded configuration dimensions.",
+    productQuestion: "Which trigger, connector, and plugin shapes do people actually configure on the automations they publish?",
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
@@ -1221,6 +1272,12 @@ export const TELEMETRY_EVENTS = {
       runCount: countBucket,
     })),
   }),
+  /**
+   * `publish_template` and `adopt_template_version` stopped arriving with the
+   * template gallery on 2026-08-28. They stay in the closed enum because a
+   * shipped value is never removed from one — read a value's presence as "some
+   * build has emitted this", never as "the product still offers it".
+   */
   automation_action_completed_v2: productEvent({
     name: "automation_action_completed_v2",
     definition: "The regional API completed an automation lifecycle or execution action.",
@@ -1468,6 +1525,10 @@ export const TELEMETRY_EVENTS = {
       segmentCount: countBucket,
       refreshCadence: z.enum(["disabled", "one_minute", "two_minutes", "five_minutes", "custom"]),
     })),
+    retired: {
+      since: "2026-09-14",
+      reason: "Built-in meeting notes are retired; the generator is gone and `isRetiredMeetingTelemetry` suppresses any occurrence a released client still replays.",
+    },
   }),
   note_opened_v2: productEvent({
     name: "note_opened_v2",
@@ -2260,6 +2321,17 @@ export const UpdateProductAnalyticsPreferenceSchema = deferredZodSchema(() => z.
   enabled: z.boolean(),
   expectedVersion: z.number().int().nonnegative(),
 }));
+
+/**
+ * The retirement recorded on a contract, if it carries one.
+ *
+ * Read through a function because `TELEMETRY_EVENTS` is a union of exact entry
+ * types: an entry with no marker has no such property to widen, so a caller
+ * iterating the registry cannot reach the field without one.
+ */
+export function telemetryEventRetirement(name: TelemetryEventName): TelemetryRetirement | undefined {
+  return (TELEMETRY_EVENTS[name] as { retired?: TelemetryRetirement }).retired;
+}
 
 /** Shipped clients may replay these events after the built-in feature is retired. */
 export function isRetiredMeetingTelemetry(event: { name: string; properties: unknown }): boolean {

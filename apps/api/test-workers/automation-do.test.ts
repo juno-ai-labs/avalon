@@ -20,7 +20,7 @@
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   asAutomationId,
@@ -75,6 +75,7 @@ const EMAIL_ADDRESS = `${EMAIL_LOCAL_PART}@automation.rallywith.ai`;
 const NOW = "2026-08-29T10:00:00.000Z";
 const TEST_ENV: Env = env;
 const RUN_SETTLE_TIMEOUT_MS = 15_000;
+const TEST_APP_ENV = env.APP_ENV;
 
 /**
  * Reassigned per test: a finished test's objects keep draining after
@@ -408,6 +409,79 @@ async function settledChildRun(runId: string): Promise<{ status: string; error_j
   }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("terminal");
   return settled!;
 }
+
+/**
+ * The regional telemetry acceptance surface, declared only for the tests that
+ * read it back.
+ *
+ * `emitProductUsageTelemetry` swallows its own failure, so an object emitting
+ * into a database with no telemetry tables looks exactly like an object
+ * emitting nothing at all — which is the shape of the defect these tests
+ * exist to catch. Declaring the tables here rather than in the shared control
+ * plane keeps every other suite's D1 the way it is.
+ *
+ * `APP_ENV` is overridden for the same reason. The test Worker runs as `test`
+ * (`wrangler.test.jsonc`), which is not one of the three values
+ * `context.environment` admits, so *every* API-produced envelope is refused by
+ * `TelemetryEnvelopeSchema` before it reaches D1 — silently, because emission
+ * is observational. Until that is settled, no API producer can be proved on
+ * workerd without this line, which is a large part of why the automation
+ * contracts went three weeks unproduced with a green suite.
+ */
+async function seedTelemetryAcceptance(): Promise<void> {
+  (env as { APP_ENV: string }).APP_ENV = "development";
+  await env.DB.batch([
+    env.DB.prepare(`ALTER TABLE users ADD COLUMN analytics_person_id TEXT`),
+    env.DB.prepare(`ALTER TABLE users ADD COLUMN product_analytics_enabled INTEGER NOT NULL DEFAULT 1`),
+    env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN name TEXT`),
+    env.DB.prepare(`CREATE TABLE telemetry_accepted_events (
+      event_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, envelope_json TEXT NOT NULL,
+      route TEXT NOT NULL, routing_basis TEXT NOT NULL, analytics_subject_id TEXT NOT NULL,
+      workspace_analytics_id TEXT, subject_user_id TEXT, accepted_at TEXT NOT NULL,
+      normalized_timestamp TEXT NOT NULL, delete_at TEXT NOT NULL, delivery_state TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, delivered_at TEXT,
+      terminal_code TEXT, analytics_lakehouse_state TEXT
+    )`),
+    env.DB.prepare(`CREATE TABLE telemetry_delivery_receipts (
+      event_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, route TEXT NOT NULL,
+      result_code TEXT NOT NULL, created_at TEXT NOT NULL, delete_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`CREATE TABLE telemetry_profile_jobs (
+      id TEXT PRIMARY KEY, subject_user_id TEXT, workspace_id TEXT, job_kind TEXT NOT NULL,
+      destination_analytics_id TEXT NOT NULL, anonymous_epoch_id TEXT, properties_json TEXT NOT NULL,
+      version INTEGER NOT NULL, state TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT, acknowledged_at TEXT, created_at TEXT NOT NULL, delete_at TEXT NOT NULL
+    )`),
+  ]);
+}
+
+interface AcceptedTelemetry {
+  name: string;
+  identityScope: string;
+  source: string;
+  properties: Record<string, unknown>;
+}
+
+/**
+ * Accepted product events, oldest first. Polled because emission is deferred:
+ * the lifecycle call returns before the envelope reaches D1, which is the
+ * whole point of `emitProductUsageTelemetry`.
+ */
+async function acceptedTelemetry(expected: number): Promise<AcceptedTelemetry[]> {
+  let events: AcceptedTelemetry[] = [];
+  await expect.poll(async () => {
+    const rows = await env.DB.prepare(
+      `SELECT envelope_json FROM telemetry_accepted_events ORDER BY accepted_at, event_id`,
+    ).all<{ envelope_json: string }>();
+    events = rows.results.map((row) => JSON.parse(row.envelope_json) as AcceptedTelemetry);
+    return events.length;
+  }, { timeout: 5_000, interval: 50 }).toBe(expected);
+  return events;
+}
+
+afterEach(() => {
+  (env as { APP_ENV: string }).APP_ENV = TEST_APP_ENV;
+});
 
 beforeEach(async () => {
   sidekickToolScript = [];
@@ -944,6 +1018,122 @@ describe("AutomationDO", () => {
       .toEqual([]);
     await expect(runInDurableObject(automationStub(), (instance: AutomationDO) =>
       instance.readDetail({ ...addressed(), actor: actor() }))).rejects.toThrow("This Sidekick was archived");
+  });
+
+  it("reports a first publication's trigger kinds, and every later publication as an edit", async () => {
+    await seedTelemetryAcceptance();
+    await createDraft();
+    await seedWebhookConnection();
+    await automationStub().submitDefinition({
+      ...addressed(),
+      draft: {
+        ...DEFINITION,
+        recommendedPlugins: [{ pluginId: "plugin_webhook", recommendedTools: [], reason: "Needed" }],
+        // `semantic_activity` is half of the pair the lakehouse cannot tell
+        // apart: its `automation_trigger_type` reads `external_event` for both
+        // it and `connector_activity`. This event is the only place the
+        // difference reaches analytics.
+        triggers: [
+          { type: "calendar", rrule: "FREQ=DAILY", timezone: null, summary: "Every morning" },
+          {
+            type: "semantic_activity",
+            connectorType: "generic_webhook",
+            sourceBindingKey: "deploy_hook",
+            suggestedSourcePluginId: "plugin_webhook",
+            deterministicPrefilter: { eventType: "deploy.finished" },
+            condition: "The deploy touched checkout",
+          },
+        ],
+      },
+      evaluatorRules: AutomationSetEvaluatorRulesModelInputV1Schema.parse({
+        schemaVersion: 1,
+        evaluators: [{
+          evaluatorKey: "checkout_deploys",
+          source: {
+            sourceBindingKey: "deploy_hook",
+            suggestedSourcePluginId: "plugin_webhook",
+            event: { kind: "event_type", eventType: "deploy.finished" },
+          },
+          when: { kind: "always" },
+        }],
+      }),
+      submittedByRunId: null,
+    });
+
+    await apply();
+
+    const [published] = await acceptedTelemetry(1);
+    expect(published).toMatchObject({
+      name: "automation_created_v2",
+      source: "api",
+      identityScope: "workspace-user",
+      properties: {
+        automationId: AUTOMATION_ID,
+        creationMethod: "custom",
+        visibility: "private",
+        triggerTypes: ["calendar", "semantic_activity"],
+        connectorTypes: ["generic_webhook"],
+        pluginCount: 1,
+        deliveryTargetTypes: [],
+        modelOverride: false,
+      },
+    });
+    expect(published?.properties).not.toHaveProperty("draftId");
+    expect(published?.properties).not.toHaveProperty("templateId");
+
+    // A second ready revision is the same object publishing again, which is an
+    // edit of something that already exists rather than a second creation.
+    await submit({ ...DEFINITION, name: "Hourly helper", triggers: [{ type: "manual" }] });
+    await apply();
+
+    expect((await acceptedTelemetry(2))[1]).toMatchObject({
+      name: "automation_action_completed_v2",
+      properties: {
+        automationId: AUTOMATION_ID,
+        action: "edit",
+        previousStatus: "active",
+        appliedStatus: "active",
+        result: "success",
+      },
+    });
+  });
+
+  it("reports pause, resume, a manual run, and the delete that ends them", async () => {
+    await seedTelemetryAcceptance();
+    await activeAutomation();
+    const published = await acceptedTelemetry(1);
+    expect(published[0]?.name).toBe("automation_created_v2");
+
+    await automationStub().pause({ ...addressed(), actor: actor() });
+    await automationStub().resume({ ...addressed(), actor: actor() });
+    const started = await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "telemetry-run-0001" });
+    // The same key again is the same occurrence, so it is not a second run to
+    // report; the object answers from the run it already admitted.
+    expect((await automationStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: "telemetry-run-0001" })))
+      .toEqual({ runId: started.runId, reused: true });
+    await automationStub().remove({ ...addressed(), actor: actor() });
+
+    expect((await acceptedTelemetry(5)).slice(1).map((event) => [
+      event.name, event.properties.action, event.properties.previousStatus, event.properties.appliedStatus,
+    ])).toEqual([
+      ["automation_action_completed_v2", "pause", "active", "paused"],
+      ["automation_action_completed_v2", "resume", "paused", "active"],
+      ["automation_action_completed_v2", "run_now", "active", "active"],
+      ["automation_action_completed_v2", "delete", "active", "deleted"],
+    ]);
+  });
+
+  it("reports discarding a Sidekick that never published as archiving a draft, not a delete", async () => {
+    await seedTelemetryAcceptance();
+    await createDraft();
+    await submit({ ...DEFINITION, ready: false });
+
+    await automationStub().remove({ ...addressed(), actor: actor() });
+
+    expect(await acceptedTelemetry(1)).toMatchObject([{
+      name: "automation_action_completed_v2",
+      properties: { action: "archive_draft", previousStatus: "draft", appliedStatus: "deleted" },
+    }]);
   });
 
   it("refuses management by a member who is neither author nor principal", async () => {

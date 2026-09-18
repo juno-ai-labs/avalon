@@ -613,6 +613,13 @@ Sidekick's id, exactly what every Sidekick showed before the picker existed.
 - **A room's automation is the room's.** Its scope is fixed at creation, its
   managers are the room's participants, it is listed only in the room's rail,
   and the room's archive pauses it. Authorship confers nothing on it.
+- **A lifecycle transition reports itself, and the report cannot change it.**
+  `apply`, `pause`, `resume`, `runNow` and `remove` each emit through
+  `telemetry/automation-lifecycle.ts` after their write has committed. The
+  object is the producer rather than the route, because `saveDefinition`
+  applies a ready draft without going through one. Emission is deferred and
+  swallows its own failure, so a new transition may add a call here but must
+  never await one, and must never let one throw.
 
 ## Boundary
 

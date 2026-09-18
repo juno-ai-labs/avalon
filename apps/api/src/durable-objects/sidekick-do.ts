@@ -69,6 +69,7 @@ import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
+import { emitAutomationActionCompleted, emitAutomationPublished } from "../telemetry/automation-lifecycle";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
@@ -690,6 +691,26 @@ export class SidekickDO extends ConversationParentDurableObject {
     if (this.row()?.applied_effects_revision === revision.definition_revision) {
       await this.cancelScheduledAlarm("sidekick_publication", String(revision.definition_revision));
     }
+    // Which publication this was is decided from the row as it stood *before*
+    // the transaction: a replay that re-runs only the tail arrives with the
+    // revision already accepted and reports nothing, rather than calling the
+    // first publication an edit.
+    const subject = this.telemetrySubject(row, request.actor.userId);
+    if (row.accepted_definition_revision === null) {
+      emitAutomationPublished(this.env, {
+        ...subject,
+        definition,
+        pluginCount: prepared.selections.defaultPluginIds.length,
+        modelOverride: row.model_override !== null,
+      });
+    } else if (row.accepted_definition_revision !== revision.definition_revision) {
+      emitAutomationActionCompleted(this.env, {
+        ...subject,
+        action: "edit",
+        previousStatus: row.lifecycle,
+        appliedStatus: this.row()?.lifecycle ?? "active",
+      });
+    }
     return this.detail();
   }
 
@@ -804,6 +825,12 @@ export class SidekickDO extends ConversationParentDurableObject {
     if (row.lifecycle === "paused") return;
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can be paused");
     await this.pauseBy(row, "person");
+    emitAutomationActionCompleted(this.env, {
+      ...this.telemetrySubject(row, request.actor.userId),
+      action: "pause",
+      previousStatus: "active",
+      appliedStatus: "paused",
+    });
   }
 
   async resume(input: AutomationActorRequest): Promise<void> {
@@ -817,6 +844,12 @@ export class SidekickDO extends ConversationParentDurableObject {
       throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this Sidekick is archived");
     }
     await this.resumeFromPause(row);
+    emitAutomationActionCompleted(this.env, {
+      ...this.telemetrySubject(row, request.actor.userId),
+      action: "resume",
+      previousStatus: "paused",
+      appliedStatus: "active",
+    });
   }
 
   async remove(input: AutomationActorRequest): Promise<void> {
@@ -848,6 +881,15 @@ export class SidekickDO extends ConversationParentDurableObject {
     await this.cancelScheduledAlarmKind(AUTOMATION_RUN_ALARM_KIND);
     if (row.lifecycle === "active") await this.replaceRegistrations([]);
     await this.armNextAlarm();
+    // A Sidekick that never published is archived rather than deleted: the
+    // person is discarding a draft, which is a different thing to measure
+    // from retiring something that had been running.
+    emitAutomationActionCompleted(this.env, {
+      ...this.telemetrySubject(row, request.actor.userId),
+      action: row.lifecycle === "draft" ? "archive_draft" : "delete",
+      previousStatus: row.lifecycle,
+      appliedStatus: "deleted",
+    });
   }
 
   /**
@@ -908,6 +950,13 @@ export class SidekickDO extends ConversationParentDurableObject {
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
     );
+    if (!admitted.reused) emitAutomationActionCompleted(this.env, {
+      ...this.telemetrySubject(row, request.actor.userId),
+      action: "run_now",
+      previousStatus: "active",
+      appliedStatus: "active",
+      runId: admitted.runId,
+    });
     return { runId: admitted.runId, reused: admitted.reused };
   }
 
@@ -1947,6 +1996,22 @@ export class SidekickDO extends ConversationParentDurableObject {
       throw new ApiError(422, "sidekick_timezone_invalid", "The schedule's timezone is not valid");
     }
     return timezone;
+  }
+
+  /**
+   * Who and what an automation telemetry event is about.
+   *
+   * Taken from the row as the method read it, so an event reports the scope
+   * and identity the transition actually applied to rather than whatever the
+   * object holds by the time the deferred emission runs.
+   */
+  private telemetrySubject(row: AutomationRow, actorUserId: string) {
+    return {
+      workspaceId: asWorkspaceId(row.workspace_id),
+      automationId: row.automation_id,
+      actorUserId: asUserId(actorUserId),
+      scope: row.scope,
+    };
   }
 
   // ---------------------------------------------------------------------------

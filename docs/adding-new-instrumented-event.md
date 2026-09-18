@@ -163,4 +163,42 @@ pnpm test
 - Verify opt-out, retention, and prohibited-data behavior before shipping.
 
 
-## 5. Finish the change
+## 5. Retiring an event
+
+**A contract whose producer is removed is retired in the same change that
+removes it.** A registered event with no producer is a claim the catalogue
+makes and the data does not support: a dashboard, a funnel, or an
+investigation is built on the declaration, and the first anyone learns
+otherwise is when a query comes back empty and nobody can say whether that is
+the product or the pipeline. Four automation contracts sat declared and
+unproduced from the August 2026 durable-lifecycle cutover — the decision to
+drop two of them is recorded in [`telemetry.md`](telemetry.md), and the
+registry was never told.
+
+**The registry is the ingestion admission schema as well as the catalogue, so
+the entry usually stays.** `TelemetryEnvelopeSchema` refuses a name it does not
+know, and the delivery drain parses before it filters, so one stored envelope
+whose contract was deleted stalls the whole pass rather than itself. Set
+`retired: { since, reason }` on the entry instead. `since` is the day the last
+producer left; `reason` says what removed it, so nobody re-derives the answer.
+The marker is declarative — it suppresses nothing.
+
+Then take the two further steps the situation calls for:
+
+- **Nothing in the wild can still send it?** Only the API produces `source:
+  "api"` events, the authenticated desktop transport rejects them, and there is
+  no client spool holding them — so once the regional acceptance retention has
+  passed, the entry may be deleted outright.
+- **It must also be discarded rather than merely stop arriving?** Name it in
+  the suppression predicate the collector, the desktop spool, the lakehouse and
+  the PostHog adapter all read, the way `isRetiredMeetingTelemetry` does for the
+  retired meeting contracts. Marking alone lets a released client's replay
+  through.
+
+`apps/api/test/telemetry-api-producers.test.ts` holds the API half of this to
+the wall: every product event the registry declares the API authoritative for
+is either produced somewhere under `apps/api/src`, marked retired, or named in
+that file's ledger of known gaps with what is known about each. A gap that
+gains a producer fails the test too, so the ledger can only shrink.
+
+## 6. Finish the change
