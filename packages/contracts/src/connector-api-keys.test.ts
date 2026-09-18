@@ -20,12 +20,19 @@ describe("connector API key guidance", () => {
   });
 
   it("declares a format only where the provider documents one", () => {
-    // Ashby's authentication page shows a key as a basic-auth username and
-    // Fireflies' authorization page describes only the header, so a prefix for
-    // either would be invented — and would reject a valid key.
+    // Ashby's authentication page shows a key as a basic-auth username, so a
+    // prefix for it would be invented — and would reject a valid key.
     expect(ConnectorApiKeyGuidanceCatalog.ashby.format).toBeNull();
-    expect(ConnectorApiKeyGuidanceCatalog.fireflies.format).toBeNull();
     expect(ConnectorApiKeyGuidanceCatalog.granola.format).not.toBeNull();
+  });
+
+  it("leaves out a provider that has an installation but takes no key", () => {
+    // Fireflies still has workspace installations, made before that scope was
+    // withdrawn, and no way to paste a key for one: the server refuses a
+    // replacement credential for a scope it no longer connects. An entry here
+    // would offer a field for a paste that cannot happen.
+    expect(ConnectorApiKeyProviders).not.toContain("fireflies");
+    expect(isConnectorApiKeyProvider("fireflies")).toBe(false);
   });
 
   it("declares every pattern anchored, and neither global nor sticky", () => {
@@ -56,12 +63,12 @@ describe("connector API key guidance", () => {
 
   it("says nothing about an empty field or a provider with no documented format", () => {
     expect(connectorApiKeyMismatch("granola", "   ")).toBeNull();
-    expect(connectorApiKeyMismatch("fireflies", "anything at all")).toBeNull();
+    expect(connectorApiKeyMismatch("ashby", "anything at all")).toBeNull();
   });
 
   it("refuses an empty paste for every provider and a malformed one only where a format exists", () => {
-    expect(connectorApiKeyAcceptable("fireflies", "  ")).toBe(false);
-    expect(connectorApiKeyAcceptable("fireflies", "opaque-key")).toBe(true);
+    expect(connectorApiKeyAcceptable("ashby", "  ")).toBe(false);
+    expect(connectorApiKeyAcceptable("ashby", "opaque-key")).toBe(true);
     expect(connectorApiKeyAcceptable("granola", "opaque-key")).toBe(false);
     expect(connectorApiKeyAcceptable("granola", `grn_${"a".repeat(24)}`)).toBe(true);
   });
