@@ -159,7 +159,7 @@ import {
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
-import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { createAgentInferenceLogger, logAgentInferencePrepared } from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -2636,18 +2636,38 @@ export async function runWorkstreamHarness(
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
   // names — `description` is what the retired view called `objective`.
-  const identity = await createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId)
-    .identity();
+  const identityPreparation = new Preparation(() => createIdentityObjectPort(
+    env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+  ).identity());
+  const initialRunPreparation = new Preparation(() => createHarnessRunObjectPort(
+    env, input.workspaceId, input.parentId, undefined, conversationSubstreamId,
+  ).run({ runId: input.harnessRunId }));
+  // These two reads gate every later branch and grant no authority. Observe
+  // both through the reusable preparation primitive so they overlap without
+  // creating floating rejections.
+  identityPreparation.get();
+  initialRunPreparation.get();
+  const identity = await identityPreparation.get();
   const workstream = identity && identity.archived_at === null
     ? { title: identity.title, objective: identity.description }
     : null;
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
-  const initialRun = await createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId)
-    .run({ runId: input.harnessRunId });
+  const initialRun = await initialRunPreparation.get();
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  const currentSidekickSources = await resolveSidekickSkills(env, input, storedSidekickSkills?.sources.map((source) => source.id));
+  const sidekickSourcesPreparation = new Preparation(() => resolveSidekickSkills(
+    env,
+    input,
+    storedSidekickSkills?.sources.map((source) => source.id),
+  ));
+  const persistedHostOutcomePreparation = new Preparation(() => loadPersistedHarnessHostOutcome(
+    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+    input,
+  ));
+  sidekickSourcesPreparation.get();
+  persistedHostOutcomePreparation.get();
+  const currentSidekickSources = await sidekickSourcesPreparation.get();
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
   }
@@ -2673,10 +2693,7 @@ export async function runWorkstreamHarness(
     }
   };
   const streamId = input.harnessRunId;
-  const persistedHostOutcome = await loadPersistedHarnessHostOutcome(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    input,
-  );
+  const persistedHostOutcome = await persistedHostOutcomePreparation.get();
   if (persistedHostOutcome) {
     return {
       status: persistedHostOutcome.status,
@@ -2687,11 +2704,39 @@ export async function runWorkstreamHarness(
     };
   }
   const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
+  const initialAuthorityReadyAtMs = Date.now();
   if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
     code: "run_ownership_lost",
   });
   const attemptLease = runtime.lease;
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId);
+  const modelRoutingPreparation = new Preparation(() => resolveWorkstreamModelRouting(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.parentId,
+  }));
+  const attachmentGroundingPreparation = new Preparation(async () => {
+    const guard = new AttachmentGroundingGuard();
+    const receipts = await createToolReceiptObjectPort(
+      env,
+      input.workspaceId,
+      input.parentId,
+      undefined,
+      conversationSubstreamId,
+    ).receiptsForRun({
+      runId: input.harnessRunId,
+      capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
+    });
+    const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
+    await guard.restoreReceipts(
+      receipts,
+      async (receipt) => receipt.outputRef
+        ? loadToolReplayOutput(env, receipt.outputRef, replayDeadline)
+        : null,
+    );
+    return guard;
+  });
+  modelRoutingPreparation.get();
+  attachmentGroundingPreparation.get();
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
@@ -2739,9 +2784,6 @@ export async function runWorkstreamHarness(
   // A seed belongs only beneath a fresh canonical projection. Once Bind has a
   // projection, or a compaction checkpoint replaces its prefix, replaying the
   // seed here would duplicate inherited instructions and history.
-  const initialContext = requiresCanonicalBootstrap && priorCompaction === null
-    ? await orderedTranscript.initialContext()
-    : null;
   const transcript = createMessageObjectPort(
     env,
     input.workspaceId,
@@ -2749,21 +2791,26 @@ export async function runWorkstreamHarness(
     undefined,
     input.substreamId ?? "0",
   );
-  const storedMessages = requiresCanonicalBootstrap
-    ? await loadTriggerFencedTranscriptMessages(
-      transcript,
-      input,
-      // The transcript comes from the object rather than from a routed reader
-      // whose four-table join was rewritten onto three compatibility views. The
-      // paging contract is unchanged, which is what lets this stay an injected
-      // lister: the loader's fence walk is the same walk.
-      transcriptLister(
+  const [initialContext, storedMessages] = await Promise.all([
+    requiresCanonicalBootstrap && priorCompaction === null
+      ? orderedTranscript.initialContext()
+      : Promise.resolve(null),
+    requiresCanonicalBootstrap
+      ? loadTriggerFencedTranscriptMessages(
         transcript,
-        { workspaceId: input.workspaceId, workstreamId: input.parentId },
-      ),
-      priorCompaction?.compactedThroughSequence ?? -1,
-    )
-    : [];
+        input,
+        // The transcript comes from the object rather than from a routed reader
+        // whose four-table join was rewritten onto three compatibility views. The
+        // paging contract is unchanged, which is what lets this stay an injected
+        // lister: the loader's fence walk is the same walk.
+        transcriptLister(
+          transcript,
+          { workspaceId: input.workspaceId, workstreamId: input.parentId },
+        ),
+        priorCompaction?.compactedThroughSequence ?? -1,
+      )
+      : Promise.resolve([]),
+  ]);
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
@@ -2802,6 +2849,11 @@ export async function runWorkstreamHarness(
   let streamStarted = false;
   let suppressCurrentStreamPreview = false;
   const harnessTools = await toolsPreparation.get();
+  const priorHintsPreparation = new Preparation(() => loadAuthorizedActivationHints(
+    createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+    new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
+  ));
+  priorHintsPreparation.get();
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   const activeCredentialPluginIds = new Set<string>();
@@ -2869,24 +2921,8 @@ export async function runWorkstreamHarness(
       occurredAtUtc: new Date().toISOString(),
     });
   };
-  const attachmentGrounding = new AttachmentGroundingGuard();
-  const attachmentGroundingReceipts = await createToolReceiptObjectPort(
-    env,
-    input.workspaceId,
-    input.parentId,
-    undefined,
-    conversationSubstreamId,
-  ).receiptsForRun({
-    runId: input.harnessRunId,
-    capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
-  });
-  const attachmentGroundingReplayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
-  await attachmentGrounding.restoreReceipts(
-    attachmentGroundingReceipts,
-    async (receipt) => receipt.outputRef
-      ? loadToolReplayOutput(env, receipt.outputRef, attachmentGroundingReplayDeadline)
-      : null,
-  );
+  const attachmentGrounding = await attachmentGroundingPreparation.get();
+  const harnessInputsReadyAtMs = Date.now();
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
@@ -2923,10 +2959,7 @@ export async function runWorkstreamHarness(
     memoryContextHash: promptContext.memoryContextHash,
     limits: runScopeLimits,
   });
-  const priorHints = await loadAuthorizedActivationHints(
-    createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
-  );
+  const priorHints = await priorHintsPreparation.get();
   const requestedActivations = [
     ...priorHints,
     ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
@@ -3023,10 +3056,7 @@ export async function runWorkstreamHarness(
     }
   };
 
-  const modelRouting = await resolveWorkstreamModelRouting(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.parentId,
-  });
+  const modelRouting = await modelRoutingPreparation.get();
   // A seeded run is routed where the seam is: the OpenRouter client, an
   // unbound model, no fallbacks, no Azure transport. See `demoSeedModelRoute`.
   const seedRoute = seedProvider ? demoSeedModelRoute(modelRouting) : null;
@@ -3034,6 +3064,27 @@ export async function runWorkstreamHarness(
   if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
     stopController.abort("stopped_by_user");
   }
+
+  const inferencePreparationFinishedAtMs = Date.now();
+  const inferenceStartEligible = (runtime?.lease.attemptNumber ?? 1) === 1;
+  logAgentInferencePrepared(env, {
+    workspaceId: input.workspaceId,
+    requestId: input.harnessRunId,
+    source: "workstream",
+    workstreamId: input.parentId,
+    substreamId: input.substreamId ?? "0",
+    ...(input.telemetryOperationId ? { operationId: input.telemetryOperationId } : {}),
+    ...(input.telemetryJourney ? { journey: input.telemetryJourney } : {}),
+    ...(input.telemetryRequestReceivedAt !== undefined
+      ? { requestReceivedAt: input.telemetryRequestReceivedAt }
+      : {}),
+    inferenceStartEligible,
+  }, {
+    runStartedAtMs,
+    initialAuthorityReadyAtMs,
+    harnessInputsReadyAtMs,
+    preparationFinishedAtMs: inferencePreparationFinishedAtMs,
+  });
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
   // recurring monitor only once every setup step that can throw has finished,
@@ -3055,7 +3106,7 @@ export async function runWorkstreamHarness(
     ...(input.telemetryRequestReceivedAt !== undefined
       ? { requestReceivedAt: input.telemetryRequestReceivedAt }
       : {}),
-    inferenceStartEligible: (runtime?.lease.attemptNumber ?? 1) === 1,
+    inferenceStartEligible,
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;
