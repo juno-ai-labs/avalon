@@ -87,3 +87,31 @@ punished on the watch half under the current overlay, and a candidate that never
 produces it will lose the eighteen balanced cases. If your contract takes a view
 on where that line sits, say so in your notes — that is a finding about the
 product, and it may be worth more than a point of utility.
+
+## Correction, 2026-09-18: the asymmetry was backwards
+
+Everything above was written under a matrix that charged a false fire **double** a
+miss. That is the wrong way round for this product, and
+[`objective.md`](../objective.md) now says so: the gate guards a
+state-of-the-art model that decides for itself whether the event is worth acting
+on, so an unwanted session is cheap, while a dropped request is the failure the
+user actually feels. A miss now costs double a false fire.
+
+What that invalidates in this brief:
+
+- **The band-utility column in the table above, and the ranking it produced.**
+  Re-derived from the same stored answers with `rescore.ts`, the ordering changes:
+  `gen4-merged` and `gen3-trimmed` keep their places largely by having the highest
+  recall, and `w2-grounded` — third in the wide run under the old matrix — drops to
+  tenth of eleven, because its calibration is conservative and its correct matches
+  sit below the higher thresholds in the band.
+- **"Watches made noisy" as the gap worth attacking.** It is still reported and it
+  still matters, but it is now the cheap axis. The expensive one is `watches
+  dropped`: a watch that missed an occurrence it should have caught.
+- **The accuracy-selects-the-worse-product finding.** It stands as a statement that
+  accuracy is not the objective. It does not stand as an argument for the quiet
+  candidate: `gen3-judgeable`'s fifteen unwanted runs are no longer what condemned
+  it.
+
+The corpus, the split, the noise floor and the unresolved ground-truth question
+above are unaffected: none of them depend on the price list.

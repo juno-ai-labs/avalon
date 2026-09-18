@@ -78,6 +78,23 @@ decision.
 > `state`, one `questions` entry with `instructions` and `criteria`, and the
 > provider returns one choice plus a calibrated confidence.
 >
+> ### What the two errors cost, and they are not equal
+>
+> A yes starts a session with a state-of-the-art model that decides for itself
+> whether there is anything worth doing with the event. So a wrong yes costs one
+> session and nothing else: the agent looks, finds nothing, and stops.
+>
+> A wrong no is silent. The person asked to be told when something happened, it
+> happened, and the product said nothing. There is no second line of defence
+> behind a no.
+>
+> **So when the condition is genuinely arguable, the answer is yes.** That is not
+> a licence to fire on everything — a watch that fires on every event is useless
+> for a different reason, and the scoring charges for that too — but where you
+> would otherwise write a rule that resolves a hard case by withholding, write the
+> one that resolves it by passing the event through. A criterion whose effect is
+> "only when certain" is drawing the line in the expensive direction.
+>
 > ### What you may change
 >
 > Everything in the candidate JSON: the state's object and field names, which
@@ -135,6 +152,11 @@ decision.
 > criteria actively point the wrong way and a boundary needs replacing. A wrong
 > answer at 0.10 means the criteria say nothing about that case and something is
 > missing. The two call for opposite edits, and the digest gives you both numbers.
+>
+> Confidence is also the gate: the runtime fires only above a threshold, so a
+> right yes held at 0.3 is a miss in production. If the digest shows matches being
+> found but held quietly, the fix is a criterion that says plainly what a match
+> looks like rather than one that hedges.
 >
 > Keep the include and exclude lists disjoint and symmetric: if one label
 > excludes a situation, some other label should claim it. A gap is where the
