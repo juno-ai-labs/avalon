@@ -159,7 +159,11 @@ import {
   type HarnessRunMetrics,
 } from "../observability/harness-run-observability";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
-import { createAgentInferenceLogger, logAgentInferencePrepared } from "./agent-inference-logging";
+import {
+  createAgentInferenceLogger,
+  logAgentInferencePrepared,
+  type AgentInferencePreparationBreakdown,
+} from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
 import {
   AGENT_MODEL_FLAG_KEYS,
@@ -2623,6 +2627,20 @@ export async function runWorkstreamHarness(
   // rows written to look like it. See `docs/demo-workspaces.md`.
   const seedProvider = input.seed ? demoSeedProviderFetch(input.seed) : null;
   const runStartedAtMs = Date.now();
+  const preparationBreakdown: AgentInferencePreparationBreakdown = {
+    initialIdentityRunMs: 0,
+    persistedOutcomeMs: 0,
+    runAuthorityMs: 0,
+    sidekickAuthorityMs: 0,
+    leaseHeartbeatMs: 0,
+    runContextMs: 0,
+    memoryContextMs: 0,
+    transcriptBootstrapMs: 0,
+    toolLoadingMs: 0,
+    attachmentReplayMs: 0,
+    transcriptBootstrapRequired: false,
+    sidekickSnapshotReused: false,
+  };
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
   // names — `description` is what the retired view called `objective`.
@@ -2645,19 +2663,30 @@ export async function runWorkstreamHarness(
   const initialRun = await initialRunPreparation.get();
   if (!initialRun) return { status: "failed", error: { code: "harness_run_not_found", message: "Harness run not found" } };
   if (initialRun.status === "cancelled") return { status: "stopped" };
+  preparationBreakdown.initialIdentityRunMs = Date.now() - runStartedAtMs;
   const authorityPreparation = new Preparation(async () => {
+    const runAuthorityStartedAtMs = Date.now();
     const authority = await readRunAuthority(env, input);
+    preparationBreakdown.runAuthorityMs = Date.now() - runAuthorityStartedAtMs;
     return { ...authority, readyAtMs: Date.now() };
   });
-  const persistedHostOutcomePreparation = new Preparation(() => loadPersistedHarnessHostOutcome(
-    createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    input,
-  ));
+  const persistedHostOutcomePreparation = new Preparation(async () => {
+    const persistedOutcomeStartedAtMs = Date.now();
+    const outcome = await loadPersistedHarnessHostOutcome(
+      createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+      input,
+    );
+    preparationBreakdown.persistedOutcomeMs = Date.now() - persistedOutcomeStartedAtMs;
+    return outcome;
+  });
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
+  preparationBreakdown.sidekickSnapshotReused = storedSidekickSkills !== null;
   let recommendationRead: Promise<string[]> | undefined;
   const readRecommendations = () => recommendationRead ??= recommendedSidekickRefs(env, input);
+  let sidekickAuthorityStartedAtMs = 0;
   const sidekickSourcesPreparation = new Preparation(async () => {
     const { principalIsGuest } = await authorityPreparation.get();
+    sidekickAuthorityStartedAtMs = Date.now();
     return resolveSidekickSkills(env, input, principalIsGuest,
       storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null, readRecommendations);
   });
@@ -2685,6 +2714,7 @@ export async function runWorkstreamHarness(
   // waking parent authorities for executions that cannot use any Sidekick.
   const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
     : currentSidekickSources.length > 0 ? await readRecommendations() : [];
+  preparationBreakdown.sidekickAuthorityMs = Date.now() - sidekickAuthorityStartedAtMs;
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
@@ -2712,6 +2742,7 @@ export async function runWorkstreamHarness(
     workstreamId: input.parentId,
   }));
   const attachmentGroundingPreparation = new Preparation(async () => {
+    const attachmentReplayStartedAtMs = Date.now();
     const guard = new AttachmentGroundingGuard();
     const receipts = await createToolReceiptObjectPort(
       env,
@@ -2730,6 +2761,7 @@ export async function runWorkstreamHarness(
         ? loadToolReplayOutput(env, receipt.outputRef, replayDeadline)
         : null,
     );
+    preparationBreakdown.attachmentReplayMs = Date.now() - attachmentReplayStartedAtMs;
     return guard;
   });
   modelRoutingPreparation.get();
@@ -2745,21 +2777,35 @@ export async function runWorkstreamHarness(
   // value grants authority, and tool/prompt setup still waits for the heartbeat.
   const runDefinitionPreparation = new Preparation(() => input.automationRun
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null));
+  const toolLoadingStartedAtMs = Date.now();
   const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
   runDefinitionPreparation.get();
   inventoryPreparation.get();
+  const leaseHeartbeatStartedAtMs = Date.now();
   await liveness.pulse("run_start", true);
-  const promptPreparation = new Preparation(() => loadRunPromptContext(
-    env, input, attemptLease, workstream, runDefinitionPreparation,
-  ));
-  const toolsPreparation = new Preparation(() => loadHarnessTools(
-    env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
-    runDefinitionPreparation, inventoryPreparation, attemptLease,
-  ));
+  preparationBreakdown.leaseHeartbeatMs = Date.now() - leaseHeartbeatStartedAtMs;
+  const promptPreparation = new Preparation(async () => {
+    const promptContextStartedAtMs = Date.now();
+    const promptContext = await loadRunPromptContext(
+      env, input, attemptLease, workstream, runDefinitionPreparation, preparationBreakdown,
+    );
+    preparationBreakdown.runContextMs = Date.now() - promptContextStartedAtMs;
+    return promptContext;
+  });
+  const toolsPreparation = new Preparation(async () => {
+    const tools = await loadHarnessTools(
+      env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
+      runDefinitionPreparation, inventoryPreparation, attemptLease,
+    );
+    preparationBreakdown.toolLoadingMs = Date.now() - toolLoadingStartedAtMs;
+    return tools;
+  });
   promptPreparation.get();
   toolsPreparation.get();
   const requiresCanonicalBootstrap = !runtime.persistentLoop
     || runtime.persistentLoop.projection === null;
+  preparationBreakdown.transcriptBootstrapRequired = requiresCanonicalBootstrap;
+  const transcriptBootstrapStartedAtMs = Date.now();
   const orderedTranscript = createTranscriptObjectPort(
     env,
     input.workspaceId,
@@ -2811,6 +2857,7 @@ export async function runWorkstreamHarness(
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
+  preparationBreakdown.transcriptBootstrapMs = Date.now() - transcriptBootstrapStartedAtMs;
   const rawModelMessages = [
     ...renderSubstreamInitialContext(initialContext),
     ...(priorCompaction?.messages ?? []),
@@ -3081,6 +3128,7 @@ export async function runWorkstreamHarness(
     initialAuthorityReadyAtMs,
     harnessInputsReadyAtMs,
     preparationFinishedAtMs: inferencePreparationFinishedAtMs,
+    breakdown: preparationBreakdown,
   });
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
@@ -4513,6 +4561,7 @@ async function loadRunPromptContext(
   workstream: { title: string; objective: string },
   runDefinitionPreparation = new Preparation(() => input.automationRun
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
+  preparationBreakdown?: Pick<AgentInferencePreparationBreakdown, "memoryContextMs">,
 ): Promise<{
   systemPrompt: string;
   additionalMessages: ModelMessage[];
@@ -4696,6 +4745,7 @@ async function loadRunPromptContext(
       eventCount: digestWindow.eventCount,
     }), "digest_delivery", input.digestDeliveryId);
   }
+  const memoryContextStartedAtMs = Date.now();
   const frozenMemory = recallsMemoryAtAdmission
     ? await freezeRunMemoryContext(
         env,
@@ -4704,6 +4754,9 @@ async function loadRunPromptContext(
         memoryQueryParts.filter(Boolean).join("\n\n"),
       )
     : null;
+  if (preparationBreakdown) {
+    preparationBreakdown.memoryContextMs = Date.now() - memoryContextStartedAtMs;
+  }
   if (frozenMemory && frozenMemory.results.length > 0) {
     additionalMessages.push(modelDerivative({
       role: "user",
