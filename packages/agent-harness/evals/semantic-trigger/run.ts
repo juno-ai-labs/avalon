@@ -21,6 +21,7 @@ import {
   candidateQuestions,
   candidateState,
   groundTruth,
+  primitiveOf,
   type CandidateContract,
   type EvalCase,
   type Verdict,
@@ -169,6 +170,49 @@ function admitOf(verdict: Verdict | null): boolean {
  */
 export const OPERATING_BAND = [0.5, 0.6, 0.7] as const;
 
+/**
+ * The verdict a candidate's answer means.
+ *
+ * For a Choice it is the mapping. For a Noul it is the scalar against the middle
+ * of the operating band: the band's ends are swept by the objective, but the
+ * confusion matrix and three-class accuracy need one verdict per case, and the
+ * midpoint is the least arbitrary choice available. A hybrid's judgeability
+ * answer wins outright when it says the condition can never be settled, because
+ * that is a statement about the condition rather than about the degree.
+ */
+function resolveVerdict(
+  candidate: CandidateContract,
+  choice: string | null,
+  confidence: number | null,
+): Verdict | null {
+  const primitive = primitiveOf(candidate);
+  if (primitive === "choice") {
+    return choice !== null && candidate.mapping[choice] ? candidate.mapping[choice]! : null;
+  }
+  if (confidence === null) return null;
+  const judgeability = candidate.judgeability;
+  if (judgeability && choice?.startsWith("noul|")) {
+    const judged = choice.slice("noul|".length);
+    if (judged === judgeability.unjudgeableLabel) return "not_judgeable";
+  }
+  const midpoint = OPERATING_BAND[Math.floor(OPERATING_BAND.length / 2)]!;
+  return confidence > midpoint ? "met" : "not_met";
+}
+
+function noulProbabilities(
+  candidate: CandidateContract,
+  choice: string | null,
+  confidence: number | null,
+): Record<Verdict, number> {
+  const noul = confidence ?? 0;
+  const judgeability = candidate.judgeability;
+  if (judgeability && choice?.startsWith("noul|")
+    && choice.slice("noul|".length) === judgeability.unjudgeableLabel) {
+    return { met: 0, not_met: 0, not_judgeable: 1 };
+  }
+  return { met: noul, not_met: 1 - noul, not_judgeable: 0 };
+}
+
 /** What the product pays for one decision. A false fire costs double a miss. */
 function utility(fires: boolean, shouldFire: boolean): number {
   if (fires && shouldFire) return 1;
@@ -225,6 +269,19 @@ export function candidateSize(candidate: CandidateContract, sample: EvalCase): C
       ...criterion.include,
       ...criterion.exclude,
     ]),
+    // A hybrid's second question is instruction the model reads, so it counts.
+    ...(candidate.judgeability
+      ? [
+        candidate.judgeability.instructions.question,
+        candidate.judgeability.instructions.focus,
+        candidate.judgeability.instructions.decision,
+        ...Object.values(candidate.judgeability.criteria).flatMap((criterion) => [
+          criterion.meaning,
+          ...criterion.include,
+          ...criterion.exclude,
+        ]),
+      ]
+      : []),
   ];
   return {
     questionBytes: Buffer.byteLength(JSON.stringify(questions)),
@@ -243,6 +300,8 @@ export function requestHash(candidate: CandidateContract): string {
       instructions: candidate.instructions,
       criteria: candidate.criteria,
       mapping: candidate.mapping,
+      primitive: primitiveOf(candidate),
+      judgeability: candidate.judgeability ?? null,
       model: MODEL,
     }))
     .digest("hex");
@@ -287,6 +346,39 @@ async function askOnce(
       decoded = JSON.parse(raw);
     } catch {
       return { outcome: { latencyMs, failureKind: "response_invalid_json" }, transportFailed: false };
+    }
+    const primitive = primitiveOf(candidate);
+    if (primitive !== "choice") {
+      // A Noul returns the degree itself and no confidence, because the degree is
+      // the quantity a threshold is applied to. So the scalar lands in
+      // `confidence`, which is what every downstream calculation already
+      // thresholds and bins — the gate, the band utility, the calibration sweep.
+      const answers = decoded.answers as Record<string, { noul?: unknown; choice?: unknown }> | undefined;
+      const noulAnswer = answers?.[candidate.noulName ?? "satisfaction"];
+      const noul = typeof noulAnswer?.noul === "number" ? noulAnswer.noul : null;
+      if (noul === null) {
+        return { outcome: { latencyMs, failureKind: "noul_missing" }, transportFailed: false };
+      }
+      const judgeability = candidate.judgeability;
+      const judged = judgeability ? answers?.[judgeability.name] : undefined;
+      const judgeabilityChoice = typeof judged?.choice === "string" ? judged.choice : null;
+      if (judgeability && judgeabilityChoice === null) {
+        return { outcome: { latencyMs, failureKind: "judgeability_missing" }, transportFailed: false };
+      }
+      return {
+        outcome: {
+          latencyMs,
+          // The "choice" a Noul made is the scalar's own name plus, for a hybrid,
+          // the judgeability answer, so a report still says what was returned.
+          choice: judgeabilityChoice === null ? "noul" : `noul|${judgeabilityChoice}`,
+          confidence: noul,
+          probabilities: null,
+          resolvedModel: typeof decoded.model === "string" ? decoded.model : null,
+          inputTokens: typeof decoded.usage?.input_tokens === "number" ? decoded.usage.input_tokens : null,
+          outputTokens: typeof decoded.usage?.output_tokens === "number" ? decoded.usage.output_tokens : null,
+        },
+        transportFailed: false,
+      };
     }
     const answer = decoded.answers?.condition;
     const choice = typeof answer?.choice === "string" ? answer.choice : null;
@@ -335,15 +427,27 @@ async function evaluateCase(
     attempt = await askOnce(apiKey, candidate, testCase);
   }
   const choice = attempt.outcome.choice ?? null;
-  const verdict = choice !== null && candidate.mapping[choice] ? candidate.mapping[choice]! : null;
   const confidence = attempt.outcome.confidence ?? null;
+  const verdict = resolveVerdict(candidate, choice, confidence);
   const shouldFire = truth.label === "met";
-  const firesInBand = OPERATING_BAND.map((threshold) => verdict === "met" && (confidence ?? 0) > threshold);
+  // A Choice must both pick the match label and clear the threshold; a Noul only
+  // has to clear it, because the scalar is the whole answer. A hybrid that calls
+  // the condition unsettleable never fires whatever the scalar says.
+  const primitive = primitiveOf(candidate);
+  const blockedByJudgeability = verdict === "not_judgeable";
+  const firesInBand = OPERATING_BAND.map((threshold) => (primitive === "choice"
+    ? verdict === "met" && (confidence ?? 0) > threshold
+    : !blockedByJudgeability && (confidence ?? 0) > threshold));
   const bandUtility = firesInBand.reduce((total, fires) => total + utility(fires, shouldFire), 0) / firesInBand.length;
-  const probabilities = verdictProbabilities(
-    { choice, confidence, probabilities: attempt.outcome.probabilities ?? null },
-    candidate.mapping,
-  );
+  const probabilities = primitiveOf(candidate) === "choice"
+    ? verdictProbabilities(
+      { choice, confidence, probabilities: attempt.outcome.probabilities ?? null },
+      candidate.mapping,
+    )
+    // For a Noul the scalar *is* P(match), which is the cleanest probability in
+    // the whole comparison: a Choice's confidence is about the label it picked,
+    // while this is about the thing being asked.
+    : noulProbabilities(candidate, choice, confidence);
   const brier = (["met", "not_met", "not_judgeable"] as const)
     .reduce((total, key) => total + (probabilities[key] - (truth.label === key ? 1 : 0)) ** 2, 0);
   return {

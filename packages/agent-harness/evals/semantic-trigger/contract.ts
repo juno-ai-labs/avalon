@@ -57,6 +57,45 @@ export type DerivedFact =
   | "event_field_count_nonempty"
   | "snippet_length_bucket";
 
+/**
+ * Which JEV primitive a candidate uses.
+ *
+ * The decision is a Choice by default and by history, but underneath it the
+ * product asks one boolean: fire, or do not. `docs/jev-best-practices.md` says to
+ * combine answers that lead to the same action, and `not_met` and
+ * `not_judgeable` lead to the same action — so a graded scalar is not obviously
+ * the wrong primitive here, and one measured result beats the argument.
+ *
+ * The reason to think it might win is specific rather than aesthetic. A Choice
+ * returns a confidence *in the label it picked*, and pooled over six runs that
+ * number turned out to be a cliff: 42.7% accurate below 0.5 and flat at 86-92%
+ * above it, with no usable ordering. A Noul returns the degree itself, which is
+ * the quantity the gate thresholds. If the scalar has a gradient where the
+ * confidence had none, the threshold becomes a real lever instead of a dead one.
+ *
+ * The reason to doubt it is also specific: the same document records a Noul
+ * losing badly on addressing, 73% against 92%, because that decision's negative
+ * side combined several different policies. Here it combines two that take one
+ * action, which is a different situation — but "different situation" is a
+ * hypothesis, not a result.
+ *
+ * `noul_with_judgeability` is the third option and costs nothing extra on the
+ * wire: JEV answers several questions in one request, so a scalar for the degree
+ * and a Choice for whether the condition is settleable at all arrive in one round
+ * trip. That keeps the authoring-defect signal a pure Noul would throw away.
+ */
+export type CandidatePrimitive = "choice" | "noul" | "noul_with_judgeability";
+
+/** The second question of a hybrid: is this condition settleable by such an event at all. */
+export interface CandidateJudgeability {
+  /** The answer key, which is part of the request. */
+  name: string;
+  instructions: { question: string; focus: string; decision: string };
+  criteria: Record<string, CandidateCriterion>;
+  /** Which of its labels means "no event of this kind could ever settle it". */
+  unjudgeableLabel: string;
+}
+
 export interface CandidateContract {
   id: string;
   /** Which candidate this was mutated from, so the lineage is readable. */
@@ -70,6 +109,16 @@ export interface CandidateContract {
   criteria: Record<string, CandidateCriterion>;
   /** Every choice label must map to exactly one operational verdict. */
   mapping: Record<string, Verdict>;
+  /** Defaults to `choice`, so every candidate written before this existed is unchanged. */
+  primitive?: CandidatePrimitive;
+  /** The answer key for a Noul candidate's scalar. Defaults to `satisfaction`. */
+  noulName?: string;
+  /** Present only on `noul_with_judgeability`. */
+  judgeability?: CandidateJudgeability;
+}
+
+export function primitiveOf(candidate: CandidateContract): CandidatePrimitive {
+  return candidate.primitive ?? "choice";
 }
 
 export interface EvalCase {
@@ -153,18 +202,46 @@ export function candidateState(candidate: CandidateContract, testCase: EvalCase)
   };
 }
 
-/** Build the exact `questions` document one candidate sends. */
+function renderedCriteria(criteria: Record<string, CandidateCriterion>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(criteria).map(([label, criterion]) => [
+    label,
+    { meaning: criterion.meaning, include: criterion.include, exclude: criterion.exclude },
+  ]));
+}
+
+/**
+ * Build the exact `questions` document one candidate sends.
+ *
+ * A Noul takes `instructions` and `criteria` the same way a Choice does — the
+ * provider refuses a Noul question that carries neither — so a candidate's
+ * criteria describe the ends of the scale rather than a closed set of answers.
+ */
 export function candidateQuestions(candidate: CandidateContract): Record<string, unknown> {
-  return {
-    condition: {
-      type: "choice",
+  const primitive = primitiveOf(candidate);
+  if (primitive === "choice") {
+    return {
+      condition: {
+        type: "choice",
+        instructions: candidate.instructions,
+        criteria: renderedCriteria(candidate.criteria),
+      },
+    };
+  }
+  const questions: Record<string, unknown> = {
+    [candidate.noulName ?? "satisfaction"]: {
+      type: "noul",
       instructions: candidate.instructions,
-      criteria: Object.fromEntries(Object.entries(candidate.criteria).map(([label, criterion]) => [
-        label,
-        { meaning: criterion.meaning, include: criterion.include, exclude: criterion.exclude },
-      ])),
+      ...(Object.keys(candidate.criteria).length > 0 ? { criteria: renderedCriteria(candidate.criteria) } : {}),
     },
   };
+  if (primitive === "noul_with_judgeability" && candidate.judgeability) {
+    questions[candidate.judgeability.name] = {
+      type: "choice",
+      instructions: candidate.judgeability.instructions,
+      criteria: renderedCriteria(candidate.judgeability.criteria),
+    };
+  }
+  return questions;
 }
 
 export function candidateChoices(candidate: CandidateContract): [string, ...string[]] {
