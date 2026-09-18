@@ -496,7 +496,7 @@ export function createDaytonaTerminalRuntime(
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
-        `No output file or directory exists at that path under $AVALON_RESOURCE_DIR (${TERMINAL_OUTPUT_ROOT}). terminal_publish_resource resolves filePath against that directory, not the workspace root that terminal_read_file and terminal_write_file use. Write or copy the finished file or directory beneath it, then publish its path relative to that directory.`,
+        `No output file or directory exists at that path under $AVALON_RESOURCE_DIR (${TERMINAL_OUTPUT_ROOT}). publish_resource resolves filePath against that directory, not the workspace root that read_file and write_file use. Write or copy the finished file or directory beneath it, then publish its path relative to that directory.`,
         { field: "filePath" },
       );
     }
@@ -663,7 +663,7 @@ export function createDaytonaTerminalRuntime(
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
-        `No output file exists at that path under $AVALON_RESOURCE_DIR (${TERMINAL_OUTPUT_ROOT}). terminal_publish_resource resolves filePath against that directory, not the workspace root that terminal_read_file and terminal_write_file use. Write or copy the finished file beneath it, then publish its path relative to that directory.`,
+        `No output file exists at that path under $AVALON_RESOURCE_DIR (${TERMINAL_OUTPUT_ROOT}). publish_resource resolves filePath against that directory, not the workspace root that read_file and write_file use. Write or copy the finished file beneath it, then publish its path relative to that directory.`,
         { field: "filePath" },
       );
     }
@@ -731,14 +731,14 @@ export function createDaytonaTerminalRuntime(
       const metadataStdout = await settleProbe(sandbox, metadata, probe);
       if (metadata.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
       if (metadata.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
-        throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use terminal_run_command with `ls -l` or `file` to inspect it.", { filePath });
+        throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use run_command with `ls -l` or `file` to inspect it.", { filePath });
       }
       const size = Number(metadataStdout.trim());
       if (metadata.exitCode !== 0 || !Number.isSafeInteger(size) || size < 0) {
-        throw new TerminalToolError("file_read_failed", "The file size could not be verified. Inspect it with terminal_run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
+        throw new TerminalToolError("file_read_failed", "The file size could not be verified. Inspect it with run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
       }
       if (size > 10 * 1_048_576) {
-        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; terminal_read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
+        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
       }
       try {
         return await provider.readFile(sandbox.providerSandboxId, path);
@@ -747,7 +747,7 @@ export function createDaytonaTerminalRuntime(
         // A download 404 can instead mean the toolbox is temporarily unavailable.
         throw new TerminalToolError(
           "file_read_failed",
-          "The file could not be read. Use terminal_run_command with `ls -l` or `file` to verify that it exists and is a regular file.",
+          "The file could not be read. Use run_command with `ls -l` or `file` to verify that it exists and is a regular file.",
           { reason: "Inspect the path with ls -l or file, then retry the read." },
         );
       }
@@ -771,25 +771,25 @@ export function createDaytonaTerminalRuntime(
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
       if (result.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
-        throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use terminal_run_command with `ls -l` or `file` to inspect it.", { filePath });
+        throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use run_command with `ls -l` or `file` to inspect it.", { filePath });
       }
       if (result.exitCode === FILE_NOT_UTF8_EXIT_CODE) {
-        throw new TerminalToolError("not_text_file", "The file is not valid UTF-8 text. Use terminal_run_command with `file` or a format-specific tool to inspect it.", { filePath });
+        throw new TerminalToolError("not_text_file", "The file is not valid UTF-8 text. Use run_command with `file` or a format-specific tool to inspect it.", { filePath });
       }
       if (result.exitCode === FILE_TOO_LARGE_EXIT_CODE) {
         const size = Number(result.stdout.trim());
-        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; terminal_read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
+        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
       }
       if (result.exitCode === FILE_LINE_TOO_LARGE_EXIT_CODE) {
         const size = Number(result.stdout.trim());
         throw new TerminalToolError(
           "limit_exceeded",
-          `A single line is ${size} bytes; terminal_read_file pages can contain at most 262144 bytes. Use terminal_run_command with a bounded text tool such as cut, fold, head -c, jq, or rg.`,
+          `A single line is ${size} bytes; read_file pages can contain at most 262144 bytes. Use run_command with a bounded text tool such as cut, fold, head -c, jq, or rg.`,
           { field: "offset", expected: "a line encoded as at most 262144 UTF-8 bytes" },
         );
       }
       if (result.exitCode !== 0) {
-        throw new TerminalToolError("file_read_failed", "The file could not be read. Inspect it with terminal_run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
+        throw new TerminalToolError("file_read_failed", "The file could not be read. Inspect it with run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
       }
       try {
         return JSON.parse(result.stdout) as Awaited<ReturnType<TerminalRuntime["readFilePage"]>>;
@@ -850,14 +850,14 @@ export function createDaytonaTerminalRuntime(
       if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
       result = { ...result, stdout: await settleProbe(sandbox, result, probe) };
       if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
-        throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with terminal_run_command before replacing it.", { filePath });
+        throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with run_command before replacing it.", { filePath });
       }
       if (result.exitCode === FILE_NOT_UTF8_EXIT_CODE) {
-        throw new TerminalToolError("not_text_file", "The existing file is not UTF-8 text. Inspect it with terminal_run_command before replacing it.", { filePath });
+        throw new TerminalToolError("not_text_file", "The existing file is not UTF-8 text. Inspect it with run_command before replacing it.", { filePath });
       }
       if (result.exitCode === FILE_TOO_LARGE_EXIT_CODE) {
         const size = Number(result.stdout.trim());
-        throw new TerminalToolError("limit_exceeded", `The existing file is ${size} bytes; terminal_write_file replaces files up to 10485760 bytes.`, { field: "filePath", expected: "file bytes at most 10485760" });
+        throw new TerminalToolError("limit_exceeded", `The existing file is ${size} bytes; write_file replaces files up to 10485760 bytes.`, { field: "filePath", expected: "file bytes at most 10485760" });
       }
       const summary = /^([01]) (\d+)\s*$/u.exec(result.stdout);
       if (result.exitCode !== 0 || !summary) {
