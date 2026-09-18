@@ -5,7 +5,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Archive, Menu } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
@@ -13,7 +13,7 @@ import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
 import { Button, IconButton, InlineError, Modal } from '@rally/ui/components/primitives';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
-import { ShareConversationButton } from '../../desktop/src/renderer/components/scope-sharing-panel';
+import { ShareConversationButton, ShareConversationDialog } from '../../desktop/src/renderer/components/scope-sharing-panel';
 import { SidekickPicker } from '../../desktop/src/renderer/components/sidekick-picker';
 import { useCollaborationSession, CollaborationSessionProvider } from '../../desktop/src/renderer/lib/collaboration-session';
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
@@ -30,7 +30,8 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   const navigate = useNavigate();
   const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
-  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
+  const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const [changingArchive, setChangingArchive] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const directory = useQuery({ queryKey: ['shared-directory'], enabled: Boolean(api),
@@ -39,19 +40,20 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   const archived = parent?.conversations.find((item) => item.substreamId === substreamId)?.archived ?? false;
   const parentArchived = parent?.archived === true || (substreamId === '0' && archived);
   if (!parentId) return <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><p>This conversation link is incomplete.</p></section>;
-  const changeArchive = async (value: boolean) => {
+  const changeArchive = async (value: boolean, target = substreamId) => {
     if (!api || changingArchive) return;
     setChangingArchive(true); setArchiveError(null);
     try {
-      await api.setSubstreamArchived(parentId, substreamId, value);
+      await api.setSubstreamArchived(parentId, target, value);
       await queryClient.invalidateQueries({ queryKey: ['shared-directory'] });
     } catch (error) { setArchiveError(error instanceof Error ? error.message : 'Unable to change archive state.'); }
     finally { setChangingArchive(false); }
   };
   return <>
-    <Modal open={archiveOpen} onOpenChange={setArchiveOpen} title="Archive substream" description="This substream will leave the active list. You can restore it later.">
-      <Button disabled={changingArchive} onClick={() => setArchiveOpen(false)}>Cancel</Button>
-      <Button disabled={changingArchive} onClick={() => { void changeArchive(true).then(() => setArchiveOpen(false)); }}>Archive substream</Button>
+    {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
+    <Modal open={archiveTarget !== null} onOpenChange={(open) => { if (!open) setArchiveTarget(null); }} title="Archive substream" description="This substream will leave the active list. You can restore it later.">
+      <Button disabled={changingArchive} onClick={() => setArchiveTarget(null)}>Cancel</Button>
+      <Button disabled={changingArchive} onClick={() => { void changeArchive(true, archiveTarget ?? substreamId).then(() => setArchiveTarget(null)); }}>Archive substream</Button>
     </Modal>
     {archiveError ? <InlineError>{archiveError}</InlineError> : null}
     {archived ? <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><h1>{parentArchived ? 'Archived work stream' : 'Archived conversation'}</h1>
@@ -64,6 +66,8 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
           mainVisible={Boolean(parent?.conversations.some((item) => item.substreamId === '0'))}
           workstream={{ ...context.detail, title: parent?.title ?? 'Shared workstream',
             privateChildren: parent?.conversations.filter((item) => item.substreamId !== '0' && !item.archived) }}
+          mainActions={{ onShare: (target) => setSharingSubstream(target.substreamId) }}
+          substreamActions={{ onShare: (target) => setSharingSubstream(target.substreamId), onArchive: (target) => setArchiveTarget(target.substreamId) }}
           selectedSubstreamId={substreamId} presentUserIds={context.presentUserIds}
           onSelectSubstream={(id) => navigate(`/workstreams/${parentId}${id === '0' ? '' : `/substreams/${id}`}`)}
           onParticipants={context.openParticipantDialog} onFocusTranscript={context.focusTranscript}
@@ -76,8 +80,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
           onRename={async (title) => { await context.rename(title); void queryClient.invalidateQueries({ queryKey: ['shared-directory'] }); }}
           onShowNavigation={onShowNavigation}
           onCopyLink={() => { void navigator.clipboard.writeText(location.href); }}
-          actions={<>{substreamId !== '0' && <IconButton label="Archive substream" disabled={changingArchive} onClick={() => setArchiveOpen(true)}><Archive size={16} /></IconButton>}
-            {api && session?.workspace && <ShareConversationButton api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={substreamId} />}</>} />} />}
+          actions={api && session?.workspace ? <ShareConversationButton api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={substreamId} /> : null} />} />}
   </>;
 }
 
