@@ -2145,17 +2145,20 @@ children, and the final meeting-notes pass all read it**, worth doing when a pro
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
 
-Two failure codes an operator will see, both distinct from
+Three failure codes an operator will see, all distinct from
 `harness_execution_failed`, which means Rally's own defect:
 
 | Code | Meaning | Triage |
 | --- | --- | --- |
 | `provider_unavailable` | Rally called and got nothing — no response, a 408, a 429, a 5xx, or an HTTP-200 stream declaring `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
 | `provider_circuit_open` | Rally did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Rally's credential or credit, so this code does not by itself accuse the provider. |
+| `context_length_exceeded` | Rally called and the endpoint refused the prompt as longer than it accepts, declaring `context_length_exceeded` in its 400 — after every other candidate for the model refused it too. | Rally's sizing, not the provider's health. Compare the deployment's own input limit against the `context_length` the catalog reports for that model: a deployment that accepts less is a window compaction is sizing against wrongly, and every long run on that model will reach it. Not to be read as `context_limit_exceeded`, which is Rally declining to send a run it could not make fit and says nothing about a deployment. |
 
-A run failing with either while the provider is healthy points at credentials or
-at the breaker's cooldown (60–120 seconds), not at a model outage. The reasoning
-behind the split and the retry is
+A run failing with either *provider* code while the provider is healthy points
+at credentials or at the breaker's cooldown (60–120 seconds), not at a model
+outage. A run failing with `context_length_exceeded` while the provider is
+healthy points at neither: the call was answered, and the answer was that the
+prompt did not fit. The reasoning behind the splits and the retry is
 [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 
 ### Ambiguous external write

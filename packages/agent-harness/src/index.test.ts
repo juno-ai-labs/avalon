@@ -3331,6 +3331,77 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("names a context-length refusal the endpoint declared rather than blaming Avalon", async () => {
+    // The 17 September failure. Compaction sized the run from OpenRouter's
+    // catalog figure for the model, the Azure deployment behind it accepts far
+    // less, and the 400 that came back said exactly which limit was crossed —
+    // which Avalon then discarded, reporting `harness_execution_failed`: its
+    // own defect, no remedy, "copy the request ID for support".
+    const azureUrls: string[] = [];
+    const azureFetcher = vi.fn(async (request: RequestInfo | URL) => {
+      azureUrls.push(String(request));
+      return Response.json({
+        error: {
+          message: "This model's maximum context length is 922000 tokens. However, your messages resulted in 1415120 tokens.",
+          type: "invalid_request_error",
+          param: "messages",
+          code: "context_length_exceeded",
+        },
+      }, { status: 400 });
+    }) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    // `kind: "context"`, not `provider`: a 400 is our request and the invariant
+    // that Avalon never names its own request as the provider's still holds.
+    // The code changes what a reader is told went wrong, not who owns it.
+    await expect(runHarness(runInput(azureFetcher, {
+      primaryModel: "x-ai/grok-4.6",
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      transportRetries: 2,
+      workspaceId: "workspace-azure-context-length",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "context", code: "context_length_exceeded" },
+    });
+    // A rejection Avalon owns still traverses: another endpoint for the same
+    // model may have a larger window, and one that does is a recovery rather
+    // than a failure. The code is what is left when every candidate has
+    // refused, which is why it is read from the last attempt's error and not
+    // raised the moment the first 400 arrives.
+    expect(azureUrls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+    ]);
+
+    // OpenRouter does not adopt the upstream code: it reports its own numeric
+    // 400 and forwards the endpoint's envelope inside `metadata.raw`, so the
+    // machine code survives only as an escaped JSON pair. Reading it there is
+    // what keeps the same failure from staying generic on the other transport.
+    const openRouterFetcher = vi.fn(async () => Response.json({
+      error: {
+        message: "Provider returned error",
+        code: 400,
+        metadata: {
+          provider_name: "Azure",
+          raw: JSON.stringify({
+            error: { message: "maximum context length", code: "context_length_exceeded" },
+          }),
+        },
+      },
+    }, { status: 400 })) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    await expect(runHarness(runInput(openRouterFetcher, {
+      transportRetries: 2,
+      workspaceId: "workspace-openrouter-context-length",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "context", code: "context_length_exceeded" },
+    });
+    expect(openRouterFetcher).toHaveBeenCalledTimes(1);
+
+    expect(memberSafeHarnessFailureMessage("context_length_exceeded"))
+      .toBe("This conversation is longer than the selected model will accept. Start a new work stream to continue, and copy the request ID for support");
+  });
+
   it("spends no retry when the budget is zero or the run has no room for one", async () => {
     const stalled = () => Response.json({ error: { message: "upstream stalled" } }, { status: 503 });
 
