@@ -1,0 +1,128 @@
+# Browser sessions
+
+The lite browser uses an opaque cookie to address the ordinary session ledger.
+It does not receive desktop access or refresh tokens. The [browser host](browser-client.md) forwards same-origin requests to this
+regional authentication boundary. The collaboration UI and socket integration
+remain unfinished.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/db/migrations/0112_browser_sessions.sql` | Cookie credential index and per-workspace session mappings. |
+| `apps/api/src/services/browser-session-service.ts` | Registration, explicit workspace selection, renewal, metadata and logout. |
+| `apps/api/src/services/session-authentication.ts` | Shared ordinary-session, membership-incarnation and region checks. |
+| `apps/api/src/routes/browser.ts` | HttpOnly cookies, Origin checks and the cookie-to-API adapter. |
+| `apps/api/test/browser-sessions.test.ts` | Real migrated SQLite and HTTP protocol cases. |
+
+## How it works
+
+`POST /browser/email/start` uses the existing email challenge and delivery
+service. `POST /browser/email/redeem` consumes a proof, resumes its identity-only
+session, and sets `__Host-rally-browser-<region>`. The cookie is host-only,
+Secure, HttpOnly, SameSite=Lax and has Path=/; its expiry comes from the ordinary
+session row. Explicit HTTP development origins use a non-prefixed development
+cookie without Secure. Production requires HTTPS.
+
+The cookie is derived with a purpose-bound HMAC from the identity session's
+credential. Only its hash is stored. Retrying the same email redemption recovers
+the same cookie rather than breaking another tab or storing readable secrets.
+JSON responses contain user, workspace and expiry metadata only. Link GETs
+return 405; they do not consume email proofs.
+
+`POST /browser/workspace/select` establishes or reuses a normal workspace
+session. `browser_workspace_sessions` maps `(browser session, workspace)` to its
+session ID. Concurrent selections use a conditional write and revoke an unused
+loser's session. There is no mutable active-workspace field. Selecting workspace
+A leaves a tab using B unchanged. Child expiry cannot exceed the identity
+session's expiry.
+
+`GET /browser/session` describes identity; `GET /browser/workspaces` lists its
+current regional relationships. `POST /browser/session/renew` applies the
+ordinary session renewal window, absolute lifetime ceiling, and eligibility
+predicate through `AuthService`’s shared `sessionRenewalPolicy`, without token
+rotation races in JavaScript. It renews only still-live workspace sessions with
+current membership incarnations. It cannot revive an expired or revoked session.
+`POST /browser/logout` revokes identity first, then each mapped workspace session
+through ordinary logout and its socket-revocation publication, and clears the
+cookie.
+
+`/browser/api/<workspace ID>/<product path>` adapts the cookie to the ordinary
+API. `_` selects the identity-only session, for example during invitation
+acceptance. A request-local bearer is minted internally after the same session
+checks used by the desktop transport. It is never returned to JavaScript. The
+adapter strips cookies and development identity headers from the forwarded
+request and overwrites caller-supplied Authorization. Only named product route
+families are forwarded; authentication/token issuance, internal operations and
+onboarding routes are excluded. Existing product authorization still decides
+which scopes the caller may read or mutate.
+
+## Invariants
+
+- A cookie authenticates a user; it does not grant workspace or conversation
+  access. Every workspace request checks the ordinary session's immutable
+  membership incarnation and current relationship.
+- Promotion retains the mapped session. Removal/rejoin makes it unusable until
+  explicit workspace selection establishes a fresh binding.
+- Mutations require an exact configured browser Origin and reject cross-site
+  Fetch Metadata. A bearer supplied alongside a cookie cannot choose the actor.
+- Browser responses are no-store. Credentials never enter URLs or JSON bootstraps.
+- The cookie transport is confined to `/browser`; ordinary API endpoints do not
+  silently begin accepting cookies without the Origin gate.
+- Workspace IDs belong in request addresses, never shared mutable tab state.
+
+## Boundary
+
+D1 owns the credential index and session relationships. Product Durable Objects
+retain all scope authority. The browser host must expose this boundary on its
+own origin through explicit regional routing; it must not rely on third-party
+cookies or accept arbitrary API hosts. This adapter forwards HTTP business
+requests, not WebSocket frames. The browser host forwards the existing purpose-bound ticket upgrades through its
+regional service binding, stripping cookies and Authorization from that path.
+The shared product API client supports cookie sessions without bearer renewal;
+subscription ownership and collaboration mounting remain in progress.
+
+## Failure modes and limits
+
+Missing/invalid browser-origin configuration refuses the transport. Session
+renewal reuses the team's existing 30-day inactivity window and 90-day absolute
+ceiling; this module introduces no new expiry numbers. Lost email responses are
+recoverable using the same redemption operation. A workspace activation racing
+logout cannot authenticate through the revoked root, even if it already created
+a workspace session. Socket revocation uses the existing logout delivery path
+and inherits its documented publication-failure behavior.
+
+## Testing
+
+Run `pnpm --filter @rally/api exec vitest run test/browser-sessions.test.ts`.
+The suite applies real migrations and exercises email redemption, cookie flags,
+CSRF rejection, two-tab selection and racing activations, the ordinary API
+adapter, promotion, rejoin fencing, renewal ceilings and whole-browser logout.
+It is backend protocol evidence, not proof of browser rendering or end-to-end
+collaboration.
+
+`pnpm --filter @rally/api test:workers test-workers/browser-sessions.test.ts`
+additionally proves concurrent activation and cross-tab incarnation isolation
+against real D1 in workerd. Its minimal schema declares the runtime dependencies;
+the Node suite separately applies the checked-in migrations.
+
+## Changelog
+
+### 2026-09-17 — Reuse ordinary sessions behind a browser cookie
+
+**What changed:** Added an opaque browser credential and workspace-specific
+session mappings over the existing identity/session ledger. Browser and bearer
+renewal share one SQL policy so expiry, region, and membership eligibility cannot
+drift between transports.
+
+**Why:** The lite client needs quick email entry without exposing durable
+credentials to JavaScript, and two browser tabs must not change each other's
+workspace authority.
+
+**Considered and rejected:** A single active-workspace cookie would mix tab
+state; one credential cookie per workspace would grow every request's cookie
+header. A separate browser user or permission store would duplicate authority.
+
+**Consequences:** Keep workspace selection explicit, reuse ordinary session
+incarnation checks, and preserve the same-origin/Origin boundary when the web
+host is connected. The frontend and socket host integration remain unfinished.

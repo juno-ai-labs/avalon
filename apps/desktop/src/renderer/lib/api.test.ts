@@ -3,6 +3,7 @@ import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import "../../../../../tests/isolated-region";
 import type { DesktopSession } from '../../common/desktop';
+import type { CookieClientSession } from '@rally/contracts/client-session';
 import type { ApiError } from './api';
 import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
 import { SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
@@ -345,6 +346,41 @@ describe('Rally API wire adapter', () => {
     // the refusal of a wrong route as an error where a room's list belongs.
     expect(String(fetchMock.mock.calls[0]?.[0]))
       .toBe(`https://api.rally.test/sidekicks/workstream/${workstreamId}`);
+  });
+
+  it('reads recommendations through the authorized conversation, including Main', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => { void input; return json({ items: [] }); });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    await api.getRecommendedSidekicks(workstreamId, undefined, 'child-scope');
+    await api.getRecommendedSidekicks(workstreamId);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      `https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/recommended-sidekicks`,
+      `https://api.rally.test/conversations/${workstreamId}/substreams/0/recommended-sidekicks`,
+    ]);
+  });
+
+  it('reads recommendation capabilities through the selected conversation', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => { void input; return json({ canManage: false, items: [] }); });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    await expect(api.getSidekickRecommendationOptions(workstreamId, 'child-scope')).resolves.toEqual({ canManage: false, items: [] });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/sidekick-recommendation-options`);
+  });
+
+  it('changes recommendations through the selected conversation route', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input; void init; return json({ items: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    await api.setRecommendedSidekick(workstreamId, automationId, true, 'child-scope');
+    await api.setRecommendedSidekick(workstreamId, automationId, false, 'child-scope');
+    expect(fetchMock.mock.calls.map(([url, init]) => [String(url), init?.method])).toEqual([
+      [`https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/recommended-sidekicks/${automationId}`, 'PUT'],
+      [`https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/recommended-sidekicks/${automationId}`, 'DELETE'],
+    ]);
   });
 
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {
@@ -977,6 +1013,18 @@ describe('message mention resolution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('resolves selected guest mentions without workspace-directory discovery', async () => {
+    const fetchMock = stubRoster();
+    const guestSession: CookieClientSession = { authentication: 'cookie', expiresAt: session.expiresAt,
+      apiBaseUrl: '/regional/global/browser/api/' + workspaceId, user: session.user,
+      workspace: { id: workspaceId, name: 'Shared', region: 'global', role: null, accessClass: 'guest' } };
+    const api = new RallyApi(guestSession.apiBaseUrl, guestSession);
+    await expect(api.messageMentionPayload('Ask @Adam', [{ type: 'person', label: 'Adam', userId, connectorType: null }]))
+      .resolves.toEqual([{ type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 }]);
+    await expect(api.messageMentionPayload('Ask @Adam')).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('fetches the workspace roster for durable person mention Markdown', async () => {
     const fetchMock = stubRoster();
     const api = new RallyApi('https://api.rally.test', session);
@@ -1420,6 +1468,35 @@ describe('expired access-token recovery', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it('does not restore a bearer when sign-out completes during renewal', async () => {
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    let release!: (value: DesktopSession) => void;
+    const renew = vi.fn(() => new Promise<DesktopSession>((resolve) => { release = resolve; }));
+    api.setCredentialRenewal(renew);
+    const pending = api.getSocketTicket(workstreamId);
+    const rejection = expect(pending).rejects.toMatchObject({ status: 401 });
+    await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
+    api.setSession(null);
+    release(renewed);
+    await rejection;
+    expect(api.viewerUserId).toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('allows the session provider to publish the renewed credential before renewal resolves', async () => {
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    api.setCredentialRenewal(async () => {
+      api.setSession(renewed);
+      return renewed;
+    });
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(parsedTicket);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('replays an unauthorized upload under the renewed credential', async () => {
     class StubUpload {
       static instances: StubUpload[] = [];
@@ -1526,5 +1603,75 @@ describe('expired access-token recovery', () => {
     }));
     const headers = new Headers(fetchMock.mock.calls[0]![1]!.headers);
     expect(headers.get('authorization')).toBe(`Bearer ${session.accessToken}`);
+  });
+});
+
+describe('browser cookie collaboration transport', () => {
+  const cookie: CookieClientSession = { authentication: 'cookie', apiBaseUrl: `/regional/global/browser/api/${workspaceId}`,
+    user: session.user, workspace: session.workspace, expiresAt: session.expiresAt };
+
+  it('reuses reads and scoped mutations with same-origin cookies and no bearer', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.method === 'PATCH'
+      ? new Response(null, { status: 204 }) : json(detail));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    expect(api.viewerUserId).toBe(userId);
+    await expect(api.getConversation(workstreamId)).resolves.toMatchObject({ id: workstreamId });
+    await api.renameSubstream(workstreamId, '0', 'Shared main');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `${cookie.apiBaseUrl}/conversations/${workstreamId}`,
+      `${cookie.apiBaseUrl}/conversations/${workstreamId}/substreams/0`,
+    ]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.credentials).toBe('same-origin');
+      expect(new Headers(init?.headers).has('Authorization')).toBe(false);
+    }
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ title: 'Shared main' }));
+  });
+
+  it('does not attempt native credential renewal for a rejected cookie', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ error: { code: 'invalid_session' } }, { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    const renew = vi.fn().mockResolvedValue(session);
+    api.setCredentialRenewal(renew);
+    await expect(api.getConversation(workstreamId)).rejects.toMatchObject({ status: 401 });
+    expect(renew).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('keeps tickets in handshake protocols and routes sockets through the browser origin', async () => {
+    const ticket = 'test-ticket-longer-than-twenty';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ url: `wss://api.rally.test/socket/conversations/${workstreamId}/0?ticket=${ticket}`, ticket })));
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    const result = await api.getSocketTicket(workstreamId);
+    const expected = new URL(`/regional/global/socket/conversations/${workstreamId}/0`, location.origin);
+    expected.protocol = expected.protocol === 'https:' ? 'wss:' : 'ws:';
+    expect(result.url).toBe(expected.toString());
+    expect(result.url).not.toContain(ticket);
+    expect(result.protocols).toEqual(socketTicketProtocols(ticket));
+  });
+
+  it('uploads using the same scoped resource path without a bearer header', async () => {
+    class CookieUpload {
+      static current: CookieUpload;
+      readonly headers = new Headers();
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      status = 200;
+      response: unknown = resource;
+      url = '';
+      open(_method: string, url: string): void { this.url = url; CookieUpload.current = this; }
+      setRequestHeader(name: string, value: string): void { this.headers.set(name, value); }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void { queueMicrotask(() => this.listeners.get('load')?.()); }
+    }
+    vi.stubGlobal('XMLHttpRequest', CookieUpload);
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1')).resolves.toMatchObject({ id: resourceId });
+    expect(CookieUpload.current.url).toBe(`${cookie.apiBaseUrl}/resources/upload`);
+    expect(CookieUpload.current.headers.has('Authorization')).toBe(false);
+    expect(CookieUpload.current.headers.get('X-Rally-Draft-Id')).toBe('draft-1');
   });
 });

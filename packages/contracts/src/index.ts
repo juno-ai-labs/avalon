@@ -287,17 +287,25 @@ export const WorkspaceSchema = z.object({
   name: z.string().min(1).max(120),
   slug: z.string().min(2).max(80),
   region: RegionSchema,
-  role: MemberRoleSchema,
+  // Absent accessClass is the legacy full-member wire representation.
+  accessClass: z.enum(["member", "guest"]).optional(),
+  role: MemberRoleSchema.nullable(),
   timezone: IanaTimezoneSchema,
   createdAt: TimestampSchema
-});
+}).refine((workspace) => workspace.accessClass === "guest"
+  ? workspace.role === null : workspace.role !== null,
+{ message: "Guests have no workspace role; members require a role" });
 
 export const WorkspaceMemberSchema = z.object({
   user: UserSchema,
-  role: MemberRoleSchema,
+  incarnation: z.string().min(1).optional(),
+  revision: z.number().int().positive().optional(),
+  accessClass: z.enum(["member", "guest"]).optional(),
+  role: MemberRoleSchema.nullable(),
   status: z.enum(["active", "invited", "suspended"]),
   joinedAt: TimestampSchema.nullable()
-});
+}).refine((member) => member.accessClass === "guest" ? member.role === null : member.role !== null,
+{ message: "Guests have no workspace role; members require a role" });
 
 export const WorkspaceInvitationRoleSchema = z.enum(["admin", "member"]);
 export const WorkspaceInvitationStatusSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
@@ -3729,6 +3737,13 @@ export const SidekickAttachmentSchema = z.object({
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
 export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });
+/** Sources eligible for an explicit workstream recommendation in this conversation. */
+export const SidekickRecommendationOptionsSchema = z.object({
+  canManage: z.boolean(),
+  items: z.array(SidekickAttachmentSchema.extend({ attached: z.boolean() })),
+});
+export type SidekickRecommendationOptions = z.infer<typeof SidekickRecommendationOptionsSchema>;
+
 
 export { isUnknownSocketEvent,safeParseSocketEvent } from "./socket-events";
 

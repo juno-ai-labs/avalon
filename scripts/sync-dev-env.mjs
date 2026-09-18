@@ -1,4 +1,5 @@
 import { configuredRegions, regions } from "./regions.mjs";
+import { workerEnvValue } from "./worker-env-value.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
@@ -38,6 +39,8 @@ const workerKeys = [
   "TERMINAL_EMERGENCY_DISABLED",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "EMAIL_LOGIN_POLICY_JSON",
+  "BROWSER_APP_ORIGIN",
   "RESEND_NOTIFICATION_FROM_EMAIL",
   "RESEND_RECEIVING_API_KEY",
   "RESEND_WEBHOOK_SIGNING_SECRET",
@@ -111,6 +114,8 @@ const regionalizableKeys = [
   "TERMINAL_EMERGENCY_DISABLED",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "EMAIL_LOGIN_POLICY_JSON",
+  "BROWSER_APP_ORIGIN",
   "RESEND_NOTIFICATION_FROM_EMAIL",
   "RESEND_RECEIVING_API_KEY",
   "GOOGLE_OAUTH_CLIENT_ID",
@@ -300,7 +305,7 @@ for (const region of configuredRegions) {
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
       && regional[key].length > 0)
-    .map((key) => `${key}=${JSON.stringify(regional[key])}`)
+    .map((key) => `${key}=${workerEnvValue(key, regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });
 }

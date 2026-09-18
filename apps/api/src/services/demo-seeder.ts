@@ -512,14 +512,27 @@ export async function applyDemoSeedAction(
         await new ResourceService(env, auth).upload(file, action.title, resourceId);
       } catch (error) {
         // The draft this id names already exists: an earlier attempt uploaded
-        // it and was interrupted before attaching or recording. Attach it.
+        // it and was interrupted before message admission or recording.
+        // Replay the same admission below; its client ID prevents a second turn.
         if (!(error instanceof ApiError && error.code === "attachment_draft_exists")) throw error;
       }
-      await new WorkstreamObjectClient(env, auth, workstreamId, substreamId).attachResource(resourceId);
+      // Uploads enter a conversation through ordinary message admission, which
+      // reserves the author's draft and commits its attachment with the turn.
+      // Bypassing this with attachResource would leave an unclaimed draft that
+      // can be deleted or reaped independently of the conversation.
+      const admitted = await new WorkstreamObjectClient(env, auth, workstreamId, substreamId).createMessage({
+        text: "",
+        clientMessageId,
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [resourceId],
+        seed: { packVersion: session.pack.version, actionId: action.actionId, assistant: null },
+      });
       return { state: "confirmed", receipt: await confirm(env, session, action, {
         workstreamId,
         substreamId,
         resourceId,
+        turnId: admitted.turn.turnId,
       }) };
     }
     case "sidekick": {

@@ -1,5 +1,7 @@
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
+import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, ParticipantTransferRequestSchema,
+  type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { AgentCommunicationService } from "../services/agent-communication-service";
@@ -66,7 +68,7 @@ import {
 import { z } from "zod";
 
 import {
-  revocationClosesSocket,
+  revocationClosesSession,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
@@ -277,7 +279,7 @@ const SocketAttachmentSchema = z.object({
   // The socket upgrade authorizes the member once. Access-revocation delivery
   // closes this socket when that authorization ends, so commands use the
   // admitted role instead of paying for a second D1 session lookup.
-  role: z.enum(["owner", "admin", "member"]).optional(),
+  role: z.enum(["owner", "admin", "member"]).nullable().optional(),
   analyticsWorkspaceId: z.string().nullable().optional(),
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
@@ -316,7 +318,7 @@ const SocketAdmissionPreparationSchema = z.strictObject({
   ticketIssuedAt: z.number().int().positive(),
   ticketExpiresAt: z.number().int().positive(),
   authorityGeneration: z.number().int().nonnegative(),
-  role: z.enum(["owner", "admin", "member"]),
+  role: z.enum(["owner", "admin", "member"]).nullable(),
   analyticsWorkspaceId: z.string().nullable(),
   membershipVersion: z.number().int().nonnegative().default(0),
   afterSequence: z.number().int().nonnegative().optional(),
@@ -340,7 +342,7 @@ const SocketUpgradeIdentitySchema = z.object({
   parentArchived: z.literal("true").transform(() => true).optional().default(false),
   admissionVersion: z.coerce.number().int().optional(),
   authorityGeneration: z.coerce.number().int().nonnegative().optional(),
-  role: z.enum(["owner", "admin", "member"]).optional(),
+  role: z.enum(["owner", "admin", "member"]).nullable().optional(),
   analyticsWorkspaceId: z.string().optional(),
   membershipVersion: z.coerce.number().int().nonnegative().optional(),
 });
@@ -390,7 +392,7 @@ const ProductAuthSchema = z.strictObject({
   userId: UserIdSchema,
   workspaceId: WorkspaceIdSchema,
   region: RegionSchema,
-  role: z.enum(["owner", "admin", "member"]),
+  role: z.enum(["owner", "admin", "member"]).nullable(),
   // Absent: `sessionId` names a `sessions` row and is verified there.
   // `"connector"`: a connector ingress already verified the link that binds
   // this member on the message being delivered, `sessionId` is correlation
@@ -414,8 +416,8 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
   z.strictObject({ operation: z.literal("create_message"), auth: ProductAuthSchema,
     input: WorkstreamObjectCreateMessageInputSchema }),
-  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema }),
-  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema }),
+  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
+  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema, operationId: IdSchema.optional() }),
   z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
   z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
@@ -1342,8 +1344,79 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return { outcome };
   }
 
-  private privateChildMembershipAllows(userId: string, requiredVersion: number): boolean {
-    if (this.objectStore.identity()?.parentKind !== "workstream" || this.externalSubstreamId() === "0") return true;
+  /** Internal parent-driven handoff; never expose this RPC as a user route. */
+  async transferParticipantAuthority(input: ParticipantTransferRequest) {
+    await this.storageReady;
+    const request = parseRpcInput(ParticipantTransferRequestSchema,input,"main_participant_transfer");
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
+      || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
+      return { status: "identity_mismatch" as const };
+    }
+    const store = new ParticipantAuthorityTransferStorage(this.state.storage);
+    const transferId = store.currentTransferId();
+    if (transferId !== null && transferId !== request.transferId) return { status: "conflict" as const };
+    if (request.phase === "prepare") return { status: "prepared" as const, snapshot: store.prepare(request.transferId) };
+    if (transferId === null) return { status: "not_ready" as const };
+    store.commit(request.transferId);
+    return { status: "committed" as const };
+  }
+
+  /** Parent-produced effective access, after the legacy authority handoff. */
+  async applyParticipantProjection(input: {
+    workspaceId: string; parentId: string; substreamId: string; projection: ParticipantProjection;
+  }) {
+    await this.storageReady;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema,
+      parentId: IdSchema, substreamId: SubstreamIdSchema, projection: ParticipantProjectionSchema }), input, "participant_projection");
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
+      || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
+      return { status: "identity_mismatch" as const };
+    }
+    const store = new ParticipantAuthorityTransferStorage(this.state.storage);
+    const projection = request.projection;
+    const actorUserId = projection.addedByUserId ?? projection.userId;
+    const names = await this.product.participantEffectNames(actorUserId, projection.userId);
+    const { result } = await this.objectStore.commitWithRegionalEffects(() => {
+      const prior = this.state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM participants WHERE user_id=?", projection.userId,
+      ).toArray()[0];
+      const result = store.applyProjection(projection);
+      return { result, changed: result.status === "applied" && (prior?.status === "active") !== projection.active };
+    }, (_sql, outcome) => !outcome.changed ? [] : this.product.privateChildMembershipEffects({
+      substreamId: request.substreamId, userId: projection.userId, actorUserId,
+      actorName: names.actorName, recipientName: names.recipientName,
+      active: projection.active, now: projection.changedAt,
+    }));
+    // Effect publication can yield. Consult the latest local receipt so an old
+    // removal cannot disconnect a reader admitted by a newer projection.
+    // Also run on duplicate delivery: the previous call may have committed but
+    // lost its response before it closed the sockets.
+    if (store.projectionForUser(projection.userId)?.active === false) {
+      this.rememberSocketRevocation();
+      for (const [ticketId, prepared] of [...this.preparedSocketAdmissions]) {
+        if (prepared.input.userId === projection.userId) this.deletePreparedSocketAdmission(ticketId);
+      }
+      let evicted = false;
+      for (const socket of this.state.getWebSockets()) {
+        if (this.readAttachment(socket)?.userId !== projection.userId) continue;
+        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
+        evicted = true;
+      }
+      if (evicted) await this.broadcastPresence(request.workspaceId, request.parentId);
+    }
+    return result.result;
+  }
+
+  private conversationMembershipAllows(userId: string, requiredVersion: number): boolean {
+    if (this.objectStore.identity()?.parentKind !== "workstream") return true;
+    const transfer = new ParticipantAuthorityTransferStorage(this.state.storage);
+    if (transfer.currentTransferId() !== null) {
+      const projection = transfer.projectionForUser(userId);
+      return projection?.active === true && projection.revision === requiredVersion;
+    }
+    if (this.externalSubstreamId() === "0") return true;
     const row = this.state.storage.sql.exec<{ version: number; active: number }>(
       `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
       userId,
@@ -1408,7 +1481,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.objectStore.realtimeAuthorityGeneration() !== preparation.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(preparation.userId)
-      || !this.privateChildMembershipAllows(preparation.userId, preparation.membershipVersion)
+      || !this.conversationMembershipAllows(preparation.userId, preparation.membershipVersion)
     ) return { outcome: "refused" };
 
     const entry: PreparedSocketAdmission = {
@@ -1489,7 +1562,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private prunePreparedSocketAdmissions(now = Math.floor(Date.now() / 1_000)): void {
-    for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
+    for (const [ticketId, prepared] of [...this.preparedSocketAdmissions]) {
       if (prepared.input.ticketExpiresAt <= now) this.deletePreparedSocketAdmission(ticketId);
     }
   }
@@ -1570,7 +1643,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.objectStore.realtimeAuthorityGeneration() !== input.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(input.userId)
-      || !this.privateChildMembershipAllows(input.userId, input.membershipVersion ?? 0)
+      || !this.conversationMembershipAllows(input.userId, input.membershipVersion ?? 0)
     ) {
       this.deletePreparedSocketAdmission(identity.ticketId);
       return null;
@@ -2094,12 +2167,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Authoritative current readers for privacy decisions made outside this object. */
-  async sidekickAttachments(input: { workspaceId: string; workstreamId: string; removeId?: string }): Promise<string[]> {
+  async sidekickAttachments(input: { workspaceId: string; workstreamId: string; removeId?: string; auth?: AuthContext }): Promise<string[]> {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema, removeId: IdSchema.optional() }).parse(input);
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema, removeId: IdSchema.optional(), auth:ProductAuthSchema.optional() }).parse(input);
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || identity.parentKind !== "workstream") {
       throw new Error("sidekick_attachment_identity_mismatch");
+    }
+    if (request.auth) {
+      const { principal,...auth } = request.auth;
+      const root = await this.product.authorize({ ...auth,...(principal ? { principal } : {}) });
+      if (request.removeId) {
+        this.assertPrivateChildNotArchived();
+        if (root.archived_at !== null) throw new ApiError(409,"workstream_archived","The conversation is archived");
+        if (this.state.storage.sql.exec("SELECT user_id FROM participants WHERE user_id = ? AND status = 'active'",auth.userId).toArray().length === 0) {
+          throw new ApiError(403,"sidekick_attachment_forbidden","Only participants can change Sidekick attachments");
+        }
+      }
     }
     if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
@@ -3218,6 +3302,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       if (request.operation === "create_message") {
         return jsonResponse(await this.admitMessage(current, request.input, span));
+      }
+      if ((request.operation === "add_participant" || request.operation === "remove_participant")
+        && identity.parentKind === "workstream"
+        && new ParticipantAuthorityTransferStorage(this.state.storage).currentTransferId() !== null) {
+        const active = request.operation === "add_participant";
+        if (active) await this.product.authorizeParticipantAddition(current, request.userId);
+        const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+          identity.workspaceId, workstreamDOName(this.env.AVALON_REGION, identity.workspaceId, asWorkstreamId(identity.parentId)));
+        const substreamId = this.externalSubstreamId();
+        const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
+          actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
+          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
+        if (result.status === "denied") {
+          if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
+          if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");
+          if (result.reason === "migration_pending") throw new ApiError(409, "participant_migration_pending", "Participant authority is moving; retry this operation");
+          throw new ApiError(403, "participant_grant_forbidden", "This participant change is not allowed");
+        }
+        if (result.status === "conflict") throw new ApiError(409, "participant_grant_conflict", "Participant access changed; refresh and retry");
+        const participant = await this.product.participant(request.userId);
+        if (active) {
+          if (!participant) throw new ApiError(409, "participant_change_superseded", "A later change removed this participant");
+          await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
+          return jsonResponse(participant);
+        }
+        if (participant) throw new ApiError(409, "participant_change_superseded", "This person still has access through a later share. Refresh and try again.");
+        await this.publishLocalProductEvent(identity, { type: "participant_removed", userId: request.userId });
+        return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
         const participant = await this.product.addParticipant(current, request.userId);
@@ -5120,7 +5232,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       socket.close(1011, "Missing connection identity");
       return;
     }
-    if (!this.privateChildMembershipAllows(attachment.userId, attachment.membershipVersion)) {
+    if (!this.conversationMembershipAllows(attachment.userId, attachment.membershipVersion)) {
       socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this conversation");
       return;
     }
@@ -5427,7 +5539,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
         assertParentWritable(attachment);
         this.assertPrivateChildNotArchived();
-        if (!attachment.sessionId || !attachment.role) {
+        if (!attachment.sessionId || attachment.role === undefined) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
           // ticket and the complete admitted identity.
@@ -5851,7 +5963,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
-            AND member.user_id = session.user_id
+            AND member.user_id = session.user_id AND member.incarnation = session.workspace_incarnation
             AND member.status = 'active'
            JOIN workspaces workspace ON workspace.id = session.workspace_id
           WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
@@ -6303,7 +6415,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.headers,
           RALLY_HEADERS.SOCKET_ADMISSION_AUTHORITY_GENERATION,
         ),
-        role: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_ADMISSION_ROLE),
+        role: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_ADMISSION_ROLE) === "null"
+          ? null : readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_ADMISSION_ROLE),
         analyticsWorkspaceId: readRallyHeader(
           request.headers,
           RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID,
@@ -6391,7 +6504,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     if (!auth || !this.product.canRead(identity.data.userId)
-      || !this.privateChildMembershipAllows(identity.data.userId, identity.data.membershipVersion ?? 0)) {
+      || !this.conversationMembershipAllows(identity.data.userId, identity.data.membershipVersion ?? 0)) {
       span.setError("forbidden");
       return jsonResponse({ error: "forbidden" }, 403);
     }
@@ -7106,7 +7219,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   private async socketViewerAuth(attachment: SocketAttachment): Promise<AuthContext | null> {
-    return attachment.sessionId && attachment.role
+    return attachment.sessionId && attachment.role !== undefined
       ? {
           sessionId: attachment.sessionId,
           userId: attachment.userId,
@@ -7291,7 +7404,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private evictReadersWhoLostLocalAccess(): boolean {
     let evicted = false;
-    for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
+    for (const [ticketId, prepared] of [...this.preparedSocketAdmissions]) {
       if (this.product.canRead(prepared.input.userId)) continue;
       this.deletePreparedSocketAdmission(ticketId);
     }
@@ -7312,16 +7425,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // authorization query and must not recreate access after this call.
     this.rememberSocketRevocation();
     let evicted = false;
-    for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
-      if (!revocationClosesSocket(request, prepared.input)) continue;
+    for (const [ticketId, prepared] of [...this.preparedSocketAdmissions]) {
+      if (!(await revocationClosesSession(this.env, request, prepared.input))) continue;
       this.deletePreparedSocketAdmission(ticketId);
     }
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
       // This schema alone makes `sessionId` optional, which is why the rule is
       // shared rather than written out at each of the four roles — see
-      // `revocationClosesSocket`.
-      if (!attachment || !revocationClosesSocket(request, attachment)) continue;
+      // `revocationClosesSession`.
+      if (!attachment || !(await revocationClosesSession(this.env, request, attachment))) continue;
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
       evicted = true;
     }

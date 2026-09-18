@@ -55,8 +55,8 @@ interface UploadFixture {
 function fixture(payloads: Parameters<typeof createCloudflareTestBinding<R2Bucket>>[0], bindings: Partial<Env> = {}): UploadFixture {
   const regional = new DatabaseSync(':memory:');
   open.push(regional);
-  regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
-  regional.prepare("INSERT INTO workspace_members VALUES (?, ?, 'active')").run(workspaceId, userId);
+  regional.exec(`CREATE TABLE workspace_members(workspace_id TEXT, user_id TEXT, status TEXT, access_class TEXT DEFAULT 'member')`);
+  regional.prepare("INSERT INTO workspace_members(workspace_id,user_id,status) VALUES (?, ?, 'active')").run(workspaceId, userId);
   const workspaceObject = createTestWorkspaceDO({
     workspaceId,
     regionalDatabase: regional,

@@ -683,6 +683,16 @@ multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
 
+### 2026-09-17 — Admit seeded uploads as attachment messages
+
+Uploads now use ordinary message admission with a stable client message ID and
+an empty, non-inferencing seeded turn. The upload receipt records that turn.
+Directly attaching a pending draft bypassed its reservation and could leave a
+conversation referencing a file still eligible for draft deletion or cleanup.
+Retry must reuse the original upload and message identities, including when the
+orchestration receipt was lost after admission committed.
+
+
 ### 2026-09-15 — Separate prepared prose from scripted execution
 
 The pack's creation action now explicitly chooses history or execution. History

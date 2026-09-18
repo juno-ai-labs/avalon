@@ -1,3 +1,4 @@
+import { authenticateSession } from "../services/session-authentication";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import type { MiddlewareHandler } from "hono";
@@ -66,13 +67,13 @@ export async function authenticate(c: Context): Promise<IdentityAuthContext> {
     const workspaceId = WorkspaceIdSchema.safeParse(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.DEV_WORKSPACE_ID)).data;
     if (userId && workspaceId) {
       const member = await c.env.DB.prepare(
-        `SELECT m.role FROM workspace_members m
+        `SELECT m.role, m.access_class FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
            AND w.region = ? AND w.abandoned_at IS NULL`,
       )
         .bind(userId, workspaceId, c.env.AVALON_REGION)
-        .first<{ role: "owner" | "admin" | "member" }>();
+        .first<{ role: "owner" | "admin" | "member" | null; access_class: "member" | "guest" }>();
       if (member) {
         return {
           sessionId: "development",
@@ -80,6 +81,7 @@ export async function authenticate(c: Context): Promise<IdentityAuthContext> {
           workspaceId,
           region: c.env.AVALON_REGION,
           role: member.role,
+          accessClass: member.access_class,
         };
       }
     }
@@ -90,50 +92,7 @@ export async function authenticate(c: Context): Promise<IdentityAuthContext> {
     throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   }
   const claims = await verifyAccessToken(c.env, authorization.slice(7));
-  if (claims.region !== c.env.AVALON_REGION) {
-    throw new ApiError(409, "region_mismatch", "The session belongs to a different data region");
-  }
-  // The two analytics surrogates are selected here rather than looked up
-  // anywhere else. `workspaces` is already joined, and `users` is one primary
-  // key away, so both arrive on a query this request was making regardless —
-  // no second round trip, no cache to invalidate, and no copy of identity data
-  // outside the region's own database. See `docs/performance-tracing.md`.
-  //
-  // Both joins are LEFT joins so that a diagnostic can never decide an
-  // authentication. A session without its user row is unreachable while the
-  // foreign key holds, but the cost of being wrong about that is a signed-out
-  // member, and the cost of the defence is nothing.
-  const session = await c.env.DB.prepare(
-    `SELECT s.workspace_id, m.role, w.region AS workspace_region,
-            u.analytics_person_id, w.analytics_workspace_id
-     FROM sessions s
-     LEFT JOIN users u ON u.id = s.user_id
-     LEFT JOIN workspace_members m
-       ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id AND m.status = 'active'
-     LEFT JOIN workspaces w ON w.id = s.workspace_id AND w.abandoned_at IS NULL
-     WHERE s.id = ? AND s.user_id = ? AND s.region = ?
-       AND s.revoked_at IS NULL AND s.expires_at > ?`,
-  )
-    .bind(claims.sessionId, claims.userId, claims.region, new Date().toISOString())
-    .first<{
-      workspace_id: string | null;
-      role: "owner" | "admin" | "member" | null;
-      workspace_region: string | null;
-      analytics_person_id: string | null;
-      analytics_workspace_id: string | null;
-    }>();
-  if (!session || session.workspace_id !== claims.workspaceId) {
-    throw new ApiError(401, "session_revoked", "The session is no longer active");
-  }
-  if (session.workspace_id && (!session.role || session.workspace_region !== c.env.AVALON_REGION)) {
-    throw new ApiError(401, "session_revoked", "The session is no longer active");
-  }
-  return {
-    ...claims,
-    role: session.role,
-    analyticsPersonId: session.analytics_person_id,
-    analyticsWorkspaceId: session.analytics_workspace_id,
-  };
+  return authenticateSession(c.env, claims);
 }
 
 /**
@@ -175,6 +134,22 @@ export function getIdentityAuth(c: Context): IdentityAuthContext {
   if (!auth) throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   return auth;
 }
+
+/** Workspace relationship only; the caller must authorize the exact product scope. */
+export function getWorkspaceAuth(c: Context): AuthContext {
+  const auth = getIdentityAuth(c);
+  if (!auth.workspaceId || (!auth.role && auth.accessClass !== "guest")) {
+    throw new ApiError(403,"workspace_setup_required","Choose or join a workspace to continue");
+  }
+  return auth as AuthContext;
+}
+
+export const requireWorkspaceAuth: MiddlewareHandler<HonoAppEnv> = async (c,next) => {
+  c.set("auth",c.get("auth") ?? await timedAuthenticate(c));
+  const auth = getWorkspaceAuth(c);
+  requestDeferral(c)(touchLastSeen(c.env,auth.workspaceId,auth.userId));
+  await next();
+};
 
 export function getAuth(c: Context): AuthContext {
   const auth = getIdentityAuth(c);

@@ -1,4 +1,4 @@
-import type { SidekickAttachment, WorkstreamAppearance } from '@rally/contracts';
+import type { SidekickAttachment, SidekickRecommendationOptions, WorkstreamAppearance } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { IconCarambola } from '@tabler/icons-react';
 import type { WorkstreamAutomationSummary } from '../lib/types';
@@ -29,6 +29,8 @@ export interface SidekickRow {
   appearance?: WorkstreamAppearance | undefined;
   /** Present only where the caller may detach it; a room's own row has none. */
   onRemove?: (() => void) | undefined;
+  onRemoveRecommendation?: (() => void) | undefined;
+  onRecommend?: (() => void) | undefined;
 }
 
 /**
@@ -68,7 +70,7 @@ export function SidekickSection({ items, error }: {
           rides along because compact hides the copy underneath, and a row
           nobody can read is the one place **Paused** is worth saying twice. */}
       <Tip label={item.note ? `${item.name} · ${item.note}` : item.name} side="right">
-        <ContextMenu.Trigger asChild disabled={!item.onRemove}>
+        <ContextMenu.Trigger asChild disabled={!item.onRemove && !item.onRemoveRecommendation && !item.onRecommend}>
         <button className="workstream-context-row" type="button" aria-label={item.name} aria-description={item.recommended ? 'Recommended Sidekick' : undefined} onClick={() => void desktopBridge().openSidekicks(item.id)}>
           {/* The library's own hexagon, at the rail's size: compact drops every
               title in this rail, and a Sidekick row without its mark collapses
@@ -86,9 +88,11 @@ export function SidekickSection({ items, error }: {
           <IconCarambola size={14} stroke={1.5} aria-hidden="true" />
         </span>
       </Tip>}
-      {item.onRemove && <ContextMenu.Portal>
+      {(item.onRemove || item.onRemoveRecommendation || item.onRecommend) && <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content">
-          <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove</ContextMenu.Item>
+          {item.onRemove && <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove from this substream</ContextMenu.Item>}
+          {item.onRemoveRecommendation && <ContextMenu.Item className="menu-item" onSelect={item.onRemoveRecommendation}>Remove workstream recommendation</ContextMenu.Item>}
+          {item.onRecommend && <ContextMenu.Item className="menu-item" onSelect={item.onRecommend}>Recommend for this workstream</ContextMenu.Item>}
         </ContextMenu.Content>
       </ContextMenu.Portal>}
     </li></ContextMenu.Root>)}</ul>
@@ -116,12 +120,13 @@ function ownedNote(status: WorkstreamAutomationSummary['status']): string | unde
  * separates the two states: a half-answered union rendered as `[]` is a claim
  * that the room has no Sidekicks.
  */
-export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, onRemoveRecommendation }: {
+export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, recommendationOptions, onChangeRecommendation }: {
   owned: WorkstreamAutomationSummary[] | undefined;
   attached: SidekickAttachment[] | undefined;
   recommended: SidekickAttachment[] | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
-  onRemoveRecommendation?: ((id: string) => void) | undefined;
+  recommendationOptions?: SidekickRecommendationOptions | undefined;
+  onChangeRecommendation?: ((id: string, attached: boolean) => void) | undefined;
 }): SidekickRow[] | undefined {
   if (!owned || !attached || !recommended) return undefined;
   const attachments = new Map(attached.map((attachment) => [attachment.id, attachment]));
@@ -161,12 +166,18 @@ export function workstreamSidekickRows({ owned, attached, recommended, onRemoveA
     const existing = rows.find((row) => row.id === recommendation.id);
     if (existing) {
       existing.recommended = true;
-      if (onRemoveRecommendation && !ownedIds.has(recommendation.id)) existing.onRemove = () => onRemoveRecommendation(recommendation.id);
     }
     else rows.push({ id: recommendation.id, name: recommendation.name, description: recommendation.description,
       recommended: true, ...(recommendation.available ? {} : { note: 'Unavailable' }),
-      ...(onRemoveRecommendation ? { onRemove: () => onRemoveRecommendation(recommendation.id) } : {}),
     });
+  }
+  if (recommendationOptions?.canManage && onChangeRecommendation) {
+    for (const row of rows) {
+      const option = recommendationOptions.items.find((item) => item.id === row.id);
+      if (!option || ownedIds.has(row.id)) continue;
+      if (option.attached) row.onRemoveRecommendation = () => onChangeRecommendation(row.id, false);
+      else row.onRecommend = () => onChangeRecommendation(row.id, true);
+    }
   }
   return rows;
 }

@@ -28,7 +28,7 @@ const Addressed = {
 /** Who is acting, resolved by the Worker: their role, and whether they are in the owning room. */
 export const AutomationActorSchema = z.strictObject({
   userId: UserIdSchema,
-  actorRole: z.enum(["owner", "admin", "member"]).optional(),
+  actorRole: z.enum(["owner", "admin", "member"]).nullable().optional(),
   participantOfOwningWorkstream: z.boolean().default(false),
 });
 export type AutomationActor = z.infer<typeof AutomationActorSchema>;

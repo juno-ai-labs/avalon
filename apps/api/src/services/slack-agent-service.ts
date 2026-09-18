@@ -72,6 +72,7 @@ import {
 } from "./connector-actor-identity";
 import {
   admitConnectorAudience,
+  reconcileConnectorWorkstreamCreator,
   connectorWorkstreamScope,
   resolveConnectorAudience,
   type ConnectorConversationMember,
@@ -114,7 +115,6 @@ import {
   // actually answers with.
   type WorkspaceSlackSession,
 } from "../durable-objects/workspace-slack-protocol";
-import { createIdentityObjectPort } from "../runtime/identity-port";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -1152,9 +1152,10 @@ export class SlackAgentService {
       }),
     );
     for (const session of assigned.sessions) {
-      await reconcileSlackWorkstreamIdentity(this.env, {
+      await reconcileConnectorWorkstreamCreator(this.env, {
         workspaceId: session.workspaceId,
         workstreamId: session.workstreamId,
+        assignmentId: JSON.stringify(["slack", session.id]),
         userId,
         previousAssignedUserId: session.previousAssignedUserId,
         mayCorrectVerifiedCreator: method === "explicit_link"
@@ -1835,6 +1836,7 @@ export class SlackAgentService {
         await admitConnectorAudience(this.env, {
           workspaceId: connection.workspace_id,
           workstreamId: session.workstream_id,
+          eventId: clientMessageId,
           userIds: matchedWorkspaceUserId ? [matchedWorkspaceUserId] : [],
           addedByUserId: matchedWorkspaceUserId,
         });
@@ -3438,29 +3440,6 @@ export class SlackAgentService {
 
 }
 
-async function reconcileSlackWorkstreamIdentity(
-  env: Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    userId: string;
-    previousAssignedUserId: string | null;
-    mayCorrectVerifiedCreator: boolean;
-  },
-): Promise<void> {
-  // The read that decided whether the creator seat was open, the participant
-  // upsert, the promotion and the demotion of the previous holder were four
-  // statements across two tables. They are one operation on the authority that
-  // owns both, because they are one fact about who this work stream belongs to
-  // — and a work stream with two creators or none is what a partial batch
-  // leaves behind.
-  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).adoptCreator({
-    userId: input.userId,
-    previousAssignedUserId: input.previousAssignedUserId,
-    mayCorrectVerifiedCreator: input.mayCorrectVerifiedCreator,
-    now: Date.now(),
-  });
-}
 
 const SlackResponseMessageSchema = z.strictObject({
   response_type: z.enum(["ephemeral", "in_channel"]),

@@ -4,6 +4,7 @@ import {
   AcceptWorkspaceInvitationRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   SessionSchema,
+  WorkspaceSchema,
   WorkspaceInvitationPreviewSchema,
   WorkspaceOnboardingStateSchema,
 } from "./index";
@@ -11,6 +12,16 @@ import {
 const workspaceId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("organization invitation contracts", () => {
+  it("separates guest access class from workspace roles", () => {
+    const workspace = { id:workspaceId,name:"Shared",slug:"shared",region:"global",timezone:"UTC",
+      createdAt:"2026-09-16T00:00:00.000Z",accessClass:"guest",role:null };
+    expect(WorkspaceSchema.parse(workspace)).toEqual(workspace);
+    expect(WorkspaceSchema.safeParse({ ...workspace,role:"owner" }).success).toBe(false);
+    expect(WorkspaceSchema.safeParse({ ...workspace,accessClass:"member" }).success).toBe(false);
+    expect(WorkspaceSchema.safeParse({ ...workspace,accessClass:undefined }).success).toBe(false);
+    expect(WorkspaceSchema.safeParse({ ...workspace,accessClass:undefined,role:"member" }).success).toBe(true);
+  });
+
   it("defaults invitations to member and accepts an explicit administrator role", () => {
     expect(CreateWorkspaceInvitationRequestSchema.parse({
       email: "  member@example.com  ",

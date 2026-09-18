@@ -1209,15 +1209,15 @@ describe('AddParticipantDialog', () => {
       </Tooltip.Provider>,
     );
 
-    expect(screen.getByRole('button', { name: 'Add Jordan to work stream' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add Jordan to main conversation' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Katherine participant actions' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Add Adam to work stream' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add Adam to main conversation' })).not.toBeInTheDocument();
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
       button: 0,
       ctrlKey: false,
     });
-    const remove = screen.getByRole('menuitem', { name: 'Remove from work stream' });
+    const remove = screen.getByRole('menuitem', { name: 'Remove from main conversation' });
     expect(remove).toHaveClass('menu-item-danger');
     fireEvent.click(remove);
     expect(onRemove).toHaveBeenCalledWith(adam);
@@ -1248,7 +1248,7 @@ describe('AddParticipantDialog', () => {
       button: 0,
       ctrlKey: false,
     });
-    expect(screen.getByRole('menuitem', { name: 'Remove from work stream' }))
+    expect(screen.getByRole('menuitem', { name: 'Remove from main conversation' }))
       .toHaveAttribute('data-disabled');
   });
 });

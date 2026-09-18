@@ -1,7 +1,7 @@
-import { asAutomationId, asUserId, asWorkspaceId, asWorkstreamId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { codeSkillRef, type HarnessSkill } from "@rally/agent-harness";
 import type { Env } from "../env";
-import { automationDOName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
+import { automationDOName, conversationObjectName, workspaceDOName, workstreamDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
@@ -55,11 +55,25 @@ export function sidekickSkillCatalog(
 }
 
 /** Resolve authority on every attempt, including attempts restoring pinned content. */
-export async function resolveSidekickSkills(env: Env, input: WorkstreamWorkflowInput, pinnedIds?: readonly string[], existingExecution = pinnedIds !== undefined): Promise<SidekickSkillSource[]> {
+export async function resolveSidekickSkills(env: Env, input: WorkstreamWorkflowInput, principalIsGuest: boolean, pinnedIds?: readonly string[], existingExecution = pinnedIds !== undefined): Promise<SidekickSkillSource[]> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
-  const ids = pinnedIds ?? await workspace.sidekickSkillCandidates({ workspaceId });
+  let ids = pinnedIds ?? await workspace.sidekickSkillCandidates({ workspaceId });
   if (ids.length === 0) return [];
+  // The run's existing principal admission supplies this fact. Resolving skills
+  // must not add another membership round trip to every assistant/tool attempt.
+  if (principalIsGuest && !existingExecution) {
+    if (input.parentKind !== "workstream") return [];
+    const conversation = await durableObjectStubForWorkspace(env,env.SUBSTREAM_AGENTS,workspaceId,
+      conversationObjectName(env.AVALON_REGION,workspaceId,input.parentId,asSubstreamId(input.substreamId ?? "0")));
+    const [recommended,loaded] = await Promise.all([
+      recommendedSidekickRefs(env,input),
+      conversation.sidekickAttachments({ workspaceId,workstreamId:input.parentId }),
+    ]);
+    const available = new Set([...recommended,...loaded.map(sidekickSkillRef)]);
+    ids = ids.filter((id) => available.has(sidekickSkillRef(id)));
+    if (ids.length === 0) return [];
+  }
   const identityPort = createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
   const [identity, participants] = await Promise.all([identityPort.identity(), identityPort.participants()]);
   if (!identity || identity.archived_at !== null) return [];
