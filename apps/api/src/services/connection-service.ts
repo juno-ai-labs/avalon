@@ -1,3 +1,4 @@
+import { runtimeDeferral } from "../lib/defer";
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
@@ -646,7 +647,7 @@ export class ConnectionService {
     // row — so a narrowed policy takes effect on next use without a fan-out
     // write to every SubstreamAgent. The rollback that used to live here
     // existed only to undo this row when that fan-out failed.
-    await this.recordConnectionAudit(
+    runtimeDeferral(this.recordConnectionAudit(
       connection.workspace_id,
       this.requireAuth().userId,
       "connector.github_repository_access.updated",
@@ -657,7 +658,7 @@ export class ConnectionService {
         defaultRemoteAccess: input.defaultRemoteAccess,
         repositoryCount: input.repositories.length,
       },
-    );
+    ));
     return {
       ...current,
       revision: nextRevision,
@@ -853,13 +854,13 @@ export class ConnectionService {
       await this.createPollSchedule(String(row.workspace_id), connectionId, 300);
     }
     await this.refreshScheduler(String(row.workspace_id));
-    await this.recordConnectionAudit(
+    runtimeDeferral(this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
       stateData.connectionId ? "connector.reauthorized" : "connector.authorized",
       connectionId,
       { provider: "google", scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId: account.providerAccountId },
-    );
+    ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return this.connectorAttemptTarget({
@@ -1222,13 +1223,13 @@ export class ConnectionService {
       repositoryBootstrap.resources,
       at,
     );
-    await this.recordConnectionAudit(
+    runtimeDeferral(this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
       existing ? "connector.reauthorized" : "connector.authorized",
       connectionId,
       { provider: "github", scope: stateData.scope, capabilities: stateData.capabilities, installationId: providerAccountId },
-    );
+    ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return this.connectorAttemptTarget({
@@ -1574,13 +1575,13 @@ export class ConnectionService {
         throw customMcpUnreachable(error);
       }
     }
-    await this.recordConnectionAudit(
+    runtimeDeferral(this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
       existing ? "connector.reauthorized" : "connector.authorized",
       connectionId,
       { provider, scope: stateData.scope, capabilities: grantedCapabilities, providerAccountId },
-    );
+    ));
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return this.connectorAttemptTarget({
@@ -1793,7 +1794,7 @@ export class ConnectionService {
       if (managed) {
         repairOutcome = await reportConnectorRepair(this.env, identity, async (signal) => {
           const repaired = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "repair" });
-          await this.recordInstallationAudit(repaired, "connector.installation.repair");
+          runtimeDeferral(this.recordInstallationAudit(repaired, "connector.installation.repair"));
           const installation = await runConnectorInstallation(this.env, connection.workspace_id, id, signal);
           // An installation still in flight — `setting_up`, `updating` — is not
           // one that needs attention, and a Test whose health check passed must
@@ -1954,7 +1955,7 @@ export class ConnectionService {
         ? await (await this.workspaceObject(connection.workspace_id)).connectorInstallation({ workspaceId: connection.workspace_id, connectionId: id }) : null;
       if (managedInstallation) {
         const installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, action: "disconnect" });
-        await this.recordInstallationAudit(installation, "connector.installation.disconnect");
+        runtimeDeferral(this.recordInstallationAudit(installation, "connector.installation.disconnect"));
         await enqueueConnectorInstallation(this.env, installation);
         await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
       }
@@ -2079,13 +2080,13 @@ export class ConnectionService {
           });
         }
       }
-      await this.recordConnectionAudit(
+      runtimeDeferral(this.recordConnectionAudit(
         connection.workspace_id,
         this.requireAuth().userId,
         "connector.disabled",
         connection.id,
         { provider: connection.connector_type, scope: connection.scope, remoteRevocation },
-      );
+      ));
       await this.emitConnectorAction(
         connection,
         "disconnect",
@@ -2151,9 +2152,9 @@ export class ConnectionService {
       return this.webhookConnectionResult(winner);
     }
     await this.syncConnectorIngressRoute(id);
-    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
+    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
-    });
+    }));
     const stored: StoredConnection = {
       id,
       workspace_id: auth.workspaceId,
@@ -2202,10 +2203,10 @@ export class ConnectionService {
       connection.id,
       auth.workspaceId,
     ).run();
-    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.credentials_rotated", id, {
+    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.credentials_rotated", id, {
       provider: "generic_webhook",
       scope: connection.scope,
-    });
+    }));
     await this.emitConnectorAction(
       connection,
       "secret_rotate",
@@ -2281,11 +2282,11 @@ export class ConnectionService {
       at,
     ).run();
     await this.syncConnectorIngressRoute(id);
-    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
+    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "x",
       scope: input.scope,
       capabilities,
-    });
+    }));
     const connection = (await this.list()).find((item) => item.id === id);
     if (!connection) throw new ApiError(500, "connection_write_failed", "The X connection could not be loaded");
     await this.emitConnectorSetupCompleted(
@@ -2363,7 +2364,7 @@ export class ConnectionService {
       if (error instanceof Error && /idempotency_conflict|installation_exists/u.test(error.message)) throw new ApiError(409, "connector_setup_conflict", "This setup key has different inputs, or workspace events are already configured. Reopen the existing installation.");
       throw error;
     }
-    await this.recordInstallationAudit(installation, "connector.authorized", "setup");
+    runtimeDeferral(this.recordInstallationAudit(installation, "connector.authorized", "setup"));
     if (installation.connectionId === id) {
       await this.emitConnectorSetupCompleted(await this.loadAuthorized(id), "api_key", Date.now() - telemetryStartedAt, false).catch(() => undefined);
     }
@@ -2419,7 +2420,7 @@ export class ConnectionService {
     try {
       installation = await (await this.workspaceObject(connection.workspace_id)).changeConnectorInstallation({ workspaceId: connection.workspace_id, connectionId: id, ...input });
     } catch (error) { throw installationActionError(error); }
-    await this.recordInstallationAudit(installation, `connector.installation.${input.action}`);
+    runtimeDeferral(this.recordInstallationAudit(installation, `connector.installation.${input.action}`));
     await this.syncConnectorIngressRoute(id);
     await enqueueConnectorInstallation(this.env, installation);
     await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
@@ -2466,7 +2467,7 @@ export class ConnectionService {
     } catch (error) {
       throw installationActionError(error);
     }
-    await this.recordInstallationAudit(updated, "connector.credentials.replaced");
+    runtimeDeferral(this.recordInstallationAudit(updated, "connector.credentials.replaced"));
     await enqueueConnectorInstallation(this.env, updated);
     await publishConnectorWorkspaceSync(this.env, connection.workspace_id);
     return { installation: updated };
@@ -2558,13 +2559,13 @@ export class ConnectionService {
       throw customMcpUnreachable(error);
     }
     await this.syncConnectorIngressRoute(id);
-    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
+    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: CUSTOM_MCP_CONNECTOR_TYPE,
       scope: input.scope,
       capabilities,
       serverUrl,
       authMode: "headers",
-    });
+    }));
     const connection = (await this.list()).find((item) => item.id === id);
     if (!connection) throw new ApiError(500, "connection_write_failed", "The MCP connection could not be loaded");
     await this.emitConnectorSetupCompleted(
@@ -2671,12 +2672,12 @@ export class ConnectionService {
       auth.workspaceId,
       CUSTOM_MCP_CONNECTOR_TYPE,
     ).run();
-    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.settings_changed", id, {
+    runtimeDeferral(this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.settings_changed", id, {
       provider: CUSTOM_MCP_CONNECTOR_TYPE,
       scope: connection.scope,
       serverUrl: config.serverUrl,
       toolPolicy,
-    });
+    }));
     await publishConnectorWorkspaceSync(this.env, auth.workspaceId);
     return this.getCustomMcpSettings(id);
   }
@@ -3831,7 +3832,7 @@ export class ConnectionService {
   private async recordInstallationAudit(installation: ConnectorInstallation, action: string, phase = String(installation.generation)): Promise<void> {
     const auth = this.requireAuth();
     const operationKey = `${installation.connectionId}:${action}:${phase}`;
-    await this.env.DB.prepare(`INSERT INTO audit_events
+    await this.env.AUDIT_DB.prepare(`INSERT INTO audit_events
       (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
       SELECT ?, ?, 'user', ?, ?, 'connector_connection', ?, ?, ?
       WHERE NOT EXISTS (SELECT 1 FROM audit_events WHERE workspace_id = ? AND target_id = ?
@@ -3848,7 +3849,7 @@ export class ConnectionService {
     connectionId: string,
     metadata: Record<string, unknown>,
   ): Promise<void> {
-    await this.env.DB.prepare(
+    await this.env.AUDIT_DB.prepare(
       `INSERT INTO audit_events
        (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
        VALUES (?, ?, 'user', ?, ?, 'connector_connection', ?, ?, ?)`,

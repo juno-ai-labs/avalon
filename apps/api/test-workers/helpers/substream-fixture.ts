@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -48,6 +49,12 @@ export async function seedWorkspaceControlPlane(
   database: D1Database,
   input: { workspaceId: string; userId: string; sessionId: string },
 ): Promise<void> {
+  await env.AUDIT_DB.prepare(`CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
+      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
+      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
+    )`).run();
   await database.batch([
     database.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -60,12 +67,6 @@ export async function seedWorkspaceControlPlane(
     database.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT,
       timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'
-    )`),
-    database.prepare(`CREATE TABLE audit_events (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
-      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
-      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
     )`),
     database.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`)
       .bind(input.workspaceId),
