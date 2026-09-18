@@ -1,4 +1,4 @@
-import { AshbyEventLabels, connectorApiKeyAcceptable, type ConnectorInstallation } from "@rally/contracts";
+import { AshbyEventLabels, connectorApiKeyAcceptable, isConnectorApiKeyProvider, type ConnectorInstallation } from "@rally/contracts";
 import { CircleAlert, CircleCheck } from 'lucide-react';
 import { useState, useSyncExternalStore } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -76,7 +76,7 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
   });
   return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Ashby for workspace"
     description="One shared connection receives your Ashby organization's recruiting events automatically. Personal Ashby sign-in does not create webhooks."
-    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !apiKey.trim() || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
+    footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !connectorApiKeyAcceptable('ashby', apiKey) || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for workspace'}</Button></>}>
     {!online && <InlineError>Connection management is unavailable while offline.</InlineError>}
     <p>The button below opens the page that issues the key. Create one with Read API Keys (apiKeysRead) and Write API Keys (apiKeysWrite) permissions, then paste it here — never in a work stream. The key stays encrypted in this workspace's Rally region. Ashby processes requests and delivers organization events outside Rally's regional storage boundary.</p>
     <p>These events concern the organization, including recruiting records whose visibility may differ from a personal query. Rally manages event subscriptions automatically; choose the events you want to act on when creating automations.</p>
@@ -296,7 +296,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
         <div className="installation-action"><Button aria-expanded={advanced} onClick={() => setAdvanced((value) => !value)}>Advanced</Button><p>Technical details and recovery tools for workspace administrators and support.</p></div>
       {advanced && <section aria-label="Advanced connection settings">
         <Button disabled={!online || query.isFetching} onClick={() => void query.refetch()}>Refresh status</Button>
-        {active && <details><summary>Replace workspace API key</summary>
+        {active && isConnectorApiKeyProvider(installation.provider) && <details><summary>Replace workspace API key</summary>
           <p>Use a key from the same provider organization with webhook management access. Existing subscriptions and signing keys are preserved. Unknown provider outcomes still require inspection.</p>
           <ConnectorApiKeyIssuingLink provider={installation.provider} />
           <ConnectorApiKeyField disabled={!online || replaceKey.isPending} inputLabel="New API key" label="New API key" onChange={setReplacementKey} provider={installation.provider} value={replacementKey} />

@@ -36,7 +36,7 @@ export const connectorProviders = [
     id: 'ashby' as const,
     provider: ConnectorConnectionCardCatalog.ashby.providerType,
     name: 'Ashby',
-    description: 'Hiring, candidates, interviews, application tracking, and pipelines.',
+    description: 'Hiring, candidates, interviews, applicant tracking, and pipelines.',
     mark: ConnectorConnectionCardCatalog.ashby.iconName,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['ashby.personal.mcp'],

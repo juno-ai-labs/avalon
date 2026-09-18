@@ -1,5 +1,5 @@
-import { ConnectorApiKeyGuidanceCatalog, connectorApiKeyMismatch, type ConnectorInstallationProvider } from '@rally/contracts';
-import type { ReactNode } from 'react';
+import { ConnectorApiKeyGuidanceCatalog, connectorApiKeyMismatch, type ConnectorApiKeyProvider } from '@rally/contracts';
+import { useState, type ReactNode } from 'react';
 import { Button, InlineError } from './primitives';
 import { desktopBridge } from '../lib/platform';
 
@@ -18,19 +18,19 @@ import { desktopBridge } from '../lib/platform';
  * `@rally/contracts`, beside the pattern the API and the adapter check, so a
  * provider that documents no format simply gets no check here.
  */
-export function ConnectorApiKeyIssuingLink({ provider, variant = 'link' }: { provider: ConnectorInstallationProvider; variant?: 'link' | 'button' }): React.JSX.Element {
+export function ConnectorApiKeyIssuingLink({ provider, variant = 'link' }: { provider: ConnectorApiKeyProvider; variant?: 'link' | 'button' }): React.JSX.Element {
   const { issuingUrl, issuingLabel } = ConnectorApiKeyGuidanceCatalog[provider];
   const open = () => void desktopBridge().openExternal(issuingUrl);
   if (variant === 'button') return <Button onClick={open}>{issuingLabel} ↗</Button>;
   return (
-    <button className="granola-key-guide-link" onClick={open} type="button">
+    <button className="connector-key-guide-link" onClick={open} type="button">
       {issuingLabel} ↗
     </button>
   );
 }
 
 export function ConnectorApiKeyField({ provider, value, onChange, disabled = false, label, id, inputClassName, inputLabel, help, autoFocus = false }: {
-  provider: ConnectorInstallationProvider;
+  provider: ConnectorApiKeyProvider;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -41,8 +41,18 @@ export function ConnectorApiKeyField({ provider, value, onChange, disabled = fal
   help?: ReactNode;
   autoFocus?: boolean;
 }): React.JSX.Element {
+  // A half-typed key is not a wrong key. `connectorApiKeyMismatch` already
+  // carves out the empty field for that reason, and somebody typing `g`, `gr`,
+  // `grn` is the same person: a message saying Granola keys start with `grn_`
+  // is untrue of what they have typed so far, and it would be on screen, in an
+  // alert, from the first character to the last. So the verdict waits for a
+  // moment when the value could be finished — a paste, which is the case this
+  // step is built for and arrives as one event, or leaving the field. Once
+  // shown it stays live, so correcting the key clears it as it is corrected,
+  // and emptying the field starts the person over.
+  const [settled, setSettled] = useState(false);
   const format = ConnectorApiKeyGuidanceCatalog[provider].format;
-  const mismatch = connectorApiKeyMismatch(provider, value);
+  const mismatch = settled ? connectorApiKeyMismatch(provider, value) : null;
   return (
     <>
       <label className="form-field" htmlFor={id}>
@@ -54,7 +64,12 @@ export function ConnectorApiKeyField({ provider, value, onChange, disabled = fal
           className={inputClassName}
           disabled={disabled}
           id={id}
-          onChange={(event) => onChange(event.currentTarget.value)}
+          onBlur={() => setSettled(true)}
+          onChange={(event) => {
+            if (!event.currentTarget.value.trim()) setSettled(false);
+            onChange(event.currentTarget.value);
+          }}
+          onPaste={() => setSettled(true)}
           {...(format ? { placeholder: format.placeholder } : {})}
           spellCheck={false}
           type="password"

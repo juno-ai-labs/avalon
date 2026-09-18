@@ -87,15 +87,17 @@ later decision.
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 | `packages/contracts/src/connector-api-keys.ts` | Per provider: the page that issues its API key, and the key format the provider documents — the one declaration the API's request schema, the adapter's own check and the desktop field all read. |
-| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. |
+| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key — used by Granola's and Ashby's setup modals and by **Replace workspace API key**. The Fireflies workspace modal still carries its own input and documentation link; that flow is being removed rather than converted. |
 
 ### Pasting an API key
 
 Three connectors are configured by pasting a key rather than by an OAuth round
 trip, and the product rule for that step is one key and nothing else: somebody
 pastes it and Rally does the rest. Two things are declared per provider in
-`packages/contracts/src/connector-api-keys.ts`, and every surface reads them
-from there:
+`packages/contracts/src/connector-api-keys.ts`, which the Worker's request
+schema, the adapter's own check, and the desktop key field all read — every
+surface but the Fireflies workspace modal, which still carries a hand-built
+input because that flow is being removed rather than converted:
 
 - **Where the key is issued.** `issuingUrl` is the provider page that creates
   the key — Ashby's admin API keys page, Fireflies' API integration page — so
@@ -109,13 +111,23 @@ from there:
   the sentence shown when a paste does not match. Granola documents `grn_`; that
   pattern is the same object the API's request schema and the adapter's own
   check use, which is what stopped the three copies of it drifting. **Ashby and
-  Fireflies have no entry, deliberately.** Neither documents a format, and a
+  Fireflies declare no format, deliberately.** Neither documents a format, and a
   prefix guessed here would reject a valid key at the exact step this exists to
   smooth — so a provider with no documented format is checked only for being
   non-empty.
 
 A mismatch is said out loud under the field, not left as a Connect button that
-refuses to light up with no reason given.
+refuses to light up with no reason given — but not while somebody is still
+typing the key: the verdict waits for a paste or for the field to be left,
+because a half-typed key is not a wrong key. The submit button beside it asks
+`connectorApiKeyAcceptable`, so the message and the gate cannot answer
+differently.
+
+The catalog is keyed on `ConnectorApiKeyProviders`, its own list, rather than on
+the installation-provider enum the same three names happen to fill today.
+"Somebody pastes a key into it" and "Rally manages its event subscriptions" are
+different questions, and a connector installed over OAuth would otherwise have
+to invent an issuing page to satisfy the guard.
 
 ### Authorization model
 
@@ -1234,7 +1246,7 @@ fixture table instead, where it is reviewable.
 ### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
 
 **What changed:** The Ashby and Fireflies cards keep only the sentence that says
-what the connector gives you — "Hiring, candidates, interviews, application
+what the connector gives you — "Hiring, candidates, interviews, applicant
 tracking, and pipelines." and "Meeting transcripts, summaries, and the action
 items they name." Where an API key is pasted, the link now opens the provider
 page that issues the key, the field shows the documented shape as its

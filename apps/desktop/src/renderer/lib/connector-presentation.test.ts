@@ -5,9 +5,33 @@ import {
   connectorScopeStates,
   connectorStatusLabel,
 } from './connector-presentation';
+import { connectorProviders } from './connector-catalog';
 import type { WorkstreamConnection } from './types';
 
 describe('connectorPresentation', () => {
+  // The two catalogs held the same sentences twice, and the copy nobody
+  // remembered to edit was this one: Ashby had a card that read well and a
+  // mention that said "Workspace connector." Every connector whose blurb is not
+  // deliberately its own now reads the card's sentence, and this is what says
+  // which ones those are.
+  // `custom-mcp` and `slack` say something different in a transcript on
+  // purpose, and the two Google cards share one connector type, so a mention
+  // picks between their bundles by display name rather than by type — the test
+  // above covers that pair.
+  const notKeyedByTypeAlone = new Set(['custom-mcp', 'slack', 'google-mail-calendar', 'google-drive-workspace']);
+  it.each(connectorProviders.filter((provider) => !notKeyedByTypeAlone.has(provider.id)).map((provider) => [provider.id, provider.provider, provider.description] as const))(
+    'describes %s in the transcript with the sentence its card shows',
+    (_id, providerType, description) => {
+      expect(connectorPresentation(providerType).description).toBe(description);
+    },
+  );
+
+  it('keeps a mention out of the fallback blurb for every connector with a card', () => {
+    for (const provider of connectorProviders) {
+      expect(connectorPresentation(provider.provider).description).not.toBe('Workspace connector.');
+    }
+  });
+
   it('distinguishes the two Google capability bundles without inventing a connector type', () => {
     expect(connectorPresentation('google', '@Gmail')).toMatchObject({
       name: 'Gmail',

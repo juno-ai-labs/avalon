@@ -1,4 +1,16 @@
-import { ConnectorInstallationProviders, type ConnectorInstallationProvider } from "./connector-installation";
+/**
+ * The providers Rally is configured for by pasting an API key.
+ *
+ * Declared here rather than borrowed from `ConnectorInstallationProviderSchema`,
+ * which the two lists agree with today only by coincidence: that enum means
+ * "has a workspace event installation", and an installation provider
+ * authorized by OAuth would have to invent an issuing page to satisfy this
+ * catalog's guard. A connector belongs on this list when somebody pastes a key
+ * into Rally for it, and on that one when Rally manages event subscriptions for
+ * it; a provider can be on either alone.
+ */
+export const ConnectorApiKeyProviders = ["ashby", "fireflies", "granola"] as const;
+export type ConnectorApiKeyProvider = (typeof ConnectorApiKeyProviders)[number];
 
 /**
  * Everything a person needs to get one API key pasted, per provider.
@@ -64,7 +76,7 @@ export const ConnectorApiKeyGuidanceCatalog = {
       mismatch: "That does not look like a Granola workspace API key — Granola keys start with grn_. Paste the whole key.",
     },
   },
-} as const satisfies Record<ConnectorInstallationProvider, ConnectorApiKeyGuidance>;
+} as const satisfies Record<ConnectorApiKeyProvider, ConnectorApiKeyGuidance>;
 
 /**
  * The reason a pasted key cannot be a key for this provider, or null.
@@ -74,7 +86,7 @@ export const ConnectorApiKeyGuidanceCatalog = {
  * wrong thing, and telling them off before they start is the friction this is
  * removing.
  */
-export function connectorApiKeyMismatch(provider: ConnectorInstallationProvider, apiKey: string): string | null {
+export function connectorApiKeyMismatch(provider: ConnectorApiKeyProvider, apiKey: string): string | null {
   const format = ConnectorApiKeyGuidanceCatalog[provider].format;
   if (!format) return null;
   const pasted = apiKey.trim();
@@ -83,12 +95,19 @@ export function connectorApiKeyMismatch(provider: ConnectorInstallationProvider,
 }
 
 /** True when the trimmed value can be sent: non-empty, and matching a documented format if there is one. */
-export function connectorApiKeyAcceptable(provider: ConnectorInstallationProvider, apiKey: string): boolean {
+export function connectorApiKeyAcceptable(provider: ConnectorApiKeyProvider, apiKey: string): boolean {
   const pasted = apiKey.trim();
   if (!pasted) return false;
   return connectorApiKeyMismatch(provider, pasted) === null;
 }
 
-export function isConnectorApiKeyProvider(provider: string): provider is ConnectorInstallationProvider {
-  return (ConnectorInstallationProviders as readonly string[]).includes(provider);
+/**
+ * Whether this provider is one somebody pastes a key into.
+ *
+ * The narrowing is what a surface holding a broader provider — an installation's
+ * `provider`, a connection's `connectorType` — asks before offering a key field
+ * for it, so a provider that never takes a key cannot reach this catalog.
+ */
+export function isConnectorApiKeyProvider(provider: string): provider is ConnectorApiKeyProvider {
+  return (ConnectorApiKeyProviders as readonly string[]).includes(provider);
 }

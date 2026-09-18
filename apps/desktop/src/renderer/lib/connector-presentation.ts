@@ -1,4 +1,5 @@
 import type { WorkstreamConnection } from './types';
+import { connectorProviders, type ConnectorProviderCatalogEntry } from './connector-catalog';
 import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
 
 /**
@@ -17,58 +18,77 @@ export interface ConnectorPresentation {
 
 type CatalogEntry = { readonly name: string; readonly description: string };
 
+/**
+ * The sentence the Connections card shows for this connector.
+ *
+ * These two catalogs held byte-identical copies of the same eight sentences
+ * with nothing binding them, which is how Ashby came to have a card that read
+ * well and a transcript blurb that said "Workspace connector.". The card is the
+ * one somebody edits, so it is the source; a connector whose transcript blurb
+ * is deliberately different from its card says so where it is written, below.
+ */
+function cardDescription(id: ConnectorProviderCatalogEntry['id']): string {
+  const card = connectorProviders.find((provider) => provider.id === id);
+  if (!card) throw new Error(`No connector card is declared for ${id}`);
+  return card.description;
+}
+
 const GOOGLE_MAIL: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
   name: 'Google Mail + Calendar',
-  description: 'Search Gmail, create drafts, send mail, and work with calendar events.',
+  description: cardDescription('google-mail-calendar'),
   capabilityPrefixes: ['gmail.', 'calendar.'],
 };
 
 const GOOGLE_FILES: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
   name: 'Google Drive + Docs + Sheets',
-  description: 'Read Drive files and work with Google Docs and Sheets content.',
+  description: cardDescription('google-drive-workspace'),
   capabilityPrefixes: ['drive.', 'docs.', 'sheets.'],
 };
 
 const CATALOG: Readonly<Record<string, CatalogEntry>> = {
   custom_mcp: {
     name: 'Custom MCP server',
+    // Deliberately not the card's sentence: the card explains how to add a
+    // server, and a transcript mention is about what the tools are.
     description: 'Tools served live by a Model Context Protocol server you point Rally at.',
   },
   github: {
     name: 'GitHub',
-    description: 'Repositories, issues, pull requests, checks, and development events.',
+    description: cardDescription('github'),
   },
   ashby: {
     name: 'Ashby',
-    description: 'Hiring, candidates, interviews, application tracking, and pipelines.',
+    description: cardDescription('ashby'),
   },
   fireflies: {
     name: 'Fireflies',
-    description: 'Meeting transcripts, summaries, and the action items they name.',
+    description: cardDescription('fireflies'),
   },
   granola: {
     name: 'Granola',
-    description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',
+    description: cardDescription('granola'),
   },
   linear: {
     name: 'Linear',
-    description: 'Connect personally to act as you, or install Rally for shared workspace access and real-time activity.',
+    description: cardDescription('linear'),
   },
   slack: {
     name: 'Slack',
+    // Deliberately not the card's sentence: the card offers a connection to
+    // make, while a mention may be the workspace Agent itself.
     description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
   },
   notion: {
     name: 'Notion',
-    description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally workspace.',
+    description: cardDescription('notion'),
   },
   x: {
     name: 'Public X via TwitterAPI.io',
-    description: 'Read-only public X timelines, threads, replies, and Lists using a Rally-managed third-party API key.',
+    description: cardDescription('x'),
   },
   generic_webhook: {
     name: 'Inbound webhook',
-    description: 'Receive signed activity from systems that do not have a native Rally connector.',
+    description: cardDescription('generic-webhook'),
   },
 };
 
