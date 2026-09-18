@@ -33,6 +33,21 @@ export interface AgentInferenceLogger {
   onAttempt(attempt: InferenceAttemptEvent): Promise<void>;
 }
 
+export interface AgentInferencePreparationBreakdown {
+  initialIdentityRunMs: number;
+  persistedOutcomeMs: number;
+  runAuthorityMs: number;
+  sidekickAuthorityMs: number;
+  leaseHeartbeatMs: number;
+  runContextMs: number;
+  memoryContextMs: number;
+  transcriptBootstrapMs: number;
+  toolLoadingMs: number;
+  attachmentReplayMs: number;
+  transcriptBootstrapRequired: boolean;
+  sidekickSnapshotReused: boolean;
+}
+
 export function logAgentInferencePrepared(
   env: Env,
   context: AgentInferenceLogContext,
@@ -41,6 +56,7 @@ export function logAgentInferencePrepared(
     initialAuthorityReadyAtMs: number;
     harnessInputsReadyAtMs: number;
     preparationFinishedAtMs: number;
+    breakdown: AgentInferencePreparationBreakdown;
   },
 ): void {
   if (context.inferenceStartEligible === false || context.requestReceivedAt === undefined) return;
@@ -61,6 +77,18 @@ export function logAgentInferencePrepared(
     context_tools_ms: timing.harnessInputsReadyAtMs - timing.initialAuthorityReadyAtMs,
     scope_activation_routing_ms: timing.preparationFinishedAtMs - timing.harnessInputsReadyAtMs,
     total_ms: timing.preparationFinishedAtMs - timing.runStartedAtMs,
+    initial_identity_run_ms: timing.breakdown.initialIdentityRunMs,
+    persisted_outcome_ms: timing.breakdown.persistedOutcomeMs,
+    run_authority_ms: timing.breakdown.runAuthorityMs,
+    sidekick_authority_ms: timing.breakdown.sidekickAuthorityMs,
+    lease_heartbeat_ms: timing.breakdown.leaseHeartbeatMs,
+    run_context_ms: timing.breakdown.runContextMs,
+    memory_context_ms: timing.breakdown.memoryContextMs,
+    transcript_bootstrap_ms: timing.breakdown.transcriptBootstrapMs,
+    tool_loading_ms: timing.breakdown.toolLoadingMs,
+    attachment_replay_ms: timing.breakdown.attachmentReplayMs,
+    transcript_bootstrap_required: timing.breakdown.transcriptBootstrapRequired,
+    sidekick_snapshot_reused: timing.breakdown.sidekickSnapshotReused,
   });
 }
 
