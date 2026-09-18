@@ -11,6 +11,7 @@ const connectorName: Record<ConnectorProvider, string> = {
   google: 'Google',
   github: 'GitHub',
   ashby: 'Ashby',
+  canva: 'Canva',
   fireflies: 'Fireflies',
   granola: 'Granola',
   linear: 'Linear',
