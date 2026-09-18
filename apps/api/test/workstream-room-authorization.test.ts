@@ -30,10 +30,21 @@ const MEMBER_SESSION = "00000000-0000-7000-8000-0000000000c6";
 const at = "2026-08-11T09:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
-afterEach(() => {
+const lifecycleWork: Promise<unknown>[] = [];
+afterEach(async () => {
+  const failures: unknown[] = [];
+  for (let index = 0; index < lifecycleWork.length; index += 1) {
+    try {
+      await lifecycleWork[index];
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  lifecycleWork.length = 0;
   for (const database of databases.splice(0)) database.close();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  if (failures.length > 0) throw new AggregateError(failures, "room lifecycle work failed");
 });
 beforeEach(() => {
   // The constructor registers a hibernation-friendly ping/pong pair through two
@@ -171,7 +182,10 @@ function roomFor(
     blockConcurrencyWhile: async (body: () => Promise<unknown>) => body(),
     setWebSocketAutoResponse: () => undefined,
     getWebSockets: () => sockets,
-    waitUntil: () => undefined,
+    // Eager loop and projection drains are invocation-owned work. Retain them
+    // exactly as workerd does so teardown cannot close their object database
+    // while a drain is still settling.
+    waitUntil: (promise: Promise<unknown>) => { lifecycleWork.push(promise); },
     storage: {
       get: async (key: string | string[]) => Array.isArray(key)
         ? new Map(key.flatMap((entry) => storage.has(entry) ? [[entry, storage.get(entry)]] : []))
