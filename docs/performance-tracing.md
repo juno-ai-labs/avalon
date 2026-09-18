@@ -164,6 +164,18 @@ durable attempt. `request_clock_skewed` is true, and
 `request_to_prepared_ms` is omitted, when the request timestamp is later than
 the preparation timestamp.
 
+The same row carries raw elapsed durations for the operations inside those
+regions: `initial_identity_run_ms`, `persisted_outcome_ms`,
+`run_authority_ms`, `sidekick_authority_ms`, `lease_heartbeat_ms`,
+`run_context_ms`, its nested `memory_context_ms`,
+`transcript_bootstrap_ms`, `tool_loading_ms`, and `attachment_replay_ms`.
+`transcript_bootstrap_required` distinguishes a fresh canonical projection from
+a resident persistent-loop projection, and `sidekick_snapshot_reused`
+distinguishes a pinned Sidekick snapshot from fresh discovery. These durations
+also overlap: for example tool inventory begins before the lease heartbeat and
+prompt, tools, transcript, and attachment replay proceed concurrently. Use each
+field to identify the slow dependency, never add them together.
+
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
 same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
@@ -729,6 +741,30 @@ Note also how an export is scoped, because it is easy to get backwards. The
 destination is account configuration; the **attachment is per Worker**, through
 `observability.<signal>.destinations`. Creating a destination exports nothing —
 a Worker exports when its own config names one.
+
+## Changelog
+
+### 2026-09-18 — Resolve aggregate inference preparation tails into dependency timings
+
+**What changed:** The synchronous `agent_inference_prepared` row now records the
+elapsed time of authority, recovery, heartbeat, prompt and memory, transcript,
+tool, and attachment-replay dependencies, plus whether the run reused its
+Sidekick snapshot and resident transcript projection.
+
+**Why:** Production measurements isolated authoritative-state and context/tool
+loading as the two remaining pre-provider bottlenecks, including one 6.9-second
+authority outlier, but the three aggregate regions could not identify which
+Durable Object, D1, memory, transcript, or tool path owned the tail.
+
+**Considered and rejected:** Emitting a log row around every awaited operation.
+That would multiply ingest volume and make one run require a log join. The
+existing one-row diagnostic can carry overlapping dependency durations without
+changing execution order or adding a telemetry promise.
+
+**Consequences:** The detailed durations are diagnostic dependency clocks, not
+a serial partition, and may exceed their enclosing region when work starts in
+one region and is consumed in another. Dashboards must group them independently
+and use the two boolean fields when comparing warm and fresh runs.
 
 ### 2026-09-18 — Attribute and overlap pre-provider preparation
 
