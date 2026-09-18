@@ -1309,6 +1309,10 @@ inventory reads start while the initial lease heartbeat completes. Prompt and
 tool setup start after that heartbeat, alongside canonical transcript loading.
 Each consumer awaits only its dependency's existing promise. Rejections are
 observed immediately and failed preparations can be retried by later demand.
+Each `Preparation` exposes the settled attempt's I/O-visible `elapsedMs`, or
+`null` before it settles; retry clears the failed attempt's measurement before
+the replacement starts. This lets diagnostics measure the reusable dependency
+itself instead of placing clocks around whichever control-flow path consumes it.
 No model or tool execution is started by preparation; Bind's live authority,
 lease, transcript, and command checks remain in their ordinary path.
 

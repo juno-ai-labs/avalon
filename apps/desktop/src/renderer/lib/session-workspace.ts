@@ -1,4 +1,9 @@
-import type { DesktopSession } from '../../common/desktop';
+// `ClientSession` rather than `DesktopSession`: this builds the workspace's
+// *presentation*, and every field it reads is on the session both the desktop
+// and the lite browser carry. `DesktopSession extends ClientSession`, so the
+// desktop still passes one; the narrower type is what lets a host-agnostic
+// surface use the same placeholder.
+import type { ClientSession } from '@rally/contracts/client-session';
 import type { Workspace } from './types';
 
 /**
@@ -37,7 +42,7 @@ import type { Workspace } from './types';
  * invalidates; this stays what the first paint is drawn from while that read is
  * in flight.
  */
-export function workspaceFromSession(session: DesktopSession | null): Workspace | null {
+export function workspaceFromSession(session: ClientSession | null): Workspace | null {
   const workspace = session?.workspace;
   // `user` is checked rather than assumed: this is reached from more than the
   // one caller that built the session now, and all-or-nothing has to mean a

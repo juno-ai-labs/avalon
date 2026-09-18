@@ -23,7 +23,8 @@ properties without knowing which appearance is active.
 | `packages/ui/src/styles/themes.css` | Generated light and dark custom-property blocks. |
 | `packages/ui/src/styles/app.css` | Component and layout rules expressed through semantic tokens. |
 | `packages/ui/src/themes.ts` | The shared appearance preference, resolver, and initial window backgrounds; desktop common imports re-export it. |
-| `apps/desktop/src/renderer/lib/theme.ts` | Device preference persistence, system appearance watching, DOM application, and native window synchronization. |
+| `packages/ui/src/lib/theme.ts` | Shared appearance, device preference, and system appearance watcher. |
+| `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |

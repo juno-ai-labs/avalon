@@ -31,18 +31,20 @@ export function backgroundRealtimeWorkstreamIds(
 }
 
 /** Start the existing pool from the directory, independently of workspace details. */
-export function WorkspaceWorkstreamSockets({ api, children }: PropsWithChildren<{
+export function WorkspaceWorkstreamSockets({ api, enabled = true, children }: PropsWithChildren<{
   api: WorkstreamSocketApi | null;
+  enabled?: boolean;
 }>): React.JSX.Element {
   const location = useLocation();
   const workstreams = useCachedWorkstreams();
-  const activeWorkstreamId = openWorkstreamId(location.pathname);
+  const activeWorkstreamId = enabled ? openWorkstreamId(location.pathname) : null;
   const backgroundIds = useMemo(() => {
+    if (!enabled) return [];
     const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams);
     if (location.pathname !== '/' || !workstreams) return selected;
     const skipped = skippedWorkstreamIds(location.state);
     const first = firstLandingWorkstream(workstreams.filter((row) => !skipped.has(row.id)));
     return first ? [...new Set([first.id, ...selected])] : selected;
-  }, [activeWorkstreamId, location.pathname, location.state, workstreams]);
-  return <WorkstreamSocketPool api={api} activeWorkstreamId={activeWorkstreamId} backgroundWorkstreamIds={backgroundIds}>{children}</WorkstreamSocketPool>;
+  }, [activeWorkstreamId, enabled, location.pathname, location.state, workstreams]);
+  return <WorkstreamSocketPool api={enabled ? api : null} activeWorkstreamId={activeWorkstreamId} backgroundWorkstreamIds={backgroundIds}>{children}</WorkstreamSocketPool>;
 }

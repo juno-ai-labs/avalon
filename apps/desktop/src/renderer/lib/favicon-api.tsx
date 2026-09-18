@@ -1,6 +1,6 @@
 import { createContext, type PropsWithChildren, useContext } from 'react';
 import type { RallyApi } from './api';
-import { useAppSession } from './app-session';
+import { useCollaborationSession } from './collaboration-session';
 
 const FaviconApiContext = createContext<RallyApi | null>(null);
 
@@ -10,7 +10,7 @@ const FaviconApiContext = createContext<RallyApi | null>(null);
  * re-render every finished message merely because it contains a web link.
  */
 export function FaviconApiProvider({ children }: PropsWithChildren): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api } = useCollaborationSession();
   return <FaviconApiContext.Provider value={api}>{children}</FaviconApiContext.Provider>;
 }
 

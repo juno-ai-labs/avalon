@@ -11,8 +11,9 @@ const getAutomation = vi.hoisted(() => vi.fn());
 const getAutomationRuns = vi.hoisted(() => vi.fn());
 const setAutomationAppearance = vi.hoisted(() => vi.fn());
 const archiveAutomation = vi.hoisted(() => vi.fn());
-vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance } }),
+vi.mock('../lib/collaboration-session', () => ({
+  useOptionalCollaborationSession: () => null,
+  useCollaborationSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance } }),
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.

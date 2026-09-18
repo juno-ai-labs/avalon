@@ -131,6 +131,56 @@ describe("connectors", () => {
     }])).toThrow(/narrows the scopes of activity it does not produce/u);
   });
 
+  // The declaration only ever narrows: an empty one closes a connector nothing
+  // could then connect at all, and one naming a scope outside
+  // `supportedScopes` reads as opening a scope this adapter cannot serve. Both
+  // are a mistake in the adapter, and the registry is where a mistake in an
+  // adapter is caught.
+  function narrowingConnector(
+    connectableScopes: ("personal" | "workspace")[],
+    supportedScopes: ("personal" | "workspace")[],
+  ) {
+    return {
+      agentPlugin: {
+        providerType: "narrowing",
+        wireNamePrefix: "narrowing",
+        description: "Test-only connector that narrows its connectable scopes.",
+        systemMessage: "Use only the tools exposed by this test connector.",
+        tools: [],
+      },
+      connectableScopes,
+      manifest: {
+        type: "narrowing",
+        displayName: "Narrowing",
+        supportedScopes,
+        oauthRequired: true,
+        capabilities: [],
+        activityTriggers: [],
+        resourceTypes: [],
+        tools: [],
+        supportsWatches: false,
+        supportsPolling: false,
+        supportsWebhooks: false,
+      },
+      async executeTool(name: string): Promise<never> {
+        throw new Error(`Unexpected tool ${name}`);
+      },
+      async healthCheck() {
+        return { ok: true, message: "Configured" };
+      },
+    };
+  }
+
+  it("refuses an empty declaration of connectable scopes", () => {
+    expect(() => new ConnectorRegistry([narrowingConnector([], ["personal", "workspace"])]))
+      .toThrow(/invalid connectable connection scopes/u);
+  });
+
+  it("refuses a connectable scope the connector does not support", () => {
+    expect(() => new ConnectorRegistry([narrowingConnector(["personal"], ["workspace"])]))
+      .toThrow(/invalid connectable connection scopes/u);
+  });
+
   it("does not let another user borrow a personal connection", () => {
     expect(() =>
       assertPrincipalAccess(
