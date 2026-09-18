@@ -89,7 +89,7 @@ searches for either label filter by the available scope. API-key searches reveal
 Workspace setup has no event selection: Rally manages Ashby subscriptions
 automatically, while automations choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
-Ashby, Fireflies and Granola installations through **Manage events**. The main view shows
+Ashby and Granola installations through **Manage events**. The main view shows
 plain status, the last event and explained **Test**, with **Get help** when needed.
 **Advanced** contains saved-status refresh, API-key replacement and technical
 recovery; subscription diagnostics are collapsed separately. Cleanup retry is

@@ -4,13 +4,16 @@ import { createExecutionContext, createMessageBatch, getQueueResult, reset, runI
 import { SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { asUserId, asWorkspaceId, ConnectionSchema, ConnectorInstallationSchema, ConnectorManualRegistrationSchema } from '@rally/contracts';
+import { asUserId, asWorkspaceId, ConnectionSchema, ConnectorInstallationSchema } from '@rally/contracts';
 import { createApp } from '../src/app';
+import { ConnectionService } from '../src/services/connection-service';
 import type { AuthContext, Env } from '../src/env';
 import { workspaceDOName } from '../src/durable-objects/names';
 import type { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { WorkspaceConnectorEventQueueMessageSchema } from '../src/durable-objects/workspace-connector-event-protocol';
 import { consumeActivityQueue } from '../src/queues/activity-consumer';
+import { encryptString } from '../src/lib/crypto';
+import { runConnectorInstallation } from '../src/services/connector-installation-service';
 import { ConnectorInstallationQueueSchema } from '../src/services/connector-installation-service';
 import { seedWorkspaceControlPlane } from './helpers/substream-fixture';
 
@@ -18,11 +21,6 @@ const envelopeKey = 'fireflies-installation-fixture-envelope-key';
 const sessionKey = 'fireflies-installation-fixture-session-key';
 // Low entropy on purpose: the repository's secret scan reads every branch.
 const validApiKey = 'kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk';
-const SetupResponse = z.object({
-  installation: ConnectorInstallationSchema,
-  connection: ConnectionSchema,
-  manualRegistration: ConnectorManualRegistrationSchema.nullable(),
-});
 // The identifying fields of the refusal's log entry, and only those: the entry
 // also carries a timestamp, region and build, which say nothing about which
 // delivery was refused.
@@ -113,7 +111,7 @@ async function fixture(options: { connectorEnabled?: boolean } = {}) {
     return { status: response.status, body: value };
   }
 
-  let userReply: () => Response = () => Response.json({ data: { user: { user_id: 'u-1', email: 'bob@acme.test', name: 'Bob' } } });
+  const userReply: () => Response = () => Response.json({ data: { user: { user_id: 'u-1', email: 'bob@acme.test', name: 'Bob' } } });
   const provider = vi.fn(async (input: string | URL | Request): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.origin !== 'https://api.fireflies.ai') {
@@ -173,20 +171,52 @@ async function fixture(options: { connectorEnabled?: boolean } = {}) {
     return z.object({ installation: ConnectorInstallationSchema.nullable() }).parse(read.body).installation;
   }
 
-  async function setup(idempotencyKey?: string) {
-    const created = await request('/connections/fireflies/workspace', owner, {
-      apiKey: validApiKey, idempotencyKey: idempotencyKey ?? crypto.randomUUID(),
+  /**
+   * A Fireflies workspace installation of the shape `createWorkspaceInstallation`
+   * left behind while the scope was open — the grouped registration, the
+   * host-generated signing secret, the ingress route — written here because the
+   * route that made one is gone. Everything below it is what such a connection
+   * must keep doing: deliveries still arrive, verify, and become activity.
+   */
+  async function setup() {
+    const connectionId = crypto.randomUUID();
+    const registrationKey = 'meeting.transcribed+meeting.summarized';
+    const secretRef = `webhook_secret:${registrationKey}`;
+    const signingSecret = 'ssssssssssssssssssssssssssssssss';
+    const destination = new URL(`/ingest/fireflies/${connectionId}`, testEnv.PUBLIC_API_BASE_URL).toString();
+    const at = new Date().toISOString();
+    const credentials = { apiKey: validApiKey, [secretRef]: signingSecret };
+    await stub.createConnectorInstallation({
+      installation: ConnectorInstallationSchema.parse({
+        connectionId, workspaceId, provider: 'fireflies', attemptId: crypto.randomUUID(),
+        generation: 1, desiredVersion: 1, appliedVersion: null, state: 'setting_up',
+        selectedEvents: ['meeting.transcribed', 'meeting.summarized'],
+        registrations: [{
+          key: registrationKey, providerId: null,
+          events: ['meeting.transcribed', 'meeting.summarized'], destination, enabled: null,
+          state: 'pending', action: 'create', stepId: crypto.randomUUID(), verifiedAt: null, error: null,
+          rotation: 'stable', rotationGeneration: 0, activeSecretRef: secretRef, pendingSecretRef: null,
+        }],
+        createdAt: at, updatedAt: at, lastReceivedAt: null, error: null,
+      }),
+      userId: owner.userId, inputHash: 'fireflies-legacy-workspace-installation',
+      credentials: { ...await encryptString(JSON.stringify(credentials), envelopeKey, connectionId), keyVersion: 1 },
+      capability: 'fireflies.workspace.read', displayName: 'Fireflies · bob@acme.test',
     });
-    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    await env.DB.prepare(`INSERT INTO connector_ingress_routes (
+      connection_id, workspace_id, region, connector_type, scope,
+      provider_account_id, provider_user_id, status, updated_at
+    ) VALUES (?, ?, 'global', 'fireflies', 'workspace', NULL, NULL, 'active', ?)`)
+      .bind(connectionId, workspaceId, at).run();
     // The installation runner is what settles a manual create into Action
-    // required; in production the Queue delivers it moments after the response.
-    await drainQueue('installation');
-    return SetupResponse.parse(created.body);
+    // required; in production the Queue delivers it moments after setup.
+    await runConnectorInstallation(testEnv, workspaceId, connectionId, new AbortController().signal);
+    queue.mockClear();
+    return { connectionId, signingSecret };
   }
 
   return {
-    workspaceId, owner, member, stub, request, deliver, drainQueue, activities, receipts, installation, setup, queue,
-    rejectKey: () => { userReply = () => Response.json({ errors: [{ code: 'auth_failed' }] }, { status: 500 }); },
+    workspaceId, owner, member, stub, testEnv, request, deliver, drainQueue, activities, receipts, installation, setup, queue,
   };
 }
 
@@ -195,58 +225,23 @@ function payload(event: string, meetingId = 'meeting-1', timestamp = Date.now())
 }
 
 describe('the Fireflies workspace installation', () => {
-  it('reserves nothing when the provider rejects the pasted key', async () => {
-    const f = await fixture();
-    f.rejectKey();
-    const created = await f.request('/connections/fireflies/workspace', f.owner, {
-      apiKey: validApiKey, idempotencyKey: crypto.randomUUID(),
-    });
-    expect(created.status).toBe(422);
-    expect(ApiFailure.parse(created.body).error.code).toBe('connector_credential_rejected');
-    const connections = await f.request('/connections', f.owner);
-    expect(z.object({ items: z.array(ConnectionSchema) }).parse(connections.body).items).toEqual([]);
-  });
-
-  it('hands the administrator the endpoint, the secret, and the steps exactly once', async () => {
-    const f = await fixture();
-    const { installation, connection, manualRegistration } = await f.setup();
-    // Settings names the account the key reads, which for a key-scoped
-    // connector is the whole question of what the workspace can see.
-    expect(connection.displayName).toBe('Fireflies · bob@acme.test');
-    expect(installation.selectedEvents).toEqual(['meeting.transcribed', 'meeting.summarized']);
-    expect(manualRegistration?.destination).toContain(`/ingest/fireflies/${connection.id}`);
-    expect(manualRegistration?.signingSecret).toMatch(/^[A-Za-z0-9_-]{16,}$/u);
-    // The steps live on the settled registration rather than in the setup
-    // response: one copy, which the management window is already reading.
-    const settled = await f.installation(connection.id);
-    expect(settled?.registrations[0]?.events).toEqual(['meeting.transcribed', 'meeting.summarized']);
-    expect(settled?.registrations[0]?.error).toContain('https://app.fireflies.ai/integrations/api/webhook');
-
-    // Neither the secret nor the key is readable back through the connection.
-    const listed = await f.request('/connections', f.owner);
-    expect(JSON.stringify(listed.body)).not.toContain(manualRegistration!.signingSecret);
-    expect(JSON.stringify(listed.body)).not.toContain(validApiKey);
-    const reread = await f.installation(connection.id);
-    expect(JSON.stringify(reread)).not.toContain(manualRegistration!.signingSecret);
-  });
-
   it('leaves the installation action required until a delivery proves the registration, then makes it current', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
 
     // Nothing but a delivery can verify this registration: the adapter declares
     // create manual and inspect unsupported, so the runner settles the step as
     // action required rather than calling a provider API that does not exist.
-    const pending = await f.installation(connection.id);
+    const pending = await f.installation(connectionId);
     expect(pending?.state).toBe('action_required');
     expect(pending?.lastReceivedAt).toBeNull();
     expect(pending?.registrations[0]?.verifiedAt).toBeNull();
 
-    const delivered = await f.deliver(connection.id, payload('meeting.transcribed'), secret);
+    const delivered = await f.deliver(connectionId, payload('meeting.transcribed'), secret);
     expect(delivered.status, JSON.stringify(delivered.body)).toBe(202);
 
-    const verified = await f.installation(connection.id);
+    const verified = await f.installation(connectionId);
     expect(verified?.state).toBe('current');
     expect(verified?.registrations[0]?.state).toBe('current');
     expect(verified?.registrations[0]?.verifiedAt).not.toBeNull();
@@ -257,20 +252,20 @@ describe('the Fireflies workspace installation', () => {
 
   it('lets the dashboard test event verify the registration without writing an activity', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
-    expect((await f.installation(connection.id))?.state).toBe('action_required');
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
+    expect((await f.installation(connectionId))?.state).toBe('action_required');
 
     // A test event is still a delivery: unsigned, it proves nothing.
-    expect((await f.deliver(connection.id, payload('test', 'test_00000000'), secret, null)).status).toBe(401);
+    expect((await f.deliver(connectionId, payload('test', 'test_00000000'), secret, null)).status).toBe(401);
 
-    const tested = await f.deliver(connection.id, payload('test', 'test_00000000'), secret);
+    const tested = await f.deliver(connectionId, payload('test', 'test_00000000'), secret);
     expect(tested.status, JSON.stringify(tested.body)).toBe(200);
     expect(tested.body).toEqual({ ping: true });
 
     // The administrator pressed a button and the connection answered: that is
     // the verification, so Settings says Connected before any meeting exists.
-    const verified = await f.installation(connection.id);
+    const verified = await f.installation(connectionId);
     expect(verified?.state).toBe('current');
     expect(verified?.registrations[0]?.verifiedAt).not.toBeNull();
     expect(verified?.lastReceivedAt).not.toBeNull();
@@ -282,16 +277,16 @@ describe('the Fireflies workspace installation', () => {
 
   it('rejects an unsigned, mis-signed, stale, or unsubscribed delivery without writing anything', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
     const body = payload('meeting.summarized');
 
-    expect((await f.deliver(connection.id, body, secret, null)).status).toBe(401);
-    expect((await f.deliver(connection.id, body, secret, `sha256=${'0'.repeat(64)}`)).status).toBe(401);
-    expect((await f.deliver(connection.id, body, 'wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww')).status).toBe(401);
+    expect((await f.deliver(connectionId, body, secret, null)).status).toBe(401);
+    expect((await f.deliver(connectionId, body, secret, `sha256=${'0'.repeat(64)}`)).status).toBe(401);
+    expect((await f.deliver(connectionId, body, 'wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww')).status).toBe(401);
     // Correctly signed, but its in-body timestamp is hours old: the only replay
     // anchor Fireflies gives, since it signs the body and nothing else.
-    expect((await f.deliver(connection.id, payload('meeting.summarized', 'meeting-1', Date.now() - 7_200_000), secret)).status).toBe(401);
+    expect((await f.deliver(connectionId, payload('meeting.summarized', 'meeting-1', Date.now() - 7_200_000), secret)).status).toBe(401);
     // Verified, and still refused: an event this connector does not handle.
     // The log line is the half that matters and the half the response cannot
     // prove: `request_failed` never records a refusal's message and withholds
@@ -300,7 +295,7 @@ describe('the Fireflies workspace installation', () => {
     // delivery it was. Asserted in-isolate, on the real `console.warn` the
     // logger writes through.
     const warnings = vi.spyOn(console, 'warn');
-    const botJoined = await f.deliver(connection.id, payload('meeting.bot_joined'), secret);
+    const botJoined = await f.deliver(connectionId, payload('meeting.bot_joined'), secret);
     expect(botJoined.status).toBe(400);
     const refusal = ApiFailure.parse(botJoined.body).error;
     expect(refusal.code).toBe('unsupported_webhook_event');
@@ -309,7 +304,7 @@ describe('the Fireflies workspace installation', () => {
     expect(warnings.mock.calls.map(([entry]) => RefusalLog.safeParse(entry).data).filter(Boolean)).toEqual([{
       event: 'connector_webhook_event_refused',
       connector_type: 'fireflies',
-      connection_id: connection.id,
+      connection_id: connectionId,
       event_type: 'meeting.bot_joined',
       code: 'unsupported_webhook_event',
     }]);
@@ -321,30 +316,30 @@ describe('the Fireflies workspace installation', () => {
     // knows the URL cannot make Rally write a per-connection row either.
     expect(await f.receipts()).toBe(0);
     // None of them counted as the verifying delivery.
-    const stillPending = await f.installation(connection.id);
+    const stillPending = await f.installation(connectionId);
     expect(stillPending?.state).toBe('action_required');
     expect(stillPending?.lastReceivedAt).toBeNull();
   });
 
   it('refuses a signed delivery for an event the registration does not carry', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
     // Narrow the grant the way a later declaration would: the event is one the
     // connector handles, so this is an authorization answer rather than the
     // "Rally never subscribed to this" refusal above, and the two must not
     // collapse into one code.
     await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
       const row = state.storage.sql.exec<{ document_json: string }>(
-        'SELECT document_json FROM connector_installations WHERE connection_id = ?', connection.id).toArray()[0]!;
+        'SELECT document_json FROM connector_installations WHERE connection_id = ?', connectionId).toArray()[0]!;
       const document = JSON.parse(row.document_json) as { selectedEvents: string[]; registrations: { events: string[] }[] };
       document.selectedEvents = ['meeting.summarized'];
       document.registrations[0]!.events = ['meeting.summarized'];
       state.storage.sql.exec('UPDATE connector_installations SET document_json = ? WHERE connection_id = ?',
-        JSON.stringify(document), connection.id);
+        JSON.stringify(document), connectionId);
     });
 
-    const refused = await f.deliver(connection.id, payload('meeting.transcribed'), secret);
+    const refused = await f.deliver(connectionId, payload('meeting.transcribed'), secret);
     expect(refused.status).toBe(401);
     expect(ApiFailure.parse(refused.body).error.code).toBe('event_not_authorized');
     await f.drainQueue('event');
@@ -354,9 +349,9 @@ describe('the Fireflies workspace installation', () => {
 
   it('reports a correctly signed but stale delivery as a timestamp problem, not a wrong key', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const stale = await f.deliver(connection.id,
-      payload('meeting.summarized', 'meeting-1', Date.now() - 7_200_000), manualRegistration!.signingSecret);
+    const { connectionId, signingSecret } = await f.setup();
+    const stale = await f.deliver(connectionId,
+      payload('meeting.summarized', 'meeting-1', Date.now() - 7_200_000), signingSecret);
     expect(stale.status).toBe(401);
     // The distinction is the whole point: telling an administrator their
     // signing secret is wrong when their clock or a replay is the cause sends
@@ -366,19 +361,19 @@ describe('the Fireflies workspace installation', () => {
 
   it('rejects a delivery to a connection the administrator removed', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
-    expect((await f.deliver(connection.id, payload('meeting.transcribed'), secret)).status).toBe(202);
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
+    expect((await f.deliver(connectionId, payload('meeting.transcribed'), secret)).status).toBe(202);
     await f.drainQueue('event');
     const before = await f.activities();
 
-    const disconnected = await f.request(`/connections/${connection.id}/installation`, f.owner, { action: 'disconnect' });
+    const disconnected = await f.request(`/connections/${connectionId}/installation`, f.owner, { action: 'disconnect' });
     expect(disconnected.status, JSON.stringify(disconnected.body)).toBe(200);
 
     // Fireflies has no delete API, so Rally cannot take the webhook down at the
     // provider; refusing its deliveries is the entire reason a webhook the
     // administrator left behind is harmless.
-    const afterRemoval = await f.deliver(connection.id, payload('meeting.summarized', 'meeting-9'), secret);
+    const afterRemoval = await f.deliver(connectionId, payload('meeting.summarized', 'meeting-9'), secret);
     expect(afterRemoval.status).toBe(404);
     await f.drainQueue('event');
     expect(await f.activities()).toEqual(before);
@@ -386,36 +381,36 @@ describe('the Fireflies workspace installation', () => {
 
   it('refuses a delivery for a disabled connection even with its ingress route intact', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
     // Disable the row without going through disconnect, which also retires the
     // ingress route: that route is the outer control, and this is the one
     // underneath it. Removing either predicate has to fail a test on its own,
     // or "defence in depth" is one layer wearing two names.
     await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
-      state.storage.sql.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = ?", connection.id);
+      state.storage.sql.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = ?", connectionId);
     });
 
-    expect((await f.deliver(connection.id, payload('meeting.summarized', 'meeting-11'), secret)).status).toBe(404);
+    expect((await f.deliver(connectionId, payload('meeting.summarized', 'meeting-11'), secret)).status).toBe(404);
     await f.drainQueue('event');
     expect(await f.activities()).toEqual([]);
   });
 
   it('will not let a delivery revive an installation whose connection is disabled', async () => {
     const f = await fixture();
-    const { connection } = await f.setup();
-    const before = await f.installation(connection.id);
+    const { connectionId } = await f.setup();
+    const before = await f.installation(connectionId);
     await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
-      state.storage.sql.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = ?", connection.id);
+      state.storage.sql.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = ?", connectionId);
     });
 
     await f.stub.receiveConnectorInstallationEvent({
-      workspaceId: f.workspaceId, connectionId: connection.id, receivedAt: new Date().toISOString(),
+      workspaceId: f.workspaceId, connectionId: connectionId, receivedAt: new Date().toISOString(),
       registrationKey: before!.registrations[0]!.key,
       registrationSupport: { create: 'manual', inspect: 'unsupported' },
     });
 
-    const after = await f.installation(connection.id);
+    const after = await f.installation(connectionId);
     expect(after?.registrations[0]?.state).toBe('action_required');
     expect(after?.registrations[0]?.verifiedAt).toBeNull();
     expect(after?.state).not.toBe('current');
@@ -423,8 +418,8 @@ describe('the Fireflies workspace installation', () => {
 
   it('does not let a delivery verify a registration for a provider that can be inspected', async () => {
     const f = await fixture();
-    const { connection } = await f.setup();
-    const before = await f.installation(connection.id);
+    const { connectionId } = await f.setup();
+    const before = await f.installation(connectionId);
     expect(before?.registrations[0]?.state).toBe('action_required');
 
     // The same hook, with the declaration an inspectable provider sends. Ashby
@@ -433,12 +428,12 @@ describe('the Fireflies workspace installation', () => {
     // the webhook back and comparing its destination and events.
     const at = new Date().toISOString();
     await f.stub.receiveConnectorInstallationEvent({
-      workspaceId: f.workspaceId, connectionId: connection.id, receivedAt: at,
+      workspaceId: f.workspaceId, connectionId: connectionId, receivedAt: at,
       registrationKey: before!.registrations[0]!.key,
       registrationSupport: { create: 'automatic', inspect: 'automatic' },
     });
 
-    const after = await f.installation(connection.id);
+    const after = await f.installation(connectionId);
     expect(after?.registrations[0]?.state).toBe('action_required');
     expect(after?.registrations[0]?.verifiedAt).toBeNull();
     expect(after?.state).toBe('action_required');
@@ -448,27 +443,27 @@ describe('the Fireflies workspace installation', () => {
 
   it('verifies only the registration whose secret signed the delivery', async () => {
     const f = await fixture();
-    const { connection } = await f.setup();
+    const { connectionId } = await f.setup();
     // A second registration, as a single_event provider would carry: the
     // delivery names one key, and must not vouch for a subscription the
     // administrator may never have ticked.
     await runInDurableObject(f.stub, (_instance: WorkspaceDO, state) => {
       const row = state.storage.sql.exec<{ document_json: string }>(
-        'SELECT document_json FROM connector_installations WHERE connection_id = ?', connection.id).toArray()[0]!;
+        'SELECT document_json FROM connector_installations WHERE connection_id = ?', connectionId).toArray()[0]!;
       const document = JSON.parse(row.document_json) as { registrations: Record<string, unknown>[] };
       document.registrations.push({ ...document.registrations[0]!, key: 'second', stepId: crypto.randomUUID() });
       state.storage.sql.exec('UPDATE connector_installations SET document_json = ? WHERE connection_id = ?',
-        JSON.stringify(document), connection.id);
+        JSON.stringify(document), connectionId);
     });
 
-    const before = await f.installation(connection.id);
+    const before = await f.installation(connectionId);
     await f.stub.receiveConnectorInstallationEvent({
-      workspaceId: f.workspaceId, connectionId: connection.id, receivedAt: new Date().toISOString(),
+      workspaceId: f.workspaceId, connectionId: connectionId, receivedAt: new Date().toISOString(),
       registrationKey: before!.registrations[0]!.key,
       registrationSupport: { create: 'manual', inspect: 'unsupported' },
     });
 
-    const after = await f.installation(connection.id);
+    const after = await f.installation(connectionId);
     expect(after?.registrations.find((item) => item.key === before!.registrations[0]!.key)?.state).toBe('current');
     expect(after?.registrations.find((item) => item.key === 'second')?.state).toBe('action_required');
     expect(after?.registrations.find((item) => item.key === 'second')?.verifiedAt).toBeNull();
@@ -476,71 +471,35 @@ describe('the Fireflies workspace installation', () => {
 
   it('leaves a verified installation connected when Test finds nothing to repair', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    expect((await f.deliver(connection.id, payload('meeting.transcribed'), manualRegistration!.signingSecret)).status).toBe(202);
-    expect((await f.installation(connection.id))?.state).toBe('current');
+    const { connectionId, signingSecret } = await f.setup();
+    expect((await f.deliver(connectionId, payload('meeting.transcribed'), signingSecret)).status).toBe(202);
+    expect((await f.installation(connectionId))?.state).toBe('current');
 
     // Test runs a repair. For a provider whose registrations carry no provider
     // id there is nothing to inspect, so no step becomes pending and nothing
     // ever settles — which is why claiming "Updating" here used to strand a
     // working installation until the next real meeting arrived.
-    const tested = await f.request(`/connections/${connection.id}/test`, f.owner, {});
+    const tested = await f.request(`/connections/${connectionId}/test`, f.owner, {});
     expect(tested.status, JSON.stringify(tested.body)).toBe(200);
 
-    const after = await f.installation(connection.id);
+    const after = await f.installation(connectionId);
     expect(after?.state).toBe('current');
     expect(after?.registrations[0]?.state).toBe('current');
   });
 
   it('refuses to adopt a webhook id for a provider that can never confirm one', async () => {
     const f = await fixture();
-    const { connection } = await f.setup();
-    const key = (await f.installation(connection.id))!.registrations[0]!.key;
+    const { connectionId } = await f.setup();
+    const key = (await f.installation(connectionId))!.registrations[0]!.key;
 
     // Storing a fabricated provider id would make the registration read as one
     // Rally created: the cleanup advice would start offering to delete a
     // webhook through an API Fireflies does not have.
-    const refused = await f.request(`/connections/${connection.id}/installation`, f.owner,
+    const refused = await f.request(`/connections/${connectionId}/installation`, f.owner,
       { action: 'reconcile', key, providerId: 'invented-by-hand' });
     expect(refused.status, JSON.stringify(refused.body)).toBe(422);
     expect(ApiFailure.parse(refused.body).error.code).toBe('connector_reconciliation_unsupported');
-    expect((await f.installation(connection.id))?.registrations[0]?.providerId).toBeNull();
-  });
-
-  it('reveals the signing secret once, and never again for the same attempt', async () => {
-    const f = await fixture();
-    const idempotencyKey = crypto.randomUUID();
-    const first = await f.setup(idempotencyKey);
-    expect(first.manualRegistration).not.toBeNull();
-
-    // The replay returns the same installation and no secret: a lost one is
-    // replaced by reconnecting, which is the reason the desktop refuses to
-    // close that dialog while it is on screen.
-    const replay = await f.request('/connections/fireflies/workspace', f.owner, { apiKey: validApiKey, idempotencyKey });
-    expect(replay.status, JSON.stringify(replay.body)).toBe(201);
-    const second = SetupResponse.parse(replay.body);
-    expect(second.connection.id).toBe(first.connection.id);
-    expect(second.manualRegistration).toBeNull();
-  });
-
-  it('admits only a workspace administrator, and only a body the contract accepts', async () => {
-    const f = await fixture();
-    const body = { apiKey: validApiKey, idempotencyKey: crypto.randomUUID() };
-    expect((await f.request('/connections/fireflies/workspace', null, body)).status).toBe(401);
-    const forbidden = await f.request('/connections/fireflies/workspace', f.member, body);
-    expect(forbidden.status).toBe(403);
-    expect(ApiFailure.parse(forbidden.body).error.code).toBe('workspace_admin_required');
-
-    for (const invalid of [
-      { idempotencyKey: crypto.randomUUID() },
-      { apiKey: validApiKey },
-      { apiKey: validApiKey, idempotencyKey: 'not-a-uuid' },
-      { apiKey: '   ', idempotencyKey: crypto.randomUUID() },
-      { ...body, capabilities: ['fireflies.workspace.read'] },
-    ]) {
-      expect((await f.request('/connections/fireflies/workspace', f.owner, invalid)).status,
-        JSON.stringify(invalid)).toBe(400);
-    }
+    expect((await f.installation(connectionId))?.registrations[0]?.providerId).toBeNull();
   });
 
   it('starts a personal authorization only for the personal scope', async () => {
@@ -564,15 +523,15 @@ describe('the Fireflies workspace installation', () => {
 
   it('admits each handled event once and keeps the two apart', async () => {
     const f = await fixture();
-    const { connection, manualRegistration } = await f.setup();
-    const secret = manualRegistration!.signingSecret;
+    const { connectionId, signingSecret } = await f.setup();
+    const secret = signingSecret;
     const transcribed = payload('meeting.transcribed', 'meeting-7');
     const summarized = payload('meeting.summarized', 'meeting-7', Date.now() + 1_000);
 
-    expect((await f.deliver(connection.id, transcribed, secret)).status).toBe(202);
-    expect((await f.deliver(connection.id, summarized, secret)).status).toBe(202);
+    expect((await f.deliver(connectionId, transcribed, secret)).status).toBe(202);
+    expect((await f.deliver(connectionId, summarized, secret)).status).toBe(202);
     // A byte-identical replay of a delivery Fireflies already made.
-    const replay = await f.deliver(connection.id, summarized, secret);
+    const replay = await f.deliver(connectionId, summarized, secret);
     expect(replay.status).toBe(200);
 
     await f.drainQueue('event');
@@ -586,13 +545,29 @@ describe('the Fireflies workspace installation', () => {
     const f = await fixture({ connectorEnabled: false });
     const catalog = await f.request('/connections/catalog', f.owner);
     expect(z.object({ availableConnectorTypes: z.array(z.string()) }).parse(catalog.body).availableConnectorTypes).not.toContain('fireflies');
-    const created = await f.request('/connections/fireflies/workspace', f.owner, {
-      apiKey: validApiKey, idempotencyKey: crypto.randomUUID(),
+    const started = await f.request('/connections/fireflies/start', f.owner, {
+      scope: 'personal', capabilities: ['fireflies.personal.read'],
     });
     // The exact refusal, not merely "some failure": an unmapped throw is a 500,
     // which would pass a `>= 400` assertion while telling the administrator
     // nothing and paging somebody.
-    expect(created.status, JSON.stringify(created.body)).toBe(422);
-    expect(ApiFailure.parse(created.body).error.code).toBe('unsupported_capability');
+    expect(started.status, JSON.stringify(started.body)).toBe(422);
+    expect(ApiFailure.parse(started.body).error.code).toBe('unsupported_capability');
+  });
+
+  it('accepts no new workspace connection, by route or by service', async () => {
+    const f = await fixture();
+    // The administrator's own setup route is gone with the flow it drove.
+    expect((await f.request('/connections/fireflies/workspace', f.owner, {
+      apiKey: validApiKey, idempotencyKey: crypto.randomUUID(),
+    })).status).toBe(404);
+    // And the service behind it refuses the scope rather than relying on the
+    // route's absence: one workspace key reads every member's meetings, so a
+    // caller that finds another way in is answered, not obliged.
+    await expect(new ConnectionService(f.testEnv, f.owner).createWorkspaceInstallation({
+      provider: 'fireflies', apiKey: validApiKey, idempotencyKey: crypto.randomUUID(),
+    })).rejects.toMatchObject({ status: 422, code: 'connector_scope_not_connectable' });
+    const connections = await f.request('/connections', f.owner);
+    expect(z.object({ items: z.array(ConnectionSchema) }).parse(connections.body).items).toEqual([]);
   });
 });
