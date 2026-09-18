@@ -1080,8 +1080,9 @@ The regional Worker binds `TELEMETRY_DB` and `AUDIT_DB` separately from identity
 `packages/db/audit-migrations` owns `audit_events`. Their user, workspace, and
 workstream IDs have no cross-database foreign keys. Audit writes are best-effort
 background work using the existing runtime deferral. See [telemetry](telemetry.md#storage-and-background-writes)
-for the fresh cutover and delivery behavior. Legacy regional tables are retained
-as inactive history; no applied migration is rewritten.
+for the fresh cutover and delivery behavior. Regional migration `0113_drop_legacy_observability_tables.sql` drops the four
+inactive legacy tables after deploying the Worker that no longer reaps them.
+The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 

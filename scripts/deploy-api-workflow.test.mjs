@@ -200,6 +200,7 @@ test('applies Worker-first D1 migrations after the compatible Worker', async () 
   assert.match(workflow, /0090_drop_legacy_product_tables\.sql/u);
   assert.match(workflow, /0094_retire_agent_inference_payload_ledger\.sql/u);
   assert.match(workflow, /0097_email_routes_use_full_address\.sql/u);
+  assert.match(workflow, /0113_drop_legacy_observability_tables\.sql/u);
   assert.equal(workflow.match(/classify-pending-d1-migrations\.mjs/gu)?.length, 1);
 });
 
