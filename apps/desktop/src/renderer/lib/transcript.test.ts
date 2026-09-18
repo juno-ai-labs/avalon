@@ -2206,7 +2206,7 @@ describe('orderedTranscriptMessages plugin runs', () => {
         blocks: [
           {
             type: 'tool', blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
-            pluginId: 'rally:core', toolName: 'core_current_time', callIndex: 0,
+            pluginId: 'rally:core', toolName: 'current_time', callIndex: 0,
             status: 'completed', participantSafeInput: null, participantSafeResult: null,
             error: null, activityId: null,
           },

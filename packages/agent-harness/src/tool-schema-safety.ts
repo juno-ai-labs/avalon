@@ -530,7 +530,7 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
   // A name declared more than one way recombines *under* the property, which is
   // the one place a provider accepts a composition: the same deployment that
   // rejects a root `anyOf` accepts `table_query`'s nested recursive `$ref` union
-  // and `core_request_elicitation`'s nested nullable union. Alternatives become
+  // and `request_elicitation`'s nested nullable union. Alternatives become
   // an `anyOf` and constraints that all apply become an `allOf`, so a union's
   // branches are not silently narrowed to one and an intersection's are not
   // silently widened to any.
@@ -594,7 +594,7 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
  * request, every tool**, exactly as on xAI.
  *
  * Only the root is checked, and that is measured too: `table_query` carries a
- * self-recursive `$defs`/`$ref` and `core_request_elicitation` a nested
+ * self-recursive `$defs`/`$ref` and `request_elicitation` a nested
  * `anyOf` with a `null` branch, and the same deployment accepts both when they
  * are the only tool sent.
  */

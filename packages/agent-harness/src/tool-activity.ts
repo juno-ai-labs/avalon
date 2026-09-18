@@ -1,6 +1,8 @@
 import {
   CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   CONNECTOR_CONNECTION_STATE_WIRE_NAME,
+  LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
+  LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME,
 } from "@rally/contracts";
 
 /**
@@ -10,6 +12,30 @@ import {
  */
 
 export type ToolActivityStatus = "started" | "completed" | "failed";
+
+type ToolProse = { started: string; settled: string; failed: string };
+
+// Shared by a tool's current wire name and the prefixed one it used to carry.
+const CURRENT_TIME_PROSE: ToolProse = {
+  started: "Checking the current time",
+  settled: "Checked the current time",
+  failed: "Could not check the current time",
+};
+const REQUEST_ELICITATION_PROSE: ToolProse = {
+  started: "Asking for a decision",
+  settled: "Asked for a decision",
+  failed: "Could not ask for a decision",
+};
+const CONNECTOR_CONNECTION_STATE_PROSE: ToolProse = {
+  started: "Checking a connector's connection",
+  settled: "Checked a connector's connection",
+  failed: "Could not check a connector's connection",
+};
+const CONNECTOR_CONNECTION_CARD_PROSE: ToolProse = {
+  started: "Preparing a connector",
+  settled: "Prepared a connector",
+  failed: "Could not prepare a connector",
+};
 
 /**
  * Wire names Avalon owns. Connector tools are deliberately absent: there are as
@@ -21,7 +47,7 @@ export type ToolActivityStatus = "started" | "completed" | "failed";
  * success-tense prose next to a failure icon would be the only thing most
  * readers see.
  */
-const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; failed: string }> = {
+const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   web_search: {
     started: "Searching the public web",
     settled: "Searched the public web",
@@ -32,26 +58,10 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Read a public web page",
     failed: "Could not read a public web page",
   },
-  core_current_time: {
-    started: "Checking the current time",
-    settled: "Checked the current time",
-    failed: "Could not check the current time",
-  },
-  core_request_elicitation: {
-    started: "Asking for a decision",
-    settled: "Asked for a decision",
-    failed: "Could not ask for a decision",
-  },
-  [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: {
-    started: "Checking a connector's connection",
-    settled: "Checked a connector's connection",
-    failed: "Could not check a connector's connection",
-  },
-  [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: {
-    started: "Preparing a connector",
-    settled: "Prepared a connector",
-    failed: "Could not prepare a connector",
-  },
+  current_time: CURRENT_TIME_PROSE,
+  request_elicitation: REQUEST_ELICITATION_PROSE,
+  [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
+  [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
   workstream_read_resource: {
     started: "Reading an attached resource",
     settled: "Read an attached resource",
@@ -188,6 +198,15 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Created an artifact",
     failed: "Could not create an artifact",
   },
+
+  // Retired wire names, for the same reason. `rally:core` advertised its tools
+  // under a `core_` prefix until the always-active plugins stopped carrying
+  // one; the tools are unchanged, so these read identically to their current
+  // names above and are removed only when the rows that hold them are.
+  core_current_time: CURRENT_TIME_PROSE,
+  core_request_elicitation: REQUEST_ELICITATION_PROSE,
+  [LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
+  [LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
 };
 
 /**

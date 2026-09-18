@@ -169,7 +169,7 @@ exists, and a headless run has no one to ask; do not assume prior context.
 
 Describe *what to do* and let the model find the tool: "search the authorized
 connectors", "read the attached resources", "ask for the missing identifier" —
-not `web_search`, `workstream_run_subagent`, `core_request_elicitation`. A
+not `web_search`, `workstream_run_subagent`, `request_elicitation`. A
 literal wire name is brittle: nothing compiles prose, so a rename or a plugin
 that is not in this run's frozen scope breaks it silently, and Bind composes the
 model-facing wire name from the plugin's short name at render time anyway.
