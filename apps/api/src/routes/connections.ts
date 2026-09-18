@@ -1,6 +1,6 @@
 import { providerWebhookMaxBytes, readBoundedRequestBytes } from "../lib/bounded-request-body";
 import { AshbyIngestionResultSchema } from "../services/ashby-routing-service";
-import { ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from "@rally/contracts";
+import { ConnectorApiKeyGuidanceCatalog, ConnectorInstallationReadResponseSchema, ConnectorInstallationMutationResponseSchema, ConnectorInstallationSetupResponseSchema, ConnectionTestResponseSchema } from "@rally/contracts";
 import { AshbyEventSelectionSchema } from "@rally/connectors";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
@@ -103,7 +103,7 @@ const granolaStart = z.object({
 });
 const granolaWorkspace = z.strictObject({
   idempotencyKey: z.string().uuid().optional(),
-  apiKey: z.string().trim().regex(/^grn_[\x21-\x7E]{1,508}$/u),
+  apiKey: z.string().trim().regex(ConnectorApiKeyGuidanceCatalog.granola.format.pattern),
   capabilities: z.array(z.literal("granola.workspace.read")).length(1),
 });
 const githubStart = z.object({
