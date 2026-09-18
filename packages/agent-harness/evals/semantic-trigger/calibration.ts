@@ -31,7 +31,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { CandidateContract, Verdict } from "./contract";
+import { primitiveOf, type CandidateContract, type Verdict } from "./contract";
 import { loadCases } from "./run";
 import type { CandidateReport, CaseOutcome } from "./run";
 
@@ -54,7 +54,18 @@ const BINS: Array<[number, number]> = [[0, 0.5], [0.5, 0.7], [0.7, 0.85], [0.85,
  * confidence of a `met` choice is the best available stand-in, and a non-`met`
  * choice contributes zero.
  */
-function matchProbability(outcome: CaseOutcome, mapping: Record<string, Verdict>): number {
+function matchProbability(
+  outcome: CaseOutcome,
+  mapping: Record<string, Verdict>,
+  primitive: ReturnType<typeof primitiveOf>,
+): number {
+  if (primitive !== "choice") {
+    // The scalar *is* P(match), whichever side of the threshold it fell on.
+    // Reading it as zero below the midpoint would flatter the Noul's
+    // calibration by pretending it had claimed certainty it never claimed.
+    if (outcome.verdict === "not_judgeable") return 0;
+    return outcome.confidence ?? 0;
+  }
   if (outcome.probabilities) {
     let total = 0;
     for (const [label, probability] of Object.entries(outcome.probabilities)) {
@@ -80,14 +91,26 @@ function main(): void {
     .sort()
     .map((name) => JSON.parse(readFileSync(join(reportsDir, name), "utf8")) as GenerationFile);
 
-  const pooled = new Map<string, { mapping: Record<string, Verdict>; runs: number; outcomes: CaseOutcome[] }>();
+  const pooled = new Map<string, {
+    mapping: Record<string, Verdict>;
+    primitive: ReturnType<typeof primitiveOf>;
+    judgeability: CandidateContract["judgeability"] | null;
+    runs: number;
+    outcomes: CaseOutcome[];
+  }>();
   for (const generation of generations) {
     for (const report of generation.reports) {
       if (only && !only.includes(report.candidateId)) continue;
       const candidate = generation.candidates.find((entry) => entry.id === report.candidateId);
       if (!candidate) continue;
       const entry = pooled.get(report.candidateId)
-        ?? { mapping: candidate.mapping, runs: 0, outcomes: [] };
+        ?? {
+          mapping: candidate.mapping,
+          primitive: primitiveOf(candidate),
+          judgeability: candidate.judgeability ?? null,
+          runs: 0,
+          outcomes: [],
+        };
       entry.runs += 1;
       entry.outcomes.push(...report.cases);
       pooled.set(report.candidateId, entry);
@@ -98,23 +121,44 @@ function main(): void {
     const answered = entry.outcomes.filter((outcome) => outcome.verdict !== null);
     console.log(`\n## ${candidateId} — ${entry.runs} run(s), ${answered.length} answered case-runs pooled\n`);
 
-    console.log("Accuracy by confidence in the chosen label:\n");
-    console.log("| confidence | case-runs | 3-class correct |");
-    console.log("| --- | ---: | ---: |");
+    const mean = (values: number[]) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length);
+
+    // A reliability curve over P(match), which is the one diagnostic that means
+    // the same thing for both primitives. Binning a Choice's confidence-in-label
+    // and a Noul's degree-of-match against each other compares two different
+    // quantities; binning the probability each assigns to *matching* does not.
+    // A usable gradient shows as the observed rate climbing with the bin.
+    console.log("Reliability over P(match): what share of each bin truly matched.\n");
+    console.log("| P(match) | case-runs | truly matched | predicted |");
+    console.log("| --- | ---: | ---: | ---: |");
     for (const [low, high] of BINS) {
-      const inBin = answered.filter((outcome) => (outcome.confidence ?? 0) >= low && (outcome.confidence ?? 0) < high);
+      const inBin = answered.filter((outcome) => {
+        const probability = matchProbability(outcome, entry.mapping, entry.primitive);
+        return probability >= low && probability < high;
+      });
       if (inBin.length === 0) continue;
-      const correct = inBin.filter((outcome) => outcome.verdict === outcome.truth).length;
-      console.log(`| ${low.toFixed(2)}–${Math.min(high, 1).toFixed(2)} | ${inBin.length} | ${((correct / inBin.length) * 100).toFixed(1)}% |`);
+      const matched = inBin.filter((outcome) => outcome.truth === "met").length;
+      const predicted = mean(inBin.map((outcome) => matchProbability(outcome, entry.mapping, entry.primitive)));
+      console.log(`| ${low.toFixed(2)}–${Math.min(high, 1).toFixed(2)} | ${inBin.length} | ${((matched / inBin.length) * 100).toFixed(1)}% | ${(predicted * 100).toFixed(1)}% |`);
     }
 
-    const right = answered.filter((outcome) => outcome.verdict === outcome.truth).map((outcome) => outcome.confidence ?? 0);
-    const wrong = answered.filter((outcome) => outcome.verdict !== outcome.truth).map((outcome) => outcome.confidence ?? 0);
-    const mean = (values: number[]) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length);
-    console.log(`\nMean confidence right ${mean(right).toFixed(3)}, wrong ${mean(wrong).toFixed(3)}, separation ${(mean(right) - mean(wrong)).toFixed(3)}.`);
+    if (entry.primitive === "choice") {
+      const right = answered.filter((outcome) => outcome.verdict === outcome.truth).map((outcome) => outcome.confidence ?? 0);
+      const wrong = answered.filter((outcome) => outcome.verdict !== outcome.truth).map((outcome) => outcome.confidence ?? 0);
+      console.log(`\nMean confidence right ${mean(right).toFixed(3)}, wrong ${mean(wrong).toFixed(3)}, separation ${(mean(right) - mean(wrong)).toFixed(3)}.`);
+    } else {
+      // A Noul has no confidence in an answer, so "separation" would compare the
+      // degree of match against itself. The reliability curve above is the
+      // equivalent, and the spread below says whether the scale is being used.
+      const scalars = answered.map((outcome) => outcome.confidence ?? 0).sort((a, b) => a - b);
+      const middle = scalars.filter((value) => value > 0.25 && value < 0.75).length;
+      console.log(`\nScalar spread: median ${scalars[Math.floor(scalars.length / 2)]?.toFixed(2)}, `
+        + `${((middle / scalars.length) * 100).toFixed(1)}% of answers between 0.25 and 0.75. `
+        + `A scale answering yes-or-no in scalar clothing leaves that share near zero.`);
+    }
 
     const brier = mean(entry.outcomes.map((outcome) => {
-      const probability = matchProbability(outcome, entry.mapping);
+      const probability = matchProbability(outcome, entry.mapping, entry.primitive);
       const actual = outcome.truth === "met" ? 1 : 0;
       return (probability - actual) ** 2;
     }));
@@ -124,7 +168,12 @@ function main(): void {
     console.log("| threshold | fires | wanted | unwanted | missed | precision | recall | watches made noisy | silence broken |");
     console.log("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
     for (const threshold of THRESHOLDS) {
-      const fired = entry.outcomes.filter((outcome) => outcome.verdict === "met" && (outcome.confidence ?? 0) > threshold);
+      const fired = entry.outcomes.filter((outcome) => (entry.primitive === "choice"
+        // A Choice must pick the match label and clear the threshold.
+        ? outcome.verdict === "met" && (outcome.confidence ?? 0) > threshold
+        // A Noul only has to clear it: the scalar is the whole answer, and a
+        // hybrid's judgeability answer blocks a fire whatever the scalar says.
+        : outcome.verdict !== "not_judgeable" && (outcome.confidence ?? 0) > threshold));
       const wanted = fired.filter((outcome) => outcome.truth === "met").length;
       const unwanted = fired.length - wanted;
       const missed = entry.outcomes.filter((outcome) => outcome.truth === "met"

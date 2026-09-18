@@ -51,8 +51,24 @@ brier = mean over cases of  Σ_verdict ( P(verdict) − 1[verdict is true] )²
 
 Zero is perfect and 0.667 is a uniform guess over three classes. This is the part
 that answers "at what confidence was the answer given" continuously rather than
-at a cut point, and it is the tiebreaker between candidates whose band utility is
-inside the noise floor.
+at a cut point.
+
+**Across primitives, the binary score decides.** A pure Noul cannot express "no
+event of this kind could settle this" — it has one scalar — so the three-class
+score charges it for mass it had no way to place, which on this tuning split is
+worth about 0.126, larger than the differences being measured. That is a penalty
+for the primitive's shape rather than for being wrong, and the product does not
+care either way, because both non-firing answers take the same action. So a
+cross-primitive comparison is settled on
+
+```
+fireBrier = mean over cases of ( P(match) − 1[the event should have fired] )²
+```
+
+which asks exactly what the gate asks. The three-class score stays reported,
+because it is what distinguishes a candidate that understands the third class
+from one that has quietly dropped it — and that difference is a product signal
+even when it is not a scoring one.
 
 Two candidates can share an accuracy and differ here by a lot, and the difference
 is exactly what a threshold can and cannot fix. Errors that arrive at 0.5 are
