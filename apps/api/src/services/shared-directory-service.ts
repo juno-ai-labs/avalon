@@ -15,15 +15,15 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
   const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
     workspaceId, userId, membershipIncarnation: relationship.incarnation,
   }));
-  const workstreams = [];
-  for (const parentId of candidates) {
+  const items = await Promise.all(candidates.map(async (parentId) => {
     const parent = await durableObjectStubForWorkspace(env, env.WORKSTREAM_DOS, workspaceId,
       workstreamDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(parentId)));
     const item = SharedWorkstreamSchema.nullable().parse(await parent.readSharedWorkstream({
       workspaceId, parentId, userId, membershipIncarnation: relationship.incarnation,
     }));
-    if (item) workstreams.push(item);
-  }
+    return item;
+  }));
+  const workstreams = items.filter((item) => item !== null);
   const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (current?.status !== "active" || current.incarnation !== relationship.incarnation
     || current.revision !== relationship.revision) return SharedDirectorySchema.parse({ workstreams: [] });

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { asUserId } from "@rally/contracts";
 import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema,
-  type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
+  type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { Env } from "../env";
 import { encryptString, decryptString, randomToken, hmacSha256, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -19,7 +19,8 @@ export class ScopeInvitationService {
   private readonly invitations: ScopeInvitationStorage;
   constructor(private readonly env: Env, private readonly storage: DurableObjectStorage,
     private readonly resolve: (request: ScopeAccessRequest, relationship: WorkspaceRelationship | null) => ScopeAccessResult,
-    private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean) {
+    private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean,
+    private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void) {
     this.invitations = new ScopeInvitationStorage(storage);
   }
 
@@ -124,7 +125,7 @@ export class ScopeInvitationService {
           ? { status: "accepted", invitation: current.summary } : denied("invitation_unavailable");
       }
       if (!this.canShare(current.summary.targets, currentActor)) return denied("sharing_required");
-      const grants = new ScopeGrantStorage(this.storage, request);
+      const grants = new ScopeGrantStorage(this.storage, request, this.enqueueDirectory);
       for (const [index, target] of current.summary.targets.entries()) {
         const operationId = current.grantOperationIds[index];
         if (!operationId) throw new Error("scope_invitation_grant_operation_missing");

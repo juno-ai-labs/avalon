@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
 
 /** Guest is a workspace relationship, never a different kind of user identity. */
@@ -132,6 +133,7 @@ export const SharedWorkstreamSchema = z.strictObject({
   parentId: IdSchema,
   // Main supplies the parent title; a child-only share does not expose it.
   title: z.string().nullable(),
+  appearance: WorkstreamAppearanceSchema.optional(),
   conversations: z.array(z.strictObject({ substreamId: SubstreamIdSchema, title: z.string(), archived: z.boolean() })),
 });
 export const SharedDirectorySchema = z.strictObject({ workstreams: z.array(SharedWorkstreamSchema) });

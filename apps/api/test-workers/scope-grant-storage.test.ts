@@ -20,18 +20,30 @@ function command(overrides: Partial<ScopeGrantMutation> = {}): ScopeGrantMutatio
 }
 
 async function withStorage(name: string, run: (store: ScopeGrantStorage, state: DurableObjectState) => void) {
-  const stub = env.MIGRATION_PROBE_DO!.getByName(name);
-  await stub.ping();
+  const stub = env.WORKSTREAM_DOS.getByName(name);
+  await stub.authority(address);
   await runInDurableObject(stub, (_instance, state) => {
     applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
       component: "workstream_do", workerVersionId: "scope-grant-test" });
-    run(new ScopeGrantStorage(state.storage, address), state);
+    state.storage.sql.exec(`INSERT OR IGNORE INTO workstream_metadata
+      (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+      VALUES (1,?,?,'global',1,'Parent','','','personal','idle',0,0,0)`,workspaceId,parentId);
+    run(_instance['scopeGrants'](address), state);
   });
+}
+
+function deliveries(state: DurableObjectState) {
+  return state.storage.sql.exec<{ payload_json: string }>(
+    "SELECT payload_json FROM durable_outbox WHERE effect_kind='scope_grant_directory' ORDER BY source_version,created_at,message_id",
+  ).toArray().map((row) => ({ grant: JSON.parse(row.payload_json).effect.grant, actorUserId: userId }));
+}
+function acknowledge(state: DurableObjectState, revision: number): void {
+  state.storage.sql.exec("DELETE FROM durable_outbox WHERE effect_kind='scope_grant_directory' AND json_extract(payload_json,'$.effect.grant.revision')=?", revision);
 }
 
 describe("workstream scope grants in real workerd", () => {
   it("replays revisionless participant commands without reapplying an old addition", async () => {
-    await withStorage("scope-grant-participant-retry", (store) => {
+    await withStorage("scope-grant-participant-retry", (store, state) => {
       const add = { operationId:crypto.randomUUID(),actorUserId:userId,userId,target:command().target,active:true };
       const added = store.mutateCurrent(add);
       expect(added.status).toBe("committed");
@@ -40,7 +52,7 @@ describe("workstream scope grants in real workerd", () => {
       expect(store.mutateCurrent(add)).toEqual(added);
       expect(store.read(userId,add.target)).toMatchObject({ active:false });
       expect(() => store.mutateCurrent({ ...add,active:false })).toThrow("scope_grant_operation_reused");
-      expect(store.pendingDeliveries()).toHaveLength(2);
+      expect(deliveries(state)).toHaveLength(2);
     });
   });
 
@@ -79,13 +91,13 @@ describe("workstream scope grants in real workerd", () => {
         BEGIN SELECT RAISE(ABORT, 'projection schedule failed'); END`);
       expect(() => store.mutate(command())).toThrow("projection schedule failed");
       expect(store.forUser(userId)).toEqual([]);
-      expect(store.pendingDeliveries()).toEqual([]);
+      expect(deliveries(state)).toEqual([]);
       expect(state.storage.sql.exec("SELECT 1 FROM participant_projection_deliveries").toArray()).toEqual([]);
     });
   });
 
   it("imports a frozen roster once without resurrecting subsequently revoked grants", async () => {
-    await withStorage("scope-grant-import-retry", (store) => {
+    await withStorage("scope-grant-import-retry", (store, state) => {
       const target = command().target;
       const snapshot = { transferId: crypto.randomUUID(), participants: [
         { userId, addedByUserId: null, reason: "creator", addedAt: 1 },
@@ -99,7 +111,7 @@ describe("workstream scope grants in real workerd", () => {
       expect(revoked.status).toBe("committed");
       expect(store.importParticipants(target, snapshot)).toEqual(receipt);
       expect(store.read(userId, target)).toMatchObject({ active: false, revision: 2 });
-      expect(store.pendingDeliveries()).toHaveLength(2);
+      expect(deliveries(state)).toHaveLength(2);
       expect(() => store.importParticipants(target, { ...snapshot, transferId: crypto.randomUUID() }))
         .toThrow("participant_import_conflict");
       expect(() => store.importParticipants(target, { ...snapshot, participants: [] }))
@@ -118,12 +130,12 @@ describe("workstream scope grants in real workerd", () => {
         BEGIN SELECT RAISE(ABORT, 'import receipt failed'); END`);
       expect(() => store.importParticipants(target, snapshot)).toThrow("import receipt failed");
       expect(store.forUser(userId)).toEqual([]);
-      expect(store.pendingDeliveries()).toEqual([]);
+      expect(deliveries(state)).toEqual([]);
       expect(state.storage.sql.exec<{ total: number }>("SELECT COUNT(*) AS total FROM scope_grant_operations").one().total).toBe(0);
       expect(state.storage.sql.exec<{ revision: number }>("SELECT revision FROM scope_grant_revision").one().revision).toBe(0);
       state.storage.sql.exec("DROP TRIGGER fail_import");
       expect(store.importParticipants(target, snapshot)).toEqual({ grantCount: 2, revision: 2 });
-      expect(store.pendingDeliveries()).toHaveLength(2);
+      expect(deliveries(state)).toHaveLength(2);
     });
   });
 
@@ -140,15 +152,15 @@ describe("workstream scope grants in real workerd", () => {
   });
 
   it("commits grant, retry receipt and delivery intent together, and retries preserve revocation", async () => {
-    await withStorage("scope-grant-retry", (store) => {
+    await withStorage("scope-grant-retry", (store, state) => {
       const add = command();
       const accepted = store.mutate(add);
       expect(accepted.status).toBe("committed");
       if (accepted.status !== "committed") throw new Error("Expected grant");
       expect(store.read(userId, add.target)).toEqual(accepted.grant);
-      expect(store.pendingDeliveries()).toEqual([{ grant: accepted.grant, actorUserId: userId }]);
+      expect(deliveries(state)).toEqual([{ grant: accepted.grant, actorUserId: userId }]);
       expect(store.mutate(add)).toEqual(accepted);
-      expect(store.pendingDeliveries()).toHaveLength(1);
+      expect(deliveries(state)).toHaveLength(1);
 
       const remove = command({ active: false, expectedRevision: accepted.grant.revision });
       const removed = store.mutate(remove);
@@ -158,22 +170,22 @@ describe("workstream scope grants in real workerd", () => {
       expect(store.mutate(add)).toEqual(accepted);
       expect(store.read(userId, add.target)).toEqual(removed.grant);
 
-      store.acknowledgeDelivery(accepted.grant.revision);
-      expect(store.pendingDeliveries()).toEqual([{ grant: removed.grant, actorUserId: userId }]);
-      store.acknowledgeDelivery(accepted.grant.revision);
-      expect(store.pendingDeliveries()).toHaveLength(1);
+      acknowledge(state, accepted.grant.revision);
+      expect(deliveries(state)).toEqual([{ grant: removed.grant, actorUserId: userId }]);
+      acknowledge(state, accepted.grant.revision);
+      expect(deliveries(state)).toHaveLength(1);
     });
   });
 
   it("refuses stale activation and binds every retry to its original command", async () => {
-    await withStorage("scope-grant-conflict", (store) => {
+    await withStorage("scope-grant-conflict", (store, state) => {
       const revoke = command({ active: false });
       const result = store.mutate(revoke);
       if (result.status !== "committed") throw new Error("Expected tombstone");
       const stale = command();
       expect(store.mutate(stale)).toEqual({ status: "conflict", current: result.grant });
       expect(() => store.mutate({ ...revoke, active: true })).toThrow("scope_grant_operation_reused");
-      expect(store.pendingDeliveries()).toHaveLength(1);
+      expect(deliveries(state)).toHaveLength(1);
       const reactivate = store.mutate(command({ expectedRevision: result.grant.revision }));
       expect(reactivate.status).toBe("committed");
       expect(store.mutate(stale)).toEqual({ status: "conflict", current: result.grant });
@@ -183,7 +195,7 @@ describe("workstream scope grants in real workerd", () => {
   it("rolls back the grant and revision when recording its delivery fails", async () => {
     await withStorage("scope-grant-rollback", (store, state) => {
       const add = command();
-      state.storage.sql.exec(`CREATE TRIGGER fail_grant_delivery BEFORE INSERT ON scope_grant_deliveries
+      state.storage.sql.exec(`CREATE TRIGGER fail_grant_delivery BEFORE INSERT ON durable_outbox
         BEGIN SELECT RAISE(ABORT, 'delivery failed'); END`);
       expect(() => store.mutate(add)).toThrow("delivery failed");
       expect(store.read(userId, add.target)).toBeNull();
@@ -191,7 +203,7 @@ describe("workstream scope grants in real workerd", () => {
       expect(state.storage.sql.exec<{ total: number }>("SELECT COUNT(*) AS total FROM scope_grant_operations").one().total).toBe(0);
       state.storage.sql.exec("DROP TRIGGER fail_grant_delivery");
       expect(store.mutate(add).status).toBe("committed");
-      expect(store.pendingDeliveries()).toHaveLength(1);
+      expect(deliveries(state)).toHaveLength(1);
     });
   });
 
@@ -204,9 +216,29 @@ describe("workstream scope grants in real workerd", () => {
       const reopened = new ScopeGrantStorage(state.storage, address);
       expect(reopened.forUser(userId)).toHaveLength(3);
       expect(new Set(reopened.forUser(userId).map((grant) => grant.id)).size).toBe(3);
-      expect(reopened.pendingDeliveries()).toHaveLength(3);
+      expect(deliveries(state)).toHaveLength(3);
       expect(() => reopened.mutate(command({ target: { kind: "workstream", ...address, parentId: crypto.randomUUID() } })))
         .toThrow("scope_grant_parent_mismatch");
+    });
+  });
+
+  it("moves pending legacy discovery into the parent outbox atomically", async () => {
+    const stub = env.WORKSTREAM_DOS.getByName("scope-grant-legacy-outbox");
+    await stub.authority(address);
+    await runInDurableObject(stub, (instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workstream_metadata
+        (id,workspace_id,workstream_id,region,authority_generation,title,description,preview,scope,exact_state,last_activity_at,created_at,updated_at)
+        VALUES (1,?,?,'global',1,'Parent','','','personal','idle',0,0,0)`, workspaceId, parentId);
+      const grant = { id: crypto.randomUUID(), userId, target: command().target, active: true, revision: 1, membershipIncarnation: null };
+      state.storage.sql.exec("INSERT INTO scope_grant_deliveries(revision,grant_json,actor_user_id,created_at) VALUES (1,?,?,1)", JSON.stringify(grant), userId);
+      state.storage.sql.exec(`CREATE TRIGGER fail_legacy_outbox BEFORE INSERT ON durable_outbox
+        BEGIN SELECT RAISE(ABORT, 'outbox unavailable'); END`);
+      expect(() => state.storage.transactionSync(() => instance['retireGrantDirectoryDeliveries']())).toThrow('outbox unavailable');
+      expect(state.storage.sql.exec("SELECT revision FROM scope_grant_deliveries").toArray()).toHaveLength(1);
+      state.storage.sql.exec("DROP TRIGGER fail_legacy_outbox");
+      state.storage.transactionSync(() => instance['retireGrantDirectoryDeliveries']());
+      expect(deliveries(state).map((item) => item.grant)).toEqual([grant]);
+      expect(state.storage.sql.exec("SELECT revision FROM scope_grant_deliveries").toArray()).toEqual([]);
     });
   });
 

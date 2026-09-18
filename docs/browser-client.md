@@ -70,7 +70,7 @@ opens the exact canonical destination immediately for a single accepted scope;
 invitations with several scopes show their destination links. A child-only destination
 points directly to that child, not through Main. No GET or focus event accepts.
 
-After authentication the client lists the user's regional workspaces and can sign
+For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the
 shared-conversation directory and canonical workstream and child links
 activate the addressed workspace and mount the shared feed. No setup or onboarding
@@ -92,7 +92,7 @@ focus. External revocation continues to rely on server authorization and socket
 revocation, not a channel message from another browser.
 
 Visible tabs renew halfway through the remaining server-issued session lifetime.
-Focus, becoming visible, and reconnecting also attempt renewal. The server retains
+Focus, becoming visible, and reconnecting reconcile the session and renew only when the scheduled renewal is due. Overlapping restores share one in-flight operation. The server retains
 the ordinary inactivity window and absolute ceiling; the client adds no lifetime
 policy. An unchanged expiry does not rearm the renewal timer, avoiding a loop at
 the absolute ceiling. At the reported expiry the client re-reads the session,
@@ -102,16 +102,12 @@ Failed network requests remain visible and can recover on focus or reconnect;
 generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
-The collapsible shared-conversation navigation reads `/sharing/directory`, whose
-candidates are admitted by each canonical parent before labels are returned.
-Child-only grants show Shared workstream rather than Main-derived parent titles.
-The navigation refreshes on focus or an explicit refresh and uses router links
-to switch the visible feed. It creates no workspace/control socket. Workspace
-name remains visible in the toolbar and in the collapsible sidebar alongside the
-existing initial-based workspace badge. These labels come from the authenticated
-workspace session, so child-only guests can identify the workspace without a Main
-subscription. The workspace model has no configurable icon or color fields; the
-badge uses the shared theme styling. See [scope grant directory](scope-grant-directory.md).
+The shared navigation uses the same navigation frame, workstream rows, contextual
+sidebar, header, resource rows, Sidekick controls and account trigger as desktop,
+from `@rally/ui`. Only authorized directory entries are supplied. Child-only shares
+omit Main and its title. Workspace identity uses the existing account/badge treatment;
+no workspace icon/color settings are introduced. The browser does not install desktop
+background subscriptions. See [shared UI](shared-ui.md).
 
 ### Shared collaboration transport
 
@@ -137,6 +133,7 @@ execution are separate from setup. Sidekick creation likewise requires an explic
 creation callback; without it the picker retains attachment of existing Sidekicks
 and omits the native creation action. The lite browser omits both setup capabilities.
 
+Addressed conversation links select their workspace directly without waiting for the workspace list.
 The browser mounts the shared surface with query, collaboration, tooltip and
 speech providers. A router basename preserves workspace-addressed links. The
 standalone feed hook opens only the selected conversation; workspace presence is
@@ -159,7 +156,7 @@ client. API and socket authority in that check are fixtures; real guest mutation
 and lifecycle acceptance remain in progress. The collaboration context deliberately does not expose workspace
 creation, account onboarding or desktop credential controls.
 
-The lite header also lists Sidekicks available in the selected conversation,
+The shared contextual sidebar lists Sidekicks available in the selected conversation,
 including workstream recommendations and locally loaded instructions. Its removal
 local action removes only the local attachment and leaves the workstream
 recommendation available. A separately labeled parent action removes the shared

@@ -5,14 +5,14 @@ import { hmacSha256, sha256 } from "../lib/crypto";
 import { authenticateSession } from "./session-authentication";
 import { AuthService, verifyAccessToken, sessionRenewalPolicy } from "./auth-service";
 
-import { BrowserSessionSchema } from "@rally/contracts/browser-session";
+import { BrowserSessionSchema, type BrowserSession } from "@rally/contracts/browser-session";
 export { BrowserSessionSchema, BrowserWorkspacesSchema } from "@rally/contracts/browser-session";
 
 /** A credential index into the ordinary session ledger, never a second user identity. */
 export class BrowserSessionService {
   constructor(private readonly env: Env) {}
 
-  async register(session: Session): Promise<{ credential:string; expiresAt:string }> {
+  async register(session: Session): Promise<{ credential:string; expiresAt:string; session: BrowserSession }> {
     const claims = await verifyAccessToken(this.env, session.accessToken);
     if (claims.workspaceId !== null) throw new Error("browser_identity_session_required");
     await authenticateSession(this.env,claims);
@@ -23,10 +23,16 @@ export class BrowserSessionService {
     await this.env.DB.prepare("INSERT INTO browser_sessions(session_id,credential_hash) VALUES (?,?) ON CONFLICT(session_id) DO NOTHING")
       .bind(claims.sessionId,await sha256(credential)).run();
     const auth = await this.read(credential);
-    return { credential, expiresAt:await this.expiry(auth.sessionId) };
+    const description = await this.describe(auth);
+    return { credential, expiresAt: description.expiresAt, session: description };
   }
 
   async read(credential: string, workspaceId?: string): Promise<IdentityAuthContext> {
+    return authenticateSession(this.env, await this.resolve(credential, workspaceId));
+  }
+
+  /** Resolve the root cookie binding; ordinary middleware authenticates the target once. */
+  async resolve(credential: string, workspaceId?: string) {
     const selected = workspaceId === undefined ? "root.id" : "selected.session_id";
     const join = workspaceId === undefined ? "" : "JOIN browser_workspace_sessions selected ON selected.browser_session_id=browser.session_id AND selected.workspace_id=?";
     const row = await this.env.DB.prepare(`SELECT target.id,target.user_id,target.workspace_id
@@ -38,8 +44,8 @@ export class BrowserSessionService {
         new Date().toISOString(),this.env.AVALON_REGION)
       .first<{ id:string;user_id:string;workspace_id:string|null }>();
     if (!row || row.workspace_id !== (workspaceId ?? null)) throw new ApiError(401,"browser_session_required","Sign in to continue");
-    return authenticateSession(this.env,{ sessionId:row.id,userId:asUserId(row.user_id),
-      workspaceId:row.workspace_id === null ? null : asWorkspaceId(row.workspace_id),region:this.env.AVALON_REGION });
+    return { sessionId:row.id,userId:asUserId(row.user_id),
+      workspaceId:row.workspace_id === null ? null : asWorkspaceId(row.workspace_id),region:this.env.AVALON_REGION };
   }
 
   async describe(auth: IdentityAuthContext) {

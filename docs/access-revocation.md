@@ -21,6 +21,11 @@ workspace-membership middleware. This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
 
+Membership removal/leave use the durable relationship dispatcher as their sole
+immediate producer. The consumer performs revocation and directory synchronization;
+the service does not also publish those effects directly. Dispatch failure leaves
+the D1 intent for the existing scheduled recovery path.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -28,7 +33,7 @@ retryable failure for direct reads and explicit partial status for search/lists.
 | `apps/api/src/services/access-revocation.ts` | The message schema, the publish helpers, the expired-session sweep, and `revocationClosesSocket` — the one place that decides whether a socket belongs to a revocation. Every producer goes through here. |
 | `apps/api/src/queues/access-revocation-consumer.ts` | One hop per message: resolve the object, call it, publish the children it names. |
 | `apps/api/src/routes/workspace-membership.ts` | The administrator removal route and `DELETE /workspaces/:workspaceId/membership`, where a member leaves for themself. |
-| `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and publish in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
+| `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and immediately dispatch its trigger-recorded relationship intent in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |
 | `apps/api/src/services/workspace-relationship-delivery.ts` | Retries D1-recorded membership changes through the existing revocation queue. Queue acceptance marks dispatch, not application. |
@@ -383,8 +388,10 @@ would be a way into somebody else's workspace.
 
 ### 2026-09-16 — Recover membership and grant revocation publication
 
-The membership transaction now records a delivery intent, and the existing cron
-dispatches it to the existing revocation queue. This closes the gap where a
+The membership transaction now records a delivery intent. Removal and leave
+immediately dispatch that intent to the existing revocation queue; the cron
+recovers interrupted publication. Direct removal fanout was removed because it
+duplicated the same revocation and directory invalidation. This closes the gap where a
 committed removal could lose its only queue publication. Active relationship
 changes publish directory/profile invalidation; removals and suspension use the
 same object walk. Queue acceptance and root processing have separate markers;

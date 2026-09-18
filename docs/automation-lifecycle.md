@@ -886,6 +886,15 @@ run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
+## Scoped Sidekick discovery reuse
+
+Guest candidate selection uses one recommended-or-loaded ID rule across execution
+and management. Initial execution memoizes recommendation references within that
+request; pinned retries still revalidate their sources. Management queries resolve
+candidate summaries without recursively invoking other public service entrypoints.
+Desktop and browser request management options only when their controls open, not
+on every transcript update.
+
 ## Changelog
 
 ### 2026-09-17 — A connector event admits under the occurrence its connector named
@@ -928,7 +937,10 @@ copying Main's loaded state into a child were rejected. Parent management is
 checked by the canonical parent grant, including AutomationService's actor
 resolution. The directory locates the owner but its projected Main roster cannot
 substitute for current management authority. Source history remains a separate
-permission, and recommendations still do not auto-load.
+permission, and recommendations still do not auto-load. Guest candidate selection
+uses one recommended-or-loaded helper. A run shares its recommendation read with
+initial skill discovery, and management choices load only when controls open;
+ordinary transcript updates must not fetch a management catalog.
 
 ### 2026-09-15 — The empty Sidekick slot stays visible until an active shortcut occupies it
 

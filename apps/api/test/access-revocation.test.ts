@@ -16,6 +16,7 @@ import {
   publishAccessRevocation,
   reapExpiredSessions,
 } from "../src/services/access-revocation";
+import { WorkspaceRelationshipChangeMessageSchema } from "../src/services/workspace-relationship-delivery";
 import { AuthService } from "../src/services/auth-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { acceptInvitationForUser, WorkspaceService } from "../src/services/workspace-service";
@@ -41,6 +42,12 @@ afterEach(() => {
 });
 
 interface Published { body: unknown }
+function removedRelationships(sent: Published[]) {
+  return sent.flatMap(({ body }) => {
+    const parsed = WorkspaceRelationshipChangeMessageSchema.safeParse(body);
+    return parsed.success && parsed.data.removed ? [parsed.data.relationship] : [];
+  });
+}
 
 /**
  * The workspace object only receives the sidebar invalidation here; the
@@ -114,18 +121,10 @@ describe("removing a member", () => {
     ).get(WORKSPACE, MEMBER) as { count: number };
     expect(remaining.count).toBe(0);
 
-    const revocations = sent
-      .map((message) => AccessRevocationMessageSchema.safeParse(message.body))
-      .flatMap((parsed) => parsed.success ? [parsed.data] : []);
-    expect(revocations).toHaveLength(1);
-    expect(revocations[0]).toMatchObject({
-      reason: "workspace_membership_removed",
-      workspaceId: WORKSPACE,
-      userId: MEMBER,
-      // No session: every window they hold is inadmissible now.
-      sessionId: null,
-      target: { scope: "workspace" },
-    });
+    expect(removedRelationships(sent)).toEqual([expect.objectContaining({
+      workspaceId: WORKSPACE, userId: MEMBER,
+    })]);
+    expect(sent.some(({ body }) => AccessRevocationMessageSchema.safeParse(body).success)).toBe(false);
   });
 
   it("keeps an owner when two owners remove each other at the same time", async () => {
@@ -150,8 +149,9 @@ describe("removing a member", () => {
     ).get(WORKSPACE) as { count: number };
     expect(owners.count).toBe(1);
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
-    // The refused one announces nothing: it did not cause a revocation.
-    expect(sent).toHaveLength(1);
+    // Only the successful removal records a revocation. Earlier membership
+    // changes may also be pending for the same recipient.
+    expect(removedRelationships(sent)).toHaveLength(1);
   });
 
   it("refuses an admin whose target was promoted after the check", async () => {
@@ -242,14 +242,9 @@ describe("leaving a workspace", () => {
     expect(database.prepare(
       "SELECT 1 AS present FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
     ).get(WORKSPACE, MEMBER)).toBeUndefined();
-    expect(sent.map((message) => AccessRevocationMessageSchema.parse(message.body))).toEqual([
-      expect.objectContaining({
-        reason: "workspace_membership_removed",
-        workspaceId: WORKSPACE,
-        userId: MEMBER,
-        sessionId: null,
-      }),
-    ]);
+    expect(removedRelationships(sent)).toEqual([expect.objectContaining({
+      workspaceId: WORKSPACE, userId: MEMBER,
+    })]);
   });
 
   it("refuses the sole owner while other active members remain", async () => {
@@ -312,9 +307,10 @@ describe("leaving a workspace", () => {
     expect(database.prepare(
       "SELECT revoked_at FROM download_grants WHERE id = ?",
     ).get("00000000-0000-7000-8000-000000000098")).toEqual({ revoked_at: expect.any(String) });
-    expect(sent.map((message) => AccessRevocationMessageSchema.parse(message.body))).toEqual([
-      expect.objectContaining({ userId: OWNER, workspaceId: WORKSPACE, sessionId: null }),
-    ]);
+    expect(sent.map(({ body }) => WorkspaceRelationshipChangeMessageSchema.parse(body)))
+      .toContainEqual(expect.objectContaining({ relationship: expect.objectContaining({
+        userId: OWNER, workspaceId: WORKSPACE, status: "suspended",
+      }) }));
   });
 
   it("never leaves an accepted member active inside an abandoned workspace", async () => {
@@ -588,7 +584,7 @@ describe("the membership route", () => {
       `SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
     ).get(WORKSPACE, MEMBER) as { count: number };
     expect(remaining.count).toBe(0);
-    expect(sent).toHaveLength(1);
+    expect(removedRelationships(sent)).toHaveLength(1);
   });
 
   it("refuses a path that names a workspace the caller is not signed in to", async () => {
@@ -622,7 +618,7 @@ describe("the membership route", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ outcome: "left" });
-    expect(sent).toHaveLength(1);
+    expect(removedRelationships(sent)).toHaveLength(1);
   });
 });
 

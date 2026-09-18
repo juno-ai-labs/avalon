@@ -2653,7 +2653,10 @@ export async function runWorkstreamHarness(
   }
   const { principalIsGuest, ...runAuthoritySnapshot } = await readRunAuthority(env, input);
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  const currentSidekickSources = await resolveSidekickSkills(env, input, principalIsGuest, storedSidekickSkills?.sources.map((source) => source.id));
+  let recommendationRead: Promise<string[]> | undefined;
+  const readRecommendations = () => recommendationRead ??= recommendedSidekickRefs(env, input);
+  const currentSidekickSources = await resolveSidekickSkills(env, input, principalIsGuest,
+    storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null, readRecommendations);
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A Sidekick is no longer available to this execution");
   }
@@ -2661,7 +2664,7 @@ export async function runWorkstreamHarness(
   // No eligible sources means no recommendation can enter this snapshot. Avoid
   // waking parent authorities for executions that cannot use any Sidekick.
   const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
-    : currentSidekickSources.length > 0 ? await recommendedSidekickRefs(env, input) : [];
+    : currentSidekickSources.length > 0 ? await readRecommendations() : [];
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),

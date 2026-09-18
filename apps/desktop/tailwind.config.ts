@@ -8,7 +8,7 @@ import type { Config } from 'tailwindcss';
  * pinned a utility to the dark theme; see `docs/theming.md`.
  */
 export default {
-  content: ['./src/renderer/**/*.{html,ts,tsx}'],
+  content: ['./src/renderer/**/*.{html,ts,tsx}', '../../packages/ui/src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {

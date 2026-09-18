@@ -7,7 +7,6 @@ import type { ScopeGrantTarget } from "@rally/contracts/scope-grants";
 import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
 import { listSharedDirectory } from "../src/services/shared-directory-service";
 import { AuthorizationService } from "../src/services/authorization-service";
-import { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import type { Env } from "../src/env";
 import { consumeEffectBodies, pendingParentEffects } from "./helpers/conversation-effects";
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
@@ -25,8 +24,8 @@ const mutation = (target: ScopeGrantTarget = child) => ({ operationId: crypto.ra
   userId: recipientId, target, active: true, expectedRevision: 0 });
 
 async function seedActorGrant(target: ScopeGrantTarget) {
-  await runInDurableObject(room(), (_instance, state) => {
-    new ScopeGrantStorage(state.storage, { workspaceId, parentId }).mutate({
+  await runInDurableObject(room(), (_instance) => {
+    _instance['scopeGrants']({ workspaceId, parentId }).mutate({
       operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId, target, active: true, expectedRevision: 0,
     }, actorId);
   });
@@ -68,7 +67,7 @@ it("refuses a legacy Main migration over an existing parent grant ledger", async
   expect(await room().beginMainParticipantMigration({ workspaceId,parentId })).toEqual({ status:"conflict" });
   await runInDurableObject(room(), (_instance,state) => {
     expect(state.storage.sql.exec("SELECT 1 FROM main_participant_migration").toArray()).toEqual([]);
-    expect(new ScopeGrantStorage(state.storage,parent).forUser(actorId)).toHaveLength(1);
+    expect(_instance['scopeGrants'](parent).forUser(actorId)).toHaveLength(1);
   });
 });
 
@@ -77,7 +76,7 @@ it("refuses a legacy child migration over an existing conversation grant ledger"
   expect(await room().beginChildParticipantMigration({ workspaceId,parentId,substreamId:childId })).toEqual({ status:"conflict" });
   await runInDurableObject(room(), (_instance,state) => {
     expect(state.storage.sql.exec("SELECT 1 FROM child_participant_migrations").toArray()).toEqual([]);
-    expect(new ScopeGrantStorage(state.storage,parent).forUser(actorId)).toHaveLength(1);
+    expect(_instance['scopeGrants'](parent).forUser(actorId)).toHaveLength(1);
   });
 });
 
@@ -140,7 +139,7 @@ it("serves migrated child grants without reading Main and retains admission revi
   const transferId = crypto.randomUUID();
   const revision = await runInDurableObject(room(), (_instance,state) => {
     state.storage.sql.exec("INSERT INTO child_participant_migrations(substream_id,transfer_id,phase) VALUES (?,?,'pending')",childId,transferId);
-    const store = new ScopeGrantStorage(state.storage,parent);
+    const store = _instance['scopeGrants'](parent);
     store.registerParticipantProjection(childId,transferId);
     const projection = store.participantProjection(childId,recipientId)!;
     store.acknowledgeParticipantProjection(childId,recipientId,projection.revision);
@@ -210,8 +209,8 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
       userId: recipientId, active: true, membershipIncarnation: recipientId, target: child,
     }) }),
   })]));
-  await runInDurableObject(room(), (_instance, state) => {
-    expect(new ScopeGrantStorage(state.storage, { workspaceId, parentId }).pendingDeliveries()).toEqual([]);
+  await runInDurableObject(room(), (_instance) => {
+    expect(_instance['scopeGrants']({ workspaceId, parentId }).pendingDeliveries()).toEqual([]);
   });
   const directory = env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
   await directory.initializeWorkspace(workspaceId, "wnam");
@@ -285,8 +284,8 @@ it("requires a parent grant for guest recommendation management and observes its
   // Another collaborator retains parent access; last-participant protection
   // must not be the reason this later management mutation is rejected.
   expect(await room().mutateScopeGrant(mutation(parent))).toMatchObject({ status: "committed" });
-  const revision = await runInDurableObject(room(), (_instance, state) =>
-    new ScopeGrantStorage(state.storage, parent).read(actorId, parent)!.revision);
+  const revision = await runInDurableObject(room(), (_instance) =>
+    _instance['scopeGrants'](parent).read(actorId, parent)!.revision);
   const removed = await room().mutateScopeGrant({ operationId: crypto.randomUUID(), actorUserId: actorId,
     userId: actorId, target: parent, active: false, expectedRevision: revision });
   expect(removed).toMatchObject({ status: "committed" });

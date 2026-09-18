@@ -1,3 +1,5 @@
+import { Share2 } from 'lucide-react';
+import { IconButton } from '@rally/ui/components/primitives';
 import { useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
@@ -118,7 +120,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId }: {
 
 export function ShareConversationButton(props: Parameters<typeof ScopeSharingPanel>[0]): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  return <><button type="button" onClick={() => setOpen(true)}>Share</button>
+  return <><IconButton label="Share conversation" onClick={() => setOpen(true)}><Share2 size={16} /></IconButton>
     <Modal open={open} onOpenChange={setOpen} title="Share conversation" description="Invite people to collaborate using their email address.">
       {open ? <ScopeSharingPanel {...props} /> : null}
     </Modal></>;
