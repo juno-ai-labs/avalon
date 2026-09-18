@@ -173,6 +173,13 @@ Begin with inventory. Do not guess a region or Durable Object name:
    `run_substream_sql`.
 4. Inspect the schema before querying application rows.
 
+For a Sidekick, start from `list_sidekicks` with the `workspaceId` instead. Its
+`sidekickId` reaches two different objects: `run_sidekick_sql` opens the
+Sidekick itself — definition revisions, schedules, run history — while the same
+ID passed to `list_substreams` and `run_substream_sql` as the `workstreamId`
+opens its conversation, because a Sidekick is a conversation parent like a work
+stream.
+
 A safe first workspace query is:
 
 ```sql
@@ -207,9 +214,11 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_workspaces` | None | Lists workspace identity records across configured deployments. |
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
 | `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from WorkstreamDO. |
+| `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO. |
 | `run_workstream_sql` | `workstreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkstreamDO. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
+| `run_sidekick_sql` | `workspaceId`, `sidekickId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SidekickDO — the Sidekick itself, not its conversation. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
