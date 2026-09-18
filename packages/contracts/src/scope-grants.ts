@@ -134,6 +134,7 @@ export const SharedWorkstreamSchema = z.strictObject({
   // Main supplies the parent title; a child-only share does not expose it.
   title: z.string().nullable(),
   appearance: WorkstreamAppearanceSchema.optional(),
+  archived: z.boolean().optional(),
   conversations: z.array(z.strictObject({ substreamId: SubstreamIdSchema, title: z.string(), archived: z.boolean() })),
 });
 export const SharedDirectorySchema = z.strictObject({ workstreams: z.array(SharedWorkstreamSchema) });

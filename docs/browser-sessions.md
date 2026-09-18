@@ -2,8 +2,8 @@
 
 The lite browser uses an opaque cookie to address the ordinary session ledger.
 It does not receive desktop access or refresh tokens. The [browser host](browser-client.md) forwards same-origin requests to this
-regional authentication boundary. The collaboration UI and socket integration
-remain unfinished.
+regional authentication boundary. The browser mounts the shared collaboration UI
+and uses the existing ticketed conversation sockets.
 
 ## Where the code lives
 
@@ -81,7 +81,8 @@ cookies or accept arbitrary API hosts. This adapter forwards HTTP business
 requests, not WebSocket frames. The browser host forwards the existing purpose-bound ticket upgrades through its
 regional service binding, stripping cookies and Authorization from that path.
 The shared product API client supports cookie sessions without bearer renewal;
-subscription ownership and collaboration mounting remain in progress.
+the browser mounts only the selected conversation feed and does not install
+the desktop background socket swarm.
 
 ## Failure modes and limits
 

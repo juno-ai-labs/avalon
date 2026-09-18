@@ -1423,7 +1423,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
       .map((child) => ({ substreamId: child.substream_id, archived: metadata.archived_at !== null || child.archived_at !== null,
         title: child.substream_id === "0" ? "Main" : child.title ?? "Shared substream" }));
     if (!conversations.length) return null;
-    return SharedWorkstreamSchema.parse({ parentId: request.parentId,
+    return SharedWorkstreamSchema.parse({ parentId: request.parentId, archived: metadata.archived_at !== null,
       title: conversations.some((child) => child.substreamId === "0") ? metadata.title : null,
       ...(conversations.some((child) => child.substreamId === "0") && this.childCommonProjections()[0]?.appearance
         ? { appearance: this.childCommonProjections()[0]!.appearance } : {}),

@@ -388,7 +388,7 @@ would be a way into somebody else's workspace.
 
 ### 2026-09-16 — Recover membership and grant revocation publication
 
-The membership transaction now records a delivery intent. Removal and leave
+The membership transaction now records a delivery intent. Removal, leave and guest promotion
 immediately dispatch that intent to the existing revocation queue; the cron
 recovers interrupted publication. Direct removal fanout was removed because it
 duplicated the same revocation and directory invalidation. This closes the gap where a

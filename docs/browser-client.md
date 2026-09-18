@@ -152,8 +152,9 @@ server-side scope checks still authorize the resulting command.
 
 A browser fixture has exercised feed snapshot admission, composer submission and
 its private socket receipt, responsive layout and sign-out through the production
-client. API and socket authority in that check are fixtures; real guest mutations
-and lifecycle acceptance remain in progress. The collaboration context deliberately does not expose workspace
+client. API and socket authority in that visual check are fixtures; the API
+runtime suites cover guest mutation and lifecycle authority. The collaboration
+context deliberately does not expose workspace
 creation, account onboarding or desktop credential controls.
 
 The shared contextual sidebar lists Sidekicks available in the selected conversation,
@@ -231,9 +232,10 @@ introduces no new authentication TTL or attempt count; those remain explicit
 policy in [email-login.md](email-login.md).
 
 Current limitations: the entry restores the configured deployment's identity,
-not a cross-deployment session set. Only Global is configured today. Complete
-shared collaboration and subscription ownership remain open
-implementation work. The host has no production route yet.
+not a cross-deployment session set. Only Global is configured today. The browser
+owns one selected-conversation subscription, with no desktop background swarm.
+Production routing/configuration, external mailbox delivery and deployed stateful
+artifact serving remain release checks.
 
 ## Testing
 
@@ -269,12 +271,18 @@ mutation. A failed rename keeps its draft and shows the API error; success close
 the dialog and refreshes shared navigation. Guest Main renames use the same
 exact-conversation route as child renames, without requiring full membership.
 
-A scoped lifecycle read precedes live-feed admission. Archived children render a
-Restore substream control outside the feed, so reloading does not strand the
-participant behind a refused socket. Archive/restore uses the existing child
-lifecycle mutation, refreshes the directory, and remounts the feed after restore.
-The lifecycle read itself requires current conversation access. Main workstream
-archive is not exposed by this child lifecycle control.
+The shared-directory response carries both parent and conversation archive state.
+There is no separate lifecycle preflight. An independently archived child under an
+active parent offers Restore substream outside the feed. An archived parent shows
+Archived work stream and explains that its work stream must be restored first;
+it never sends a child restore for Main or for a parent-archived child.
+Archive/restore uses the existing child mutation and refreshes the directory.
+
+Equivalent session refreshes update the stable RallyApi with `setSession`; they
+must not close a healthy socket or reject pending command receipts. Identity,
+workspace, role or access-class changes replace the client and re-admit it.
+Responsive navigation uses shell state, closes on navigation and supplies the
+shared dismissal scrim. Sharing reads distinguish loading, empty and error states.
 
 ## Changelog
 
@@ -291,6 +299,9 @@ destination click.
 **What changed:** Added the lite browser package, static entry shell, email
 and OTP submission, session restoration, invitation acceptance and same-origin
 regional HTTP/upgrade forwarding, plus cookie mode in the shared API client.
+Session revalidation retains a stable API client and healthy conversation socket;
+parent archive state and shell-owned navigation keep lifecycle and responsive
+controls consistent with the selected scope.
 
 **Why:** Guests need to enter shared work without installing the desktop app or
 creating a workspace. Reusing the regional session boundary keeps identity and
@@ -301,7 +312,7 @@ product surfaces. An arbitrary-host reverse proxy would make links choose the
 credential destination. A separate guest session model would duplicate authority.
 
 **Consequences:** Keep the configured service routing and cookie boundary when
-adding the persistent collaboration UI. This host is not a WebSocket multiplexer
+extending the collaboration UI. This host is not a WebSocket multiplexer
 and does not establish desktop feature parity. Workspace landing and scoped
 navigation reuse this collaboration host, keeping discovery separate from the
 member directory so an independent child share cannot reveal Main metadata.

@@ -103,7 +103,9 @@ describe("authentication in the complete application router", () => {
     database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
     database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
       .run(workspaceId, guestId, at);
-    const bindings = { ...env(), PUBLIC_API_BASE_URL: "https://api.example.test" };
+    const send = vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined);
+    const bindings = createTestEnv({ ...env(), PUBLIC_API_BASE_URL: "https://api.example.test",
+      ACCESS_REVOCATION_QUEUE: { send, sendBatch: async () => undefined } });
     const guestSession = await new AuthService(bindings).createRegionalSession(guestId, workspaceId);
     const relationship = database.prepare("SELECT incarnation, revision FROM workspace_members WHERE user_id = ?").get(guestId)!;
     const response = await createApp().request(`/workspace/members/${guestId}/promote`, {
@@ -112,6 +114,13 @@ describe("authentication in the complete application router", () => {
     }, bindings);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ userId: guestId, accessClass: "member", role: "member", incarnation: relationship.incarnation });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "workspace_relationship_changed", removed: false,
+      relationship: expect.objectContaining({ workspaceId, userId: guestId, incarnation: relationship.incarnation,
+        revision: Number(relationship.revision) + 1, accessClass: "member", role: "member", status: "active" }),
+    }));
+    expect(database.prepare("SELECT dispatched_at FROM workspace_relationship_deliveries WHERE user_id=? ORDER BY revision DESC LIMIT 1")
+      .get(guestId)?.dispatched_at).toEqual(expect.any(String));
     const refreshed = await new AuthService(bindings).refresh(guestSession.refreshToken);
     expect(refreshed.user.id).toBe(guestId);
     expect(refreshed.workspace).toMatchObject({ role: "member" });

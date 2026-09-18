@@ -2,8 +2,7 @@
 
 Email sign-in proves control of an address and creates an ordinary identity-only
 session. The [browser cookie transport](browser-sessions.md) now adapts that
-session for the web host; the browser sign-in page and invitation acceptance UI
-are still unfinished. The routes
+session for the browser sign-in page and invitation acceptance UI. The routes
 require explicit policy and browser-origin configuration before they are usable.
 
 ## Where the code lives
@@ -43,7 +42,8 @@ issues a workspace session. These routes use immutable user identity without a
 Google subject. Guest sessions carry `accessClass: "guest"` and a null role;
 legacy member sessions can omit `accessClass`. Promotion keeps the user and
 session incarnation, and refresh returns the current member role. General
-member-only product routes remain unavailable to guests pending scope integration.
+member-only discovery and setup routes remain unavailable to guests; shared
+conversation mutations use the existing exact-scope authority.
 Identity-only sessions can accept [scoped invitations](scope-invitations.md) through
 `POST /sharing/accept`; verified mailbox admission and grant receipts live in the
 workstream owner, independently of email sign-in challenge consumption.

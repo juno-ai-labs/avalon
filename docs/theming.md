@@ -180,14 +180,21 @@ scheme and iframe are absent from the renderer CSP and Electron protocol
 registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
+## Changelog
+
 ### 2026-09-17 — Share theme presentation between desktop and browser
 
-The shared UI package now owns the generated stylesheet, component styles,
-bundled fonts and browser-safe appearance runtime. The generator writes there
-and desktop imports the same files. Native window reporting stays in a desktop
-adapter. This prevents two clients drifting visually without coupling browser
-startup to Electron; new tokens and appearance changes must update the shared
-source rather than the desktop import wrappers.
+**What changed:** The shared UI package owns generated/component styles, bundled
+fonts and the browser-safe appearance runtime. The generator and both clients
+use those files; desktop keeps the native reporting adapter.
+
+**Why:** The browser and desktop must receive the same appearance changes.
+
+**Considered and rejected:** A separate browser stylesheet would drift; a shared
+runtime that calls Electron would break browser startup.
+
+**Consequences:** New tokens and appearance changes update the shared source,
+not the desktop import wrappers. Native window synchronization remains desktop-only.
 
 ### 2026-09-16 — One saturated success step for the status dot
 

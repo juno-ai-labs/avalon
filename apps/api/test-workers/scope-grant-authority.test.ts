@@ -218,7 +218,7 @@ it("hands committed grants to the durable parent outbox even when Queue delivery
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
     membershipIncarnation: recipientId })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
-    parentId, title: null, conversations: [{ substreamId: childId, title: "Shared substream", archived: false }],
+    parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared substream", archived: false }],
   }] });
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
   // The workspace still contains the added candidate, but the canonical grant
@@ -238,11 +238,11 @@ it("releases only canonical shared conversation labels and hides Main metadata f
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
   expect(await room().readSharedWorkstream(request)).toBeNull();
   await room().mutateScopeGrant(mutation());
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: null,
+  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: null, archived: false,
     conversations: [{ substreamId: childId, title: "Visible child", archived: false }] });
   expect(await room().readSharedWorkstream({ ...request, membershipIncarnation: "replacement" })).toBeNull();
   await room().mutateScopeGrant(mutation(main));
-  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent",
+  expect(await room().readSharedWorkstream(request)).toEqual({ parentId, title: "Private parent", archived: false,
     conversations: [{ substreamId: "0", title: "Main", archived: false }, { substreamId: childId, title: "Visible child", archived: false }] });
   await env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId).run();
   expect(await room().readSharedWorkstream(request)).toBeNull();
@@ -267,7 +267,9 @@ it("lists inherited and archived readable children but omits restricted and unre
     state.storage.sql.exec("UPDATE conversation_children SET status='ready', archived_at=1 WHERE substream_id=?", childId);
   });
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
+  expect((await room().readSharedWorkstream(request))?.archived).toBe(false);
   await runInDurableObject(room(), (_instance, state) => { state.storage.sql.exec("UPDATE workstream_metadata SET archived_at=1"); });
+  expect((await room().readSharedWorkstream(request))?.archived).toBe(true);
   expect((await room().readSharedWorkstream(request))?.conversations).toHaveLength(2);
 });
 
