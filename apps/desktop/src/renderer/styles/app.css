@@ -2467,7 +2467,7 @@ pre {
   border-bottom: 1px solid var(--av-sys-color-border-subtle);
   display: grid;
   gap: 11px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   min-height: 58px;
   padding: 8px 13px;
 }

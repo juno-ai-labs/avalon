@@ -1,14 +1,17 @@
 import type { Region } from "@rally/contracts/regions";
 import { PersonalPresentationSchema } from '@rally/contracts';
 import {
+  AssignableMemberRoleSchema,
   asUserId,
   asWorkspaceId,
+  type AssignableMemberRole,
   type UserId,
   type PendingWorkspaceInvitation,
   type WorkspaceInvitation,
   type WorkspaceInvitationPreview,
   type WorkspaceInvitationRole,
 } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
 import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant, revokeDownloadGrantsForInvitation } from "@rally/db/private-access";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
@@ -509,6 +512,140 @@ export class WorkspaceService {
   }
 
   /**
+   * Set the role on a membership that already exists — the one way a workspace
+   * grows a second administrator.
+   *
+   * `workspace_members.role` has been a per-membership column since the first
+   * migration, so N administrators were always representable; what did not
+   * exist was any way to *assign* one after the fact. An invitation carried a
+   * role and nothing else did, so a workspace whose administrator was away had
+   * no in-product way to grant anybody else the powers every admin-gated action
+   * already accepted. That is what this method is.
+   *
+   * Three refusals, and each is deliberate:
+   *
+   * - **`owner` is not assignable, and an owner is not a target.** The founding
+   *   membership is what `leaveWorkspace` and `removeMember` count when they
+   *   refuse to leave a workspace unowned. Letting it be handed around here
+   *   would put a second module in charge of an invariant those two enforce,
+   *   and transferring ownership is a separate operation nobody has asked for.
+   * - **Only an active membership.** Somebody who has not accepted their
+   *   invitation is not yet a member to promote; the invitation carries their
+   *   role, and changing it there is what revoking and reissuing one is for.
+   * - **Never the last administrator.** A workspace with nobody who can
+   *   administer it cannot be recovered from inside the product — no admin
+   *   means no invitation, no promotion, and no way back. The guard counts
+   *   owner and admin together, because that pair is exactly the set every
+   *   admin-gated check in this tree accepts.
+   *
+   * The write re-asserts all three in its own `WHERE`, for the reason
+   * `removeMember` spells out at length: each was read in an earlier round trip
+   * and D1 auto-commits in between, so two administrators demoting each other
+   * at once both pass the reads. SQLite serializes the statements, whichever
+   * runs second finds the invariant it needed already gone, and changes
+   * nothing.
+   */
+  async setMemberRole(userId: string, role: AssignableMemberRole): Promise<void> {
+    this.requireAdmin();
+    // Parsed rather than trusted. The route validates the body, but this is
+    // also reachable from a test, a script, and whatever calls it next, and a
+    // `ZodError` escaping here would reach the error handler as a 500 whose
+    // message is a JSON blob. `zodDiagnosticCode` names the field instead.
+    const parsed = AssignableMemberRoleSchema.safeParse(role);
+    if (!parsed.success) {
+      throw new ApiError(
+        400,
+        zodDiagnosticCode(parsed.error, "member_role") ?? "member_role_invalid",
+        "A member's role can only be set to administrator or member",
+      );
+    }
+    const assigned = parsed.data;
+    const member = await this.env.DB.prepare(
+      `SELECT role, status FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(this.auth.workspaceId, userId).first<{ role: string; status: string }>();
+    if (!member) throw new ApiError(404, "member_not_found", "That person is not in this workspace");
+    if (member.role === "owner") {
+      throw new ApiError(
+        403,
+        "cannot_change_owner_role",
+        "The workspace owner's role cannot be changed here",
+      );
+    }
+    if (member.status !== "active") {
+      throw new ApiError(
+        409,
+        "member_not_active",
+        "That person has not joined this workspace yet. Their invitation carries their role.",
+      );
+    }
+    if (member.role === assigned) return;
+
+    const updated = await this.env.DB.prepare(
+      `UPDATE workspace_members
+          SET role = ?
+        WHERE workspace_id = ? AND user_id = ? AND role = ? AND status = 'active'
+          AND EXISTS (
+            SELECT 1 FROM workspace_members actor
+             WHERE actor.workspace_id = workspace_members.workspace_id
+               AND actor.user_id = ? AND actor.status = 'active'
+               AND actor.role IN ('owner', 'admin')
+          )
+          AND (
+            ? != 'member'
+            OR EXISTS (
+              SELECT 1 FROM workspace_members remaining
+               WHERE remaining.workspace_id = workspace_members.workspace_id
+                 AND remaining.user_id != workspace_members.user_id
+                 AND remaining.status = 'active'
+                 AND remaining.role IN ('owner', 'admin')
+            )
+          )
+        RETURNING user_id`,
+    ).bind(
+      assigned,
+      this.auth.workspaceId,
+      userId,
+      member.role,
+      this.auth.userId,
+      assigned,
+    ).first<{ user_id: string }>();
+    if (!updated) {
+      // Which invariant refused it is worth a second read: "something changed"
+      // is the right answer to a lost race and the wrong one to the person who
+      // is about to leave their workspace with nobody able to administer it,
+      // and only they can act on the difference.
+      const remaining = await this.env.DB.prepare(
+        `SELECT COUNT(*) AS administrators FROM workspace_members
+          WHERE workspace_id = ? AND user_id != ? AND status = 'active'
+            AND role IN ('owner', 'admin')`,
+      ).bind(this.auth.workspaceId, userId).first<{ administrators: number }>();
+      if (assigned === "member" && Number(remaining?.administrators ?? 0) === 0) {
+        throw new ApiError(
+          409,
+          "last_workspace_administrator",
+          "This is the only administrator of this workspace. Make somebody else an administrator first.",
+        );
+      }
+      throw new ApiError(
+        409,
+        "membership_changed",
+        "The workspace membership changed while this role change was in flight. Check it and try again.",
+      );
+    }
+    // Two topics, and no `memberUserIds`: the roster every administrator reads
+    // and the workspace profile that carries a person's own role both go stale,
+    // but nobody joined or left, so there are no search decisions to project.
+    // Published here rather than through `workspaceSyncTopicsForMutation` so it
+    // is awaited in the request that wrote it, as every other membership write
+    // in this service is.
+    await publishWorkspaceSync(
+      this.env,
+      this.auth.workspaceId,
+      ["member_directory", "workspace_profile"],
+    );
+  }
+
+  /**
    * End the caller's own membership, or close the workspace when they are its
    * final active member.
    *
@@ -680,9 +817,6 @@ export class WorkspaceService {
     role: WorkspaceInvitationRole,
   ): Promise<{ invitation: WorkspaceInvitation; inviteUrl: string; emailDelivery: InvitationEmailDelivery }> {
     this.requireAdmin();
-    if (role === "admin" && this.auth.role !== "owner") {
-      throw new ApiError(403, "workspace_owner_required", "Only the workspace owner can invite an administrator");
-    }
     const normalizedEmail = email.trim().toLowerCase();
     const existingMember = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m JOIN users u ON u.id = m.user_id
@@ -821,7 +955,7 @@ export class WorkspaceService {
 
   private requireAdmin(): void {
     if (this.auth.role !== "owner" && this.auth.role !== "admin") {
-      throw new ApiError(403, "workspace_admin_required", "Only workspace administrators can manage invitations");
+      throw new ApiError(403, "workspace_admin_required", "This action requires a workspace administrator");
     }
   }
 }
