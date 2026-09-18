@@ -12,6 +12,10 @@ and a measured fallback. [`agent-harness.md`](agent-harness.md) owns the shipped
 runtime. The committed content-free
 `packages/agent-harness/evals/addressing/baseline-2026-09-16.json` records the
 aggregate baseline; case-level reports are ephemeral protected-scratch output.
+[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md) applies this
+guide to the rest of the tree: which decisions are candidates for a second JEV
+request, which are deliberately not, and the transport primitives a second one
+needs before it is written.
 
 ## Optimize the whole application request
 
