@@ -499,6 +499,35 @@ explicit product states rather than speculative guesses.
 
 ## Changelog
 
+### 2026-09-17 — Foreground recovery reconciles unresolved commands
+
+**What changed:** When Electron returns to the foreground with a substream
+command still awaiting its private receipt, that feed replays the command with
+the same operation ID, requests one canonical snapshot, and immediately probes
+the current socket with the existing heartbeat deadline. Feeds without an
+unresolved command do no foreground reconciliation work.
+
+**Why:** Production timing probes proved that messages and assistant replies
+could be durably committed while a background-throttled renderer remained on
+`Sending message`. The socket was owned by Electron main, but protocol receipts
+and transcript cache updates were processed in the renderer, so a delayed or
+lost renderer turn could strand the optimistic message until the window was
+raised even though the server path had completed normally.
+
+**Considered and rejected:** Disabling Electron background throttling globally
+would keep every hidden renderer running and pay a continuous CPU and power cost
+for a recovery needed only while a command is unresolved. Replaying under a new
+operation ID was also rejected because it would turn recovery into a duplicate
+mutation rather than reuse the room's existing idempotency boundary.
+
+**Consequences:** Foreground recovery is bounded to the affected feed and uses
+the same command, snapshot, and heartbeat primitives as reconnect recovery. A
+healthy socket settles from its replayed private receipt; an unresponsive socket
+closes after the existing pong deadline and reconnects through the normal
+cursor-based path.
+
+Shipped in the pull request for this change.
+
 ### 2026-09-15 — Socket ticket acquisition cannot strand reconnect loops
 
 **What changed:** Workspace, WorkstreamDO control, and SubstreamAgent feed
