@@ -40,7 +40,7 @@ describe("connector connection tool guidance", () => {
     const connectorIds = schema.properties?.connectorId?.description ?? "";
     expect(connectorIds).toBe(
       "Connector to check or show."
-      + " Personal only: google-mail-calendar, ashby, fireflies, granola."
+      + " Personal only: google-mail-calendar, ashby, canva, fireflies, granola."
       + " Personal or workspace: google-drive-workspace, github, linear, slack, notion.",
     );
     // The second is that the sentence keeps naming every id the catalog holds,
