@@ -3050,6 +3050,12 @@ export async function runWorkstreamHarness(
     source: "workstream",
     workstreamId: input.parentId,
     substreamId: input.substreamId ?? "0",
+    ...(input.telemetryOperationId ? { operationId: input.telemetryOperationId } : {}),
+    ...(input.telemetryJourney ? { journey: input.telemetryJourney } : {}),
+    ...(input.telemetryRequestReceivedAt !== undefined
+      ? { requestReceivedAt: input.telemetryRequestReceivedAt }
+      : {}),
+    inferenceStartEligible: (runtime?.lease.attemptNumber ?? 1) === 1,
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;

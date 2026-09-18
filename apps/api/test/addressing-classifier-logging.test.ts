@@ -80,6 +80,37 @@ afterEach(() => {
 });
 
 describe("addressing classifier logging", () => {
+  it("does not hold the classifier result behind lakehouse storage", async () => {
+    const { env } = fixture();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    env.PAYLOADS = createCloudflareTestBinding<R2Bucket>({ put: vi.fn(() => blocked) });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      model: "jev-1.13.0",
+      answers: {
+        addressing: {
+          type: "choice",
+          choice: "rally_should_act",
+          confidence: 0.91,
+          probabilities: { rally_should_act: 0.91, people_only: 0.09 },
+        },
+      },
+      usage: { input_tokens: 181, output_tokens: 12 },
+    })));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    let settled = false;
+    const deferred: Promise<unknown>[] = [];
+    const classification = classifyWorkstreamMessage(env, {
+      ...input,
+      defer: (promise) => deferred.push(promise),
+    }).finally(() => { settled = true; });
+    await vi.waitFor(() => expect(settled).toBe(true));
+    await expect(classification).resolves.toMatchObject({ classification: "agent_action" });
+    release();
+    await Promise.all(deferred);
+  });
+
   it("logs an accepted JEV outcome and archives the exact inference response", async () => {
     const { env, getObjectDetails, objects, defer, settleDeferred } = fixture();
     const response = {
@@ -127,14 +158,16 @@ describe("addressing classifier logging", () => {
         confidence: 0.91,
       }),
     ]));
-    expect(records(objects)).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        event_type: "attempt",
-        provider: "typesafe",
-        success: true,
-        response,
-      }),
-    ]));
+    await vi.waitFor(() => {
+      expect(records(objects)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event_type: "attempt",
+          provider: "typesafe",
+          success: true,
+          response,
+        }),
+      ]));
+    });
   });
 
   it("counts a low-confidence JEV response separately from fallback success", async () => {
@@ -185,12 +218,14 @@ describe("addressing classifier logging", () => {
       classification: "agent_action",
       confidence: 0.82,
     });
-    expect(records(objects).filter((record) => record.event_type === "attempt")).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ provider: "typesafe", success: true, response: typesafeResponse }),
-        expect.objectContaining({ provider: "openrouter", success: true }),
-      ]),
-    );
+    await vi.waitFor(() => {
+      expect(records(objects).filter((record) => record.event_type === "attempt")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ provider: "typesafe", success: true, response: typesafeResponse }),
+          expect.objectContaining({ provider: "openrouter", success: true }),
+        ]),
+      );
+    });
   });
 
   it("names the deterministic floor when both remote cascade stages fail", async () => {

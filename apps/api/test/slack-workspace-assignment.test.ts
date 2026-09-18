@@ -43,15 +43,19 @@ const databases: DatabaseSync[] = [];
  * The parent's half of a create.
  *
  * A work stream created from Slack reserves its main conversation on the parent
- * object before the child is initialized, and the real `reserveChild` answers
- * with the generation the parent is at. Nothing in this file asserts on the
- * reservation, but a create that cannot make it never reaches the object.
+ * object before the child is initialized, then flushes its provisional
+ * directory effects alongside initialization. Nothing in this file asserts on
+ * those parent operations, but a create that cannot make them never reaches
+ * the object.
  */
-function parentReserveChild() {
-  return vi.fn(async (input: { authorityGeneration: number }) => ({
-    reserved: true as const,
-    authorityGeneration: input.authorityGeneration,
-  }));
+function parentCreationRpcs() {
+  return {
+    reserveChild: vi.fn(async (input: { authorityGeneration: number }) => ({
+      reserved: true as const,
+      authorityGeneration: input.authorityGeneration,
+    })),
+    flushProvisionalDirectory: vi.fn(async () => undefined),
+  };
 }
 
 /**
@@ -929,7 +933,7 @@ describe("Slack connector principal delivery", () => {
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
       SUBSTREAM_AGENTS: substreamAgents,
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { reserveChild: parentReserveChild() },
+        extra: parentCreationRpcs(),
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
@@ -1587,7 +1591,7 @@ describe("Slack public channel membership", () => {
         },
       }),
       WORKSTREAM_DOS: testSubstreamAgentsBinding(database, {
-        extra: { reserveChild: parentReserveChild() },
+        extra: parentCreationRpcs(),
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {

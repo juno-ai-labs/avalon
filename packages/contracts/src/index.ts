@@ -2926,6 +2926,10 @@ export const WorkstreamWorkflowInputSchema = z.object({
   telemetryOperationId: IdSchema.optional(),
   /** Regional user record that owns the correlated run; never accepted from the client body. */
   telemetrySubjectUserId: IdSchema.optional(),
+  /** Worker receipt boundary used to measure admission-to-provider dispatch. */
+  telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
+  /** Stable journey name for latency SLO aggregation. */
+  telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   /**

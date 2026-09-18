@@ -3156,6 +3156,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           const { harnessRunId, workflowInput } = result;
           await span.step("workstream.room.loop.activate", () =>
             this.requestExecutionReceiptActivation(harnessRunId, workflowInput));
+          await this.armAlarmDuringRunDrain();
+          this.resumePersistentLoopDrain();
         }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({
@@ -3322,7 +3324,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               updated_at = ? WHERE run_id = ? AND terminalized_at IS NULL`,
       JSON.stringify(input), Date.now(), Date.now(), runId,
     );
-    await this.state.storage.setAlarm(Date.now() + 1);
   }
 
   private async requestPersistentLoopActivation(
@@ -3340,11 +3341,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         request.receiptRunId,
         request.workflowInput,
       );
-      return;
     }
-    // Pending inputs and the singleton loop are the durable work. The alarm is
-    // only a wake-up hint; recovery derives it again from those rows.
-    await this.state.storage.setAlarm(Date.now() + 1);
+    // Pending inputs and the singleton loop are the durable work. Start their
+    // drain in this invocation, with an alarm at the keep-alive horizon as the
+    // eviction recovery hint. A due-now alarm can race and falsely reclaim the
+    // healthy drain before it has acquired its durable execution lease.
+    await this.armAlarmDuringRunDrain();
+    this.resumePersistentLoopDrain();
   }
 
   /** Run the one persistent loop in the current invocation. Durable SQL, not
@@ -3355,6 +3358,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const loop = this.loop.loop();
       if (loop?.status === "executing" && loop.lease_expires_at !== null
         && loop.lease_expires_at > now) return "deferred";
+      const localProgressAt = this.agentDrain.lastProgress ?? this.agentDrain.activeSince;
+      if (localProgressAt !== null && now - localProgressAt < KEEP_ALIVE_INTERVAL_MS) {
+        return "deferred";
+      }
       if (this.agentDrain.abandonActive()) {
         logWarn(this.env, "substream_loop_stale_drain_reclaimed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
@@ -3377,6 +3384,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       () => undefined,
     );
     return "drained";
+  }
+
+  /**
+   * Start newly committed loop work in this invocation. Durable input rows and
+   * the alarm remain the restart authority; this only removes the alarm
+   * scheduler from the latency-critical healthy path.
+   */
+  private resumePersistentLoopDrain(): void {
+    this.state.waitUntil(this.drainLoopToCompletion().catch((error: unknown) => {
+      logWarn(this.env, "substream_loop_drain_failed", {
+        workspace_id: this.objectStore.identity()?.workspaceId,
+        workstream_id: this.objectStore.identity()?.parentId,
+        substream_id: this.externalSubstreamId(),
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }));
   }
 
   private async drainPersistentLoop(
@@ -3525,6 +3548,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         executionPrincipal: z.unknown(),
         reason: z.string().min(1).max(500),
         telemetryOperationId: z.string().nullable().optional(),
+        telemetryRequestReceivedAt: z.number().int().nonnegative().nullable().optional(),
+        telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
         seed: DemoSeedSchema.nullable().optional(),
@@ -3557,6 +3582,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
                 : {}),
             }
           : {}),
+        ...(authorization.telemetryRequestReceivedAt !== null
+          && authorization.telemetryRequestReceivedAt !== undefined
+          ? { telemetryRequestReceivedAt: authorization.telemetryRequestReceivedAt }
+          : {}),
+        ...(authorization.telemetryJourney ? { telemetryJourney: authorization.telemetryJourney } : {}),
         ...(authorization.slackOrigin ? { slackOrigin: authorization.slackOrigin } : {}),
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
@@ -5041,6 +5071,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    const requestReceivedAt = Date.now();
     await this.storageReady;
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let decoded: unknown;
@@ -5164,7 +5195,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     if (parsed.data.type === "create_message") {
-      await this.createSocketMessage(socket, attachment, parsed.data);
+      await this.createSocketMessage(socket, attachment, parsed.data, requestReceivedAt);
       return;
     }
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
@@ -5371,6 +5402,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: SocketAttachment,
     command: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "create_message" }>,
+    requestReceivedAt: number,
   ): Promise<void> {
     await inFlowSpan(this.env, "workstream.room.create_message", {
       flow: "workstream_message_send",
@@ -5416,6 +5448,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const result = await this.admitMessage(auth, {
           ...command.payload,
           telemetryOperationId: command.operationId,
+          telemetryRequestReceivedAt: requestReceivedAt,
+          telemetryJourney: "message_send",
         }, span, true);
         this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",

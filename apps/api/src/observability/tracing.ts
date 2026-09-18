@@ -53,7 +53,9 @@ import {
 export type PerfFlow =
   | "workstream_create"
   | "workstream_open"
-  | "workstream_message_send";
+  | "workstream_message_send"
+  | "substream_prepare"
+  | "substream_create";
 
 /**
  * The value types `span.setAttribute` accepts. `null` is admitted at the type

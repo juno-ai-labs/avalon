@@ -80,6 +80,7 @@ interface CreateOptions {
   slackSearchAuthorization?: SlackSearchAuthorization;
   reason?: string;
   telemetryOperationId?: string;
+  telemetryRequestReceivedAt?: number;
   /**
    * Whether the people in `participantUserIds` are told they were added.
    *
@@ -437,48 +438,65 @@ export class WorkstreamObjectCreationService {
         titleStatus: body.title == null ? "naming" : "settled",
         createdAt: at,
       },
+      deferDirectoryDelivery: true,
     }));
 
     let created: Awaited<ReturnType<WorkstreamObjectClient["initialize"]>>;
     try {
-      created = await span.step("workstream.create.object.initialize", () => client.initialize({
-      workspaceId: this.auth.workspaceId,
-      workstreamId: asWorkstreamId(receipt.workstream_id),
-      generation: control.generation,
-      title,
-      objective,
-      descriptionSource: input.descriptionSource ?? "derived",
-      titleStatus: body.title == null ? "naming" : "settled",
-      emailAddress: email.emailAddress,
-      creatorUserId: this.auth.userId,
-      openingMessage: body.openingMessage,
-      ...((options.initialization?.kind === "history") ? { initialization: options.initialization } : {}),
-      mentions: body.mentions,
-      openingStructuredContent: options.openingStructuredContent ?? null,
-      clientMessageId: body.clientMessageId,
-      participantUserIds,
-      notifyParticipants: options.notifyParticipants ?? false,
-      attachmentIds: body.attachmentIds,
-      scope,
-      originResourceIds,
-      modelOverride: body.modelOverride ?? null,
-      systemKind: null,
-      ...(options.seed ? { seed: options.seed } : {}),
-      createdFromOpportunityId: options.opportunitySnapshot?.opportunityId ?? null,
-      opportunityVersion: options.opportunitySnapshot?.version ?? null,
-      opportunityDisplayPromptHash: options.opportunitySnapshot?.displayPromptHash ?? null,
-      opportunityExecutionPromptHash: options.opportunitySnapshot?.executionPromptHash ?? null,
-      executionPrincipal: options.executionPrincipal ?? { type: "user", userId: this.auth.userId },
-      ...(options.slackOrigin ? { slackOrigin: options.slackOrigin } : {}),
-      ...(options.slackSearchAuthorization ? {
-        slackSearchAuthorization: options.slackSearchAuthorization,
-      } : {}),
-      ...(options.telemetryOperationId ? {
-        telemetryOperationId: options.telemetryOperationId,
-        telemetrySubjectUserId: this.auth.userId,
-      } : {}),
-      reason: options.reason ?? "opening_message",
+      const initialize = span.step("workstream.create.child.initialize", () => client.initialize({
+        workspaceId: this.auth.workspaceId,
+        workstreamId: asWorkstreamId(receipt.workstream_id),
+        generation: control.generation,
+        title,
+        objective,
+        descriptionSource: input.descriptionSource ?? "derived",
+        titleStatus: body.title == null ? "naming" : "settled",
+        emailAddress: email.emailAddress,
+        creatorUserId: this.auth.userId,
+        openingMessage: body.openingMessage,
+        ...((options.initialization?.kind === "history") ? { initialization: options.initialization } : {}),
+        mentions: body.mentions,
+        openingStructuredContent: options.openingStructuredContent ?? null,
+        clientMessageId: body.clientMessageId,
+        participantUserIds,
+        notifyParticipants: options.notifyParticipants ?? false,
+        attachmentIds: body.attachmentIds,
+        scope,
+        originResourceIds,
+        modelOverride: body.modelOverride ?? null,
+        systemKind: null,
+        ...(options.seed ? { seed: options.seed } : {}),
+        createdFromOpportunityId: options.opportunitySnapshot?.opportunityId ?? null,
+        opportunityVersion: options.opportunitySnapshot?.version ?? null,
+        opportunityDisplayPromptHash: options.opportunitySnapshot?.displayPromptHash ?? null,
+        opportunityExecutionPromptHash: options.opportunitySnapshot?.executionPromptHash ?? null,
+        executionPrincipal: options.executionPrincipal ?? { type: "user", userId: this.auth.userId },
+        ...(options.slackOrigin ? { slackOrigin: options.slackOrigin } : {}),
+        ...(options.slackSearchAuthorization ? {
+          slackSearchAuthorization: options.slackSearchAuthorization,
+        } : {}),
+        ...(options.telemetryOperationId ? {
+          telemetryOperationId: options.telemetryOperationId,
+          telemetrySubjectUserId: this.auth.userId,
+        } : {}),
+        ...(options.telemetryRequestReceivedAt !== undefined ? {
+          telemetryRequestReceivedAt: options.telemetryRequestReceivedAt,
+          telemetryJourney: "workstream_create" as const,
+        } : {}),
+        reason: options.reason ?? "opening_message",
       }));
+      const projectDirectory = span.step("workstream.create.directory.flush", () =>
+        workstream.flushProvisionalDirectory({
+          workspaceId: this.auth.workspaceId,
+          parentId: receipt.workstream_id,
+        }));
+      const [initializeResult, directoryResult] = await Promise.allSettled([
+        initialize,
+        projectDirectory,
+      ]);
+      if (initializeResult.status === "rejected") throw initializeResult.reason;
+      if (directoryResult.status === "rejected") throw directoryResult.reason;
+      created = initializeResult.value;
       if (projectSettle) {
         const membership = WorkspaceProjectMutationResultSchema.parse(
           await workspace.finalizeProjectMembership(projectSettle),

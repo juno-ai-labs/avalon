@@ -21,6 +21,11 @@ export interface AgentInferenceLogContext {
   workstreamId?: string;
   substreamId?: string;
   parentRequestId?: string;
+  operationId?: string;
+  journey?: "workstream_create" | "substream_create" | "message_send";
+  requestReceivedAt?: number;
+  /** Only the first durable attempt owns the user-request-to-dispatch SLO row. */
+  inferenceStartEligible?: boolean;
 }
 
 export interface AgentInferenceLogger {
@@ -33,9 +38,39 @@ export function createAgentInferenceLogger(
   context: AgentInferenceLogContext,
   defer: WorkDeferral = runtimeDeferral,
 ): AgentInferenceLogger {
+  let firstProviderRequest = true;
   return {
     onRequest: (request) => {
-      defer(captureStreamingInferenceRequest(env, context, request));
+      const providerRequestIssuedAt = Date.now();
+      const measureInferenceStart = firstProviderRequest
+        && context.inferenceStartEligible !== false
+        && context.requestReceivedAt !== undefined;
+      firstProviderRequest = false;
+      const requestToInferenceStartMs = measureInferenceStart
+        && providerRequestIssuedAt >= context.requestReceivedAt!
+        ? providerRequestIssuedAt - context.requestReceivedAt!
+        : undefined;
+      if (measureInferenceStart) {
+        logStructuredEvent(env, "info", "agent_inference_started", {
+          request_id: context.requestId,
+          inference_request_id: request.inferenceRequestId,
+          operation_id: context.operationId,
+          journey: context.journey,
+          request_received_at: context.requestReceivedAt,
+          provider_request_issued_at: providerRequestIssuedAt,
+          request_to_inference_start_ms: requestToInferenceStartMs,
+          request_clock_skewed: requestToInferenceStartMs === undefined,
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          substream_id: context.workstreamId ? context.substreamId ?? "0" : undefined,
+          source: context.source,
+          provider: request.provider,
+          model: request.model,
+        });
+      }
+      const captureContext: AgentInferenceLogContext = { ...context };
+      if (!measureInferenceStart) delete captureContext.requestReceivedAt;
+      defer(captureStreamingInferenceRequest(env, captureContext, request, providerRequestIssuedAt));
       return Promise.resolve();
     },
     onAttempt: (attempt) => {
