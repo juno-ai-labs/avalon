@@ -151,6 +151,16 @@ two rows on `inference_request_id`; use `operation_id` in the regional log or
 journey. Do not add these two durations together when reporting which side of
 the boundary missed its target.
 
+Immediately before the final liveness pulse and provider setup, the harness
+also emits `agent_inference_prepared`. Its synchronous fields partition the
+pre-provider wait into `initial_authority_ms`, `context_tools_ms`, and
+`scope_activation_routing_ms`, plus harness-local `total_ms` and the full
+`request_to_prepared_ms`. This is a Workers log only: it does not write PostHog
+or the lakehouse, and it introduces no promise or await. The preparation blocks
+intentionally overlap independent reads, so the fields name elapsed
+critical-path regions rather than claiming that their individual operations
+add up serially.
+
 Durations come from `Date.now()`, which workerd pins for the duration of a
 synchronous run and advances only across I/O — a Spectre mitigation, and the
 same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
@@ -716,6 +726,20 @@ Note also how an export is scoped, because it is easy to get backwards. The
 destination is account configuration; the **attachment is per Worker**, through
 `observability.<signal>.destinations`. Creating a destination exports nothing —
 a Worker exports when its own config names one.
+
+### 2026-09-18 — Attribute and overlap pre-provider preparation
+
+The harness now starts independent identity, run, Sidekick, terminal-outcome,
+model-routing, attachment-replay, and activation-hint reads through the
+rejection-observing `Preparation` primitive, and loads independent transcript
+inputs together. It awaits each only at its existing authority boundary. A
+synchronous `agent_inference_prepared` row
+records three critical-path regions. This was forced by production evidence of
+roughly 2.7 seconds between a completed substream confirmation flow and provider
+dispatch; the earlier inference-start row measured the gap but could not divide
+it. Removing the reads or moving the authority fences was rejected because
+they protect replay, access, and immutable run scope; only their independent
+wait time moved.
 
 ### 2026-09-17 — Name substream stages and split inference-start from provider TTFT
 

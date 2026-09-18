@@ -25,6 +25,7 @@ import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
+import { Preparation } from "./harness-preparation";
 
 /**
  * The title preparation reserves a child under.
@@ -95,7 +96,26 @@ export class SubstreamCreationService {
       })));
     }
     if (operation.status === "failed") throw new ApiError(409, "substream_creation_cancelled", "This creation request is no longer active.");
-    if (operation.preparedContext) return operation;
+    // Opening a new child applies the full object schema before it can accept
+    // its first turn. Start that authoritative, idempotent work as soon as the
+    // parent has reserved the child's stable id, while source capture and
+    // context transformation are already occupying the preparation request.
+    // Confirmation repeats the bootstrap as its recovery fence, but on the
+    // healthy path it now reaches an already-current object instead of paying
+    // the cold schema cost after the person presses send.
+    const reservedSubstreamId = operation.substreamId;
+    const childBootstrap = new Preparation(() => bootstrapConversationChildRuntime(
+      this.env,
+      this.auth.workspaceId,
+      "workstream",
+      parentId,
+      reservedSubstreamId,
+    ));
+    childBootstrap.get();
+    if (operation.preparedContext) {
+      await span.step("substream.prepare.child.bootstrap", () => childBootstrap.get());
+      return operation;
+    }
     if (operation.recipe.capture === "source" && !operation.capture) {
       const source = { workspaceId: this.auth.workspaceId, workstreamId: asWorkstreamId(parentId), substreamId: asSubstreamId("0") };
       const capture = await span.step("substream.prepare.source.capture", async () => {
@@ -119,6 +139,7 @@ export class SubstreamCreationService {
     }));
     // Recheck authority after inference, before exposing the captured content.
     await span.step("substream.prepare.authority.recheck", () => this.parent(parentId));
+    await span.step("substream.prepare.child.bootstrap", () => childBootstrap.get());
     return PrivateChildPreparationOperationSchema.parse(
       await span.step("substream.prepare.context.save", () => parent.savePreparedPrivateChildContext({ ...address, preparedContext })),
     );
