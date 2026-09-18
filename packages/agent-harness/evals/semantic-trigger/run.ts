@@ -95,6 +95,47 @@ export interface CandidateReport {
     confusion: Record<string, number>;
     meanConfidenceCorrect: number | null;
     meanConfidenceIncorrect: number | null;
+    /**
+     * What a standing watch cares about, which is not accuracy.
+     *
+     * Three-class accuracy on the balanced half of the corpus answers "does this
+     * request understand the decision". It does not answer the question a person
+     * asks after installing a Sidekick, which is "how often will this interrupt
+     * me for nothing, and will it catch the thing I asked for". Those are
+     * precision and recall on `met`, and on a corpus where almost nothing should
+     * fire they move independently of accuracy: a request that answered `not_met`
+     * to everything would score 85% on a watch and be worthless.
+     */
+    fires: {
+      /** Of the runs this request would have started, how many were wanted. */
+      metPrecision: number | null;
+      /** Of the runs that were wanted, how many it started. */
+      metRecall: number | null;
+      falseFires: number;
+      missedFires: number;
+      /** Unwanted runs per hundred events observed. */
+      falseFiresPerHundredEvents: number;
+    };
+    /** Present only when the evaluated set contains standing-watch scenarios. */
+    scenarios?: {
+      count: number;
+      /** Watches that should never have fired and did not. */
+      correctlySilent: number;
+      /** Watches that should never have fired and did. */
+      brokenSilence: number;
+      /** Watches that started at least one unwanted run. */
+      withFalseFire: number;
+      /** Watches that missed a run they should have started. */
+      withMissedFire: number;
+      perScenario: Array<{
+        scenarioId: string;
+        events: number;
+        expectedFires: number;
+        predictedFires: number;
+        falseFires: number;
+        missedFires: number;
+      }>;
+    };
     latency: { p50: number; p75: number; p90: number; p95: number; max: number };
     tokens: { input: number; output: number };
     failures: Record<string, number>;
@@ -292,6 +333,41 @@ export async function evaluateCandidate(
   }
   const mean = (values: number[]) => (values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length);
 
+  const predictedMet = outcomes.filter((outcome) => outcome.verdict === "met");
+  const truthMet = outcomes.filter((outcome) => outcome.truth === "met");
+  const falseFires = predictedMet.filter((outcome) => outcome.truth !== "met").length;
+  const missedFires = truthMet.filter((outcome) => outcome.verdict !== "met").length;
+  const fires = {
+    metPrecision: predictedMet.length === 0 ? null : (predictedMet.length - falseFires) / predictedMet.length,
+    metRecall: truthMet.length === 0 ? null : (truthMet.length - missedFires) / truthMet.length,
+    falseFires,
+    missedFires,
+    falseFiresPerHundredEvents: (falseFires / outcomes.length) * 100,
+  };
+
+  const byScenario = new Map<string, CaseOutcome[]>();
+  for (let index = 0; index < cases.length; index += 1) {
+    const scenarioId = cases[index]!.scenarioId;
+    if (!scenarioId) continue;
+    byScenario.set(scenarioId, [...(byScenario.get(scenarioId) ?? []), outcomes[index]!]);
+  }
+  const perScenario = [...byScenario].sort(([a], [b]) => a.localeCompare(b)).map(([scenarioId, group]) => ({
+    scenarioId,
+    events: group.length,
+    expectedFires: group.filter((outcome) => outcome.truth === "met").length,
+    predictedFires: group.filter((outcome) => outcome.verdict === "met").length,
+    falseFires: group.filter((outcome) => outcome.verdict === "met" && outcome.truth !== "met").length,
+    missedFires: group.filter((outcome) => outcome.truth === "met" && outcome.verdict !== "met").length,
+  }));
+  const scenarios = perScenario.length === 0 ? undefined : {
+    count: perScenario.length,
+    correctlySilent: perScenario.filter((entry) => entry.expectedFires === 0 && entry.predictedFires === 0).length,
+    brokenSilence: perScenario.filter((entry) => entry.expectedFires === 0 && entry.predictedFires > 0).length,
+    withFalseFire: perScenario.filter((entry) => entry.falseFires > 0).length,
+    withMissedFire: perScenario.filter((entry) => entry.missedFires > 0).length,
+    perScenario,
+  };
+
   return {
     candidateId: candidate.id,
     generation: candidate.generation,
@@ -311,6 +387,8 @@ export async function evaluateCandidate(
       confusion,
       meanConfidenceCorrect: mean(correctConfidences),
       meanConfidenceIncorrect: mean(incorrectConfidences),
+      fires,
+      ...(scenarios ? { scenarios } : {}),
       latency: {
         p50: percentile(latencies, 0.5),
         p75: percentile(latencies, 0.75),
@@ -369,6 +447,14 @@ async function main(): Promise<void> {
       + ` hard=${(report.aggregate.hardThreeClassAccuracy * 100).toFixed(2)}%`
       + ` p75=${report.aggregate.latency.p75}ms`
       + ` words=${report.size.words}`
+      + ` prec=${report.aggregate.fires.metPrecision === null ? "n/a" : (report.aggregate.fires.metPrecision * 100).toFixed(1) + "%"}`
+      + ` rec=${report.aggregate.fires.metRecall === null ? "n/a" : (report.aggregate.fires.metRecall * 100).toFixed(1) + "%"}`
+      + ` falsefires=${report.aggregate.fires.falseFires}`
+      + (report.aggregate.scenarios
+        ? ` watches=${report.aggregate.scenarios.count}`
+          + ` noisy=${report.aggregate.scenarios.withFalseFire}`
+          + ` broke-silence=${report.aggregate.scenarios.brokenSilence}`
+        : "")
       + ` in=${report.aggregate.tokens.input}`
       + ` wall=${((Date.now() - started) / 1000).toFixed(1)}s`,
     );
