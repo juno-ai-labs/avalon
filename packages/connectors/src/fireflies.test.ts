@@ -7,7 +7,7 @@ import {
   verifyFirefliesSignature,
 } from './fireflies';
 import { ConnectorRegistry } from './index';
-import { authorizedConnection, ConnectorError, type ConnectorConnectionContext } from './types';
+import { authorizedConnection, connectorConnectableScopes, connectorScopeIsConnectable, ConnectorError, type ConnectorConnectionContext } from './types';
 import { neverAborts } from './test-signals';
 
 const workspaceId = asWorkspaceId('44444444-4444-4444-8444-444444444444');
@@ -87,6 +87,18 @@ describe('Fireflies protocol', () => {
       'fireflies.workspace.read': ['workspace'],
       'fireflies.personal.read': ['personal'],
     });
+  });
+
+  it('still serves a workspace connection but connects no new one', () => {
+    const adapter = new ConnectorRegistry([createFirefliesConnector({ redirectUri })]).get('fireflies');
+    // The two answer different questions on purpose. One administrator's key
+    // is every member's read of every meeting it can see, so no new workspace
+    // connection is made; the connections a workspace already made keep their
+    // tools and their webhook ingress rather than failing closed.
+    expect(connectorConnectableScopes(adapter)).toEqual(['personal']);
+    expect(connectorScopeIsConnectable(adapter, 'workspace')).toBe(false);
+    expect(connectorScopeIsConnectable(adapter, 'personal')).toBe(true);
+    expect(adapter.manifest.supportedScopes).toContain('workspace');
   });
 
   it('digests the summary and keeps the transcript event operational', () => {

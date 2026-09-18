@@ -42,6 +42,57 @@ to platform policy and the receiving request. Only active sources are reauthoriz
 before model/tool boundaries. A new activation separately rechecks eligibility,
 so deleting an unused catalog candidate does not stop unrelated work.
 
+Conversation rails read `readSkillSummary` from the source owner using the
+receiving conversation's principal and current audience. The summary exposes only
+ID, name, description and loadability; it does not require or grant authoring,
+memory or run-history access. It shares the source audience policy with
+`readSkillSource`, while drafts and paused sources can remain visible but
+unavailable for a new load.
+
+Guest recommendation reads authorize the exact Main or child conversation before
+and after source reads. They combine explicit workstream recommendations and
+owned Sidekicks. Local attachment reads/removals address that conversation and
+preserve Main and siblings. Removal rechecks the local participant and archive
+state and publishes the existing `automations` invalidation topic.
+
+The shared client reads recommendations through that exact-conversation route
+and keys its cache by both workstream and substream. Recommendation mutations
+cancel older reads, update Main's answer and invalidate every conversation's
+recommendation query. Children refetch their own eligible summaries rather than
+receiving Main's source metadata from the mutation response.
+
+The run's existing principal validation supplies the workspace access class to
+Sidekick resolution. Skill enumeration and revalidation do not issue a separate
+membership query on each assistant or tool attempt. Run authority is still
+revalidated at the existing execution boundaries.
+
+New guest runs discover only recommended, workstream-owned or locally loaded
+sources. That selection is followed by ordinary source/audience checks; it cannot
+make a personal or other-workstream source usable. Already admitted execution
+snapshots retain the existing source revalidation rules, so changing a
+recommendation does not retroactively change the admitted execution. Sidekick
+service management resolves the owning workstream through the directory and
+checks its canonical management grant. A Main-only or child-only grant does not
+supply this standing. The model listing tool reuses the management decision in
+its recommendation options when loading definitions; it does not repeat that
+parent read after loading them. Recommendation and catalog reads reuse the parent
+kind returned by conversation admission instead of resolving that parent again.
+Mutations still obtain their own current authority.
+Sidekick mutation HTTP routes accept workspace guests and delegate to these same
+owner checks. They use the workspace-authenticated router and retain the existing
+realtime invalidation middleware; workspace listing and creation remain member
+surfaces. Archived parents retain management standing so the Sidekick
+owner can enforce its existing operation-specific archive rules. Detail and
+run-history HTTP reads use the same actor decision. The actor preserves a guest's
+null workspace role, so workspace skill visibility does not grant workspace-wide
+authoring history. Workstream-owned detail/history remains available through the
+parent management grant. Guest authoring conversation admission uses that same
+canonical management grant. Revoked parent grants publish the existing owned-
+Sidekick revocation fan-out from durable grant-directory delivery, closing sockets
+in those separately seated conversations. New admission and guest execution
+boundaries read current authority; frame publication does not add permission reads.
+The lite browser does not expose setup or authoring screens.
+
 A substream persists its skill snapshots by execution id and records loaded refs.
 Loading a Sidekick in a workstream's main substream also persists a deduplicated
 attachment. Future executions load eligible attachments using their latest
@@ -75,6 +126,25 @@ Both participant preconditions are checked before the shared delete. The two
 object removals remain idempotent, not a cross-object transaction. Executions
 with no eligible Sidekick sources skip recommendation authority reads entirely.
 
+Recommendation mutation now checks the canonical workstream management grant,
+separately from Main or child collaboration. Before Main authority migration,
+ordinary members retain the legacy participant rule; after transfer, a projected
+Main participant is insufficient. The parent rechecks at the mutation boundary.
+Conversation-addressed mutation routes return only that conversation's authorized
+source summaries, without reading Main. A guest manager can reuse a source already
+recommended or loaded there, but a guessed unrelated workspace Sidekick ID does
+not grant discovery or source history. Local removal still needs only the local
+conversation permission.
+
+The `sidekick-recommendation-options` conversation endpoint supplies the shared
+UI and agent catalog with eligible workspace sources, explicit attachment state
+and the canonical parent-management decision. Members retain workspace source
+discovery; guests receive only sources already recommended or loaded in the
+selected conversation. Owned sources are not presented as removable explicit
+recommendations. The UI separates local removal, shared recommendation removal,
+and recommending an eligible local source. The agent catalog reports `canAttach`
+from the same decision and only reads owned definitions with parent management.
+
 A work stream's own rails list **Sidekicks**: the Sidekicks the room owns —
 `listWorkstreamAutomations`, read through `GET /sidekicks/workstream/:id`, which
 refuses a caller who is not a participant — together with explicit workspace
@@ -83,13 +153,15 @@ list keyed by Sidekick id. The plus-marked Add Sidekick rail row opens a menu:
 Attach existing Sidekick selects a non-archived workspace Sidekick, while Create
 new Sidekick opens the existing Sidekick composer.
 A row opens that Sidekick in the library window; Remove lives in its right-click
-menu when the viewer may remove it. Removing a workspace recommendation
+menu when the viewer may remove it. Local removal and workstream recommendation
+removal are separate, explicitly labeled actions. Removing a workspace recommendation
 also clears its current local attachment. An owned Sidekick that has never been
 loaded carries no removal action; its recommendation follows ownership.
 The rail marks recommendations with a right-aligned circled carambola icon whose
 tooltip explains shared discovery without automatic loading.
 Picker state is keyed by workstream, and an attachment response cancels older
-recommendation reads before updating that workstream's cache. Removal state is
+recommendation reads before updating the selected conversation's cache and
+invalidating sibling recommendation queries. Removal state is
 keyed by conversation, so navigation cannot carry an error into another substream.
 A merged row takes its lifecycle from the owned summary and its availability
 from the attachment, because each list knows one of them. The section is absent
@@ -142,7 +214,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
 | `apps/desktop/src/renderer/components/workstream-sidebar.tsx`, `screens/conversation-surface.tsx` | The section's place below **Participants**; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
-| `apps/desktop/src/renderer/styles/app.css` | `.sidekick-tile-tooltip`, the one width every answer a strip tile's tooltip gives is held to. |
+| `packages/ui/src/styles/app.css` | `.sidekick-tile-tooltip`, the one width every answer a strip tile's tooltip gives is held to. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
@@ -814,6 +886,15 @@ run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
+## Scoped Sidekick discovery reuse
+
+Guest candidate selection uses one recommended-or-loaded ID rule across execution
+and management. Initial execution memoizes recommendation references within that
+request; pinned retries still revalidate their sources. Management queries resolve
+candidate summaries without recursively invoking other public service entrypoints.
+Desktop and browser request management options only when their controls open, not
+on every transcript update.
+
 ## Changelog
 
 ### 2026-09-17 — A connector event admits under the occurrence its connector named
@@ -839,6 +920,27 @@ connector naming a bare id could collide with another event's.
 already made, like a redelivery.
 
 PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
+
+### 2026-09-17 — Separate conversation Sidekick use from authoring access
+
+Guest conversation rails now use source-owned summaries and exact conversation
+admission. Recommendations include inherently recommended owned Sidekicks; local
+loads persist and can be removed within the granted child. A guest-triggered
+run uses ordinary user attribution and the existing skill-loading runtime.
+
+The previous list path opened the source's authoring detail and the recommendation
+path opened Main. Either coupling required granting unrelated history to a guest
+shared into one child. Source audience policy is now shared between minimal
+metadata and instruction reads, while new guest discovery follows existing
+recommendation/ownership/local-load relationships. Broad workspace discovery and
+copying Main's loaded state into a child were rejected. Parent management is
+checked by the canonical parent grant, including AutomationService's actor
+resolution. The directory locates the owner but its projected Main roster cannot
+substitute for current management authority. Source history remains a separate
+permission, and recommendations still do not auto-load. Guest candidate selection
+uses one recommended-or-loaded helper. A run shares its recommendation read with
+initial skill discovery, and management choices load only when controls open;
+ordinary transcript updates must not fetch a management catalog.
 
 ### 2026-09-15 — The empty Sidekick slot stays visible until an active shortcut occupies it
 

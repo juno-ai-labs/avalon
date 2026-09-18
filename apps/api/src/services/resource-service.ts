@@ -485,6 +485,7 @@ export class ResourceService {
   }
 
   async hydrate(id: string) {
+    await this.authorizeRead(id);
     const resource = await this.loadResource(id);
     if (resource.connection_id == null) return this.toResource(resource);
     const connection = await this.loadConnection(String(resource.connection_id));

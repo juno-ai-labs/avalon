@@ -81,6 +81,8 @@ export {
   connectorActivityScopes,
   connectorActivitySupportsScope,
   connectorCapabilitySupportsScope,
+  connectorConnectableScopes,
+  connectorScopeIsConnectable,
   connectorOriginFromActivity,
   connectorOriginUrl,
   describeConnectorOrigin,
@@ -5111,6 +5113,15 @@ export class ConnectorRegistry {
               `Connector ${manifest.type} has invalid connection scopes for capability ${capability}`,
             );
           }
+        }
+      }
+      if (adapter.connectableScopes) {
+        const scopes = adapter.connectableScopes;
+        if (!scopes.length || scopes.some((scope) => !manifest.supportedScopes.includes(scope))) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} has invalid connectable connection scopes`,
+          );
         }
       }
       if (adapter.activityConnectionScopes) {

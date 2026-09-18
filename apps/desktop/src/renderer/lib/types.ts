@@ -1,5 +1,5 @@
 import type { ImportedMessageProvenance } from "@rally/contracts";
-import type { PersonalPresentation, WorkstreamAppearance } from '@rally/contracts';
+import type { WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
@@ -35,28 +35,14 @@ export type Scope = 'you' | 'workspace';
  * server's, so "private" means the same thing on both.
  */
 export type VisibilityScope = ContractScope;
-export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
 export type AutomationStatus = 'active' | 'paused' | 'draft';
 export type AutomationLifecycleState = ContractAutomationLifecycleState;
 export type AutomationRunStatus = ContractAutomationRunStatus;
 /** The definition an automation's conversation has submitted, as the wire carries it. */
 export type AutomationDefinition = ContractAutomationDraft;
 
-export interface WorkspaceMember {
-  presentation?: PersonalPresentation | null;
-  id: string;
-  name: string;
-  email: string;
-  avatarUrl?: string;
-  timezone: string;
-  role?: string;
-  /**
-   * Present only on people read from the workspace roster, which is the one
-   * place a membership that is not yet active can appear. Participants and
-   * viewers are members by construction and carry no status.
-   */
-  status?: 'active' | 'invited' | 'suspended';
-}
+export type { HarnessStatus, WorkspaceMember } from '@rally/ui/lib/types';
+import type { HarnessStatus, WorkspaceMember } from '@rally/ui/lib/types';
 
 export interface MessageAuthor {
   id: string;
@@ -64,7 +50,8 @@ export interface MessageAuthor {
   avatarUrl?: string;
   email?: string;
   timezone?: string;
-  role?: string;
+  role?: string | null;
+  accessClass?: "member" | "guest";
   status?: 'active' | 'invited' | 'suspended';
 }
 

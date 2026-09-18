@@ -20,7 +20,7 @@ saying "Copy endpoint" where the field already says what it is.
 | `apps/desktop/src/renderer/lib/use-copy.ts` | `useCopy` — the one copy-to-clipboard behaviour: the write, the `idle` / `copied` / `failed` state it settles into, and the reset timer. `COPY_FEEDBACK_MS` is how long an outcome shows. |
 | `apps/desktop/src/renderer/components/copy-button.tsx` | `CopyButton` — the icon control every copy affordance renders, and `CopyField` — a caption, the value in a read-only field, and the control beside it. |
 | `apps/desktop/src/renderer/components/copy-button.node.test.ts` | The guard: which files may call the bridge's `copyText` directly, and which may call `useCopy`. |
-| `apps/desktop/src/renderer/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-field` lays the field and its control on one row; `.copy-detail` is the older "value beside its control" row the inspector rail and the run-failure notice share. |
+| `packages/ui/src/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-field` lays the field and its control on one row; `.copy-detail` is the older "value beside its control" row the inspector rail and the run-failure notice share. |
 
 ## How it works
 
@@ -47,8 +47,8 @@ before it has something to say.
 
 `CopyField` is the composition for a value shown to be copied rather than read:
 a `<label>` over a read-only `<input>`, the control in the same grid row, and
-`secret` to mask the value. The Fireflies setup and the inbound-webhook result
-both render two of them, an endpoint and a secret.
+`secret` to mask the value. The inbound-webhook result renders two of them, an
+endpoint and a secret.
 
 ## Invariants
 
@@ -70,8 +70,8 @@ both render two of them, an endpoint and a secret.
   keeps every control showing an outcome for the same time.
 - **A copy is never silent.** The glyph, the name, and the live region change
   together. A control that can fail without saying so is the defect this
-  replaced: the Fireflies dialog's secret cannot be read back off the screen,
-  so a failed copy there had to be a thing the administrator is shown.
+  replaced: a one-time secret cannot be read back off the screen, so a failed
+  copy there had to be a thing the administrator is shown.
 - **The control is an icon, and the label is its tooltip.** A text button
   saying "Copy endpoint" under a field captioned "Endpoint URL" was the shape
   this replaced everywhere it appeared.
@@ -107,9 +107,9 @@ provider above it.
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.test.tsx` | The control: an icon named by its label with a tooltip, the outcome in its name, class and live region, the failed state's retry, and `CopyField`'s read-only and masked fields. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.node.test.ts` | Nothing goes round it: the bridge's direct callers are the menu items, and the hook is the only timer. |
 
-The surfaces' own tests — the Fireflies setup, the inbound-webhook dialog, the
-invite link, the inspector rail, the run-failure notice, the site detail, the
-code block — assert on the control by its accessible name.
+The surfaces' own tests — the inbound-webhook dialog, the invite link, the
+inspector rail, the run-failure notice, the site detail, the code block —
+assert on the control by its accessible name.
 
 ### 2026-09-13 — One icon control for every copy affordance
 

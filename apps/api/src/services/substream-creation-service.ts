@@ -23,8 +23,14 @@ import {
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { WorkstreamObjectClient } from "./workstream-object-client";
-import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
+import {
+  bootstrapConversationChildRuntime,
+  provisionWorkstreamObject,
+  warmConversationChildRuntime,
+} from "./workstream-runtime-database";
 import { noFlowSpan, type FlowSpan } from "../observability/tracing";
+import { Preparation } from "./harness-preparation";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 
 /**
  * The title preparation reserves a child under.
@@ -59,9 +65,9 @@ export class SubstreamCreationService {
     private readonly summaryGateway?: SubstreamSummaryGateway,
   ) {}
 
-  private async parent(parentId: string) {
-    const parent = await new ConversationService(this.env, this.auth).authorizeViewer(parentId);
-    if (parent.kind !== "workstream" || parent.archived) {
+  private async parent(parentId: string, substreamId?: string) {
+    const parent = await new ConversationService(this.env, this.auth).authorizeViewer(parentId, substreamId);
+    if (parent.kind !== "workstream" || (parent.archived && !substreamId)) {
       throw new ApiError(409, "substream_parent_unavailable", "Substreams require an active work stream.");
     }
     return durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, this.auth.workspaceId,
@@ -96,6 +102,19 @@ export class SubstreamCreationService {
     }
     if (operation.status === "failed") throw new ApiError(409, "substream_creation_cancelled", "This creation request is no longer active.");
     if (operation.preparedContext) return operation;
+    // Opening a new child applies the full object schema before it can accept
+    // its first turn. Start the side-effect-free wake as soon as the parent has
+    // reserved the child's stable id, while source capture and transformation
+    // are already occupying this request. Authority remains confirmation's
+    // fenced responsibility, so human think-time cannot pin an old generation.
+    const reservedSubstreamId = operation.substreamId;
+    const childWarmup = new Preparation(() => warmConversationChildRuntime(
+      this.env,
+      this.auth.workspaceId,
+      parentId,
+      reservedSubstreamId,
+    ));
+    childWarmup.get();
     if (operation.recipe.capture === "source" && !operation.capture) {
       const source = { workspaceId: this.auth.workspaceId, workstreamId: asWorkstreamId(parentId), substreamId: asSubstreamId("0") };
       const capture = await span.step("substream.prepare.source.capture", async () => {
@@ -119,6 +138,25 @@ export class SubstreamCreationService {
     }));
     // Recheck authority after inference, before exposing the captured content.
     await span.step("substream.prepare.authority.recheck", () => this.parent(parentId));
+    try {
+      const warmed = await span.step("substream.prepare.child.warm", () => childWarmup.get());
+      logStructuredEvent(this.env, "info", "substream_child_warmed", {
+        operation_id: operation.operationId,
+        workspace_id: this.auth.workspaceId,
+        workstream_id: parentId,
+        substream_id: reservedSubstreamId,
+        object_id: warmed.objectId,
+        authority_mode: warmed.authorityMode,
+      });
+    } catch (error) {
+      logStructuredEvent(this.env, "warn", "substream_child_warm_failed", {
+        operation_id: operation.operationId,
+        workspace_id: this.auth.workspaceId,
+        workstream_id: parentId,
+        substream_id: reservedSubstreamId,
+        reason: diagnosticErrorCode(error, "child_warm_failed"),
+      });
+    }
     return PrivateChildPreparationOperationSchema.parse(
       await span.step("substream.prepare.context.save", () => parent.savePreparedPrivateChildContext({ ...address, preparedContext })),
     );
@@ -362,7 +400,7 @@ export class SubstreamCreationService {
   async changeParticipant(parentId: string, substreamId: string, input: {
     userId: string; operationId: string;
   }, active: boolean) {
-    const parent = await this.parent(parentId);
+    const parent = await this.parent(parentId, substreamId);
     await new ConversationService(this.env, this.auth).authorizeViewer(parentId, substreamId);
     if (substreamId === "0") throw new ApiError(400, "private_substream_required", "Choose a substream.");
     if (active) {
@@ -383,6 +421,9 @@ export class SubstreamCreationService {
       // first real add hit: the only way to find out that a substream member
       // must already be in the work stream was to read the Worker's log.
       if (!(error instanceof Error)) throw error;
+      if (error.message.includes("participant_migration_pending")) {
+        throw new ApiError(409,"participant_migration_pending","Participant access is being upgraded. Try again shortly.");
+      }
       if (error.message.includes("private_child_member_not_admitted_to_parent")) {
         throw new ApiError(409, "substream_member_needs_workstream_access",
           "Add this person to the work stream before adding them to a substream.");
@@ -409,7 +450,7 @@ export class SubstreamCreationService {
 
   /** Members retain read access after archive, so they can also restore the child. */
   async archive(parentId: string, substreamId: string, archived: boolean) {
-    const parent = await this.parent(parentId);
+    const parent = await this.parent(parentId, substreamId);
     if (substreamId === "0") throw new ApiError(400, "private_substream_required", "Choose a substream.");
     // Authorized in both directions by the same call, and it keeps answering
     // once the child is archived: `authorizeViewer` decides admission from
@@ -423,6 +464,9 @@ export class SubstreamCreationService {
         actorUserId: asUserId(this.auth.userId), archived,
       });
     } catch (error) {
+      if (error instanceof Error && error.message.includes("workstream_archived")) {
+        throw new ApiError(409, "substream_parent_unavailable", "Restore the work stream before changing this substream.");
+      }
       if (error instanceof Error && error.message.includes("private_child_participant_required")) {
         throw new ApiError(403, "substream_participant_required", "Only a participant can archive this substream.");
       }

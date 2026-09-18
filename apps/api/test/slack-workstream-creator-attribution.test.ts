@@ -59,6 +59,10 @@ describe("Slack work stream creator attribution", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      // Real parent grant initialization is covered in workerd conversation-creation.
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+        reserveChild: async () => undefined,
+      } }),
       AVALON_REGION: "global",
     });
 
@@ -130,6 +134,10 @@ describe("Slack work stream creator attribution", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      // Real parent grant initialization is covered in workerd conversation-creation.
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+        reserveChild: async () => undefined,
+      } }),
       AVALON_REGION: "global",
     });
 
@@ -163,6 +171,10 @@ describe("Slack work stream creator attribution", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      // Real parent grant initialization is covered in workerd conversation-creation.
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+        reserveChild: async () => undefined,
+      } }),
       AVALON_REGION: "global",
     });
 

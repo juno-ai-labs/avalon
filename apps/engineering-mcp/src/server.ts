@@ -1,5 +1,9 @@
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  EngineeringArtifactListLookupSchema,
+  EngineeringArtifactTargetLookupSchema,
+  EngineeringSidekickListLookupSchema,
+  EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamListLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
@@ -10,6 +14,8 @@ import {
   ListEngineeringWorkspacesResultSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
+  ArtifactIdSchema,
+  AutomationIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -153,6 +159,32 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return found.value;
   }));
 
+  server.registerTool("list_sidekicks", {
+    description: "List every Sidekick in the authoritative WorkspaceDO for a workspace ID, in every lifecycle including deleted.",
+    inputSchema: { workspaceId: WorkspaceIdSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ workspaceId }) => tool(principal, "list_sidekicks", { workspace_id: workspaceId }, async () => {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSidekicks({ workspaceId })));
+    const found = oneRegionalResult(
+      results.map((result) => EngineeringSidekickListLookupSchema.parse(result)),
+      `Workspace ${workspaceId}`,
+    );
+    return found.value;
+  }));
+
+  server.registerTool("list_artifacts", {
+    description: "List every live web artifact in the authoritative WorkspaceDO registry for a workspace ID.",
+    inputSchema: { workspaceId: WorkspaceIdSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ workspaceId }) => tool(principal, "list_artifacts", { workspace_id: workspaceId }, async () => {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listArtifacts({ workspaceId })));
+    const found = oneRegionalResult(
+      results.map((result) => EngineeringArtifactListLookupSchema.parse(result)),
+      `Workspace ${workspaceId}`,
+    );
+    return found.value;
+  }));
+
   server.registerTool("run_workspace_sql", {
     description: "Run arbitrary SQLite against a WorkspaceDO. Statements may mutate production state.",
     inputSchema: { workspaceId: WorkspaceIdSchema, ...sqlInputSchema },
@@ -226,6 +258,62 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Substream ${substreamId}`);
+    },
+  ));
+
+  server.registerTool("run_sidekick_sql", {
+    description: "Run arbitrary SQLite against a SidekickDO — a Sidekick's own object, not its conversation. The workspace ID is required because it is part of the Durable Object name. Statements may mutate production state.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      sidekickId: AutomationIdSchema,
+      ...sqlInputSchema,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, ({ workspaceId, sidekickId, sql, bindings = [] }) => tool(
+    principal,
+    "run_sidekick_sql",
+    { workspace_id: workspaceId, sidekick_id: sidekickId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSidekick({ workspaceId, sidekickId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringSidekickTargetLookupSchema.parse(result)),
+        `Sidekick ${sidekickId}`,
+      );
+      return executedSql(await resolved.binding.runSidekickSql({
+        workspaceId,
+        sidekickId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Sidekick ${sidekickId}`);
+    },
+  ));
+
+  server.registerTool("run_artifact_sql", {
+    description: "Run arbitrary SQLite against an ArtifactHostDO — the artifact's supervisor, holding its current version, viewer sessions and error log. A stateful artifact's own tables live in a separate facet database this tool does not reach. The workspace ID is required: the Durable Object name carries none. Statements may mutate production state.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      artifactId: ArtifactIdSchema,
+      ...sqlInputSchema,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, ({ workspaceId, artifactId, sql, bindings = [] }) => tool(
+    principal,
+    "run_artifact_sql",
+    { workspace_id: workspaceId, artifact_id: artifactId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveArtifact({ workspaceId, artifactId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringArtifactTargetLookupSchema.parse(result)),
+        `Artifact ${artifactId}`,
+      );
+      return executedSql(await resolved.binding.runArtifactSql({
+        workspaceId,
+        artifactId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Artifact ${artifactId}`);
     },
   ));
 

@@ -212,7 +212,8 @@ design, not by oversight.
 
 - The canonical mask and generated mark are `assets/brand/rally-mark-source.png`
   and `assets/brand/rally-mark.png`. The generator writes the same real mark to
-  the desktop, native icon, menu bar, site, favicon, and social-card surfaces.
+  the shared UI package (`packages/ui/src/assets/rally-mark.png`), native icon,
+  menu bar, site, desktop favicon, and social-card surfaces.
 - The public site's pages render the redesigned vector mark
   (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px and
   `/brand/rally-mark-ink.svg` — the same cut stroked ink — on light surfaces,

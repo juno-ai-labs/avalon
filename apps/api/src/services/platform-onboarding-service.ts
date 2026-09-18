@@ -53,7 +53,7 @@ export const platformIdentitySchema = z.object({
 });
 
 const WorkspacePlacementAffinitySchema = z.enum(["wnam", "enam", "weur", "eeur"]);
-const regionalWorkspaceSchema = WorkspaceSchema.extend({
+const regionalWorkspaceSchema = WorkspaceSchema.safeExtend({
   placementAffinity: WorkspacePlacementAffinitySchema,
 });
 const regionalPendingInvitationSchema = PendingWorkspaceInvitationSchema.extend({
@@ -239,6 +239,7 @@ function mapWorkspace(row: Record<string, unknown>): z.infer<typeof regionalWork
     slug: row.slug,
     region: row.region,
     role: row.role,
+    ...(row.access_class === "guest" ? { accessClass: "guest" } : {}),
     timezone: row.timezone,
     createdAt: row.created_at,
     placementAffinity: row.placement_affinity,
@@ -279,10 +280,10 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const [workspaceResult, invitationResult] = await Promise.all([
       this.env.DB.prepare(
         `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at,
-           w.placement_affinity, m.role
+           w.placement_affinity, m.role, m.access_class
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
-         WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
+         WHERE m.user_id = ? AND m.status = 'active' AND m.access_class = 'member' AND w.region = ?
            AND w.abandoned_at IS NULL
          ORDER BY m.joined_at, w.created_at, w.id`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
@@ -581,7 +582,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const membership = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active' AND m.access_class = 'member'
          AND w.region = ? AND w.abandoned_at IS NULL`,
     ).bind(userId, workspaceId, this.env.AVALON_REGION).first<{ present: number }>();
     if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");

@@ -400,10 +400,17 @@ describe("scheduling authority on real workerd", () => {
       seedRun(state);
     });
 
-    const opened = await scheduling(stub, "openElicitation", elicitation());
-
-    expect(opened.value).toEqual({ outcome: "opened", sequenceNumber: 1 });
-    await runInDurableObject(stub, async (instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      // Keep delivery from deleting the committed outbox before inspection.
+      // Invoke the same HTTP handler inside the gate, without another RPC turn.
+      if (!instance.fetch) throw new Error("SubstreamAgent fetch handler is required");
+      const response = await instance.fetch(new Request("https://object.test/internal/scheduling", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+          operation: "openElicitation", args: [elicitation()] }),
+      }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ value: { outcome: "opened", sequenceNumber: 1 } });
       expect(state.storage.sql.exec(
         `SELECT status, run_id FROM elicitation_requests`,
       ).toArray()).toEqual([{ status: "pending", run_id: RUN }]);
@@ -471,7 +478,7 @@ describe("scheduling authority on real workerd", () => {
       } else {
         expect(workstream.updated_at).toBe(elicitation().now);
       }
-    });
+    }));
   });
 
   it("answers a question once, and tells the loser of the race that it lost", async () => {

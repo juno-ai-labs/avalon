@@ -23,6 +23,7 @@ import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { defineLocalCacheSlice, localCacheScope } from './local-cache';
 import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
+import { useCollaborationSession } from './collaboration-session';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { readDevicePreferences } from './device-preferences';
@@ -34,6 +35,7 @@ import {
 
 let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
+let observedCreateSidekick: (() => Promise<void>) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 let observedReconnectAccount: (() => Promise<void>) | null = null;
@@ -65,6 +67,7 @@ const bridge = vi.hoisted(() => ({
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
   openExternal: vi.fn(),
+  openSidekicks: vi.fn().mockResolvedValue(undefined),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
   reselectActiveWorkspace: vi.fn(),
@@ -115,6 +118,8 @@ const expiredIdentitySession: DesktopSession = {
 
 function SessionProbe(): React.JSX.Element {
   const context = useAppSession();
+  const collaboration = useCollaborationSession();
+  observedCreateSidekick = collaboration.createSidekick;
   const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
@@ -127,6 +132,7 @@ function SessionProbe(): React.JSX.Element {
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
   return (
     <>
+      <output data-testid="collaboration-context">{collaboration.api === context.api && collaboration.session === context.session && collaboration.connectorSetup !== null ? 'shared' : 'mismatch'}</output>
       <output>
         {booting ? 'booting' : `${region ?? 'none'}:${pendingInvitation ? 'invite' : session?.workspace?.name ?? 'signed-out'}`}
       </output>
@@ -273,6 +279,10 @@ describe('single-platform desktop identity routing', () => {
       attemptId: 'a'.repeat(43),
     }));
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
+    expect(screen.getByTestId('collaboration-context')).toHaveTextContent('shared');
+    expect(observedCreateSidekick).not.toBeNull();
+    await observedCreateSidekick?.();
+    expect(bridge.openSidekicks).toHaveBeenCalledWith('new');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
   });

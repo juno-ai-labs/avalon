@@ -19,8 +19,6 @@ import { PROJECT_COLOR_DEFAULT, projectColorCells } from '../lib/project-palette
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
-
-
 function label(value: string): string {
   return value.split('-').map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join(' ');
 }
@@ -257,7 +255,7 @@ export function ProjectSidebarSection({
                       <IconTriangle className={clsx(isExpanded && 'is-expanded')} size={10} stroke={1.8} />
                     </button>
                     <NavLink
-                      className={({ isActive }) => clsx('project-row-link', isActive && 'is-active')}
+                      className={({ isActive }: { isActive: boolean }) => clsx('project-row-link', isActive && 'is-active')}
                       onClick={() => setExpanded((current) => {
                         const next = new Set(current);
                         if (location.pathname === `/projects/${project.id}` && next.has(project.id)) {
@@ -267,7 +265,7 @@ export function ProjectSidebarSection({
                         }
                         return next;
                       })}
-                      onKeyDown={(event) => {
+                      onKeyDown={(event: React.KeyboardEvent<HTMLAnchorElement>) => {
                         if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
                         event.preventDefault();
                         const destination = event.key === 'ArrowUp' ? index - 1 : index + 1;

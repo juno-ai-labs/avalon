@@ -1,7 +1,8 @@
 # Architecture
 
 Rally is a pnpm TypeScript monorepo with an Electron desktop client, a native
-SwiftUI iOS client, a Hono API Worker deployed twice as configured deployments,
+SwiftUI iOS client, a lite browser client, a Hono API Worker
+across configured deployments,
 internal operator Workers, and shared packages that hold every contract and rule
 the surfaces agree on. This document is the map of how those surfaces fit
 together: what runs where, what crosses which boundary, and which document owns
@@ -21,6 +22,7 @@ apps/
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
   ace/                     Access-protected internal administration Worker
 packages/
+  ui/                      Shared collaboration components, display helpers, styles and appearance
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
   agent-harness/           Bind/OpenRouter adapter, prompts, skills, classifiers, tools
@@ -34,6 +36,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/ios` | Native SwiftUI iPhone/iPad client: Keychain sessions, Google PKCE through `ASWebAuthenticationSession`, conversation feed and workspace directory sockets, TestFlight archive. Owned by [`ios-client.md`](ios-client.md). |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so a space, a stream, and a substream paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
+| `apps/browser` | Lite browser host, static SPA email sign-in and same-origin regional API forwarding. Shared collaboration uses standalone visible conversation sockets. Owned by [`browser-client.md`](browser-client.md). |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
@@ -44,6 +47,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
 | `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/ace` | The private Hono operator Worker behind `ace.internal.rallywith.ai`: D1-assisted Flagship product targeting, the shared-to-regional Queue fan-out, and the component library future internal pages extend. See [`ace.md`](ace.md). |
+| `packages/ui` | Shared collaboration presentation and browser-safe display/theme helpers, consumed by desktop and prepared for the browser host in #825. Owned by [`shared-ui.md`](shared-ui.md) and [`theming.md`](theming.md). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
 | `scripts/eslint-rules/require-validated-response.mjs` | The lint rule that makes a route validate its own response. |
@@ -690,6 +694,16 @@ Telemetry IPC is a closed named surface, local files are owner-only and bounded,
 and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
 access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
+
+### 2026-09-17 — A lite browser host reuses regional identity
+
+Added a browser Worker and passwordless entry beside the desktop and native
+clients. The browser is for scoped collaboration without setup or onboarding;
+it uses the ordinary session ledger through the regional cookie adapter. The
+host forwards through configured service bindings rather than accepting API
+hosts from links. Business authority remains in the API. Shared collaboration uses standalone
+visible conversation feeds; this adds no socket relay
+or separate guest identity system. See [browser-client.md](browser-client.md).
 
 ### 2026-09-11 — Native iOS is a fourth deployment surface
 

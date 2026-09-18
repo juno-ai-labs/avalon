@@ -324,7 +324,7 @@ describe("identity authority on real workerd", () => {
 
     // The promotion and the demotion are one fact about who this work stream
     // belongs to. Two creators, or none, is what a partial batch leaves behind.
-    expect(corrected.value).toEqual({ outcome: "adopted" });
+    expect(corrected.value).toEqual({ outcome: "adopted", participantAuthority: "legacy" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT created_by_user_id FROM workstream WHERE id = 1`,
