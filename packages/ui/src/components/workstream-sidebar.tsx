@@ -1,7 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { SidekickSection, type SidekickRow } from './sidekick-section';
 import { Archive, Copy, Globe2, GripVertical, PanelLeftClose, PanelLeftOpen, Pencil, UserPlus } from 'lucide-react';
-import { IconCornerDownRight, IconPlus } from '@tabler/icons-react';
+import { IconCornerDownRight, IconPlus, IconShare2 } from '@tabler/icons-react';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import type { SidebarPresentation } from '../lib/types';
@@ -20,7 +20,8 @@ export interface ConversationRowActions {
   onMakePublic?: (() => void) | undefined;
   publicDisabled?: boolean | undefined;
   onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
-  onRename: (target: ConversationRowTarget) => void;
+  onRename?: (target: ConversationRowTarget) => void;
+  onShare?: (target: ConversationRowTarget) => void;
   onArchive?: (target: ConversationRowTarget) => void;
 }
 
@@ -36,9 +37,12 @@ function ConversationRowMenu({ actions, children, target }: {
         {actions.onMakePublic && <ContextMenu.Item className="menu-item" disabled={actions.publicDisabled} onSelect={actions.onMakePublic}>
           <Globe2 aria-hidden="true" size={16} /> Make public to workspace
         </ContextMenu.Item>}
-        <ContextMenu.Item className="menu-item" onSelect={() => actions.onRename(target)}>
+        {actions.onRename && <ContextMenu.Item className="menu-item" onSelect={() => actions.onRename?.(target)}>
           <Pencil aria-hidden="true" size={16} /> Rename
-        </ContextMenu.Item>
+        </ContextMenu.Item>}
+        {actions.onShare && <ContextMenu.Item className="menu-item" onSelect={() => actions.onShare?.(target)}>
+          <IconShare2 aria-hidden="true" size={16} stroke={1.8} /> Share
+        </ContextMenu.Item>}
         {actions.onCopyLink && <ContextMenu.Item className="menu-item" onSelect={() => actions.onCopyLink?.(target)}>
           <Copy aria-hidden="true" size={16} /> {main ? 'Copy work stream link' : 'Copy substream link'}
         </ContextMenu.Item>}

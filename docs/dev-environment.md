@@ -81,7 +81,11 @@ pnpm env:sync
 `scripts/sync-dev-env.mjs` defaults `APP_ENV=development` and
 `RALLY_DEV_AUTH=true` and generates stable signing and encryption material for
 each configured deployment. Copy the example when running the desktop client;
-its Global endpoint is `VITE_API_GLOBAL_URL`. The local development sign-in
+its Global endpoint is `VITE_API_GLOBAL_URL`. JSON-valued Worker settings are
+serialized as single-quoted dotenv values: JSON-style escaped double quotes are
+preserved literally by Wrangler and make settings such as `EMAIL_LOGIN_POLICY_JSON`
+unparseable. Restart the local Worker after changing its environment file.
+The local development sign-in
 stores the seeded workspace credential and a separate Global identity credential
 so workspace discovery, activation, and creation use the ordinary account flow.
 
@@ -189,6 +193,15 @@ Verify configured deployments:
 Expect `"ok": true` with D1, R2, Durable Objects, Queues, and Workflows
 available. The provider checks report `not configured` until you supply keys;
 that is expected and does not block local work.
+
+## Lite browser development
+
+`pnpm dev:browser` builds the client, then watches source changes while Wrangler
+serves port 8794. Set the API's `BROWSER_APP_ORIGIN` to the exact local browser
+origin (for example `http://localhost:8794`) and use that same hostname in Chrome.
+The host uses the local Global service binding; the regional API must be running.
+JSON settings from older generated double-quoted `.dev.vars` files are decoded
+before `env:sync` rewrites them into single-quoted dotenv values.
 
 ## 4. Run the desktop client headlessly
 

@@ -1,3 +1,4 @@
+import { ScopeSharingPanel } from "../components/scope-sharing-panel";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -1038,9 +1039,10 @@ export function ConversationSurface({
    * flag gates presentation only: an artifact's authorization is structural and
    * holds whether or not this is passed.
    */
+  const browserHost = session !== null && 'authentication' in session && session.authentication === 'cookie';
   const siteArtifacts = useMemo(() => {
     if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
-    const bridge = window.rally;
+    const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);
     if (!bridge) return undefined;
     return {
       openArtifact: (resourceId: string) => api.openArtifact(resourceId),
@@ -1055,7 +1057,7 @@ export function ConversationSurface({
         openExternal: bridge.openExternal,
       },
     };
-  }, [api, featureFlags.data?.liveArtifactsEnabled]);
+  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -2411,6 +2413,8 @@ export function ConversationSurface({
       />}
 
       <AddParticipantDialog
+        sharing={participantDialogOpen && parentKind === 'workstream' && api && session?.workspace ?
+          <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
         error={addParticipant.error?.message ?? removeParticipant.error?.message}
