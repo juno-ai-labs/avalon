@@ -25,6 +25,7 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   isExternalEventTrigger,
+  semanticConditionsForEventType,
   type AutomationDetail,
   type AutomationDraft,
   type AutomationExecutionPrincipalClaim,
@@ -104,6 +105,7 @@ import {
   type AutomationActorRequest,
   type AutomationCreateRequest,
   type AutomationExternalEventAdmission,
+  type AutomationExternalEventPlan,
   type AutomationInboundEmailAdmission,
   type AutomationOwningRoomArchivedRequest,
   type AutomationRunNowRequest,
@@ -950,6 +952,58 @@ export class SidekickDO extends ConversationParentDurableObject {
     return { runId: admitted.runId, reused: admitted.reused };
   }
 
+  /**
+   * What this delivery has to do before it may admit its event.
+   *
+   * Every check `admitExternalEvent` applies lives here and is read by both, so
+   * a caller cannot learn one answer from the plan and have admission apply
+   * another. Ordering is deliberate: lifecycle, trigger membership and the
+   * activation boundary are free and settle most deliveries, and only what
+   * survives all three is worth a model call.
+   */
+  private externalEventPlan(request: AutomationExternalEventAdmission): AutomationExternalEventPlan {
+    const row = this.assertAutomation(request.workspaceId, request.automationId);
+    if (row.lifecycle !== "active") return { kind: "refuse", outcomeCode: `sidekick_${row.lifecycle}` };
+    const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
+    const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
+    if (definition?.definitionVersion === 2) {
+      const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
+      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === request.registrationId && entry.source.eventType === request.event.eventType)) {
+        return { kind: "refuse", outcomeCode: "sidekick_trigger_removed" };
+      }
+    }
+    if (row.effective_after_event_sequence === null
+      || request.event.eventSequence <= row.effective_after_event_sequence) {
+      return { kind: "refuse", outcomeCode: "sidekick_event_before_activation_boundary" };
+    }
+    const semantic = semanticConditionsForEventType(definition, request.event.eventType);
+    if (semantic.conditions.length > 0) {
+      return { kind: "judge", conditions: semantic.conditions, connectorType: semantic.connectorType };
+    }
+    // A Sidekick that gates events and whose join found none of them is refused,
+    // not admitted. The join is by declared event type, so it comes up empty when
+    // a semantic trigger's `deterministicPrefilter.eventType` has drifted from the
+    // event type its evaluator rule registered — and admitting there would run the
+    // Sidekick ungated, which is the defect this mechanism exists to fix. Refusing
+    // is visible in a way admitting is not: the outcome code says the condition
+    // could not be located rather than that it passed.
+    return semantic.gated
+      ? { kind: "refuse", outcomeCode: "sidekick_semantic_condition_unresolved" }
+      : { kind: "admit" };
+  }
+
+  /**
+   * The plan for one matched external event, without admitting it.
+   *
+   * Read-only and idempotent: a caller reads it, judges any conditions it names,
+   * and comes back to `admitExternalEvent` with the verdict.
+   */
+  async externalEventAdmissionPlan(input: AutomationExternalEventAdmission): Promise<AutomationExternalEventPlan> {
+    await this.initialized;
+    const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "external_event_admission_plan");
+    return this.externalEventPlan(request);
+  }
+
   /** Admit one matched external event, once. */
   async admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{
     admitted: boolean;
@@ -957,19 +1011,25 @@ export class SidekickDO extends ConversationParentDurableObject {
   }> {
     await this.initialized;
     const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle !== "active") return { admitted: false, outcomeCode: `sidekick_${row.lifecycle}` };
-    const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
-    if (definition?.definitionVersion === 2) {
-      const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
-      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === request.registrationId && entry.source.eventType === request.event.eventType)) {
-        return { admitted: false, outcomeCode: "sidekick_trigger_removed" };
+    const plan = this.externalEventPlan(request);
+    if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
+    if (plan.kind === "judge") {
+      // The condition the member wrote is the gate. A delivery that did not
+      // bring a verdict is refused rather than admitted, because admitting is
+      // how this trigger type spent its first year: the sentence was stored,
+      // displayed, and never applied.
+      const verdict = request.conditionVerdict;
+      if (!verdict) return { admitted: false, outcomeCode: "sidekick_semantic_condition_unjudged" };
+      // Both halves of the verdict have to agree, because the schema lets them
+      // disagree: `{ admit: true, code: "classifier_unavailable" }` parses, and
+      // trusting `admit` alone would start a run on a verdict that says the
+      // classifier never answered. The one caller today derives both from one
+      // decision, so this changes nothing at runtime — it moves the invariant to
+      // the object that the doc comments say decides, where a second caller
+      // written later inherits it instead of having to remember it.
+      if (!verdict.admit || verdict.code !== "condition_met") {
+        return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
-    }
-    if (row.effective_after_event_sequence === null
-      || request.event.eventSequence <= row.effective_after_event_sequence) {
-      return { admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" };
     }
     const admitted = await this.admitOccurrence(externalEventOccurrenceKey(request.event), {
       kind: "external_event",

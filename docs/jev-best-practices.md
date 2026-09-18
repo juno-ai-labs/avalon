@@ -12,6 +12,10 @@ and a measured fallback. [`agent-harness.md`](agent-harness.md) owns the shipped
 runtime. The committed content-free
 `packages/agent-harness/evals/addressing/baseline-2026-09-16.json` records the
 aggregate baseline; case-level reports are ephemeral protected-scratch output.
+[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md) applies this
+guide to the rest of the tree: which decisions are candidates for a second JEV
+request, which are deliberately not, and the transport primitives a second one
+needs before it is written.
 
 ## Optimize the whole application request
 
@@ -65,6 +69,22 @@ Choice reached 92.16% binary accuracy across the full 153 cases. Addressing is
 not merely a degree of “agent work”: human coordination, social reactions,
 genuine ambiguity, and independently assigned human-plus-agent work are
 different policies.
+
+**A boolean-looking decision is not automatically a Noul, and the threshold curve
+is a reason on its own.** The semantic trigger gate asks whether one event
+satisfies one written condition, which is a yes-or-no question underneath, so it
+was measured both ways over 274 cases. The best Noul tied the winning Choice on
+the product objective and lost on three counts: worse calibration on the fire
+decision, eight points less three-class accuracy because one scalar cannot say "no
+event of this kind could settle this", and the shape of its threshold curve. For a
+Choice the label carries the decision and the curve is flat from `0` to `0.5`; for
+a Noul the scalar *is* the decision, so the curve has a peak and then a cliff —
+0.860 at `0.5`, 0.787 at `0.7`, 0.613 at `0.8`. A later well-meaning edit towards
+safety costs a third of the recall on the Noul and nothing on the Choice. Prefer
+the primitive whose failure you will notice. A **hybrid** that keeps the scalar and
+adds a second Choice for judgeability is available and cost-free at runtime — both
+questions answer in one round trip — but it did not recover the third class here:
+its second question claimed events that could in fact settle their condition.
 
 Do not decompose one mutually dependent decision into independent questions
 without evidence. Rally's two-question decomposition — whether Rally should act
@@ -199,6 +219,17 @@ identical classifications on a second holdout run.
 | Untouched holdout | 126 | 91.27% | 92.86% |
 | Identical holdout repeat | 126 | 91.27% | 92.86% |
 
+**Do not assume that repeat is free.** Addressing's holdout repeat reproduced its
+classifications exactly; the semantic trigger's did not. Repeating six candidates
+three times there moved three-class accuracy by 1.4 points at the median and 4.1
+at worst, which is larger than most of the differences a generation produces. So
+measure the floor first, on repeats of the candidates you already have, and then
+read every later comparison against it: **a difference smaller than a candidate's
+own spread across its repeats is not a difference.** One run of eleven candidates
+is a story about that run, and the cheapest way to find out which of the two
+regimes a decision is in is to repeat the baseline before ranking anything
+against it.
+
 ## Build ground truth that can disagree with production
 
 Historical production output is a regression label, not automatically the
@@ -258,6 +289,61 @@ false invocation and a missed invocation have different costs, and fallback
 coverage adds latency. The selected Rally threshold routes 20 of 153 measured
 cases to fallback. Raising it may improve primary precision while making more
 messages pay the fallback's multi-second latency.
+
+**Score the decision, not the label, and write the price list down before
+ranking anything.** A candidate that answers correctly at a confidence the gate
+rejects is a miss in production, and accuracy cannot see that: on the semantic
+trigger corpus the accuracy winner had fifteen unwanted fires and the accuracy
+loser shipped. Two rules came out of getting this wrong twice.
+
+- **The direction of the asymmetry is the product's, not a tuning knob.** That
+  gate's first objective charged a false fire double a miss, reasoning that an
+  unwanted fire starts an agent run. What it missed is what the run *does*: it
+  opens with a capable model that decides for itself whether there is anything to
+  act on, so the unwanted fire costs one session and the miss costs the request.
+  The whole ranking was backwards. Ask what is behind the gate before pricing its
+  errors, and keep the weights in one named place so the ranking can be
+  re-derived rather than re-run.
+- **Sweep the threshold through one implementation of the gate's own rule.** The
+  same sweep read that rule twice, once for the fires and once for the misses, and
+  the second copy applied the Choice rule to a Noul — which pinned its missed
+  count to a fixed verdict and printed its recall as flat across the whole sweep.
+  A threshold recommendation nearly came out of that table. The number a
+  classifier's gate is set to is exactly as trustworthy as the code that drew the
+  curve.
+
+The per-case answers are worth keeping for the same reason: a stored run can be
+re-scored under a new price list without calling the provider, which is what makes
+"what would this have ranked under the corrected objective" a minute's work rather
+than a re-run with fresh sampling noise on top.
+
+**A price list fixes the decision rule, so derive it before arguing about the
+threshold.** Writing `p` for the probability the classifier's positive answer is
+right and `c`, `f`, `m` for the weights on a correct decision, a false positive and
+a miss, acting beats not acting when `p > (c − f) / (2c − f − m)`. Rally's semantic
+trigger gate prices those at 1, 0 and −2, so its optimal gate fires whenever a
+calibrated P(match) exceeds **0.25** and never lower. That number settles an
+argument that otherwise has no floor: "a miss is expensive, so err towards acting"
+is true, and it stops being true at one in four, because below that the cases being
+picked up are mostly negatives and three cheap errors cost as much as the expensive
+one they avoid. The confidence a Choice reports is not `p` and is usually not
+calibrated, so the operating point still comes from a sweep — but the derived
+number tells you which direction a sweep result can be trusted in.
+
+**Inverting the question to change which way uncertainty falls is worth trying and
+did not work here.** A positive question fires on a confident yes, so every
+hesitant right answer is scored as the expensive error. Asking the negative
+question instead — "should this be ignored?", refusing only on a confident yes —
+inverts that, and on the semantic trigger corpus it did exactly what it was
+designed to do: misses fell to near zero and recall reached 99%. It lost anyway,
+for two reasons worth knowing in advance. The bill was 60 to 75 unwanted
+invocations per 151 cases, which is what firing at P(match) ≈ 0.05 costs against a
+derived floor of 0.25. And the negation **damaged the label itself**: compared at a
+threshold of zero, where the fall-through is inactive and only the question
+differs, three-class accuracy fell 10 to 16 points and the fire-decision Brier
+roughly doubled. The model is worse at the discrimination when asked to find a
+reason to refuse than when asked to find a reason to act, and that is not a wording
+problem another generation fixes.
 
 ## Measure latency end to end
 
