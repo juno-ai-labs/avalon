@@ -102,6 +102,10 @@ function envFor(database: DatabaseSync, digestEnabled = 1): Env {
   return createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      // Real parent grant initialization is covered in workerd conversation-creation.
+      WORKSTREAM_DOS: testSubstreamAgentsBinding(database, { extra: {
+        reserveChild: async () => undefined,
+      } }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: workspaceObjectRpcs(instance, [
         "recordActivityEvent",

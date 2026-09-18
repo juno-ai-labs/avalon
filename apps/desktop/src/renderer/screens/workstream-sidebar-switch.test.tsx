@@ -12,8 +12,9 @@ const api = vi.hoisted(() => ({
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({ api, session: null }),
+vi.mock('../lib/collaboration-session', () => ({
+  useOptionalCollaborationSession: () => null,
+  useCollaborationSession: () => ({ api, session: null }),
 }));
 
 vi.mock('../lib/use-client-feature-flags', () => ({
@@ -27,6 +28,7 @@ vi.mock('../lib/workstream-socket-pool', () => ({
 
 vi.mock('../lib/workspace-socket', () => ({
   useWorkspaceSocket: () => ({ presenceUserIdsByWorkstream: {} }),
+  useOptionalWorkspaceSocket: () => null,
 }));
 
 vi.mock('../lib/use-file-attachments', () => ({

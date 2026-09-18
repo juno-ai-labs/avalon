@@ -102,11 +102,12 @@ describe('projected search authorization', () => {
   it('records retry intent before an initial authority lookup can fail', async () => {
     const stub = env.WORKSPACE_DOS.getByName('search-authorization-atomic-fill');
     await stub.initializeWorkspace(subject.workspaceId, 'wnam');
-    await stub.registerSearchAuthorization({ subject, resources: [resource] });
-    await runInDurableObject(stub, async (_instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => state.blockConcurrencyWhile(async () => {
+      // Inspect the committed intent before an alarm can deliver and delete it.
+      await instance.registerSearchAuthorization({ subject, resources: [resource] });
       expect(state.storage.sql.exec('SELECT target_id FROM search_authorization_push').toArray())
         .toContainEqual({ target_id: resource.resourceId });
-    });
+    }));
   });
 
   it('persists regional snapshots independently of the legacy inert RPCs', async () => {

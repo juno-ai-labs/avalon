@@ -1,3 +1,5 @@
+import { requireIdentityAuth, getIdentityAuth } from "../middleware/auth";
+import { startEmailLogin, redeemEmailLogin, deliverEmailLogin, EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { zValidator } from "../middleware/validation";
@@ -6,6 +8,8 @@ import {
   RefreshRequestSchema,
   RefreshTokenSchema,
   SessionSchema,
+  WorkspaceSchema,
+  WorkspaceIdSchema,
   WorkspaceInvitationPreviewSchema,
 } from "@rally/contracts";
 import { HttpOrDesktopDeepLinkUrlSchema } from "@rally/contracts/url-schemas";
@@ -40,6 +44,38 @@ const refreshBodyLimit = bodyLimit({
 const IdentityStartResponseSchema = z.object({ url: z.string().min(1) });
 
 export const authRoutes = new Hono<HonoAppEnv>();
+
+const RegionalWorkspacesSchema = z.object({ workspaces:z.array(WorkspaceSchema) });
+const SelectRegionalWorkspaceSchema = z.strictObject({ workspaceId:WorkspaceIdSchema });
+
+authRoutes.get("/workspaces",requireIdentityAuth,async (c) => {
+  c.header("Cache-Control","no-store");
+  const workspaces = await new AuthService(c.env).listRegionalWorkspaces(getIdentityAuth(c).userId);
+  return c.json(RegionalWorkspacesSchema.parse({ workspaces }));
+});
+authRoutes.post("/workspace/select",requireIdentityAuth,refreshBodyLimit,zValidator("json",SelectRegionalWorkspaceSchema),async (c) => {
+  c.header("Cache-Control","no-store");
+  const session = await new AuthService(c.env).createRegionalSession(getIdentityAuth(c).userId,c.req.valid("json").workspaceId);
+  return c.json(SessionSchema.parse(session));
+});
+
+// Both entrypoints are POST-only. Loading a link never consumes a challenge.
+authRoutes.post("/email/start", refreshBodyLimit, zValidator("json",EmailLoginStartSchema), async (c) => {
+  c.header("Cache-Control","no-store");
+  const started = await startEmailLogin(c.env,c.req.valid("json"));
+  await deliverEmailLogin(c.env,started.challengeId);
+  return c.json(EmailLoginStartedSchema.parse(started),202);
+});
+authRoutes.get("/email/redeem", (c) => {
+  c.header("Allow","POST");
+  c.header("Cache-Control","no-store");
+  return c.body(null,405);
+});
+authRoutes.post("/email/redeem", refreshBodyLimit, zValidator("json",EmailLoginRedeemSchema), async (c) => {
+  c.header("Cache-Control","no-store");
+  const receipt = await redeemEmailLogin(c.env,c.req.valid("json"));
+  return c.json(SessionSchema.parse(await new AuthService(c.env).resumeEmailLogin(receipt)));
+});
 
 authRoutes.post("/dev/session", zValidator("json", developmentSessionBody), async (c) =>
   c.json(SessionSchema.parse(

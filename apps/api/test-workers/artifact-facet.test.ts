@@ -403,6 +403,31 @@ describe("the supervisor around the facet", () => {
     });
   });
 
+  it("preserves artifact sessions admitted after a removed membership rejoined", async () => {
+    await env.DB.prepare(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT,
+      workspace_incarnation TEXT
+    )`).run();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, ?)").bind("old-session", VIEWER, WORKSPACE, "old-membership"),
+      env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, ?)").bind("new-session", VIEWER, WORKSPACE, "new-membership"),
+    ]);
+    await publish(VOTING_MODULE);
+    const host = hostStub();
+    for (const appSessionId of ["old-session", "new-session"]) {
+      const { code } = await host.openForViewer({ userId: VIEWER, appSessionId, displayName: "Ada" });
+      expect(await host.redeemCode(code)).not.toBeNull();
+    }
+    await host.revokeSocketAccess({ reason: "workspace_membership_removed",
+      workspaceId: asWorkspaceId(WORKSPACE), userId: VIEWER, sessionId: null,
+      membershipIncarnation: "old-membership" });
+    await runInDurableObject(host, (_instance, state) => {
+      expect(state.storage.sql.exec<{ app_session_id: string }>(
+        "SELECT app_session_id FROM viewer_sessions",
+      ).toArray()).toEqual([{ app_session_id: "new-session" }]);
+    });
+  });
+
   it("redeems an open code exactly once", async () => {
     await publish(VOTING_MODULE);
     const host = hostStub();

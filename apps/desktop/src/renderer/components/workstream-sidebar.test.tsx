@@ -437,7 +437,7 @@ describe('WorkstreamSidebar', () => {
       .toEqual(['Release notes', 'Editor']);
     expect(screen.getByText('Unavailable · Review wording.')).toBeVisible();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this substream' }));
     expect(onRemove).toHaveBeenCalledOnce();
 
     // Neither an empty answer nor a pending one leaves a heading behind, the

@@ -20,7 +20,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
-import { useAppSession } from '../lib/app-session';
+import { useCollaborationSession } from '../lib/collaboration-session';
 import { harnessMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
@@ -432,7 +432,7 @@ export function WorkstreamHeader({
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { api, session } = useAppSession();
+  const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
@@ -793,7 +793,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       } : null}
       renderSidebar={(context) => (
         <WorkstreamSidebar
-          addSidekick={<SidekickPicker workstreamId={context.detail.id} participantIds={context.detail.participants.map((person) => person.id)} />}
+          addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
           sidekicks={context.sidekicks}
           sidekicksError={context.sidekicksError}
           workstream={{ ...context.detail, title: parent.data?.title ?? context.detail.title, appearance: rowAppearance ?? parent.data?.appearance, privateChildren: railChildren }}

@@ -2472,6 +2472,7 @@ pre {
   padding: 8px 13px;
 }
 .settings-member-row:last-child { border-bottom: 0; }
+.settings-member-actions { display: flex; align-items: center; gap: 11px; }
 
 .settings-diagnostics { margin: 0; padding: 0 14px; }
 .settings-diagnostics div {
@@ -7337,3 +7338,13 @@ button.grokbot-conversation-title:hover { background: var(--av-sys-color-surface
 @media (forced-colors: active) {
   .background-agent-shimmer { background: none; color: CanvasText; }
 }
+
+.scope-sharing-panel { padding: 12px 0; }
+.scope-sharing-panel h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+.scope-sharing-panel label { display: grid; gap: 6px; font-size: 13px; }
+.scope-sharing-panel textarea { width: 100%; padding: 10px; border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; background: var(--av-sys-color-surface-default); color: inherit; font: inherit; }
+.scope-sharing-panel .scope-sharing-choice { display: flex; gap: 8px; align-items: start; margin-top: 12px; }
+.scope-sharing-panel p { font-size: 13px; margin: 12px 0; }
+.scope-sharing-panel ul { margin-top: 16px; display: grid; gap: 12px; }
+.scope-sharing-panel li { display: flex; gap: 12px; justify-content: space-between; font-size: 13px; overflow-wrap: anywhere; }
+.scope-sharing-panel li button { flex-shrink: 0; }

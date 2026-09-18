@@ -537,6 +537,21 @@ substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
 
+### 2026-09-17 — Authorize child mutations at the child
+
+Participant add/remove and archive/restore routes accept an active workspace relationship, including
+an invited guest. The service resolves the owning parent through authorization
+of the addressed child; requiring Main first prevented child-only collaborators
+from managing their own roster. The parent's canonical grant mutation remains
+the writer and rechecks the actor. This does not grant Main access or change the
+Main-based context capture used when creating a substream. Archive and restore
+check migrated child grants inside the local lifecycle transaction after loading
+the workspace relationship. They retain the legacy roster check only before
+migration. An archived child can be restored by its participants; an archived
+parent still prevents child lifecycle changes. Creation uses the same current
+Main admission through preparation and confirmation; confirmation must not
+depend on delivery of the participant sidebar projection.
+
 ### 2026-09-15 — Share prepared conversation file ownership
 
 Prepared history may be supplied by the internal coordinator on confirmation.

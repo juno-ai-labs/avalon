@@ -43,13 +43,16 @@ export type AutomationRunStatus = ContractAutomationRunStatus;
 export type AutomationDefinition = ContractAutomationDraft;
 
 export interface WorkspaceMember {
+  incarnation?: string;
+  revision?: number;
   presentation?: PersonalPresentation | null;
   id: string;
   name: string;
   email: string;
   avatarUrl?: string;
   timezone: string;
-  role?: string;
+  role?: string | null;
+  accessClass?: "member" | "guest";
   /**
    * Present only on people read from the workspace roster, which is the one
    * place a membership that is not yet active can appear. Participants and
@@ -64,7 +67,8 @@ export interface MessageAuthor {
   avatarUrl?: string;
   email?: string;
   timezone?: string;
-  role?: string;
+  role?: string | null;
+  accessClass?: "member" | "guest";
   status?: 'active' | 'invited' | 'suspended';
 }
 

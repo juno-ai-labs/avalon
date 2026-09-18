@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app";
 import type { HonoAppEnv } from "../src/env";
+import { SessionSchema, WorkspaceMemberSchema } from "@rally/contracts";
+import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
+import { asWorkspaceId } from "@rally/contracts";
+import { AuthService } from "../src/services/auth-service";
+import { sha256 } from "../src/lib/crypto";
 import { requireAuth } from "../src/middleware/auth";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -64,6 +69,152 @@ beforeEach(() => {
 afterEach(() => { database.close(); });
 
 describe("authentication in the complete application router", () => {
+  it("withholds guest workspaces from desktop discovery and activation", async () => {
+    const service = new RegionalOnboardingService(env());
+    const identity = { platformUserId: userId, googleSubject: "google-subject",
+      email: "member@example.com", name: "Member", avatarUrl: null,
+      timezone: "UTC", createdAt: at };
+    expect((await service.discover(identity)).workspaces.map((workspace) => workspace.id)).toContain(workspaceId);
+    database.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE user_id = ?").run(userId);
+    expect((await service.discover(identity)).workspaces).toEqual([]);
+    await expect(service.activate({ identity, operationId: sessionId,
+      workspaceId: asWorkspaceId(workspaceId), placementAffinity: "wnam",
+      preference: { preferenceSubjectHandle: sessionId, enabled: false, version: 2 },
+    })).rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
+    // Browser/API discovery remains available through the guest-aware path.
+    expect((await new AuthService(env()).listRegionalWorkspaces(userId)).map((workspace) => workspace.id)).toContain(workspaceId);
+  });
+
+  it("serializes a guest in the ordinary workspace member directory", async () => {
+    const guestId = "00000000-0000-7000-8000-000000000004";
+    database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId,at,at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId,guestId,at);
+    const result = await createApp().request("/workspace/members",{ headers:{ authorization:`Bearer ${await bearer()}` } },env());
+    expect(result.status).toBe(200);
+    const body = await result.json() as { items:unknown[] };
+    const members = body.items.map((item) => WorkspaceMemberSchema.parse(item));
+    expect(members.find((member) => member.user.id === guestId)).toMatchObject({ accessClass:"guest",role:null });
+    expect(members.find((member) => member.user.id === userId)).toMatchObject({ role:"owner" });
+  });
+
+  it("promotes the same guest through the public route and retains its session binding", async () => {
+    const guestId = "00000000-0000-7000-8000-000000000004";
+    database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId, guestId, at);
+    const bindings = { ...env(), PUBLIC_API_BASE_URL: "https://api.example.test" };
+    const guestSession = await new AuthService(bindings).createRegionalSession(guestId, workspaceId);
+    const relationship = database.prepare("SELECT incarnation, revision FROM workspace_members WHERE user_id = ?").get(guestId)!;
+    const response = await createApp().request(`/workspace/members/${guestId}/promote`, {
+      method: "POST", headers: { authorization: `Bearer ${await bearer()}`, "content-type": "application/json" },
+      body: JSON.stringify({ incarnation: relationship.incarnation, expectedRevision: relationship.revision }),
+    }, bindings);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ userId: guestId, accessClass: "member", role: "member", incarnation: relationship.incarnation });
+    const refreshed = await new AuthService(bindings).refresh(guestSession.refreshToken);
+    expect(refreshed.user.id).toBe(guestId);
+    expect(refreshed.workspace).toMatchObject({ role: "member" });
+    expect(database.prepare("SELECT workspace_incarnation FROM sessions WHERE user_id = ?").get(guestId))
+      .toMatchObject({ workspace_incarnation: relationship.incarnation });
+    expect(database.prepare("SELECT access_class FROM workspace_relationship_deliveries WHERE user_id = ? ORDER BY revision DESC LIMIT 1").get(guestId))
+      .toMatchObject({ access_class: "member" });
+  });
+
+  it("rejects stale and non-administrator promotion requests", async () => {
+    const guestId = "00000000-0000-7000-8000-000000000004";
+    database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at,incarnation) VALUES (?,?,'guest',NULL,'active',?,'current')")
+      .run(workspaceId, guestId, at);
+    const app = createApp();
+    const headers = { authorization: `Bearer ${await bearer()}`, "content-type": "application/json" };
+    const promote = (incarnation: string) => app.request(`/workspace/members/${guestId}/promote`, {
+      method: "POST", headers, body: JSON.stringify({ incarnation, expectedRevision: 1 }),
+    }, env());
+    expect((await promote("removed-membership")).status).toBe(409);
+    database.prepare("UPDATE workspace_members SET role = 'member' WHERE user_id = ?").run(userId);
+    expect((await promote("current")).status).toBe(403);
+    expect(database.prepare("SELECT access_class FROM workspace_members WHERE user_id = ?").get(guestId))
+      .toMatchObject({ access_class: "guest" });
+  });
+
+  it("discovers and selects guest workspaces without granting member routes and preserves promotion", async () => {
+    database.prepare("UPDATE users SET google_subject=NULL WHERE id=?").run(userId);
+    database.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE workspace_id=? AND user_id=?")
+      .run(workspaceId,userId);
+    database.prepare("UPDATE sessions SET workspace_id=NULL WHERE id=?").run(sessionId);
+    const identityToken = await new SignJWT({ sid:sessionId,wid:null,region:"global" })
+      .setProtectedHeader({ alg:"HS256",typ:"JWT" }).setSubject(userId)
+      .setIssuer("avalon-api").setAudience("avalon-desktop").setIssuedAt().setExpirationTime("15m")
+      .sign(new TextEncoder().encode(signingKey));
+    const bindings = { ...env(),PUBLIC_API_BASE_URL:"https://api.example.test" };
+    const app = createApp();
+    const headers = { authorization:`Bearer ${identityToken}`,"content-type":"application/json" };
+    const list = await app.request("/auth/workspaces",{ headers },bindings);
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ workspaces:[{ id:workspaceId,accessClass:"guest",role:null }] });
+    const select = await app.request("/auth/workspace/select",{ method:"POST",headers,body:JSON.stringify({ workspaceId }) },bindings);
+    expect(select.status).toBe(200);
+    const session = SessionSchema.parse(await select.json());
+    expect(session.workspace).toMatchObject({ id:workspaceId,accessClass:"guest",role:null });
+    const guestHeaders = { ...headers,authorization:`Bearer ${session.accessToken}` };
+    expect((await app.request("/auth/workspaces",{ headers:guestHeaders },bindings)).status).toBe(200);
+    expect((await app.request("/speech",{ method:"POST",headers:guestHeaders,body:"{}" },bindings)).status).toBe(403);
+    const refreshed = await new AuthService(bindings).refresh(session.refreshToken);
+    expect(refreshed.workspace).toMatchObject({ accessClass:"guest",role:null });
+    database.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE workspace_id=? AND user_id=?")
+      .run(workspaceId,userId);
+    const promoted = await new AuthService(bindings).refresh(refreshed.refreshToken);
+    expect(promoted.user.id).toBe(session.user.id);
+    expect(promoted.workspace?.role).toBe("member");
+    expect((await app.request("/speech",{ method:"POST",headers:guestHeaders,body:"{}" },bindings)).status).toBe(400);
+    database.prepare("UPDATE workspace_members SET status='suspended' WHERE workspace_id=? AND user_id=?").run(workspaceId,userId);
+    expect((await app.request("/auth/workspaces",{ headers:guestHeaders },bindings)).status).toBe(401);
+    expect(await (await app.request("/auth/workspaces",{ headers },bindings)).json()).toEqual({ workspaces:[] });
+    expect((await app.request("/auth/workspace/select",{ method:"POST",headers,body:JSON.stringify({ workspaceId }) },bindings)).status).toBe(403);
+    expect((await app.request("/auth/workspace/select",{ method:"POST",headers,body:JSON.stringify({ workspaceId:crypto.randomUUID() }) },bindings)).status).toBe(403);
+  });
+
+  it("does not revive old access or refresh credentials after membership removal and rejoin", async () => {
+    const bindings = env();
+    const app = createApp();
+    const token = await bearer();
+    const refreshToken = "old-workspace-refresh-token-for-incarnation-test";
+    database.prepare("UPDATE sessions SET refresh_token_hash=?,created_at=? WHERE id=?")
+      .run(await sha256(refreshToken),new Date().toISOString(),sessionId);
+    const request = (accessToken: string) => app.request("/speech", {
+      method:"POST",headers:{ authorization:`Bearer ${accessToken}`,"content-type":"application/json" },body:"{}",
+    },bindings);
+    expect((await request(token)).status).toBe(400);
+    const original = database.prepare("SELECT workspace_incarnation FROM sessions WHERE id=?").get(sessionId);
+    database.prepare("DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?").run(workspaceId,userId);
+    database.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,'owner','active',?)")
+      .run(workspaceId,userId,at);
+    expect(database.prepare("SELECT incarnation AS workspace_incarnation FROM workspace_members WHERE workspace_id=? AND user_id=?")
+      .get(workspaceId,userId)).not.toEqual(original);
+    expect(database.prepare("SELECT workspace_incarnation FROM sessions WHERE id=?").get(sessionId)).toEqual(original);
+    expect((await request(token)).status).toBe(401);
+    const auth = new AuthService(bindings);
+    await expect(auth.refresh(refreshToken)).rejects.toMatchObject({ status:401,code:"invalid_refresh_token" });
+    expect(database.prepare("SELECT refresh_token_hash FROM sessions WHERE id=?").get(sessionId))
+      .toEqual({ refresh_token_hash:await sha256(refreshToken) });
+    const fresh = await auth.createRegionalSession(userId,workspaceId);
+    expect((await request(fresh.accessToken)).status).toBe(400);
+  });
+
+  it("keeps the session membership binding through guest promotion", async () => {
+    const original = database.prepare("SELECT workspace_incarnation FROM sessions WHERE id=?").get(sessionId);
+    database.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE workspace_id=? AND user_id=?")
+      .run(workspaceId,userId);
+    database.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE workspace_id=? AND user_id=?")
+      .run(workspaceId,userId);
+    expect(database.prepare("SELECT workspace_incarnation FROM sessions WHERE id=?").get(sessionId)).toEqual(original);
+    const app = new Hono<HonoAppEnv>();
+    app.use("*",requireAuth);
+    app.get("/protected",(c) => c.json({ ok:true }));
+    expect((await app.request("/protected",{ headers:{ authorization:`Bearer ${await bearer()}` } },env())).status).toBe(200);
+  });
+
   it("reads the session once and checks revocation again on the next request", async () => {
     const bindings = env();
     const prepare = vi.spyOn(bindings.DB, "prepare");

@@ -15,8 +15,10 @@ import { logWarn } from "../observability/logger";
  *
  * No object polls, revalidates on a timer, or re-authorizes while publishing.
  * If a retraction is not on this queue it does not reach an open socket, which
- * makes the producer side a rule rather than a convenience: **whoever writes
- * the fact publishes the message, in the same request that wrote it.**
+ * makes the producer side a rule rather than a convenience. Membership writes
+ * now additionally record a transactional D1 intent; the scheduled dispatcher
+ * retries publication after a request/Queue failure. Other producers still
+ * publish in the request that wrote the fact.
  * See `docs/access-revocation.md`.
  *
  * The walk is queue-driven rather than one long call chain. A message names one
@@ -80,6 +82,7 @@ export const AccessRevocationMessageSchema = z.strictObject({
    * the membership is gone, so nothing they hold is still admissible.
    */
   sessionId: z.string().min(1).max(200).nullable(),
+  membershipIncarnation: z.string().min(1).optional(),
   target: RevocationTargetSchema,
   occurredAt: TimestampSchema,
 });
@@ -99,6 +102,7 @@ export const SocketAccessRevocationSchema = AccessRevocationMessageSchema.pick({
   workspaceId: true,
   userId: true,
   sessionId: true,
+  membershipIncarnation: true,
 }).strict();
 
 export type SocketAccessRevocation = z.infer<typeof SocketAccessRevocationSchema>;
@@ -128,6 +132,24 @@ export function revocationClosesSocket(
   return attachment.sessionId === undefined || attachment.sessionId === revocation.sessionId;
 }
 
+/** Membership delivery may arrive after rejoin. Resolve the immutable session
+ * binding at each holder, including legacy attachments, rather than consulting
+ * the user's current membership or trusting a root-only check. Missing session
+ * evidence fails closed; a D1 failure retries the queue hop. */
+export async function revocationClosesSession(
+  env: Pick<Env, "DB">,
+  revocation: SocketAccessRevocation,
+  attachment: { userId: string; sessionId?: string | undefined },
+): Promise<boolean> {
+  if (!revocationClosesSocket(revocation, attachment)) return false;
+  if (!revocation.membershipIncarnation || !attachment.sessionId) return true;
+  const session = await env.DB.prepare(`SELECT workspace_incarnation FROM sessions
+    WHERE id = ? AND user_id = ? AND workspace_id = ?`)
+    .bind(attachment.sessionId, revocation.userId, revocation.workspaceId)
+    .first<{ workspace_incarnation: string | null }>();
+  return !session?.workspace_incarnation || session.workspace_incarnation === revocation.membershipIncarnation;
+}
+
 /** The message an object publishes to carry its own revocation to one child. */
 export function descendantRevocation(
   revocation: SocketAccessRevocation,
@@ -148,7 +170,9 @@ export function descendantRevocation(
  * has removed the member whether or not the socket fan-out was enqueued, and
  * failing the request would tell the operator the opposite. The message is the
  * only path to an open socket, so a failure here is logged loudly and the
- * connection outlives the removal until it reconnects and fails admission.
+ * connection can outlive the removal until the durable membership retry reaches
+ * it, or it reconnects and fails admission. Other producers retain their own
+ * retry contracts (session expiry retries, logout currently does not).
  *
  * Returns whether the message went out, so a caller that can still retry — the
  * expiry sweep — does not record a retraction as delivered when it was not. A

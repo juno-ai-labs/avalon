@@ -1,3 +1,4 @@
+import { SidekickAttachmentSchema, type SidekickAttachment } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
 import { z } from "zod";
@@ -22,6 +23,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  asWorkstreamId,
   isExternalEventTrigger,
   type AutomationDetail,
   type AutomationDraft,
@@ -117,7 +119,7 @@ import {
   type DirectoryCommonEffect,
 } from "./conversation-parent-object";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, substreamLoopId, workspaceDOName } from "./names";
+import { automationDOName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
@@ -1051,6 +1053,31 @@ export class SidekickDO extends ConversationParentDurableObject {
     return { admitted: true, duplicate: admitted.reused, outcomeCode: "admitted", runId: admitted.runId };
   }
 
+  /** Instruction-use audience is independent of authoring/history admission. */
+  private skillAudienceAllows(row: AutomationRow, request: SidekickSkillReadRequest): boolean {
+    if (row.scope === "personal") {
+      const allowed = new Set([row.author_user_id,row.run_as_user_id]);
+      if (request.principalUserId === null || !allowed.has(request.principalUserId)
+        || request.audienceScope === "workspace" || request.audienceUserIds.length === 0
+        || request.audienceUserIds.some((id) => !allowed.has(id))) return false;
+    }
+    return row.scope !== "workstream" || request.conversationParentId === row.owning_workstream_id;
+  }
+
+  /** Minimal rail metadata for an already admitted receiving conversation. */
+  async readSkillSummary(input: SidekickSkillReadRequest): Promise<SidekickAttachment | null> {
+    await this.initialized;
+    const request = SidekickSkillReadRequestSchema.parse(input);
+    const row = this.row();
+    if (!row) return null;
+    this.assertAutomation(request.workspaceId,request.automationId);
+    if (row.lifecycle === "deleted" || !this.skillAudienceAllows(row,request)) return null;
+    return SidekickAttachmentSchema.parse({ id:row.automation_id,name:row.title,description:row.description,
+      available:row.lifecycle === "active" && row.loadable === 1
+        && row.accepted_definition_revision !== null && row.owning_room_archived_at === null,
+    });
+  }
+
   /** What a run reads at start: its definition by revision, and how it was triggered. */
   async readSkillSource(input: SidekickSkillReadRequest): Promise<SidekickSkillSource | null> {
     await this.initialized;
@@ -1058,13 +1085,7 @@ export class SidekickDO extends ConversationParentDurableObject {
     const row = this.assertAutomation(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted" || row.accepted_definition_revision === null || row.owning_room_archived_at !== null) return null;
     if (!request.existingExecution && (row.lifecycle !== "active" || row.loadable !== 1)) return null;
-    if (row.scope === "personal") {
-      const allowed = new Set([row.author_user_id, row.run_as_user_id]);
-      if (request.principalUserId === null || !allowed.has(request.principalUserId)
-        || request.audienceScope === "workspace" || request.audienceUserIds.length === 0
-        || request.audienceUserIds.some((id) => !allowed.has(id))) return null;
-    }
-    if (row.scope === "workstream" && request.conversationParentId !== row.owning_workstream_id) return null;
+    if (!this.skillAudienceAllows(row,request)) return null;
     const revision = this.revision(row.accepted_definition_revision);
     if (!revision) throw new Error("sidekick_accepted_revision_missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
@@ -1211,6 +1232,17 @@ export class SidekickDO extends ConversationParentDurableObject {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
     }
     this.assertAutomation(request.workspaceId, request.parentId);
+    if (request.requireGrantAuthority) {
+      if (row.scope !== "workstream" || !row.owning_workstream_id) {
+        return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
+      }
+      const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS, row.workspace_id,
+        workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id), asWorkstreamId(row.owning_workstream_id)));
+      const access = await owner.readManagementAccess({ workspaceId: row.workspace_id,
+        parentId: row.owning_workstream_id, userId: request.userId });
+      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,
+        archived: row.owning_room_archived_at !== null || (access.allowed && !access.writable) });
+    }
     let authorized = row.scope === "workspace"
       || row.author_user_id === request.userId
       || row.run_as_user_id === request.userId;
@@ -2013,7 +2045,9 @@ export class SidekickDO extends ConversationParentDurableObject {
 
   private assertViewer(row: AutomationRow, actor: AutomationActor): void {
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    if (row.scope === "workspace" || row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
+    // A null role is the existing guest workspace relationship, not workspace-wide visibility.
+    if ((row.scope === "workspace" && actor.actorRole !== null)
+      || row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
     if (row.scope === "workstream" && actor.participantOfOwningWorkstream) return;
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }

@@ -6,7 +6,7 @@ import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
-import { useAppSession } from '../lib/app-session';
+import { useCollaborationSession } from '../lib/collaboration-session';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
 
@@ -25,7 +25,7 @@ export function AutomationScreen(): React.JSX.Element {
 }
 
 function NewAutomationScreen(): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api } = useCollaborationSession();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   // One request per visit, held in a ref rather than started by the effect
@@ -66,7 +66,7 @@ function NewAutomationScreen(): React.JSX.Element {
 }
 
 function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api } = useCollaborationSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const automation = useQuery({

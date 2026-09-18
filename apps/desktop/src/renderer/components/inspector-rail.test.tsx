@@ -1163,7 +1163,7 @@ describe('a work stream’s Sidekicks in the main workstream rail', () => {
     expect(screen.getByRole('button', { name: 'Editorial guidance' })).not.toHaveAttribute('title');
     expect(screen.getByText('Write clearly.')).toBeVisible();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this substream' }));
     expect(onRemove).toHaveBeenCalledOnce();
   });
   it('keeps an authorized unavailable attachment visible', () => {

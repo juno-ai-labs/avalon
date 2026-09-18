@@ -1,3 +1,4 @@
+import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
@@ -795,12 +796,35 @@ async function consumeEffect(
     if (envelope.kind === "conversation_effect") {
       const parent = await conversationParentStub(env, envelope);
       await parent.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+      if (envelope.effect.kind === "directory_common" && envelope.effect.attachmentReservationReleases?.length) {
+        const workspace = await workspaceDirectory(env,envelope.workspaceId);
+        await workspace.publishConversationAttachments(envelope);
+      }
       logInfo(env, "conversation_effect_terminal", {
         ...fields,
         substream_id: envelope.substreamId,
         outcome: "applied",
         reason: "parent_accepted",
       });
+      message.ack();
+      return;
+    }
+    if (envelope.effect.kind === "scope_grant_directory") {
+      const workspace = await workspaceDirectory(env, envelope.workspaceId);
+      await workspace.applyScopeGrantDirectory(envelope);
+      const { grant } = envelope.effect;
+      if (!grant.active && grant.target.kind === "workstream") {
+        // Owned Sidekick conversations are siblings, outside the workstream's
+        // participant projection. Keep this durable effect retryable until the
+        // existing revocation queue accepts their fan-out.
+        const published = await publishAccessRevocation(env, {
+          reason: "workstream_participant_removed", workspaceId: envelope.workspaceId,
+          userId: grant.userId, sessionId: null,
+          ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
+          target: { scope: "workstream_automations", workstreamId: grant.target.parentId },
+        });
+        if (!published) throw new Error("scope_grant_sidekick_revocation_publish_failed");
+      }
       message.ack();
       return;
     }

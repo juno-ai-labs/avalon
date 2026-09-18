@@ -30,17 +30,45 @@ retryable failure for direct reads and explicit partial status for search/lists.
 | `apps/api/src/routes/workspace-membership.ts` | The administrator removal route and `DELETE /workspaces/:workspaceId/membership`, where a member leaves for themself. |
 | `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and publish in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
-| `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
+| `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |
+| `apps/api/src/services/workspace-relationship-delivery.ts` | Retries D1-recorded membership changes through the existing revocation queue. Queue acceptance marks dispatch, not application. |
 | `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
 ### The producer writes the fact and publishes it
 
-**Whoever writes the fact publishes the message, in the same request that wrote
-it.** There is no watcher on D1 and no reconciliation pass; a retraction that is
-not published does not reach an open socket.
+Membership changes now also write `workspace_relationship_deliveries` through
+database triggers in the same transaction. The existing immediate revocation
+publishers remain; the cron retries the durable intent if a request failed to
+publish. A `workspace_relationship_changed` message revokes removed/suspended
+relationships and publishes workspace profile, member and directory invalidation.
+Promotion invalidates those views without closing otherwise valid conversations.
 
-Five producers exist today:
+`dispatched_at` records Queue acceptance; `processed_at` records root handling.
+Neither means every descendant has acknowledged application. Failure leaves the
+intent pending or the Queue message retryable. A send followed by a failed marker
+write can duplicate delivery, so processing remains idempotent. This does not yet
+replace session revocation publication or provide the planned per-descendant
+completion tracker.
+
+Membership revocation carries its incarnation through every descendant hop.
+Each socket or artifact viewer session is compared with its immutable D1 session
+binding before closure; a delayed removal closes the old relationship's sessions
+without closing sessions admitted after rejoining. Missing legacy session bindings
+fail closed. Socket admission already checks the current relationship incarnation.
+Promotion preserves the incarnation and does not revoke the conversation.
+
+Revoked workstream grants use their existing durable `scope_grant_directory`
+effect as the publication intent. After applying its directory projection, the
+activity consumer publishes a `workstream_automations` revocation and acknowledges
+the effect only after Queue acceptance. A failed send retries the effect; repeated
+application is safe. The grant's membership incarnation travels with the message.
+This connects separately seated Sidekick authoring/run conversations to parent
+grant revocation without adding checks to frame publication or ordinary turns.
+
+Other revocation producers still publish in the request that writes their fact.
+
+The producers are:
 
 - **A membership ends.** `WorkspaceService.removeMember` deletes the
   `workspace_members` row and publishes with `sessionId: null` — the membership
@@ -56,6 +84,9 @@ Five producers exist today:
   `sessionId: null` and a `workstream_automations` target naming the room:
   the automations the room owns admitted this person through the room, and
   nothing inside the room reaches those objects.
+- **A workstream grant is revoked.** The durable grant-directory effect publishes
+  the existing `workstream_automations` hop before acknowledgment. Main and child
+  conversation membership is independently handled by participant projections.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
@@ -94,8 +125,10 @@ so this is the only object that can name artifacts, and a work stream could not.
 Its `revokeSocketAccess` drops `viewer_sessions` rows under the same method name
 and the same child-naming contract, and returns no children. The list is
 deliberately unfiltered by person, matching the generosity the rest of this walk
-is built on: an artifact is readable by anyone who can see its work stream, so a
-hop that finds no session to drop costs one call.
+is built on: resource exposure can grant access through multiple conversations,
+so the walk must not infer a viewer list from one parent roster. A hop that finds
+no session to drop costs one call. Canonical resource authorization independently
+revalidates each authenticated artifact request.
 
 Every child list the consumer reads is defaulted to empty. That is about deploys
 rather than tidiness: the consumer and WorkspaceDO are separate deployments of
@@ -221,15 +254,12 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 `revokeSocketAccess` methods are called by the consumer and by nothing else.
 
 - **The queue is unavailable when a producer publishes.** Logged as
-  `access_revocation_publish_failed` and swallowed. The socket outlives the
-  retraction until the client reconnects and fails admission — which every
-  desktop does on its own reconnect cycle. The alternative, failing the request,
-  reports a removal that did happen as a removal that did not. **This is the
-  module's weakest point**: a membership removal has already committed, so a
-  dropped message is not retried by anything and that socket keeps receiving
-  until it reconnects. Making it durable needs an outbox row written in the same
-  D1 write as the retraction, and a sweep that enqueues until delivery; that is
-  a real design change and is not built.
+  `access_revocation_publish_failed` and swallowed by the immediate publisher.
+  Membership changes also have a transactional delivery intent; the cron retries
+  dispatch until Queue acceptance. A socket can outlive the write until that
+  retry is applied or it reconnects and fails admission. Other producers retain
+  their retry behavior below; durable membership delivery does not yet fix a
+  dropped logout publication.
 
 - **The expiry sweep re-asserts its predicate when it marks.** The rows were
   selected in an earlier round trip and D1 auto-commits between statements, so a
@@ -348,6 +378,26 @@ would be a way into somebody else's workspace.
 - `workspace_socket_access_revoked` — the successful case, with the socket count.
 - The dead-letter queues are the alarm: empty is healthy, non-empty means
   somebody kept access they should have lost.
+
+## Changelog
+
+### 2026-09-16 — Recover membership and grant revocation publication
+
+The membership transaction now records a delivery intent, and the existing cron
+dispatches it to the existing revocation queue. This closes the gap where a
+committed removal could lose its only queue publication. Active relationship
+changes publish directory/profile invalidation; removals and suspension use the
+same object walk. Queue acceptance and root processing have separate markers;
+neither claims descendant completion. Real-workerd tests exercise real D1, queue
+sends, WorkspaceDO invalidation and WebSocket closure, including recovery after
+a send succeeds but its D1 marker fails. Revocation also carries the removed
+incarnation through the walk and checks each session binding before closure;
+using user ID alone would let a delayed removal disconnect a rejoined member.
+Parent-grant directory delivery also publishes the existing owned-Sidekick
+revocation hop before acknowledgment. Its ordinary participant projection cannot
+reach those sibling conversation objects. Reusing the durable effect and queue
+walk avoids polling and per-frame permission calls. Per-descendant acknowledgment
+remains unfinished.
 
 ### 2026-09-08 — A retired object's refusal ends the hop
 
