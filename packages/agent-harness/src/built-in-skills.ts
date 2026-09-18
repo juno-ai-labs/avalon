@@ -318,11 +318,154 @@ export const SCHEDULING_A_CALENDAR_EVENT_SKILL: HarnessSkill = {
   body: SCHEDULING_A_CALENDAR_EVENT_BODY,
 };
 
+const POLLING_FOR_EVENTS_BODY = `Someone asking to be told **when** something happens is asking for a Sidekick
+with a trigger, not for something you can do in this turn. Rally starts a run
+only when something tells it to.
+
+Most connectors do declare events Rally can trigger on, so the first move is
+always to look. Polling is the fallback for what inspection rules out: a
+connection that declares no events at all, or one whose declared events do not
+cover what the person described. Reaching for a timer before you have looked is
+the most common way to get this wrong.
+
+The whole procedure runs through the Sidekicks plugin; load it before you start.
+
+## 1. Look for a real event before you settle for a timer
+
+Inspect the plugin for the connector the person named and read the event types
+it declares. If one of them covers what they described, trigger on that instead
+— a \`connector_activity\` trigger when deterministic filters express the match,
+a \`semantic_activity\` one when each event also has to pass a written condition,
+a \`webhook\` one when the event types belong to a webhook connection the
+workspace has already set up. A real event arrives immediately and costs nothing
+while nothing is happening.
+
+Assume the event exists until inspection says otherwise. Notes, meetings,
+messages, tickets and mail are exactly the things connectors tend to announce,
+so a request about one of them is a request to go and read that plugin's event
+types, not a reason to poll.
+
+There is one trigger kind to stay away from: \`resource_watch\` reads as the right
+answer for "tell me when this one document changes", and a Sidekick accepted
+with only that trigger is never started by anything. Watch the source through
+its own declared events, or poll.
+
+Poll only when inspection shows no event type that fits. When you propose the
+Sidekick, say in one line that it checks on a timer because that connection does
+not announce this — otherwise the person reads the delay as a bug.
+
+## 2. Choose the cadence, no faster than every ten minutes
+
+First, if what they described is a time of day rather than a frequency — "every
+morning", "at 5pm on Fridays" — use a \`calendar\` trigger with a recurrence rule
+instead of an interval, then carry on through steps 3 and 4, which a timed
+watcher needs exactly as much.
+
+Otherwise poll with an \`interval\` trigger and set \`intervalSeconds\`.
+
+**Ten minutes — 600 seconds — is the floor, not the answer.** Every tick spends
+a model call and a round of connector reads whether or not anything changed, and
+finding nothing is the ordinary outcome.
+
+Slower is usually better, and **the person's own cadence wins** whenever it is
+at or above the floor: "check my email hourly" is 3600, "a couple of times a
+day" is 43200. Ask what would be soon enough when they have not said; most
+people want it less often than you would pick for them. If they asked for
+something faster than the floor, use the floor and tell them how often it will
+actually check — in words, never in seconds.
+
+Write the trigger's \`summary\` too, in the person's own words — "Every half
+hour", "Each weekday morning". It is the line they read on the proposal and
+under **When to expect it**, and leaving it out puts a generic phrase there
+instead of the cadence they just agreed to.
+
+## 3. Give each run a way to know what it has already seen
+
+A timer has no memory. Without one, every run reports the same three items
+again, and the person turns the Sidekick off.
+
+Declare a memory table on the draft whose \`keyColumns\` are the item's own
+stable identity from the source — a message id, a meeting id, an issue key —
+never a value the run makes up and never one that expires, because a later run
+has to rebuild the same value from the outside world. Every key column has to be
+one of the table's declared \`columns\` as well, or the draft is refused. Rows
+deduplicate on those columns, which is what makes a second sighting cheap to
+ignore.
+
+Then write into the instructions, as steps a run that has never seen this
+conversation can follow: read the table first, fetch what the connection
+reports since a little before the last recorded item, skip anything already
+recorded, act on the rest, and record each item **after** it has been acted on
+— the other order loses an item to any run that fails midway.
+
+Overlap the read window deliberately rather than asking for strictly-newer
+items: a "since" argument alone drops anything that arrives late or shares a
+timestamp with the last thing you saw. Let the table discard the overlap.
+
+Say what the **first** run does, because the table is empty and everything looks
+new: record what is already there and report nothing, unless the person asked to
+be caught up. Nobody wants a watcher's first act to be their whole backlog.
+
+## 4. Write the run so that finding nothing is normal
+
+Most runs will find nothing. Say explicitly in the instructions what such a run
+does: finish without posting, sending, or messaging anybody. A Sidekick that
+reports "nothing new" every ten minutes is worse than no Sidekick.
+
+Say what a run does when it finds several items at once — one summary covering
+all of them is almost always what the person wanted, not one message each.
+
+## Anti-patterns
+
+- **Polling a connector you never inspected.** Most connectors announce the
+  thing being asked about. Read the event types first; keep the interval for
+  what inspection rules out.
+- **An interval under ten minutes because the person said "right away".** Use
+  the floor and say so. What they actually want is a webhook: draft one when the
+  workspace already has a webhook connection declaring that event, and otherwise
+  say that wiring one up is a conversation with the team.
+- **Reaching for \`resource_watch\`.** Nothing starts a Sidekick from it. Use the
+  source's declared events, or an interval.
+- **A key column the run invents** — a row number, a hash of a summary, the
+  time it was seen — or one that expires, like a signed URL. The next run cannot
+  reconstruct it, so nothing deduplicates.
+- **Recording an item before acting on it.** A run that fails after recording
+  has silently dropped it. Record last.
+- **A run that posts to say it found nothing.** Finish silently instead.`;
+
+/**
+ * How to satisfy "tell me when X happens" for a connection with no webhook.
+ *
+ * Deliberately a loaded skill rather than standing policy: it is irrelevant to
+ * almost every turn, and the cadence floor plus the seen-item discipline are
+ * too long to carry in the prompt for the few turns that need them.
+ *
+ * `ownerPlugin` is the Sidekicks plugin, because the procedure is entirely
+ * about drafting one — which also keeps it out of the catalog of an automation
+ * occurrence, where the drafting tools are deliberately withheld.
+ */
+export const POLLING_FOR_EVENTS_SKILL: HarnessSkill = {
+  name: "polling-for-events",
+  description:
+    "How to set up a Sidekick that watches for something: check the connector's own declared events first, fall back to an interval no faster than every ten minutes, and keep a keyed memory table so a run skips what an earlier one already handled.",
+  whenToUse:
+    "When someone asks to be told whenever something happens — new mail, a finished meeting, a note or ticket added — and you are setting up a Sidekick to watch for it.",
+  body: POLLING_FOR_EVENTS_BODY,
+  // Spelled out rather than imported from the drafting tools, which import
+  // from `./index`, which imports this file: the literal keeps that cycle out
+  // of the module graph, and matches how `building-live-sites` names Terminal.
+  ownerPlugin: "rally:sidekicks",
+};
+
 /** Every skill this package ships. A host picks from these; none is automatic. */
 export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   DEEP_RESEARCH_SKILL,
   WRITING_AN_EMAIL_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  // Offered only where the Sidekicks plugin is in scope, by its `ownerPlugin`:
+  // the whole procedure is drafting one, and an automation occurrence is
+  // deliberately never given the drafting tools.
+  POLLING_FOR_EVENTS_SKILL,
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,

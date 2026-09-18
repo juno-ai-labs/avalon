@@ -1,4 +1,5 @@
 import { configuredRegions, regions } from "./regions.mjs";
+import { parseWorkerEnvValue, workerEnvValue } from "./worker-env-value.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
@@ -38,6 +39,8 @@ const workerKeys = [
   "TERMINAL_EMERGENCY_DISABLED",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "EMAIL_LOGIN_POLICY_JSON",
+  "BROWSER_APP_ORIGIN",
   "RESEND_NOTIFICATION_FROM_EMAIL",
   "RESEND_RECEIVING_API_KEY",
   "RESEND_WEBHOOK_SIGNING_SECRET",
@@ -111,6 +114,8 @@ const regionalizableKeys = [
   "TERMINAL_EMERGENCY_DISABLED",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "EMAIL_LOGIN_POLICY_JSON",
+  "BROWSER_APP_ORIGIN",
   "RESEND_NOTIFICATION_FROM_EMAIL",
   "RESEND_RECEIVING_API_KEY",
   "GOOGLE_OAUTH_CLIENT_ID",
@@ -192,11 +197,7 @@ function parseEnv(source) {
     const equals = line.indexOf("=");
     if (equals < 1) continue;
     const key = line.slice(0, equals).trim();
-    let value = line.slice(equals + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    values[key] = value;
+    values[key] = parseWorkerEnvValue(key, line.slice(equals + 1).trim());
   }
   // A developer's `.env.local` is not in the repository, so the rename from
   // Avalon cannot reach it. Read the superseded name where the current one is
@@ -300,7 +301,7 @@ for (const region of configuredRegions) {
     .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
       && typeof regional[key] === "string"
       && regional[key].length > 0)
-    .map((key) => `${key}=${JSON.stringify(regional[key])}`)
+    .map((key) => `${key}=${workerEnvValue(key, regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });
 }
