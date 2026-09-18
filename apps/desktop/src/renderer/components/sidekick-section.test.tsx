@@ -42,7 +42,17 @@ describe('SidekickSection', () => {
     fireEvent.click(row);
     expect(openSidekicks).toHaveBeenCalledWith('one');
     fireEvent.contextMenu(row);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this substream' }));
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('opens shared management even when no local attachment remains', () => {
+    const remove = vi.fn();
+    renderSection({ items: [{ id: 'one', name: 'Editor', description: '', recommended: true,
+      onRemoveRecommendation: remove }] });
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
+    expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove workstream recommendation' }));
     expect(remove).toHaveBeenCalledOnce();
   });
 
@@ -50,7 +60,7 @@ describe('SidekickSection', () => {
     renderSection({ items: [{ id: 'one', name: 'Editor', description: 'Review wording' }] });
     expect(screen.queryByRole('button', { name: 'Remove Editor' })).toBeNull();
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Editor' }));
-    expect(screen.queryByRole('menuitem', { name: 'Remove' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Remove from this substream' })).toBeNull();
   });
 
   it('leaves no heading behind for an empty answer or a pending one, and surfaces read failures', () => {
@@ -76,17 +86,33 @@ describe('SidekickSection', () => {
 });
 
 describe('workstreamSidekickRows', () => {
-  it('merges a recommendation with a local attachment and keeps one removal action', () => {
+  it('keeps local removal and shared recommendation removal distinct on a merged row', () => {
     const remove = vi.fn();
     const attachment = { id: 'shared', name: 'Editor', description: 'Writing guidance', available: true };
     const localRemove = vi.fn();
-    const rows = workstreamSidekickRows({ owned: [], attached: [attachment], recommended: [attachment], onRemoveAttachment: localRemove, onRemoveRecommendation: remove });
+    const rows = workstreamSidekickRows({ owned: [], attached: [attachment], recommended: [attachment], onRemoveAttachment: localRemove, onChangeRecommendation: remove, recommendationOptions: { canManage: true, items: [{ ...attachment, attached: true }] } });
     expect(rows).toHaveLength(1);
     expect(rows?.[0]?.recommended).toBe(true);
     rows?.[0]?.onRemove?.();
-    expect(remove).toHaveBeenCalledWith('shared');
-    expect(localRemove).not.toHaveBeenCalled();
+    expect(localRemove).toHaveBeenCalledWith('shared');
+    expect(remove).not.toHaveBeenCalled();
+    rows?.[0]?.onRemoveRecommendation?.();
+    expect(remove).toHaveBeenCalledWith('shared', false);
   });
+  it('keeps parent actions absent without management and offers eligible local recommendations', () => {
+    const attachment = { id: 'shared', name: 'Editor', description: '', available: true };
+    const change = vi.fn();
+    const make = (canManage: boolean) => workstreamSidekickRows({ owned: [], attached: [attachment], recommended: [],
+      onRemoveAttachment: vi.fn(), onChangeRecommendation: change,
+      recommendationOptions: { canManage, items: [{ ...attachment, attached: false }] },
+    })?.[0];
+    expect(make(false)?.onRemove).toBeTypeOf('function');
+    expect(make(false)?.onRecommend).toBeUndefined();
+    expect(make(false)?.onRemoveRecommendation).toBeUndefined();
+    make(true)?.onRecommend?.();
+    expect(change).toHaveBeenCalledWith('shared', true);
+  });
+
   it('waits for all three answers before claiming the room has any', () => {
     expect(workstreamSidekickRows({ owned: undefined, attached: [], recommended: [] })).toBeUndefined();
     expect(workstreamSidekickRows({ owned: [], attached: undefined, recommended: [] })).toBeUndefined();

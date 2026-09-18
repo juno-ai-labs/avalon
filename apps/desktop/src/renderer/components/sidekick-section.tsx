@@ -1,105 +1,12 @@
-import type { SidekickAttachment, WorkstreamAppearance } from '@rally/contracts';
-import * as ContextMenu from '@radix-ui/react-context-menu';
-import { IconCarambola } from '@tabler/icons-react';
+import type { SidekickAttachment, SidekickRecommendationOptions } from '@rally/contracts';
 import type { WorkstreamAutomationSummary } from '../lib/types';
+import type { SidekickRow } from '@rally/ui/components/sidekick-section';
+export type { SidekickRow } from '@rally/ui/components/sidekick-section';
+import { SidekickSection as SharedSidekickSection } from '@rally/ui/components/sidekick-section';
 import { desktopBridge } from '../lib/platform';
-import { AutomationGlyph } from './workstream-glyph';
-import { InlineError, Tip } from './primitives';
-
-/**
- * One Sidekick as a rail row, whichever list it came from.
- *
- * The row is the primitive; the two lists behind it are not. A work stream's
- * own Sidekicks and the ones loaded into its conversation are different facts
- * about the same object, and a reader looking at the rail wants the object:
- * `workstreamSidekickRows` folds both into this shape, and this component
- * knows nothing about either.
- */
-export interface SidekickRow {
-  recommended?: boolean;
-  id: string;
-  name: string;
-  description: string;
-  /**
-   * What is true of this Sidekick beyond its description — `Draft`, `Paused`,
-   * `Unavailable`. Read before the description rather than instead of it, so
-   * the row still says which Sidekick it is.
-   */
-  note?: string | undefined;
-  appearance?: WorkstreamAppearance | undefined;
-  /** Present only where the caller may detach it; a room's own row has none. */
-  onRemove?: (() => void) | undefined;
+export function SidekickSection(props: React.ComponentProps<typeof SharedSidekickSection>): React.JSX.Element | null {
+  return <SharedSidekickSection {...props} onOpen={(id) => { void desktopBridge().openSidekicks(id); }} />;
 }
-
-/**
- * The rail's **Sidekicks** section, or nothing.
- *
- * Absent while `items` is `undefined` — the answer is still on its way — and
- * absent again for `[]`, which is the rail's settled answer to an empty
- * section: a heading over nothing reads as a load failure, and the artifact
- * section beside this one drops itself for the same reason. The two states are
- * still kept apart in the caller, because only one of them may ever be turned
- * into a claim about the room.
- *
- * An `error` sits *beside* the rows rather than replacing them. The rows it
- * would replace are ones that arrived: a detach that failed is no reason for
- * the Sidekicks it did not detach to disappear, and a failed read of one of
- * the two lists behind this section is no reason to drop the other. Alone —
- * nothing arrived — it takes the section's heading with it, because then the
- * reader is being told about this section rather than about a row in it.
- */
-export function SidekickSection({ items, error }: {
-  items?: SidekickRow[] | undefined;
-  error?: string | undefined;
-}): React.JSX.Element | null {
-  if (!items?.length) {
-    return error
-      ? <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
-        <InlineError>{error}</InlineError>
-      </section>
-      : null;
-  }
-  return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section"><h2>Sidekicks</h2>
-    {error && <InlineError>{error}</InlineError>}
-    <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id}><li>
-      {/* The rail's own tooltip rather than the platform's, as the artifact
-          rows above take it: a name this rail truncates — or hides outright
-          when compact — is the whole reason the row carries one. The note
-          rides along because compact hides the copy underneath, and a row
-          nobody can read is the one place **Paused** is worth saying twice. */}
-      <Tip label={item.note ? `${item.name} · ${item.note}` : item.name} side="right">
-        <ContextMenu.Trigger asChild disabled={!item.onRemove}>
-        <button className="workstream-context-row" type="button" aria-label={item.name} aria-description={item.recommended ? 'Recommended Sidekick' : undefined} onClick={() => void desktopBridge().openSidekicks(item.id)}>
-          {/* The library's own hexagon, at the rail's size: compact drops every
-              title in this rail, and a Sidekick row without its mark collapses
-              to an empty square there. */}
-          <span aria-hidden="true" className="workstream-context-mark"><span className="workstream-context-sidekick-glyph">
-            <AutomationGlyph id={item.id} {...(item.appearance ? { appearance: item.appearance } : {})} />
-          </span></span>
-          <span className="workstream-context-copy"><span>{item.name}</span>
-            <small>{item.note ? `${item.note} · ${item.description}` : item.description}</small></span>
-        </button>
-        </ContextMenu.Trigger>
-      </Tip>
-      {item.recommended && <Tip className="sidekick-recommendation-tooltip" label="Recommended for every substream in this workstream. Agents can load it when relevant; it isn’t automatically loaded." side="right">
-        <span className="sidekick-recommendation" role="img" aria-label="Recommended Sidekick" tabIndex={0}>
-          <IconCarambola size={14} stroke={1.5} aria-hidden="true" />
-        </span>
-      </Tip>}
-      {item.onRemove && <ContextMenu.Portal>
-        <ContextMenu.Content className="menu-content">
-          <ContextMenu.Item className="menu-item" onSelect={item.onRemove}>Remove</ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>}
-    </li></ContextMenu.Root>)}</ul>
-  </section>;
-}
-
-/** A lifecycle worth saying out loud; an active Sidekick needs no note. */
-function ownedNote(status: WorkstreamAutomationSummary['status']): string | undefined {
-  return status === 'draft' ? 'Draft' : status === 'paused' ? 'Paused' : undefined;
-}
-
 /**
  * The Sidekicks of one work stream: the ones it owns, then the ones its
  * conversation has loaded.
@@ -116,12 +23,13 @@ function ownedNote(status: WorkstreamAutomationSummary['status']): string | unde
  * separates the two states: a half-answered union rendered as `[]` is a claim
  * that the room has no Sidekicks.
  */
-export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, onRemoveRecommendation }: {
+export function workstreamSidekickRows({ owned, attached, recommended, onRemoveAttachment, recommendationOptions, onChangeRecommendation }: {
   owned: WorkstreamAutomationSummary[] | undefined;
   attached: SidekickAttachment[] | undefined;
   recommended: SidekickAttachment[] | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
-  onRemoveRecommendation?: ((id: string) => void) | undefined;
+  recommendationOptions?: SidekickRecommendationOptions | undefined;
+  onChangeRecommendation?: ((id: string, attached: boolean) => void) | undefined;
 }): SidekickRow[] | undefined {
   if (!owned || !attached || !recommended) return undefined;
   const attachments = new Map(attached.map((attachment) => [attachment.id, attachment]));
@@ -161,12 +69,22 @@ export function workstreamSidekickRows({ owned, attached, recommended, onRemoveA
     const existing = rows.find((row) => row.id === recommendation.id);
     if (existing) {
       existing.recommended = true;
-      if (onRemoveRecommendation && !ownedIds.has(recommendation.id)) existing.onRemove = () => onRemoveRecommendation(recommendation.id);
     }
     else rows.push({ id: recommendation.id, name: recommendation.name, description: recommendation.description,
       recommended: true, ...(recommendation.available ? {} : { note: 'Unavailable' }),
-      ...(onRemoveRecommendation ? { onRemove: () => onRemoveRecommendation(recommendation.id) } : {}),
     });
   }
+  if (recommendationOptions?.canManage && onChangeRecommendation) {
+    for (const row of rows) {
+      const option = recommendationOptions.items.find((item) => item.id === row.id);
+      if (!option || ownedIds.has(row.id)) continue;
+      if (option.attached) row.onRemoveRecommendation = () => onChangeRecommendation(row.id, false);
+      else row.onRecommend = () => onChangeRecommendation(row.id, true);
+    }
+  }
   return rows;
+}
+/** A lifecycle worth saying out loud; an active Sidekick needs no note. */
+function ownedNote(status: WorkstreamAutomationSummary['status']): string | undefined {
+  return status === 'draft' ? 'Draft' : status === 'paused' ? 'Paused' : undefined;
 }
