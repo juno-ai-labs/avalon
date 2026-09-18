@@ -467,7 +467,7 @@ test('a bundled font that is not in the repository fails the build', () => {
       fonts: [{ family: 'Ghost', src: { bundled: 'ghost.woff2' } }],
       tokens: { 'sys.font.family.ui': 'Ghost' },
     }],
-  }), /which is not in apps\/desktop\/src\/renderer\/fonts/u);
+  }), /which is not in packages\/ui\/src\/fonts/u);
 });
 
 test('the main process is told where to fetch a remote font from', () => {

@@ -2,13 +2,13 @@ import type { Config } from 'tailwindcss';
 
 /**
  * The palette is the theme engine's, not a second copy of it. Every entry
- * resolves to a custom property declared in `src/renderer/styles/themes.css`,
+ * resolves to a custom property declared in `packages/ui/src/styles/themes.css`,
  * so a utility class follows the active theme for the same reason a hand-written
  * rule does. Literal hex values here were the previous shape and they silently
  * pinned a utility to the dark theme; see `docs/theming.md`.
  */
 export default {
-  content: ['./src/renderer/**/*.{html,ts,tsx}'],
+  content: ['./src/renderer/**/*.{html,ts,tsx}', '../../packages/ui/src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {

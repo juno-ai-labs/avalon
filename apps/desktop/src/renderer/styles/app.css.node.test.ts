@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 // file it is already processing as CSS, and `import.meta.url` is an http URL
 // under jsdom. This file is named `.node.test.ts` and typed by
 // `tsconfig.node.json` so that `node:fs` stays out of the renderer program.
-const stylesheet = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+const stylesheet = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/app.css'), 'utf8');
 
 /** The declarations inside one rule, or null when the selector is absent. */
 function rule(selector: string): string | null {
@@ -1529,7 +1529,7 @@ describe('company mark sizing', () => {
     // Specificity settles these, but a bare rule added *below* the default
     // would win on order and read as if it were fine, so the ordering is
     // pinned too: the default comes first and everything else out-specifies it.
-    const source = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), '../../packages/ui/src/styles/app.css'), 'utf8');
     const base = source.indexOf('\n.connector-mark {');
     expect(base).toBeGreaterThan(-1);
     expect(source.indexOf('.provider-icon .connector-mark')).toBeLessThan(base);

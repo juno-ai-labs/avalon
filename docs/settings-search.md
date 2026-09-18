@@ -13,7 +13,7 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/settings/setting-toggle.tsx` | Registry-backed switch presentation with existing state and mutation bindings. |
 | `apps/desktop/src/renderer/settings/choices.ts` | Digest choices and value-keyed permission labels shared by controls and search. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `SegmentedControl`, the one exclusive-choice strip the appearance preference and the connections filter both draw. |
-| `apps/desktop/src/renderer/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
+| `packages/ui/src/styles/app.css` | Settings layout and reveal treatment; appearance ownership is in [theming](theming.md). |
 | `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
 | `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |

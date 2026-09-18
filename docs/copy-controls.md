@@ -20,7 +20,7 @@ saying "Copy endpoint" where the field already says what it is.
 | `apps/desktop/src/renderer/lib/use-copy.ts` | `useCopy` — the one copy-to-clipboard behaviour: the write, the `idle` / `copied` / `failed` state it settles into, and the reset timer. `COPY_FEEDBACK_MS` is how long an outcome shows. |
 | `apps/desktop/src/renderer/components/copy-button.tsx` | `CopyButton` — the icon control every copy affordance renders, and `CopyField` — a caption, the value in a read-only field, and the control beside it. |
 | `apps/desktop/src/renderer/components/copy-button.node.test.ts` | The guard: which files may call the bridge's `copyText` directly, and which may call `useCopy`. |
-| `apps/desktop/src/renderer/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-field` lays the field and its control on one row; `.copy-detail` is the older "value beside its control" row the inspector rail and the run-failure notice share. |
+| `packages/ui/src/styles/app.css` | `.copy-button-copied` and `.copy-button-failed` colour the outcome's glyph; `.copy-field` lays the field and its control on one row; `.copy-detail` is the older "value beside its control" row the inspector rail and the run-failure notice share. |
 
 ## How it works
 
