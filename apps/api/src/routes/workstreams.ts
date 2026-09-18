@@ -179,7 +179,7 @@ workstreamRoutes.post("/import", zValidator("json", SessionImportRequestSchema),
 });
 workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
-  const requestReceivedAt = Date.now();
+  const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
   const auth = getAuth(c);
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));

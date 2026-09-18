@@ -325,6 +325,8 @@ export interface AuthContext extends IdentityAuthContext {
 
 export interface AppVariables {
   requestId: string;
+  /** Worker-entry wall clock, captured before auth, parsing, or validation. */
+  requestReceivedAt: number;
   auth: IdentityAuthContext | undefined;
   operator: TelemetryOperatorPrincipal | undefined;
   /**
