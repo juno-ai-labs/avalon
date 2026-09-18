@@ -17,7 +17,7 @@ including code that only means to restore a position.
 | [`apps/desktop/src/renderer/lib/use-transcript-follow.ts`](../apps/desktop/src/renderer/lib/use-transcript-follow.ts) | The whole mechanism, and **the only code that writes `scrollTop` on the transcript**: the follow, the reader-intent rules, and the recorded position that tells the two apart. |
 | [`apps/desktop/src/renderer/screens/conversation-surface.tsx`](../apps/desktop/src/renderer/screens/conversation-surface.tsx) | The only caller. Owns the scroll container, decides when following is permitted at all, and asks the hook to move the viewport when the screen needs it somewhere — on open, after an older canonical range is prepended, on **Jump to latest**, and on send. |
 | `apps/desktop/src/renderer/lib/use-transcript-history.ts` | Observes viewport position, schedules edge checks, and reports whether reconnection blocks visible history. The surface owns request deduplication and errors. |
-| [`apps/desktop/src/renderer/styles/app.css`](../apps/desktop/src/renderer/styles/app.css) | `.transcript-scroll` and `.transcript-column`, whose bottom padding is what keeps the newest message clear of the composer when the viewport is at the end. |
+| [`packages/ui/src/styles/app.css`](../packages/ui/src/styles/app.css) | `.transcript-scroll` and `.transcript-column`, whose bottom padding is what keeps the newest message clear of the composer when the viewport is at the end. |
 
 `@tanstack/react-virtual` measures and positions the rows, and corrects the
 viewport itself when a measurement replaces an estimate. It is not part of the

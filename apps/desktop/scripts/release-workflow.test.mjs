@@ -254,10 +254,11 @@ async function typescriptDesktopContractSourceClosure() {
   const packageJson = JSON.parse(await readFile(join(contractDirectory, 'package.json'), 'utf8'));
   const entryPoints = new Set();
 
-  for (const path of await filesBelow(
-    desktopDirectory,
-    new Set(['coverage', 'dist', 'node_modules', 'out']),
-  )) {
+  const sourceFiles = [
+    ...await filesBelow(desktopDirectory, new Set(['coverage', 'dist', 'node_modules', 'out'])),
+    ...await filesBelow(join(repositoryDirectory, 'packages/ui/src'), new Set()),
+  ];
+  for (const path of sourceFiles) {
     if (!/\.[cm]?[jt]sx?$/u.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue;
     for (const specifier of await staticModuleSpecifiers(path)) {
       const entryPoint = resolveContractPackageImport(packageJson, specifier);
@@ -292,6 +293,8 @@ test('the release trigger covers everything the installed app is built from', as
     'apps/desktop/electron-builder.yml',
     'apps/desktop/resources/icon.icns',
     'packages/contracts/package.json',
+    'packages/ui/src/styles/app.css',
+    'packages/ui/src/themes.ts',
     'packages/contracts/src/index.ts',
     'package.json',
     'pnpm-lock.yaml',

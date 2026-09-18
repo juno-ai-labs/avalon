@@ -1,0 +1,41 @@
+{
+  "name": "@rally/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./components/*": "./src/components/*.tsx",
+    "./lib/*": "./src/lib/*.ts",
+    "./themes": "./src/themes.ts",
+    "./styles/*": "./src/styles/*",
+    "./components/project-icons": "./src/components/project-icons.ts",
+    "./assets/*": "./src/assets/*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rally/contracts": "workspace:*",
+    "@radix-ui/react-avatar": "latest",
+    "@radix-ui/react-dialog": "latest",
+    "@radix-ui/react-select": "latest",
+    "@radix-ui/react-tooltip": "latest",
+    "@radix-ui/react-context-menu": "latest",
+    "@radix-ui/react-dropdown-menu": "latest",
+    "@tabler/icons-react": "^3.46.0",
+    "@thesvg/react": "^3.3.1",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "thinking-orbs": "0.2.0",
+    "tw-fade": "^0.8.0"
+  },
+  "peerDependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}
