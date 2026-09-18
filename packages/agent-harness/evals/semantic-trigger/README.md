@@ -233,6 +233,37 @@ the contract towards recall, and the threshold — not the prose — is the leve
 that trades the two. A further generation aimed at recall is not the next thing to
 try.
 
+### Evidentially loaded state field names bought nothing
+
+`w3-state`'s thesis was that the state's field names *are* the instruction: it
+sends the condition as `standing_rule.fires_only_when` and the event's fields as
+`source_tool`, `headline`, `auto_generated_summary` and
+`verbatim_excerpt_possibly_truncated`, so a machine paraphrase and a headline are
+weighed below the real content without prose having to say so. Its author asked
+for the ablation that isolates it, and
+[`candidates/w3-flat-state.json`](candidates/w3-flat-state.json) is it: every
+criterion string, both remaining instruction strings and all three labels are
+byte-identical, and only the state's names change to the flat neutral set the gate
+ships with.
+
+| | Band utility | 3-class | fireBrier | u@0 | u@0.5 | u@0.7 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `w3-state` (loaded names) | 0.703 | 85.2% | 0.071 | 0.839 | 0.768 | 0.638 |
+| `w3-flat-state` (flat names) | 0.744 | 84.1% | 0.075 | 0.815 | 0.755 | 0.731 |
+
+Three runs each, spread 0.022 and 0.024. The names changed **no labels**:
+three-class accuracy, the fire-decision Brier and the confusion matrix are the
+same within noise, and at no threshold is the flat version worse by more than its
+own spread. What they changed is where the confidences sit — the loaded names make
+the reader *less* certain, so its utility falls away faster as the threshold rises
+(0.768 to 0.638 against 0.755 to 0.731). Under this price list that is a small
+cost rather than a benefit.
+
+So the thesis is not supported here. Naming a field
+`verbatim_excerpt_possibly_truncated` did not teach the reader anything it did not
+already do with `text_snippet`; it only made it hedge. That is worth knowing before
+the next candidate spends its budget on state vocabulary.
+
 ## The noise floor, and what is therefore not a result
 
 Three repeats of eleven candidates: the spread between a candidate's own best and
