@@ -23,6 +23,7 @@ import {
   groundTruth,
   primitiveOf,
   type CandidateContract,
+  type CandidatePrimitive,
   type EvalCase,
   type Verdict,
 } from "./contract";
@@ -234,12 +235,53 @@ function noulProbabilities(
   return { met: noul, not_met: 1 - noul, not_judgeable: 0 };
 }
 
-/** What the product pays for one decision. A false fire costs double a miss. */
-function utility(fires: boolean, shouldFire: boolean): number {
-  if (fires && shouldFire) return 1;
-  if (fires && !shouldFire) return -2;
-  if (!fires && !shouldFire) return 1;
-  return 0;
+/**
+ * What the product pays for one decision. A miss costs double a false fire.
+ *
+ * The gate guards a state-of-the-art model, not a destructive action: an
+ * unwanted run costs one session against a Sidekick that was going to decide
+ * for itself whether there was anything to do, while a miss silently drops
+ * something the user asked to be watched for. Those are not the same kind of
+ * failure, and the scale says so. `objective.md` carries the argument.
+ *
+ * The magnitude is the team's to set; the direction is not. Both errors are
+ * scored as forgone credit rather than a negative, so the cheaper one costs a
+ * point and the expensive one costs three, on a scale where 1.0 is perfect.
+ */
+export const UTILITY_CORRECT = 1;
+export const UTILITY_FALSE_FIRE = 0;
+export const UTILITY_MISSED_FIRE = -2;
+
+export function utility(fires: boolean, shouldFire: boolean): number {
+  if (fires === shouldFire) return UTILITY_CORRECT;
+  return fires ? UTILITY_FALSE_FIRE : UTILITY_MISSED_FIRE;
+}
+
+/**
+ * Whether the gate fires, at each threshold in the band.
+ *
+ * A Choice must both pick the match label and clear the threshold; a Noul only
+ * has to clear it, because the scalar is the whole answer. A hybrid that calls
+ * the condition unsettleable never fires whatever the scalar says.
+ *
+ * Exported because `rescore.ts` re-derives the objective from stored runs, and
+ * two implementations of the gate's own rule is how a rescore quietly stops
+ * measuring what the runtime does.
+ */
+export function firesInBand(
+  primitive: CandidatePrimitive,
+  verdict: Verdict | null,
+  confidence: number | null,
+  band: readonly number[] = OPERATING_BAND,
+): boolean[] {
+  return band.map((threshold) => (primitive === "choice"
+    ? verdict === "met" && (confidence ?? 0) > threshold
+    : verdict !== "not_judgeable" && (confidence ?? 0) > threshold));
+}
+
+/** Mean utility over the band, on the −2..+1 scale the product pays. */
+export function bandUtilityOf(fires: readonly boolean[], shouldFire: boolean): number {
+  return fires.reduce((total, fired) => total + utility(fired, shouldFire), 0) / fires.length;
 }
 
 /**
@@ -451,15 +493,9 @@ async function evaluateCase(
   const confidence = attempt.outcome.confidence ?? null;
   const verdict = resolveVerdict(candidate, choice, confidence);
   const shouldFire = truth.label === "met";
-  // A Choice must both pick the match label and clear the threshold; a Noul only
-  // has to clear it, because the scalar is the whole answer. A hybrid that calls
-  // the condition unsettleable never fires whatever the scalar says.
   const primitive = primitiveOf(candidate);
-  const blockedByJudgeability = verdict === "not_judgeable";
-  const firesInBand = OPERATING_BAND.map((threshold) => (primitive === "choice"
-    ? verdict === "met" && (confidence ?? 0) > threshold
-    : !blockedByJudgeability && (confidence ?? 0) > threshold));
-  const bandUtility = firesInBand.reduce((total, fires) => total + utility(fires, shouldFire), 0) / firesInBand.length;
+  const fires = firesInBand(primitive, verdict, confidence);
+  const bandUtility = bandUtilityOf(fires, shouldFire);
   const probabilities = primitiveOf(candidate) === "choice"
     ? verdictProbabilities(
       { choice, confidence, probabilities: attempt.outcome.probabilities ?? null },
@@ -493,7 +529,7 @@ async function evaluateCase(
     bandUtility,
     brier,
     brierBinary,
-    firesInBand,
+    firesInBand: fires,
   };
 }
 
@@ -658,11 +694,13 @@ async function main(): Promise<void> {
       + ` hard=${(report.aggregate.hardThreeClassAccuracy * 100).toFixed(2)}%`
       + ` p75=${report.aggregate.latency.p75}ms`
       + ` words=${report.size.words}`
-      + ` prec=${report.aggregate.fires.metPrecision === null ? "n/a" : (report.aggregate.fires.metPrecision * 100).toFixed(1) + "%"}`
       + ` rec=${report.aggregate.fires.metRecall === null ? "n/a" : (report.aggregate.fires.metRecall * 100).toFixed(1) + "%"}`
+      + ` prec=${report.aggregate.fires.metPrecision === null ? "n/a" : (report.aggregate.fires.metPrecision * 100).toFixed(1) + "%"}`
+      + ` missed=${report.aggregate.fires.missedFires}`
       + ` falsefires=${report.aggregate.fires.falseFires}`
       + (report.aggregate.scenarios
         ? ` watches=${report.aggregate.scenarios.count}`
+          + ` dropped=${report.aggregate.scenarios.withMissedFire}`
           + ` noisy=${report.aggregate.scenarios.withFalseFire}`
           + ` broke-silence=${report.aggregate.scenarios.brokenSilence}`
         : "")
