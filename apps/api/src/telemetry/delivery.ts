@@ -44,16 +44,13 @@ async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
   ] as const;
   let expired = 0;
   for (const table of tables) {
-    // Legacy accepted rows retain their original expiry after the fresh cutover.
-    const databases = ["telemetry_accepted_events", "telemetry_delivery_receipts", "telemetry_replay_audit"].includes(table)
-      ? [env.TELEMETRY_DB, env.DB] : [env.DB];
-    for (const db of new Set(databases)) {
-      const row = await db.prepare(
-        `SELECT COUNT(*) AS count FROM ${table} WHERE delete_at <= ?`,
-      ).bind(now).first<{ count: number }>();
-      expired += row?.count ?? 0;
-      await db.prepare(`DELETE FROM ${table} WHERE delete_at <= ?`).bind(now).run();
-    }
+    const db = ["telemetry_accepted_events", "telemetry_delivery_receipts", "telemetry_replay_audit"].includes(table)
+      ? env.TELEMETRY_DB : env.DB;
+    const row = await db.prepare(
+      `SELECT COUNT(*) AS count FROM ${table} WHERE delete_at <= ?`,
+    ).bind(now).first<{ count: number }>();
+    expired += row?.count ?? 0;
+    await db.prepare(`DELETE FROM ${table} WHERE delete_at <= ?`).bind(now).run();
   }
   return expired;
 }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results } from "./cloudflare-test";
 import { databaseFromSnapshot } from "./migrated-schema";
@@ -6,6 +7,15 @@ import { migratedSchemaSnapshot } from "./migrated-schema-snapshots";
 /** Applies every checked-in migration to a fresh regional D1 database. */
 export function migratedSqliteDatabase(): DatabaseSync {
   return databaseFromSnapshot(migratedSchemaSnapshot("regional"));
+}
+
+/** Focused query fixture combining the independently migrated identity and observability schemas. */
+export function migratedObservabilityFixture(): DatabaseSync {
+  const database = migratedSqliteDatabase();
+  for (const directory of ["telemetry-migrations", "audit-migrations"]) {
+    database.exec(readFileSync(new URL(`../../../../packages/db/${directory}/0001_initial.sql`, import.meta.url), "utf8"));
+  }
+  return database;
 }
 
 /**

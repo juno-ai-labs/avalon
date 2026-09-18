@@ -175,7 +175,6 @@ const WORKSPACE_REGIONAL_ONLY_TABLES = [
   "workspace_members",
   "workspace_invitations",
   "sessions",
-  "audit_events",
   "platform_workspace_bindings",
 ] as const;
 
