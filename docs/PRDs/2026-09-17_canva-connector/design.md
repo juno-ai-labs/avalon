@@ -5,8 +5,9 @@
 > facts, their sources, and the live measurements behind them are in
 > [`research.md`](research.md); nothing here re-argues them.
 >
-> This connector has one scope, personal. There is no ingress, no event schema
-> and no trigger manifest, because there is nothing to ingest — see Non-goals 1
+> This connector has one scope, personal. There is no webhook ingress and no
+> event schema, because Canva delivers nothing to an unregistered integration;
+> what activity exists is polled from a design somebody named — see Non-goals 1
 > and 2 in [`prd.md`](prd.md).
 
 ## Shape of the connector
@@ -21,7 +22,7 @@ Canva MCP (mcp.canva.com/mcp) ── personal connection ── live tools/list 
 | Connection scopes | `personal` |
 | Credential | Canva MCP OAuth tokens, per member |
 | Tools | Live `tools/list`, never checked in |
-| Activity | None. `supportsWebhooks: false`, `supportsPolling: false`, no `activityTriggers`, no `resourceTypes` |
+| Activity | Polled watches only. `supportsWebhooks: false`, `supportsPolling: true`, two triggers, `resourceTypes: ["canva_design"]` |
 
 The whole adapter is the pass-through declaration
 [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md#declaring-a-pass-through-connector)
@@ -139,43 +140,78 @@ change nothing about the grant and would make Rally's own words false.
 
 ## The tool surface
 
-Discovered live at activation; never checked in. What Canva published on
-2026-09-17 was around thirty tools, with per-tool per-minute rate limits and plan
-gating. It is recorded here at the level a reviewer needs to judge the
-connector's value, and is **not** the contract:
+Discovered live at activation; never checked in. A local MCP Inspector session
+against `https://mcp.canva.com/mcp` on 2026-09-17 (protocol `2025-11-25`)
+returned **35 tools with complete input schemas**. It is recorded here at the
+level a reviewer needs to judge the connector's value, and is **not** the
+contract.
 
-| Area | Tools | Limit | Plan |
-| --- | --- | --- | --- |
-| Discovery | `search-designs`, `get-design`, `get-design-pages`, `get-design-content`, `get-presenter-notes`, `get-export-formats` | 100/min | All |
-| Generation | `generate-design`, `create-design-from-candidate`, `copy-design` | 20/min | All |
-| Editing | `start-editing-transaction`, `perform-editing-operations` (50/min), `commit-editing-transaction`, `cancel-editing-transaction`, `get-design-thumbnail` (100/min) | 20/min | All |
-| Comments | `comment-on-design`, `list-comments`, `list-replies` (100/min), `reply-to-comment` (20/min) | — | All |
-| Folders | `create-folder` (20/min), `list-folder-items`, `search-folders`, `move-item-to-folder` (100/min) | — | All |
-| Assets | `upload-asset-from-url` (30/min), `get-assets` (100/min) | — | All |
-| Export / import | `export-design`, `import-design-from-url` | 20/min | All\* |
-| Shortlinks | `resolve-shortlink` | none | All |
-| Brand templates | `search-brand-templates`, `list-brand-kits` (100/min), `create-design-from-brand-template` (20/min) | — | **Pro+** |
-| Resize | `resize-design` | 20/min | **Pro+** |
-| Autofill | `autofill-design` (60/min), `get-brand-template-dataset` (100/min) | — | **Enterprise** |
+| Area | Tools |
+| --- | --- |
+| Discovery | `search-designs`, `search`, `fetch`, `get-design`, `get-design-pages`, `get-design-content`, `get-presenter-notes`, `get-export-formats`, `resolve-shortlink` |
+| Generation | `generate-design`, `get-design-candidates`, `create-design-from-candidate`, `copy-design`, `import-design-from-url` |
+| Editing | `start-editing-transaction`, `perform-editing-operations`, `commit-editing-transaction`, `cancel-editing-transaction`, `get-design-thumbnail` |
+| Comments | `list-comments`, `list-replies`, `comment-on-design`, `reply-to-comment` |
+| Folders | `create-folder`, `search-folders`, `list-folder-items`, `move-item-to-folder` |
+| Assets | `upload-asset-from-url`, `get-assets` |
+| Output | `export-design`, `resize-design` |
+| Brand | `search-brand-templates`, `get-brand-template-dataset`, `create-design-from-brand-template`, `list-brand-kits` |
 
-\* Export is available on all plans; Free is standard quality, Pro and above get
-lossless PNG, transparency and premium elements, and a design containing premium
-elements can fail with `license_required`.
+Rate limits are per tool per minute, from Canva's published table: 100/min for
+most reads, 20/min for generation, editing commits, export, resize and folder
+creation, 50/min for `perform-editing-operations`, 30/min for asset upload, and
+no limit on `resolve-shortlink`. Whether a limit is per user or per client is
+still unknown.
 
-Two consequences:
+**The live catalog and the published one already disagree.** Canva's docs table
+lists an `autofill-design` tool; the live `tools/list` does not return it. That
+is the argument for the pass-through stated as a fact rather than a principle: a
+catalog checked into Rally would have shipped a tool the server does not serve.
+
+Four properties of the live surface shape the implementation:
+
+- **`user_intent` is a required parameter on every one of the 35 tools** — a
+  model-authored sentence, recommended under 255 characters, describing what the
+  user is trying to accomplish. There is no opting out. It is work-stream context
+  crossing to Canva on every call, so the plugin's guidance tells the model to
+  describe the operation and not the conversation around it, and the connect card
+  discloses that it happens. A constant string is not an alternative: the field is
+  required and answering it falsely is worse than answering it minimally.
+- **No tool declares an `outputSchema`.** Responses are undeclared, so Rally
+  bounds and truncation-flags them rather than validating them against a
+  contract. A rejection still names the field it rejected.
+- **The annotations misclassify writes.** `generate-design` and `export-design`
+  are annotated `readOnlyHint: true` while both create things and consume quota;
+  `commit-editing-transaction` and `cancel-editing-transaction` declare
+  `destructiveHint: true`. Rally's own classification decides serial execution,
+  receipts and read-only inline-child authority. This is exactly the case
+  [`hosted-mcp-connectors.md`](../../hosted-mcp-connectors.md) anticipates when it
+  says remote annotations never lower Rally's safety policy — without it, a
+  read-only child would hold a design generator.
+- **Two tools duplicate two others.** `search` and `fetch` are the
+  ChatGPT-connector convention and overlap `search-designs` and
+  `get-design-content`, with fewer controls. They are undocumented on canva.dev.
+  The pass-through exposes whatever the server lists, so both pairs reach the
+  model; if that proves to cost accuracy, the answer is guidance, not a filtered
+  catalog.
+
+Canva's tool descriptions also carry heavy imperative prompt-steering at the
+client model — `search-designs` contains "🚫 NEVER use this tool…" and a list of
+phrasings that must route elsewhere. It is provider-authored text entering the
+run's context, and it is treated as the untrusted content it is.
+
+Two consequences for the product:
 
 - **Rally does not pre-screen on plan.** There is no field that reports a plan
   reliably, the provider decides per call, and its refusal is accurate in a way a
-  cached check could never be. This is settled precedent: the X connector's
-  health check reads no balance for the same reason, after reading one reported
-  ten thousand usable credits as none and failed every plugin load in the
-  workspace.
-- **The most valuable tools are the gated ones.** Autofill — a brand template
-  plus data becoming a design — is Enterprise-only, and it is the tool that makes
-  the "build the launch kit" story work. Worth knowing before anyone promises it.
-
-Whether the rate limits are per user or per client is undocumented and
-inconclusive. It only matters if many members connect and share a bucket.
+  cached check could never be — the X connector's balance mistake, avoided. The
+  probe saw this directly: `resize-design` succeeded on an unpaid account and
+  returned `trial_information.uses_remaining = 1`, so entitlement is a
+  per-call negotiation, not a static fact.
+- **The gated tools are the valuable ones.** Brand templates and brand kits are
+  Pro and above, resize is Pro and above, and autofill — a template plus data
+  becoming a design — is Enterprise and is not in the live catalog at all. Worth
+  knowing before anyone promises the launch-kit demo.
 
 ### Editing is transactional
 
@@ -208,37 +244,89 @@ field it rejected, per
 [`naming-a-schema-failure.md`](../../naming-a-schema-failure.md). `unhealthy` and
 `unexpected_error` on a path that had the reason in hand are defects.
 
-## Triggers: there are none, and that is declared
+## Watching a design without webhooks
 
-The adapter declares **no** `activityTriggers`, no `resourceTypes`, and neither
-webhook nor polling support. That is not an omission to fill in later; it is the
-correct declaration for a connector that receives nothing.
+Canva sends nothing, so a watch is polled. The pattern is the one agreed on
+2026-09-17 for personal MCP connections: an internal server-side poller, no
+faster than every ten minutes, a high-water line on a provider id, paging until
+it reaches the waterline, new events onto the Cloudflare queue. Per-platform
+logic, deliberately not abstracted over.
 
-It matters because the drafting model reads the catalog. A personal Granola or
-Fireflies connection once advertised its connector's full trigger set while
-`normalize` refused every non-workspace connection, so the model built Sidekicks
-on events that could never arrive and they were silent forever —
-indistinguishable, in the product, from a Sidekick with nothing to do yet.
-[`automation-lifecycle.md`](../../automation-lifecycle.md) records the fix, and
-the correct behavior for Canva falls straight out of it: with no triggers
-declared, no Canva trigger is offered, and a rule naming a Canva event is refused
-on the plugin, naming the scope.
+Rally already has `pollingActivity` with its required `normalizeHighWatermark`
+hook, and Google's Gmail, Calendar and Drive streams run on it. Canva declares
+streams against that runner; "no generalization" means not inventing an
+abstraction over two providers' cursors, not ignoring the runner that exists.
+One thing does have to change around it: activity has so far been
+workspace-scoped, and this is a personal connection delivering events to its
+owner. [`automation-lifecycle.md`](../../automation-lifecycle.md) already
+anticipates it — *"a connector that later delivers events to personal
+connections declares it once, in its adapter, and both surfaces follow."* Canva
+is that connector.
 
-What a Sidekick *can* do is hold the tools. A personal connection may be bound by
-its owner or by the run-as principal, so a Sidekick that member owns — triggered
-by a schedule, an inbound email, or another connector's event — can use Canva as
-the hands at the end of the work:
+### The two streams
+
+**`design.revised`** — for each watched design, `get-design-content` returns
+`metadata.revision_id`, a monotonic integer, alongside `updated_at`. The
+checkpoint is the last seen `revision_id`; a higher one is one event. This is
+exact rather than heuristic, which a timestamp comparison would not be.
+
+**`design.commented`** — for each watched design, `list-comments(design_id,
+limit, continuation)` pages the design's threads. The checkpoint is the last seen
+thread id; threads above it are new. `list-replies(design_id, comment_id)` reads
+a thread when the run needs it, rather than on the polling path.
+
+Both are bounded by what somebody watches, not by how much Canva a member has.
+At 100 reads a minute per tool, the ceiling is a product decision rather than a
+provider constraint — and it is a defensive limit, so its number is below.
+
+### Why discovery is not a third stream
+
+`search-designs` would support it: `sort_by: modified_descending` with
+`ownership: any | owned | shared` gives exactly the newest-first paging the
+waterline pattern wants, and `shared` would even reveal designs newly shared with
+the member. It is deliberately not built. Polling every design a member can see,
+every ten minutes, to synthesize a feed nobody asked for, is a replica of Canva's
+own home page assembled out of rate limit — the zero-copy line in
+[`provider-apps.md`](../../provider-apps.md#the-zero-copy-connector-boundary).
+It is recorded here because the capability is real and the restraint is the
+decision.
+
+### What the adapter declares
+
+Two triggers, both narrowing to one `canva_design`, and nothing else:
+
+| Trigger | Digestibility | Filter fields | Resource relationship |
+| --- | --- | --- | --- |
+| `design.revised` | digestible | `designId`, `designTitle` | `design` → `canva_design` |
+| `design.commented` | digestible | `designId`, `designTitle`, `threadId` | `design` → `canva_design` |
+
+`resourceTypes: ["canva_design"]`, `supportsPolling: true`,
+`supportsWebhooks: false`, `supportsWatches: true`. The resource type
+materializes on every watch, so a rule can name a deck and `resources_search`
+returns something — the Granola gap, avoided by construction.
+
+Declaring exactly these two is as important as declaring nothing else. A personal
+Granola or Fireflies connection once advertised its connector's full trigger set
+while `normalize` refused every non-workspace connection, so the drafting model
+built Sidekicks on events that could never arrive and they stayed silent forever,
+indistinguishable in the product from a Sidekick with nothing to do yet.
+
+### Canva as the hands, which is still the main story
+
+A personal connection may be bound by its owner or the run-as principal, so a
+Sidekick that member owns can use Canva at the end of work something else
+started:
 
 - A Linear project reaching *shipped* triggers a run that calls
   `search-brand-templates`, `create-design-from-brand-template` and
   `export-design`, and posts the assets into the work stream.
-- A weekly schedule exports the current state of a named deck so the work stream
-  holds a dated snapshot.
+- A weekly schedule exports the current state of a named deck as a dated
+  snapshot.
 - A run that has just written copy calls `generate-design` to draft the graphic
   beside it.
-
-Canva is the hands, never the ears. That is the whole shape of this connector,
-and Non-goal 2 is where its cost is recorded.
+- And now: a watched deck gains a comment, and the Sidekick reads the thread with
+  `list-replies`, checks it against the messaging the work stream holds, and
+  answers with `reply-to-comment`.
 
 ## Limits to be set, not guessed
 
@@ -254,3 +342,6 @@ says the guard is written open and the number handed back:
 - The editing-transaction cleanup delay — how long an opened transaction may sit
   before a run is considered to have abandoned it.
 - The loopback listener's lifetime, if that fallback is built.
+- The polling interval's floor — the agreed pattern says no faster than ten
+  minutes, and the number itself is the team's — and the ceiling on how many
+  designs one work stream may watch and how many watches one member may hold.

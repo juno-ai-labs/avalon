@@ -58,7 +58,7 @@ Sources: [MCP overview](https://www.canva.dev/docs/mcp/),
 ### The published tool list
 
 Canva *does* publish one, at
-[Tools and rate limits](https://www.canva.dev/docs/mcp/tools/) — around thirty
+[Tools and rate limits](https://www.canva.dev/docs/mcp/tools/) — around thirty (the live server returns 35; see the probe below)
 tools with a per-minute rate limit and plan availability each. An earlier index
 page lists only ten, which is how this research first recorded it wrongly. The
 catalog is transcribed in [`design.md`](design.md#the-tool-surface) at review
@@ -76,10 +76,16 @@ Plan gating, which the documentation is clear about:
 
 ## The live probe (2026-09-17)
 
-Protocol-level only. No credentials were used, no login was completed, and no
-token was ever issued — every probe stopped at the redirect to Canva's login
-page. A few throwaway OAuth clients were registered at Canva's open endpoint;
-none were authorized.
+Two probes, run the same day and reported separately because they establish
+different things.
+
+The **OAuth probe** below was protocol-level only: no credentials were used, no
+login was completed, and no token was ever issued — every request stopped at the
+redirect to Canva's login page. A few throwaway OAuth clients were registered at
+Canva's open endpoint; none were authorized.
+
+The **Inspector probe**, further down, did authorize — with a real Canva account
+over a loopback redirect — and is what produced the live tool catalog.
 
 ### Registration is open; `/authorize` is the gate
 
@@ -170,6 +176,62 @@ Canva's own published advice to request only the minimum scopes needed.
   which is non-conformant to RFC 7636. Internal to Canva; noted only so nobody
   copies it.
 
+### The local Inspector probe
+
+A second probe the same day connected MCP Inspector 2.7.0 to
+`https://mcp.canva.com/mcp` with per-user OAuth on a real Canva account,
+protocol `2025-11-25`. A loopback redirect needed no registration and no waitlist
+approval — which is what made it possible, and which says nothing about
+production redirect eligibility.
+
+**35 tools were returned with complete input schemas.** The docs table lists an
+`autofill-design` tool that the live catalog does not serve, and omits `search`
+and `fetch`, which it does. Neither list is the contract; `tools/list` is.
+
+Properties of the live surface, all from the schemas:
+
+- **`user_intent` is required on all 35 tools** — "Mandatory description of what
+  the user is trying to accomplish with this tool call", recommended under 255
+  characters. There is no opting out.
+- **No tool declares an `outputSchema`.** Responses are undeclared.
+- **`search-designs` takes `sort_by`** with `relevance`, `modified_descending`,
+  `modified_ascending`, `title_descending`, `title_ascending`, and `ownership`
+  with `any`, `owned`, `shared`. Canva's own documentation page for this tool
+  publishes neither parameter. This is what makes a polling high-water line
+  possible, after the documentation suggested it was not.
+- **`list-folder-items` takes `sort_by`** across created, modified and title, in
+  both directions, and `folder_id: 'root'` lists the top level.
+- **`list-comments(design_id, limit ≤ 100, continuation)`** pages a design's
+  threads, and `list-replies` takes a `comment_id`, so threads carry stable ids.
+  Their response shapes were not exercised.
+- **`get-design` accepts a full Canva share URL**, and its description states
+  that "any collaboration token embedded in the URL is needed to access a design
+  shared via link and will be parsed and forwarded automatically". A share URL is
+  therefore bearer authority.
+- **Annotations misclassify.** `generate-design` and `export-design` are
+  `readOnlyHint: true` although both create and consume quota;
+  `commit-editing-transaction` and `cancel-editing-transaction` are
+  `destructiveHint: true`.
+- **`design_types` currently supports only `presentation`.**
+- Tool descriptions carry imperative prompt-steering at the client model,
+  including "🚫 NEVER use this tool…" in `search-designs`.
+
+Exercised end to end: search, generate (four candidates), create from candidate,
+read content before and after editing, open an editing transaction (which
+returned element ids and pages), perform a title update and a targeted text
+replacement, commit, re-read, get design, list export formats (PDF, JPG, PNG,
+PPTX, GIF, MP4), export to PDF, and resize. The edit was visually confirmed in
+the Canva editor afterwards.
+
+`resize-design` succeeded on an account with no paid entitlement and returned
+`trial_information.uses_remaining = 1` — so a plan-gated tool can answer from a
+trial quota rather than refusing, which is a second reason not to pre-screen on
+plan. `list-brand-kits` and `search-brand-templates` returned empty lists, which
+proves neither entitlement nor absence.
+
+Not exercised: comments and replies, asset upload, folder operations, brand
+template creation, import. Two disposable designs remain in the test account.
+
 ### What could not be settled
 
 **Whether CIMD bypasses the redirect-host allowlist.** It could not be tested
@@ -179,7 +241,9 @@ client — so the result proves nothing either way. This is the question with th
 most leverage in the whole PRD: if CIMD bypasses the host gate, the waitlist
 stops being blocking.
 
-Also inconclusive: whether the per-tool rate limits are per user or per client.
+Also inconclusive: whether the per-tool rate limits are per user or per client,
+and what `list-comments` and `list-replies` actually return — the Inspector
+session can settle the second whenever someone runs it again.
 
 ## Why the workspace scope was cut
 
