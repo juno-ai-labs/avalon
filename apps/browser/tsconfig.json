@@ -17,6 +17,7 @@
     "vitest.config.ts"
   ],
   "exclude": [
-    "src/client.tsx"
+    "src/client.tsx",
+    "src/conversation.tsx"
   ]
 }

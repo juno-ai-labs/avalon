@@ -1,3 +1,4 @@
+import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 import { ConfiguredRegionSchema } from "@rally/contracts/regions";
 
@@ -21,5 +22,7 @@ export async function browserRequest<T>(region: string, path: string, schema: z.
     const error = ErrorSchema.safeParse(value);
     throw new BrowserApiError(response.status, error.success ? error.data.error.message : "Unable to continue. Please try again.");
   }
-  return schema.parse(value);
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error(`Rally returned an unexpected response (${describeZodIssues(parsed.error)}). Reload and try again.`);
+  return parsed.data;
 }
