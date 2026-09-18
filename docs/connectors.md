@@ -87,20 +87,20 @@ later decision.
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 | `packages/contracts/src/connector-api-keys.ts` | Per provider: the page that issues its API key, and the key format the provider documents — the one declaration the API's request schema, the adapter's own check and the desktop field all read. |
-| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key — used by Granola's and Ashby's setup modals and by **Replace workspace API key**. The Fireflies workspace modal still carries its own input and documentation link; that flow is being removed rather than converted. |
+| `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. Every surface that takes a key uses it: Granola's and Ashby's setup modals, and **Replace workspace API key** for whichever installation is in front of you. |
 
 ### Pasting an API key
 
-Three connectors are configured by pasting a key rather than by an OAuth round
+Some connectors are configured by pasting a key rather than by an OAuth round
 trip, and the product rule for that step is one key and nothing else: somebody
 pastes it and Rally does the rest. Two things are declared per provider in
-`packages/contracts/src/connector-api-keys.ts`, which the Worker's request
-schema, the adapter's own check, and the desktop key field all read — every
-surface but the Fireflies workspace modal, which still carries a hand-built
-input because that flow is being removed rather than converted:
+`packages/contracts/src/connector-api-keys.ts`, and every surface that takes a
+key reads them from there — the Worker's request schema, the adapter's own
+check, and the desktop key field:
 
 - **Where the key is issued.** `issuingUrl` is the provider page that creates
-  the key — Ashby's admin API keys page, Fireflies' API integration page — so
+  the key — Ashby's admin API keys page, Fireflies' API integration page for
+  the workspace connections made before that scope was withdrawn — so
   the link opens the place the key comes from rather than a documentation page
   to read first. Granola is the exception in the other direction: its workspace
   keys are created in the Granola desktop app and it publishes no web page that
@@ -122,6 +122,11 @@ typing the key: the verdict waits for a paste or for the field to be left,
 because a half-typed key is not a wrong key. The submit button beside it asks
 `connectorApiKeyAcceptable`, so the message and the gate cannot answer
 differently.
+
+Fireflies keeps an entry although no new Fireflies workspace connection can be
+made: the ones made before that scope was withdrawn are still served, and
+rotating their key through **Replace workspace API key** is the path that entry
+answers for.
 
 The catalog is keyed on `ConnectorApiKeyProviders`, its own list, rather than on
 the installation-provider enum the same three names happen to fill today.
@@ -207,6 +212,13 @@ Three consequences follow, and each is load-bearing:
 Recovery is part of the contract too. A durable job that failed on authorization may be classified non-retryable — that is correct while a grant is dead — but something has to lift the ceiling once the connection is reauthorized, or the outage becomes permanent for every request that arrived during it. `redriveReauthorizedIngress` is the Slack example: a job whose connection has been written since the job last failed is re-queued, which is self-limiting because a job that fails again stamps itself newer than the connection.
 
 ### Actor identity and work-stream attribution
+
+The resolver preserves guest identity for attribution, using the role returned by
+its existing regional membership query. Automatic connector audience admission
+excludes guests, including on legacy conversations; a provider audience cannot
+create an unrelated grant. Slack also excludes guests from automatic creator
+seating and session assignment. Explicit scope sharing remains the admission
+path, and guests retain access to connectors within their shared workstreams.
 
 Every connector that can start work from a provider identity resolves that identity to an
 Rally member through one shared mapping, `resolveConnectorActorIdentity` over
@@ -680,7 +692,14 @@ Rally asks for no `offline_access`; if no refresh token comes back, the
 connection reports itself as needing reconnection when its access expires
 rather than pretending it can renew itself.
 
-A **workspace** connection uses one administrator-pasted Fireflies API key,
+A **workspace** connection is no longer offered: Fireflies declares
+`connectableScopes: ["personal"]`, the desktop catalog offers only **Connect for
+me**, the setup route is gone, and `createWorkspaceInstallation` refuses the
+scope with `connector_scope_not_connectable`. What is described in the rest of
+this section is what a connection made before that still does — the adapter
+keeps serving it, because a workspace that pasted a key keeps its meetings
+rather than losing them to a product decision. Such a connection uses one
+administrator-pasted Fireflies API key,
 validated against the provider's `user` query before anything is stored, and
 exposes three fixed read tools over checked-in GraphQL documents: search
 meetings, read a meeting's AI summary, read its transcript pages. The model
@@ -700,11 +719,11 @@ left the connection reporting healthy. So: `auth_failed` becomes the `unauthoriz
 provider's own reset time, and the rest resolve to correct-and-retry,
 not-found, forbidden, or retry-once-then-continue.
 
-What the key can read is the connected Fireflies account's own access.
-Team-wide visibility needs Fireflies Enterprise with Super Admin, and Fireflies
-publishes no field that reports whether it is enabled, so the setup copy states
-the uncertainty rather than guessing; every workspace member can read whatever
-the key can.
+What the key can read is the connected Fireflies account's own access, and
+every workspace member can read whatever the key can. That is why no new one is
+made: team-wide visibility needs Fireflies Enterprise with Super Admin, and
+Fireflies publishes no field that reports whether it is enabled, so Rally could
+not state the blast radius even to the administrator pasting the key.
 
 Activity is webhook-only at `POST /ingest/fireflies/:id`. A delivery carries an
 event name, a millisecond timestamp and a meeting id and nothing else, so the
@@ -727,9 +746,11 @@ written, and it counts as the registration's verifying delivery.
 
 Registration is the customer's: Fireflies exposes no webhook API at all, so the
 adapter declares create, update, remove and rotate manual and inspect and
-reconcile unsupported, Rally generates the signing secret and shows it once at
+reconcile unsupported, Rally generated the signing secret and showed it once at
 setup, and the first verified delivery — the dashboard's test event, or the
-first meeting — is what makes the installation current.
+first meeting — is what makes the installation current. Nothing now reaches
+that setup, and an existing installation has no **Manage events** window
+either; a workspace that wants rid of one deletes the connection.
 [Installation lifecycle](connector-installation-lifecycle.md) owns that path.
 Both scopes are gated region by region on the non-secret
 `FIREFLIES_CONNECTOR_ENABLED` variable; unset, the type is absent from the
@@ -842,6 +863,26 @@ Connectors expose one of two provider-facing activity facets while sharing the s
 
 - `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. Ashby, GitHub, Granola, Linear, Notion, and generic webhook use this facet.
 - `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
+
+**A connector that will no longer take a *credential* in one of its scopes says
+so in `connectableScopes`,** read through `connectorScopeIsConnectable`. It is
+deliberately not `supportedScopes`: narrowing that would take the tools, the
+events and the webhook ingress away from the connections a workspace already
+made, which is a data migration rather than a product decision. This one closes
+the door and leaves what is behind it working. Fireflies declares
+`["personal"]`; every other connector omits it and inherits `supportedScopes`.
+
+The line it draws is **a new grant, not a new request**, and four places in
+`ConnectionService` enforce it, all answering `connector_scope_not_connectable`:
+`beginProvider` and `completeProvider` refuse a *creating* authorization —
+one carrying no `connectionId`, since a state minted before the scope closed
+must not land a connection after it — `createWorkspaceInstallation` refuses a
+new installation, and `replaceInstallationApiKey` refuses a new provider key
+for an existing one, because a replacement key is a different administrator's
+account as easily as the same one's. Reauthorizing a connection that exists is
+allowed, as is every path that reads, repairs with the credential already
+stored, or disconnects: `replaceConnectorInstallationCredentials` is the only
+writer of a new provider credential, so that boundary is the whole of it.
 
 **A connector whose events reach Rally in only some connection scopes says so
 in `activityConnectionScopes`,** which narrows `manifest.supportedScopes` for
@@ -1241,6 +1282,12 @@ so a new connector is enrolled without anyone remembering to add it. Do not narr
 one to a fixture list to make a new adapter pass — declare the exemption in the
 fixture table instead, where it is reviewable.
 
+Guest-triggered conversational runs also recheck exact conversation admission at
+run-authority boundaries. The connector executor repeats this check after
+credential refresh and immediately before calling the adapter. Remaining an
+active workspace guest is insufficient after the addressed share is revoked.
+Workspace-principal automation runs retain their separate lifecycle authority.
+
 ## Changelog
 
 ### 2026-09-18 — The connector card is sized to its row, and a pasted key is told what is wrong with it
@@ -1363,6 +1410,30 @@ and logged as `unexpected_shape` rather than passed off as a summary not yet
 written.
 
 PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
+
+### 2026-09-17 — Seat connector audiences through scoped grants
+
+After a workstream's Main participant handoff, connector audience admission
+writes exact Main grants through WorkstreamDO and lets durable participant
+projections publish roster changes. Each connector event has an immutable batch
+receipt, preventing retries from restoring access removed after that event.
+Ordinary active members can still join from a new source-conversation event;
+guests need explicit sharing, and inherited grants remain inherited. The legacy
+identity writer remains only for workstreams that have not transferred authority.
+The existing identity admission RPC reports whether it still owns that writer;
+ordinary connector turns never contact WorkstreamDO just to discover this.
+Guest-triggered tool execution now repeats the canonical conversation check;
+checking only workspace membership would let an already-running guest continue
+using connectors after their specific share ended.
+Keeping that writer after handoff would hit the source's write fence on every
+new mapped speaker, while bypassing the fence would restore two roster owners.
+
+Slack session assignment follows this boundary too. Main corrects creator
+attribution without touching its transferred roster, then shared connector
+reconciliation requests admission with a stable session/user identity. A retry
+finishes admission after an attribution-only partial result, and an old accepted
+assignment cannot recreate access removed later. Guests remain subject to
+explicit sharing even when a connector identifies them as the original author.
 
 ### 2026-09-16 — A removed connection leaves the list, and Test says pass or fail
 
@@ -1523,6 +1594,56 @@ Adding another optional Gmail field requires deliberately extending the
 generated variants; it must not leave an unused slot for an unknown key.
 
 PR [#792](https://github.com/juno-ai-labs/avalon/pull/792).
+
+### 2026-09-18 — Fireflies takes no new workspace connection
+
+**What changed:** A connector may now declare `connectableScopes`, the scopes it
+will still take a credential in, narrowing `supportedScopes` the way
+`activityConnectionScopes` and `capabilityConnectionScopes` already narrow it
+elsewhere. Fireflies declares `["personal"]`. Creating a connection, completing
+an authorization that carries no connection, creating a workspace installation
+and replacing an installation's API key are all refused for a closed scope;
+reauthorizing an existing connection, repairing it and disconnecting it are
+not. The desktop catalog offers only
+**Connect for me** for it, `POST /connections/fireflies/workspace` and the
+two-stage setup dialog behind it are deleted, and the **Manage events** window
+is no longer offered for a connector whose workspace scope is closed. The
+signing-key rotation guidance that window carried is deleted for every provider.
+
+**Why:** A Fireflies workspace connection is one administrator's API key that
+every member of the workspace reads through, so connecting it hands the whole
+company every transcript that key can see — including calls whose participants
+never agreed to that — and Fireflies publishes no field saying what the key
+covers, so Rally cannot state the blast radius even to the person pasting it.
+Rally is taking no new workspace connection of that shape until the
+authorization model says who may read which meeting. The removed setup also
+walked an administrator through ticking event subscriptions and rotating a
+signing key, which is a webhook console rather than a product: the events a
+connector needs are the connector's to know.
+
+**Considered and rejected:** Narrowing `manifest.supportedScopes` to
+`["personal"]`, which is where a reader looks first. The registry requires a
+workspace scope for a connector with `installationManagement`, so that would
+have meant deleting the webhook ingress, the read tools and the installation
+along with it — and with them the meetings of any workspace that already pasted
+a key, which turns a product decision into a data migration. A second rejected
+option was leaving the route and refusing at the desktop, which leaves anything
+holding the route connecting a scope the product has withdrawn.
+
+**Consequences:** `supportedScopes` now answers "what can this adapter serve"
+and `connectableScopes` answers "what will it still take a credential for", and
+a surface that offers a connection has to read the second. Hiding a button is
+not the boundary — the four service paths are, which is why a replacement API
+key is refused there rather than only in the window that used to offer one. An
+existing Fireflies workspace connection keeps its tools, its ingress and its
+activity, and its row keeps **Delete**; it has no **Manage events** and no
+**Refresh**. **It therefore keeps working until its key changes, and no
+further**: rotating the key in Fireflies leaves a connection that reports
+`needs_reconnect` with deletion as the only action, because giving it a new key
+is the grant this closed. That is the decision, not a gap — a workspace whose
+key must change is a workspace connecting Fireflies afresh, which is what is
+being withheld. Reopening the scope is one line in
+`fireflies.ts` plus the desktop catalog's `scopes`.
 
 ### 2026-09-15 — Fireflies' `keywords` is a list, whatever its schema page says
 

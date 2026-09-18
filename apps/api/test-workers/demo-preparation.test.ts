@@ -125,14 +125,14 @@ async function seedControlPlane(): Promise<void> {
     env.DB.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
       VALUES (?, 'demo-template', 'demo-template', 'global', ?, ?, ?)`)
       .bind(DEMO_TEMPLATE_WORKSPACE_ID, PRESENTER_ID, NOW, NOW),
-    env.DB.prepare(`CREATE TABLE workspace_members (
+    env.DB.prepare(`CREATE TABLE workspace_members (revision INTEGER NOT NULL DEFAULT 1, access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL,
       joined_at TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES (?, ?, 'owner', 'active', ?)`)
       .bind(DEMO_TEMPLATE_WORKSPACE_ID, PRESENTER_ID, NOW),
-    env.DB.prepare(`CREATE TABLE sessions (
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL,
       revoked_at TEXT, expires_at TEXT NOT NULL
     )`),

@@ -1359,6 +1359,15 @@ is under test.
 
 ## Data model
 
+After first-share handoff, WorkstreamDO owns `scope_grants` and their operation
+receipts, scoped invitations and delivery receipts, and the Main/child participant
+transfer ledgers. The handoff is lazy per addressed scope; untouched conversations
+keep their existing authority. SubstreamAgent retains transcript execution and a
+versioned participant projection for socket admission. `scope_grant_directory`
+outbox effects update discovery without becoming a second grant authority. See
+[scoped invitations](scope-invitations.md) and [grant discovery](scope-grant-directory.md) for
+the target, inheritance, incarnation and replay rules.
+
 The DDL in source is authoritative. This catalog defines ownership and joins.
 Durable Object tables are SQLite `STRICT` tables. Native work-stream-down
 schemas use integer Unix milliseconds; WorkspaceDO's imported workspace schema
@@ -1450,7 +1459,7 @@ remain bounded and exclude the supplemented rows.
 | `projection_keys` | Next version and last hash for parent aggregate partitions such as `common` and `user:<id>`. |
 | `workstream_state_clock` | Singleton append sequence and nondecreasing millisecond floor used to create local UUIDv7 trace identities. It is not a distributed causal clock. |
 | `workstream_state_changes` | Immutable bounded tail of common and `user:<id>` aggregate rows. `waterline` orders one key; UUIDv7 `event_id` is carried over both socket paths for tracing/deduplication. |
-| `durable_outbox` | Hash-checked aggregate or immutable `parent_effect` envelope waiting for the alarm to hand it to the Queue, discriminated by a CHECK-enumerated `effect_kind` column (`directory_common`, `directory_user`, `directory_automation`, `activity_event`, `mention_notification`, `participant_notification`; the drain priority-orders on it and never re-derives the class from JSON). Every common/viewer state change keeps its own row. A row is deleted the moment `sendBatch` accepts it, deferred five seconds when the Queue refuses the batch, and deleted with a warning when the envelope is too large for one message. There is no dead-letter state here: the Queue's dead-letter queue is the disposal. |
+| `durable_outbox` | Hash-checked aggregate or immutable `parent_effect` envelope waiting for the alarm to hand it to the Queue, discriminated by a CHECK-enumerated `effect_kind` column (`directory_common`, `directory_user`, `directory_automation`, `activity_event`, `mention_notification`, `participant_notification`, `scope_grant_directory`; the drain priority-orders on it and never re-derives the class from JSON). Every common/viewer state change keeps its own row. A row is deleted the moment `sendBatch` accepts it, deferred five seconds when the Queue refuses the batch, and deleted with a warning when the envelope is too large for one message. There is no dead-letter state here: the Queue's dead-letter queue is the disposal. |
 | `workstream_socket_ticket_receipts` | Consumed metadata-socket ticket IDs, users, expiry, and consumption time. |
 
 The child tables are inputs to `workstream_metadata` and the aggregate
@@ -1638,6 +1647,31 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-18 — Overlap independent inference preparation reads
+
+**What changed:** The harness starts independent initial authority reads,
+model routing, attachment receipt replay, and activation-hint loading through
+the shared rejection-observing `Preparation` primitive, while independent
+transcript bootstrap reads load together. Each result is still awaited before
+the same consuming authority boundary, and immutable run-scope persistence,
+plugin activation, the final liveness pulse, and provider dispatch retain their
+order. Attachment replay's existing five-second wall-clock budget still begins
+immediately before receipt outputs are restored; overlapping work does not
+start that deadline early.
+
+**Why:** Production traces showed roughly 2.7 seconds after substream
+confirmation completed but before the first provider request. These reads were
+being paid sequentially even though none grants authority to another.
+
+**Considered and rejected:** Lifecycle-deferring the reads or provider dispatch
+would let failures escape durable attempt settlement. Removing replay,
+authorization, or scope checks would trade latency for incorrect execution.
+
+**Consequences:** The critical path now pays the slowest overlapping read in a
+group instead of their sum. Failures remain observed and propagate when their
+existing consumer awaits them; no logging, analytics, or lakehouse write joins
+the execution gate.
+
 ### 2026-09-17 — Start durable loop work eagerly and overlap creation projections
 
 **What changed:** message and initialization admission still persist their loop
@@ -1708,6 +1742,224 @@ activation stays with the SubstreamAgent that validates the returned loop/input
 fence.
 
 Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
+
+### 2026-09-16 — Establish durable scope grant storage
+
+Guest collaboration needs independent Main, child and whole-workstream grants;
+the old Main roster cannot represent them without overgranting. Migration 14
+adds versioned grant rows, immutable operation receipts and transactional delivery
+intents, plus an explicit child audience that defaults existing children to
+restricted. Legacy scopes retain the existing admission model until handoff;
+first-share preparation now drives the addressed handoff after checking canonical
+participants. Ordinary and system workstream creation retain the local roster;
+only first sharing establishes grant authority, keeping the handoff off creation
+and first-message admission. This is not a completed rollout of all participant writers. Each grant
+records the recipient's membership incarnation, and old incarnations
+cannot authorize a new relationship. Main migration journals freeze the mapping
+before the source RPC; child imports freeze it with their local import. Receipts
+never rebind historical grants on retry. The policy and storage invariants live
+in [authorization](authorization.md). The same unpublished migration adds
+[scoped invitation](scope-invitations.md) receipts and encrypted delivery intents.
+Their acceptance transaction writes target grants in this owner, preventing an
+interrupted cross-object grant sequence from resurrecting a later revocation.
+
+Grant changes also schedule a durable discovery handoff. Migration 15 extends
+this parent's outbox for `scope_grant_directory` effects without discarding
+pending deliveries. The handler acknowledges source intents only in the same
+transaction that enqueues their effects; WorkspaceDO stores incarnation-specific
+candidates, never admission authority. See [scope grant directory](scope-grant-directory.md).
+
+Invitation preparation includes ready inheriting children for a parent grant;
+leaving those children on legacy participant authority would make the full share
+unusable. New child publication under a migrated Main records its handoff
+intent atomically with readiness, so future inheriting children join existing
+shares and interruption cannot strand them on legacy authority. Restricted
+children use the same transfer while preserving their exact initial memberships. Read-only sharing options inspect canonical legacy membership without
+performing that handoff. Complete-workstream requests are checked against the
+current restricted-child registry after external awaits and before invitation
+commit; a stale UI list cannot silently narrow the promised share. The complete
+selection creates parent plus restricted-child grants, not redundant independent
+Main grants. [Scoped invitations](scope-invitations.md) owns this protocol.
+
+Connector admission now uses the same grant owner after migration. Migration 16
+receipts each event and its canonical audience atomically with exact Main grants,
+so an old delivery cannot resurrect a revoked participant and connector mapping
+cannot silently turn a guest into a broader collaborator.
+ Creator attribution correction
+now skips source roster writes after transfer and uses the same receipted
+admission path, keeping historical attribution separate from access authority.
+
+The new exact-scope read/mutation RPCs combine current D1 relationships with
+local grant/lifecycle authority. They avoid a Main preflight for a child and
+refuse implicit workspace reading as sharing authority. They return typed
+denials; legacy roster migration and serving cutover remain separate work.
+
+After handoff, human-message admission obtains participant additions from the
+grant owner before committing the message. A member may join a conversation
+they can already write; that operation can grant only themselves on that exact
+conversation. Existing inherited participation stays inherited. Confirmed
+mentions use ordinary scope-sharing authorization and stable command receipts.
+Both paths apply the newest roster projection before continuing. Queued messages
+admitted before handoff may update opening metadata for active participants but
+cannot recreate a participant through legacy transcript materialization. This
+keeps ordinary posting working without reopening the fenced source ledger.
+
+The migrated participant control targets the exact conversation, including Main;
+it does not interpret a Main addition as a whole-workstream grant. Removing a
+participant whose access is inherited reports `inherited_access` without changing
+either grant. The caller must manage the parent share explicitly, because a
+conversation action cannot revoke access across its siblings. A retried removal
+whose receipt was superseded by a later share reports that the participant still
+has access instead of publishing a false participant-removed event.
+
+Substream migration 62 prepares the source side of that cutover. A forward-only
+handoff atomically snapshots active participants and installs a durable write
+fence enforced by participant-table triggers. This covers identity operations,
+connector reconciliation and direct product SQL alike; read-position updates
+remain writable. Retrying the same transfer returns its original snapshot, and
+committing it never reopens legacy admission. An abort would be unsafe after a
+lost parent response, since the parent might already have imported the grants.
+WorkstreamDO's grant storage imports each frozen scope once, committing its
+grants, delivery intents and import receipt together. The receipt binds the
+source token and complete roster, so replay cannot reactivate a grant revoked
+after import. An import refuses any scope already holding grants or tombstones.
+Legacy Main participants map to parent grants; private rosters map to exact
+conversation grants. The handoff is not invoked by live paths yet: a versioned
+projection delivery path and migration orchestration must be ready before it starts.
+
+The source's projection receiver stores a per-user revision, including removals
+for users absent from the local roster. It accepts only the committed transfer
+token, ignores older deliveries and rejects conflicting payloads at the same
+revision. A synchronous transaction temporarily permits the projection write,
+changes the roster and records its revision, then closes that permission again.
+Rollback also restores the closed fence. Re-admission advances the participant
+epoch and clears the opened marker; unchanged effective access preserves both.
+This input represents effective access after combining grants, not an individual
+grant's active bit. `SubstreamAgent.applyParticipantProjection` checks the exact
+conversation address and commits roster transitions with the existing regional
+directory and participant-added effects. Duplicate delivery does not duplicate
+those effects. After commit it re-reads the latest projection before clearing
+pending admissions and closing the removed person's sockets, so a delayed
+removal cannot close a newly re-admitted session. This also runs on retries to
+recover a committed removal whose socket closure was interrupted. Membership incarnation now fences both grant admission and membership revocation
+closure. Live migration orchestration remains required before cutover.
+
+For registered projection targets, a grant mutation now computes participation
+from all remaining direct and inherited grants, and stores the latest delivery
+and a `participant_projection` alarm in the same transaction. Removing a parent
+grant preserves an independent child grant; restricted children do not inherit
+parent changes. The alarm calls the exact SubstreamAgent receiver and acknowledges
+only that revision after success. A new revision supersedes its older pending
+delivery and alarm; an in-flight old acknowledgement cannot delete it. Receiver
+refusal or RPC failure retains the intent under the existing scheduler's retry
+policy. Acknowledgement retains the latest projection payload and revision with
+an `acknowledged_revision` marker instead of deleting the row. Admission still
+needs that canonical version after delivery; pending reads exclude acknowledged
+rows, and a newer projection clears the marker atomically.
+
+`beginMainParticipantMigration` now drives the Main handoff as a stored
+`main_participant_migration` alarm. It writes the transfer token and pending
+state before contacting Main. Every attempt replays source prepare, parent
+import, source commit and projection registration with that same token. A
+failure after source commit resumes from the frozen snapshot and import receipt.
+Pending migration refuses grant mutations; a new migration also refuses to
+overwrite an existing parent grant ledger. Completing target registration and
+the parent completion marker is one transaction. That marker means authority
+handoff completed; it does not acknowledge every subsequent roster delivery.
+Source RPCs check the exact workspace, parent and selected conversation, and
+reject mismatched tokens. Main orchestration always addresses substream `0`.
+
+Private-child migration uses a different source of truth: WorkstreamDO's
+`private_child_memberships`. `beginChildParticipantMigration` freezes that
+child's legacy membership rows, imports only active memberships into exact
+conversation grants, and records its retry alarm in one transaction. The child
+agent's frozen roster supplies only the reconciliation audience. Local users
+absent from the canonical grants receive a removal projection; copying their
+stale local membership into grants would resurrect revoked access. Main is
+neither frozen nor granted by a child migration.
+
+Legacy child membership effects are retained as historical receipts but excluded
+from delivery and wake-up selection once migration starts; the canonical grant
+snapshot supersedes them. Database triggers prevent subsequent legacy writes.
+An already in-flight old delivery cannot bypass the child agent's own write
+fence. Migration remains pending until source commit and projection registration
+complete, and pending child migration also fences grant mutations.
+
+Invitation preparation invokes these handoffs for existing targets. Once Main
+has entered grant authority, publishing a new private child atomically records
+its ready state, imports its canonical initial memberships, and schedules the
+same durable child handoff. The foreground request attempts completion before
+returning; the persisted alarm recovers interruptions. Pending handoff refuses
+grant admission. Inheriting children receive existing parent grants through the
+participant projection, while restricted children retain only their exact grants.
+The standard creation service, Slack, and digest provisioning retain their
+existing local participant writes. First sharing prepares the addressed grant
+authority; eager migration added unnecessary work to their creation paths. Automation conversations retain
+their separate parent authority. Remaining legacy participant writers still
+require completion before live rollout.
+
+Connector audience admission is a parent command only after Main handoff.
+The existing identity admission RPC reports a handoff without writing; only that
+result sends the caller to the parent. Ordinary workstreams admit locally in the
+original RPC and do not resolve or contact a parent as a preflight.
+Migration 16 stores the canonical event request with the batch's grant changes
+in one transaction. Ordinary active workspace members receive an exact Main
+grant when they lack direct or inherited access; existing inherited access is
+not copied into an independent grant. Guests require explicit sharing. Replaying
+a recorded event does not reapply grants, even after removal or guest promotion;
+a new event may re-admit an ordinary member under existing connector semantics.
+Roster projections own participant events and retries. The service uses its old
+identity writer only when the parent reports an unmigrated Main.
+
+Creator adoption also respects the handoff. Main still owns its historical
+creator attribution, but a transferred Main never seats or reclassifies
+participants during attribution correction. Connector creator reconciliation
+then asks the parent to admit the mapped user under a stable assignment receipt.
+Changing attribution cannot supply a guest grant or revive a removed grant on
+retry; correcting the creator also does not remove the previous user's grants.
+
+For a migrated child, the existing parent add/remove participant methods now
+delegate to the grant authority before the legacy Main-based preflight. Their
+operation IDs map deterministically to grant operation IDs, and revisionless
+compatibility commands reuse the first attempt's revision from its receipt.
+Replaying an old add after a later removal returns the original result without
+reapplying access. Both explicit-revision and compatibility mutation paths use
+the same current relationship, scope and lifecycle checks. They retain the
+existing rule that a scope keeps at least one participant, counting overlapping
+and inheriting grants rather than just one direct grant row. Pending migration
+returns a retryable conflict through the service. The unmigrated child path
+continues to use its existing authority until its own handoff.
+
+Migrated SubstreamAgent product add/remove actions also route through the grant
+ledger (Main targets the parent grant; a child targets its exact conversation).
+Message commit updates an active author's opened timestamp with `UPDATE ...
+RETURNING`, using the returned participant as the witness before falling back
+to admission for an absent participant. This avoids a separate participant read
+on every seated author's commit while preserving the transferred roster's
+insert fence.
+Before preparation, message admission checks whether its author and confirmed
+participants are already seated. If so, it skips the asynchronous grant helper
+and its identity/transfer reads entirely. Only actual additions enter parent
+coordination; the local roster remains the admission projection.
+The service client supplies an operation ID, which callers can retain across a
+retry. Addition keeps the existing retained-content audience check. Compatibility
+grant commands synchronously attempt the latest addressed roster projection
+before responding, with the already-recorded alarm as recovery if that attempt
+fails. This preserves the participant-shaped add response without reopening
+legacy roster writes. A replayed add superseded by removal returns a conflict;
+it cannot re-admit that person. The existing semantic participant events follow
+the effective roster after delivery. Automatic admission writers and serving
+still require cutover before migrations can be enabled for live workstreams.
+
+Parent viewer admission and canonical authorization now use exact grants for
+conversations whose handoff is complete. They recheck relationship and local
+facts after the D1 await, refuse a pending handoff, and never consult Main for
+an independently migrated child. Canonical reads identify their authority as
+`grants` or `legacy`; the resolver requests the exact conversation so one
+unmigrated sibling cannot force the child's read through Main. Migrated child
+socket admission requires its applied projection to match the parent's returned
+membership revision. Main socket fencing and guest session contracts still need
+integration before rollout.
 
 ### 2026-09-15 — Assistant person links become authoritative mentions at acceptance
 

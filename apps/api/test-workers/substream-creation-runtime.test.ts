@@ -125,6 +125,127 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("substream preparation on workerd", () => {
+  it("warms the reserved child before confirmation without claiming authority or publishing it", async () => {
+    const service = new SubstreamCreationService({ ...TEST_ENV, LOG_LEVEL: "info" }, creatorAuth);
+    const operationId = "00000000-0000-7000-8000-00000000cf90";
+    const steps: string[] = [];
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    const prepared = await service.prepare(WORKSTREAM_ID, {
+        operationId,
+        title: "Warm child",
+        throughTurnId: "source-turn-1",
+      }, {
+        isTraced: false,
+        setAttributes() {},
+        setError() {},
+        mark() {},
+        async step<T>(name: string, run: () => Promise<T>): Promise<T> {
+          steps.push(name);
+          return run();
+        },
+      });
+
+    expect(steps).toContain("substream.prepare.child.warm");
+    const warmRow = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .find((entry) => entry.event === "substream_child_warmed");
+    expect(warmRow).toMatchObject({
+      substream_id: prepared.substreamId,
+      object_id: env.SUBSTREAM_AGENTS.idFromName(conversationObjectName(
+        "global", WORKSPACE_ID, WORKSTREAM_ID, prepared.substreamId,
+      )).toString(),
+      authority_mode: "unclaimed",
+    });
+    expect((await parent().listVisiblePrivateChildren({
+      workspaceId: WORKSPACE_ID,
+      parentId: WORKSTREAM_ID,
+      userId: CREATOR_ID,
+    })).children).toEqual([]);
+    logged.mockRestore();
+  });
+
+  it("lets a Main-only guest create a child before participant directory delivery", async () => {
+    await parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
+    await runDurableObjectAlarm(parent());
+    await expect.poll(() => parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }), { timeout: 10_000 })
+      .toMatchObject({ status: "complete" });
+    await env.DB.prepare("UPDATE workspace_members SET access_class='guest',role=NULL WHERE user_id=?")
+      .bind(OTHER_ID).run();
+    await runInDurableObject(parent(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream_metadata SET scope='personal' WHERE id=1");
+    });
+    expect(await parent().mutateParticipantGrant({ actorUserId: CREATOR_ID, userId: OTHER_ID,
+      target: { kind: "conversation", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") },
+      operationId: crypto.randomUUID(), active: true })).toMatchObject({ status: "committed" });
+    // The held effect queue leaves directory delivery pending. Admission must
+    // use the same authority throughout creation, not wait for a sidebar row.
+    expect(await parent().canReadWorkstream(OTHER_ID)).toBe(false);
+    const service = new SubstreamCreationService(TEST_ENV, { ...otherAuth, role: null });
+    const prepared = await service.prepare(WORKSTREAM_ID, {
+      operationId: crypto.randomUUID(), title: "Guest-created child", throughTurnId: "source-turn-1",
+    });
+    const created = await service.confirm(WORKSTREAM_ID, prepared.operationId);
+    expect(created.substreamId).toBe(prepared.substreamId);
+    const boot = await new WorkstreamObjectClient(TEST_ENV, { ...otherAuth, role: null }, WORKSTREAM_ID, created.substreamId).boot();
+    expect(boot.workstream.title).toBe("Guest-created child");
+  });
+
+  it.each([
+    { audience: "inherits_workstream", interrupted: false },
+    { audience: "restricted", interrupted: false },
+    { audience: "inherits_workstream", interrupted: true },
+  ] as const)("hands new $audience children to existing grant authority (interrupted=$interrupted)", async ({ audience, interrupted }) => {
+    await parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
+    await runDurableObjectAlarm(parent());
+    await expect.poll(() => parent().beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID }), { timeout: 10_000 })
+      .toMatchObject({ status: "complete" });
+    expect(await parent().mutateScopeGrant({ actorUserId: CREATOR_ID, userId: OTHER_ID,
+      target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID },
+      operationId: crypto.randomUUID(), expectedRevision: 0, active: true })).toMatchObject({ status: "committed" });
+    await env.DB.prepare("UPDATE workspace_members SET access_class='guest' WHERE user_id=?").bind(OTHER_ID).run();
+    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
+    const operationId = crypto.randomUUID();
+    const prepared = await service.prepare(WORKSTREAM_ID, { operationId, title: "Future child", throughTurnId: "source-turn-1" });
+    await runInDurableObject(parent(), (_instance, state) => {
+      // The product currently creates restricted children. Exercise both stored
+      // audience policies through the same real publication and handoff path.
+      state.storage.sql.exec("UPDATE conversation_children SET audience=? WHERE substream_id=?", audience, prepared.substreamId);
+    });
+    if (interrupted) {
+      await runInDurableObject(parent(), (_instance, state) => {
+        state.storage.sql.exec(`CREATE TRIGGER fail_child_handoff BEFORE UPDATE OF phase ON child_participant_migrations
+          WHEN NEW.phase='complete' BEGIN SELECT RAISE(ABORT, 'child handoff unavailable'); END`);
+      });
+      await expect(service.confirm(WORKSTREAM_ID, operationId)).rejects.toThrow("child handoff unavailable");
+      await runInDurableObject(parent(), async (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT status FROM conversation_children WHERE substream_id=?", prepared.substreamId)
+          .one()).toEqual({ status: "ready" });
+        expect(state.storage.sql.exec("SELECT phase FROM child_participant_migrations WHERE substream_id=?", prepared.substreamId)
+          .one()).toEqual({ phase: "pending" });
+        expect(state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='child_participant_migration' AND alarm_key=?", prepared.substreamId)
+          .toArray()).toHaveLength(1);
+        state.storage.sql.exec("DROP TRIGGER fail_child_handoff");
+        state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at=0 WHERE kind='child_participant_migration'");
+        await state.storage.setAlarm(Date.now());
+      });
+      await runDurableObjectAlarm(parent());
+      await expect.poll(() => runInDurableObject(parent(), (_instance, state) =>
+        state.storage.sql.exec<{ phase: string }>("SELECT phase FROM child_participant_migrations WHERE substream_id=?", prepared.substreamId)
+          .one().phase), { timeout: 10_000 }).toBe("complete");
+    }
+    const created = await service.confirm(WORKSTREAM_ID, operationId);
+    await runInDurableObject(parent(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT phase FROM child_participant_migrations WHERE substream_id=?", created.substreamId)
+        .toArray()).toEqual([{ phase: "complete" }]);
+    });
+    expect(await parent().readScopeAccess({ userId: OTHER_ID, target: { kind: "conversation",
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: created.substreamId } }))
+      .toMatchObject({ allowed: audience === "inherits_workstream" });
+    await runInDurableObject(conversation(created.substreamId), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT phase FROM participant_authority_transfer").one()).toEqual({ phase: "projection" });
+    });
+    expect(await service.confirm(WORKSTREAM_ID, operationId)).toMatchObject({ substreamId: created.substreamId });
+  });
+
   it("refuses first history installation after publishing an empty child", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000cf91";

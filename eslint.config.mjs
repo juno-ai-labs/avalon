@@ -256,14 +256,14 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}", "packages/ui/src/**/*.{ts,tsx}"],
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
       "rally/require-websocket-ticket": "error",
     },
   },
   {
-    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}", "packages/ui/src/**/*.{ts,tsx}"],
     ignores: ["apps/desktop/src/renderer/lib/workstreams-cache.ts"],
     rules: {
       "rally/no-direct-workstreams-cache-write": "error",
@@ -321,7 +321,7 @@ export default tseslint.config(
     // The desktop client logs to a terminal or DevTools rather than to Workers
     // Logs, but the same rule holds: a diagnostic goes through the logger, which
     // owns the scope tag and the level.
-    files: ["apps/desktop/src/**/*.{ts,tsx}"],
+    files: ["apps/desktop/src/**/*.{ts,tsx}", "packages/ui/src/**/*.{ts,tsx}"],
     rules: {
       "no-console": "error",
     },

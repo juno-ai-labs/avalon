@@ -58,7 +58,7 @@ caches, and only CI's cold run pays it.
 ## Drawing a mark
 
 Do not render a brand component directly. Every surface goes through
-`ConnectorMark` in `apps/desktop/src/renderer/components/primitives.tsx`, which
+`ConnectorMark` in `packages/ui/src/components/primitives.tsx`, which
 decides the mark, its colour, and how it is put on the page once:
 
 ```tsx
@@ -67,7 +67,7 @@ decides the mark, its colour, and how it is put on the page once:
 
 Which mark a connector wears is
 `connectorBrandMark(connectorType, displayName)` in
-`apps/desktop/src/renderer/lib/plugin-marks.ts` — the single table, keyed on the
+`packages/ui/src/lib/plugin-marks.ts` — the single table, keyed on the
 connector's own type, so a connector looks the same in the transcript and in
 Settings. [`plugin-activity-rows.md`](plugin-activity-rows.md) owns the
 transcript's use of it.
@@ -137,7 +137,7 @@ in Settings and no row at all in the transcript, so the table is the only thing
 to update.
 
 If the catalog has no slug — Ashby and Fireflies today — a local component in
-`apps/desktop/src/renderer/lib/brand-marks/` draws the company's own mark the
+`packages/ui/src/lib/brand-marks/` draws the company's own mark the
 same way: `currentColor`, through `ConnectorMark`, one file per brand. A Lucide
 or Tabler stand-in is not a company mark and is not the fallback. The generic
 plug is only for a connector that has not been named in the table yet.

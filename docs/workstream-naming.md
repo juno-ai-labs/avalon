@@ -12,6 +12,10 @@ title skeleton means a name is seconds away.** Everything below exists so that
 promise is kept even when the model is unreachable, the isolate goes away
 mid-call, or the event carrying the name never lands.
 
+Guest Main renames use the existing conversation-scoped `renameSubstream(id, '0',
+title)` mutation from both header and sidebar. A Main grant authorizes that
+conversation, not parent work-stream metadata. Members retain `renameWorkstream`.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -469,6 +473,13 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-09-18 — Keep guest Main renaming inside conversation authority
+
+Both desktop entry points use the conversation rename for guest Main access.
+Using the member's parent rename endpoint would reject an otherwise permitted
+conversation edit. Existing member routing remains unchanged; a guest grant
+must not be treated as parent metadata authority.
 
 ### 2026-09-15 — Name prepared conversations from canonical history
 

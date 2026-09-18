@@ -33,6 +33,73 @@ export interface AgentInferenceLogger {
   onAttempt(attempt: InferenceAttemptEvent): Promise<void>;
 }
 
+export interface AgentInferencePreparationBreakdown {
+  initialIdentityRunMs: number;
+  persistedOutcomeMs: number;
+  initialRunAuthorityMs: number;
+  sidekickAuthorityMs: number;
+  sidekickRecommendationsMs: number;
+  leaseHeartbeatMs: number;
+  runContextMs: number;
+  memoryContextMs: number;
+  transcriptBootstrapMs: number;
+  toolInventoryMs: number;
+  toolConstructionMs: number;
+  attachmentReplayMs: number;
+  transcriptBootstrapRequired: boolean;
+  sidekickSnapshotReused: boolean;
+  sidekickRecommendationsRead: boolean;
+  memoryRecallRequired: boolean;
+}
+
+export function logAgentInferencePrepared(
+  env: Env,
+  context: AgentInferenceLogContext,
+  timing: {
+    runStartedAtMs: number;
+    initialAuthorityReadyAtMs: number;
+    harnessInputsReadyAtMs: number;
+    preparationFinishedAtMs: number;
+    breakdown: AgentInferencePreparationBreakdown;
+  },
+): void {
+  if (context.inferenceStartEligible === false || context.requestReceivedAt === undefined) return;
+  const requestToPreparedMs = timing.preparationFinishedAtMs >= context.requestReceivedAt
+    ? timing.preparationFinishedAtMs - context.requestReceivedAt
+    : undefined;
+  logStructuredEvent(env, "info", "agent_inference_prepared", {
+    request_id: context.requestId,
+    operation_id: context.operationId,
+    journey: context.journey,
+    request_received_at: context.requestReceivedAt,
+    request_to_prepared_ms: requestToPreparedMs,
+    request_clock_skewed: requestToPreparedMs === undefined,
+    workspace_id: context.workspaceId,
+    workstream_id: context.workstreamId,
+    substream_id: context.workstreamId ? context.substreamId ?? "0" : undefined,
+    initial_authority_ms: timing.initialAuthorityReadyAtMs - timing.runStartedAtMs,
+    context_tools_ms: timing.harnessInputsReadyAtMs - timing.initialAuthorityReadyAtMs,
+    scope_activation_routing_ms: timing.preparationFinishedAtMs - timing.harnessInputsReadyAtMs,
+    total_ms: timing.preparationFinishedAtMs - timing.runStartedAtMs,
+    initial_identity_run_ms: timing.breakdown.initialIdentityRunMs,
+    persisted_outcome_ms: timing.breakdown.persistedOutcomeMs,
+    initial_run_authority_ms: timing.breakdown.initialRunAuthorityMs,
+    sidekick_authority_ms: timing.breakdown.sidekickAuthorityMs,
+    sidekick_recommendations_ms: timing.breakdown.sidekickRecommendationsMs,
+    lease_heartbeat_ms: timing.breakdown.leaseHeartbeatMs,
+    run_context_ms: timing.breakdown.runContextMs,
+    memory_context_ms: timing.breakdown.memoryContextMs,
+    transcript_bootstrap_ms: timing.breakdown.transcriptBootstrapMs,
+    tool_inventory_ms: timing.breakdown.toolInventoryMs,
+    tool_construction_ms: timing.breakdown.toolConstructionMs,
+    attachment_replay_ms: timing.breakdown.attachmentReplayMs,
+    transcript_bootstrap_required: timing.breakdown.transcriptBootstrapRequired,
+    sidekick_snapshot_reused: timing.breakdown.sidekickSnapshotReused,
+    sidekick_recommendations_read: timing.breakdown.sidekickRecommendationsRead,
+    memory_recall_required: timing.breakdown.memoryRecallRequired,
+  });
+}
+
 export function createAgentInferenceLogger(
   env: Env,
   context: AgentInferenceLogContext,

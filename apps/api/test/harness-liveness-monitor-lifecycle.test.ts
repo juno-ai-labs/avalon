@@ -69,7 +69,7 @@ describe("harness liveness-monitor lifetime", () => {
       'await liveness.pulse("run_start", true);',
       "promptPreparation.get();",
       "toolsPreparation.get();",
-      "await loadTriggerFencedTranscriptMessages(",
+      "loadTriggerFencedTranscriptMessages(",
       "await projectModelProtocolTranscript(",
       "await promptPreparation.get()",
       "await toolsPreparation.get()",
