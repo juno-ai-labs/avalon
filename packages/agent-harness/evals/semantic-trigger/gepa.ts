@@ -25,6 +25,7 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { verdictOfLabel } from "./contract";
 import type { CandidateContract, EvalCase } from "./contract";
 import { loadCases, UTILITY_FALSE_FIRE, UTILITY_MISSED_FIRE } from "./run";
 import type { CandidateReport } from "./run";
@@ -192,7 +193,19 @@ export function digest(
     lines.push(`- title: ${JSON.stringify(testCase.title)}`);
     lines.push(`- summary: ${JSON.stringify(testCase.summary)}`);
     lines.push(`- text_snippet: ${JSON.stringify(testCase.textSnippet.slice(0, 700))}`);
-    lines.push(`- why the corpus says \`${failure.truth}\`: ${testCase.rationale}`);
+    // `rationale` argues for the *authored* label, and the overlay scores the
+    // adjudicated one where the two differ. Printing the authored argument under
+    // the scored label is how a teacher comes to believe the corpus contradicts
+    // itself — one did, on the eight cases where the two layers disagree — and
+    // then declines to draw any rule from the hardest cases in the digest.
+    const disputed = testCase.adjudicatedLabel && testCase.adjudicatedLabel !== testCase.intendedLabel;
+    if (disputed) {
+      lines.push(`- why the corpus says \`${failure.truth}\`: ${testCase.adjudicatorRationale ?? "the adjudicator gave no argument"}`);
+      lines.push(`- the author of this case said \`${verdictOfLabel(testCase.intendedLabel)}\` instead, and the`
+        + ` overlay scores the adjudicator: ${testCase.rationale}`);
+    } else {
+      lines.push(`- why the corpus says \`${failure.truth}\`: ${testCase.rationale}`);
+    }
   }
   return lines.join("\n");
 }
