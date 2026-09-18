@@ -66,7 +66,7 @@ export const ATTACHMENT_LIST_RESOURCES_DESCRIPTION = [
   "List resources visible in this work stream. Filter with attachmentKind using exactly one of these values:",
   ...ATTACHMENT_KIND_ENTRIES.map((entry) => `- ${entry.kind} — ${entry.description}`),
   "Omit attachmentKind to list every kind. Do not use or guess MIME types.",
-  "Use workstream_list_resources_next with pageId copied from nextPageId to continue. Stop when nextPageId is null.",
+  "Use list_resources_next with pageId copied from nextPageId to continue. Stop when nextPageId is null.",
   // Two identifiers arrive per item and only one is an argument. Without this
   // the model is left to choose, and the wrong choice is rejected by every
   // other resource tool's schema — a wasted turn each time.
@@ -263,11 +263,11 @@ export type CharacterRange = z.infer<typeof CharacterRangeSchema>;
 
 export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
   z.strictObject({
-    tool: z.literal("workstream_read_resource"),
+    tool: z.literal("read_resource"),
     arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
   }),
   z.strictObject({
-    tool: z.literal("workstream_view_resource"),
+    tool: z.literal("view_resource"),
     arguments: z.strictObject({ resourceIds: z.tuple([CanonicalUuidSchema]) }),
   }),
   z.strictObject({
@@ -289,7 +289,7 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
    * blind, and an import writes a tree to the sandbox filesystem.
    *
    * What keeps it safe is that only the create-only form is expressible.
-   * `terminal_import_resource` also accepts `destinationPath` and `overwrite`,
+   * `import_resource` also accepts `destinationPath` and `overwrite`,
    * and neither appears here, so a suggested import lands on the deterministic
    * path and refuses a non-empty destination with `destination_exists` rather
    * than replacing anything. The object is strict, so a producer that tried to
@@ -297,11 +297,48 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
    * forwarded to the model.
    */
   z.strictObject({
-    tool: z.literal("terminal_import_resource"),
+    tool: z.literal("import_resource"),
     arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
   }),
 ]);
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;
+
+/**
+ * The names these three tools were suggested under before their plugins dropped
+ * their wire prefixes.
+ *
+ * A suggestion is not only produced and forwarded in one turn: it is written
+ * into a tool receipt's stored `errorJson` and re-parsed whenever that failure
+ * is reprojected. A row written before the rename carries the retired spelling,
+ * and the sanitizer that re-reads it drops the *whole* detail object when any
+ * one field fails — so without this the resource id and attachment kind beside
+ * it would be lost too, leaving a bare error code and no recovery.
+ */
+const RETIRED_SUGGESTED_TOOL_NAMES: Readonly<Record<string, string>> = {
+  workstream_read_resource: "read_resource",
+  workstream_view_resource: "view_resource",
+  terminal_import_resource: "import_resource",
+};
+
+/**
+ * Parse a suggestion that may have been stored under a retired wire name,
+ * normalizing it to the name this run advertises. Producers are unaffected:
+ * they build the current names through `SuggestedAttachmentToolCallSchema`
+ * directly, and only this read path accepts the old ones.
+ */
+export function parseStoredSuggestedAttachmentToolCall(
+  value: unknown,
+): { success: true; data: SuggestedAttachmentToolCall } | { success: false } {
+  const parsed = SuggestedAttachmentToolCallSchema.safeParse(value);
+  if (parsed.success) return { success: true, data: parsed.data };
+  const tool = typeof value === "object" && value !== null && "tool" in value
+    ? (value as { tool?: unknown }).tool
+    : undefined;
+  const current = typeof tool === "string" ? RETIRED_SUGGESTED_TOOL_NAMES[tool] : undefined;
+  if (!current) return { success: false };
+  const retry = SuggestedAttachmentToolCallSchema.safeParse({ ...(value as object), tool: current });
+  return retry.success ? { success: true, data: retry.data } : { success: false };
+}
 
 /**
  * These two are flat objects with a refinement rather than the union the choice
@@ -333,10 +370,10 @@ export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentTool
  */
 export const AttachmentListResourcesArgumentsSchema = z.strictObject({
   limit: z.number().int().min(1).max(50)
-    .describe("Maximum resources to return in one page. Defaults to 25. Set it on the first call; workstream_list_resources_next retains it automatically.")
+    .describe("Maximum resources to return in one page. Defaults to 25. Set it on the first call; list_resources_next retains it automatically.")
     .optional(),
   attachmentKind: AttachmentKindSchema
-    .describe("Return only resources of this kind, for example spreadsheet. Omit it for every kind, and never send a MIME type. Set it on the first call; workstream_list_resources_next retains it automatically.")
+    .describe("Return only resources of this kind, for example spreadsheet. Omit it for every kind, and never send a MIME type. Set it on the first call; list_resources_next retains it automatically.")
     .optional(),
   cursor: CursorSchema
     .describe("Continue an earlier listing: send the exact `nextCursor` that call returned, by itself and with no other argument. Omit it for the first page, and stop when `nextCursor` comes back null. It is an opaque token, not a page number, so never construct, shorten, or increment one.")
@@ -388,7 +425,7 @@ export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
     .describe("Maximum passages to return. Defaults to 5.")
     .optional(),
   maxPassageCharacters: z.number().int().min(500).max(4_000)
-    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or pass the passage's readPageId to workstream_read_resource_next to read further.")
+    .describe("Maximum characters in each returned passage. Defaults to 3,000. Raise it for context around a match, or pass the passage's readPageId to read_resource_next to read further.")
     .optional(),
 });
 export const AttachmentViewResourceArgumentsSchema = z.strictObject({

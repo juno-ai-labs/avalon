@@ -397,7 +397,7 @@ describe("durable UI-to-model transcript projection", () => {
       message_id: invocationId,
       harness_run_id: PRIOR_RUN_ID,
       tool_call_id: call,
-      tool_name: "workstream_read_resource",
+      tool_name: "read_resource",
       input_json: JSON.stringify({ resourceId: "00000000-0000-4000-8000-000000000046" }),
       output_ref: "results/private-note.json",
       output_summary: "Read private note",

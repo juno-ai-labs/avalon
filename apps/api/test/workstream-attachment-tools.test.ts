@@ -564,7 +564,7 @@ describe("work-stream attachment tools", () => {
           resourceId: textId,
           status: "skipped",
           reasonCode: "resource_tool_mismatch",
-          suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } },
+          suggestedCall: { tool: "read_resource", arguments: { resourceId: textId } },
         },
         { resourceId: secondImageId, status: "included", visualPartIndex: 1 },
       ],
@@ -587,8 +587,42 @@ describe("work-stream attachment tools", () => {
 
     await expect(view.execute({ resourceIds: [textId] }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
-      details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } } },
+      details: { suggestedCall: { tool: "read_resource", arguments: { resourceId: textId } } },
     });
+  });
+
+  it("names the tool a run actually advertises in every remediation it hands the model", async () => {
+    // These remediations exist so a model can recover in one turn. They were
+    // built by interpolating a `workstream_` prefix the plugin no longer
+    // carries, which named tools no run offers — beside a `suggestedCall` in
+    // the same payload that named them correctly. A literal-string rename
+    // sweep cannot see an interpolated name, so this asserts on the text.
+    const { database, objectStore, bucket, env } = fixture();
+    const tools = __integrationTesting.createAvalonTools(env, input());
+    const advertised = new Set(tools.map((tool) => tool.definition.name));
+    expect(advertised).toContain("view_resource");
+    expect(advertised).toContain("read_resource");
+
+    const textId = insertReadyResource(database, objectStore, bucket, 91);
+    const imageId = insertReadyImage(database, objectStore, bucket, 92);
+    const view = tools.find((tool) => tool.definition.name === "view_resource")!;
+    const read = tools.find((tool) => tool.definition.name === "read_resource")!;
+
+    const mismatches = [
+      await view.execute({ resourceIds: [textId] }, context()).catch((error: unknown) => error),
+      await read.execute({ resourceId: imageId }, context()).catch((error: unknown) => error),
+    ];
+    for (const error of mismatches) {
+      const message = (error as { message: string }).message;
+      expect(message).not.toMatch(/\bworkstream_[a-z_]+/u);
+      // Whatever tool the prose names, the run has to be offering it.
+      for (const named of message.match(/\b(?:view_resource|read_resource|list_resources)\b/gu) ?? []) {
+        expect(advertised, `${named} is named in a remediation but not advertised`).toContain(named);
+      }
+    }
+    // The description that promises the suggestion names it the same way.
+    expect(view.definition.description).toContain("read_resource");
+    expect(view.definition.description).not.toContain("workstream_read_resource");
   });
 
   it("reauthorizes image receipts and re-executes when visual rehydration is unavailable", async () => {
@@ -608,7 +642,7 @@ describe("work-stream attachment tools", () => {
       id: invocationId,
       runId: HARNESS_RUN_ID,
       toolCallId: "view-call",
-      toolName: "workstream_view_resource",
+      toolName: "view_resource",
       status: "completed",
       inputJson: JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
       outputRef,
@@ -693,7 +727,7 @@ describe("work-stream attachment tools", () => {
     const imageId = insertReadyImage(database, objectStore, bucket, 8);
     await expect(summarize.execute({ resourceId: imageId }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
-      details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+      details: { suggestedCall: { tool: "view_resource", arguments: { resourceIds: [imageId] } } },
     });
   });
 
@@ -743,13 +777,13 @@ describe("work-stream attachment tools", () => {
       const args = tool === search ? { resourceId: imageId, query: "diagram" } : { resourceId: imageId };
       await expect(tool.execute(args, context())).rejects.toMatchObject({
         code: "resource_tool_mismatch",
-        details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+        details: { suggestedCall: { tool: "view_resource", arguments: { resourceIds: [imageId] } } },
       });
     }
     for (const resourceId of readable) {
       await expect(view.execute({ resourceIds: [resourceId] }, context())).rejects.toMatchObject({
         code: "resource_tool_mismatch",
-        details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId } } },
+        details: { suggestedCall: { tool: "read_resource", arguments: { resourceId } } },
       });
     }
     await expect(view.execute({ resourceIds: [unsupportedId] }, context())).resolves.toMatchObject({

@@ -111,7 +111,7 @@ function fixture(message = "Please publish these changes and open a pull request
     triggerPartId: MESSAGE });
   seedToolReceipt(objectStore, {
     id: I, runId: R, toolCallId: 'publish-call',
-    toolName: 'terminal_publish_branch_and_pr', mode: 'write',
+    toolName: 'publish_branch_and_pr', mode: 'write',
   });
   const env = createTestEnv({
     DB: sqliteD1(database),
@@ -625,7 +625,7 @@ describe("Terminal repository publication", () => {
     const secondInvocationId = "20000000-0000-4000-8000-000000000008";
     seedToolReceipt(objectStore, {
       id: secondInvocationId, runId: R, toolCallId: 'publish-call-2',
-      toolName: 'terminal_publish_branch_and_pr', mode: 'write',
+      toolName: 'publish_branch_and_pr', mode: 'write',
       requestHash: 'hash-2', position: 1,
     });
     const runCommand = vi.mocked(provider.runUtilityCommand);

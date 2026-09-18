@@ -43,7 +43,7 @@ exists.
 
 ### Publishing
 
-`terminal_publish_resource` accepts a directory. It gains no parameter for what
+`publish_resource` accepts a directory. It gains no parameter for what
 to do with one: **the kind is resolved from the directory's root entry**, because
 a parameter restating what the files already say is a parameter that can disagree
 with them, and the disagreement would be invisible until serve time.
@@ -93,7 +93,7 @@ barrier without adding each independent R2 round trip to the publication latency
 ### Revising
 
 A run asked to change a site it did not build — or built in a session that has
-since ended — brings the files back first, through `terminal_import_resource`
+since ended — brings the files back first, through `import_resource`
 on the site's own resource id. The manifest is the index, and `index.js` is
 materialized alongside the assets even though a viewer's request for it 404s:
 "module, not asset" is a rule about the *serving* path, and a model that could

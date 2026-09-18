@@ -65,6 +65,62 @@ plugin prefix: Bind prepends the plugin's short wire name when it renders the
 model-facing name, so a tool called `github_list_issues` inside the GitHub
 plugin reaches the model as `github_github_list_issues`.
 
+Some plugins declare **no prefix at all**, and their canonical names reach the
+model unchanged. A plugin earns that only when every one of its tool names is
+**globally** unambiguous, because nothing namespaces them once the prefix is
+gone. Two things make a name qualify, and either is enough:
+
+- **The plugin is always active**, so a prefix on it distinguishes nothing — the
+  model cannot load it, cannot unload it, and has no second source of the same
+  capability to tell it apart from. `rally_discovery`, `rally_skills`,
+  `rally_core`, `rally_workstream`, `rally_agents`, and `rally_sidekick_result`
+  are these.
+- **The canonical name is already the one the model knows.** `rally_terminal`
+  and `rally_multimodal_generation` are loadable, but `read_file`, `edit_file`,
+  `write_file`, `apply_patch`, `run_command`, `generate_image` and
+  `generate_audio` are names a model has seen tens of thousands of times in
+  pretraining, and `terminal_read_file` is not one of them. That is the third
+  test at the top of this document, and the prefix was failing it.
+
+`rally_memory` and `rally_tables` are always active and still keep
+`memory_`/`table_`, because they fail the naming half: their canonical names are
+local verbs (`search`, `query`, `create`, `add`, `update`), two of them
+identical, and bare verbs are the naming the rest of this document exists to
+prevent. `rally_web` keeps `web_` for the opposite reason: `web_search` and
+`web_fetch` *are* the pretrained names, and stripping the prefix would leave
+bare `search` and `fetch`. `rally_sidekicks` keeps `sidekick_` because
+unprefixed its `plugins_list` and `plugins_search` would sit beside
+`rally_discovery`'s `list_plugins` and `search_plugins` — near-identical names
+for different tools, which is worse than either prefix. Connector plugins can
+never qualify: their prefix is per *connection* (`google_1`, `google_2`), and it
+is the only thing telling two connections of one connector apart.
+
+**`send_message` does not say who it acts on.** `rally_agents`' `send_message`
+reaches another *agent*, not a person and not a connector, and nothing in the
+bare name says so. It was unprefixed anyway, deliberately: the plugin's
+instructions name the addressee in every sentence that reaches for one, and the
+transcript rows say "Messaged a teammate" rather than "Sent a message". Its
+sibling `reply_to_message` had the same problem as plain `reply` and was
+renamed rather than re-prefixed — which is the fix available here, and the one
+to reach for if `send_message` turns out to mislead a model in practice.
+
+**Bind's duplicate-wire-name check covers less than "always active".** It
+iterates Bind's own `corePlugins` — discovery, skills, and whatever the host
+passes as `corePlugins`, which on the API side is `createWorkstreamCorePlugins`:
+`rally_core`, `rally_tables`, `rally_memory`, and nothing else. Every other
+plugin, including always-active ones like `rally_workstream`, `rally_agents`
+and `rally_sidekick_result`, is assembled into `plugins` and sits outside the
+guard. For those, two identical wire names resolve to whichever plugin sorts
+first by canonical id, silently.
+
+So an unprefixed plugin is a standing claim on its bare names, and for most of
+them nothing at runtime defends it.
+[`apps/api/test/plugin-wire-names.test.ts`](../apps/api/test/plugin-wire-names.test.ts)
+is what holds that line: it builds every plugin a run can register and fails
+when two unprefixed ones claim the same name. Before giving another plugin an
+empty prefix, check its names there — and if you would rather have the runtime
+guard, widening the check to all plugins is the change to make.
+
 `longRunning` is optional tool-definition metadata, not an input argument.
 True adds a short background-execution hint to the model-visible description
 when tools are loaded and advertised; false or omission leaves it unchanged.
@@ -73,7 +129,7 @@ The model may call an already-asynchronous tool directly, and a background
 agent may execute it without delegating again. Image generation and editing
 are the initial annotated tools.
 
-`core_get_connector_connection_state` and `core_show_connector_connection` are
+`get_connector_connection_state` and `show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
 id and `personal`/`workspace` scope. The read returns `connected`,
 `reconnect_required`, or `not_connected` from the caller-visible WorkspaceDO
@@ -90,11 +146,11 @@ history rather than depending on a transient started event.
 
 The model-facing flow is deliberately literal:
 
-1. Call `core_get_connector_connection_state` with `connectorId` and `scope`.
+1. Call `get_connector_connection_state` with `connectorId` and `scope`.
 2. If it returns `connected`, continue the task and do not show a card.
 3. If it returns `reconnect_required` or `not_connected` and that blocks the
    task, explain the blocker briefly.
-4. Call `core_show_connector_connection` with the same values, then stop the
+4. Call `show_connector_connection` with the same values, then stop the
    connector-dependent work for that run. Do not claim the connection worked.
 
 ### 1. Fail loud, never silently ignore an input
@@ -614,13 +670,13 @@ its normal authorization query. New private continuation state needs no HMAC or
 artificial expiry; old signed cursors are decoded only for stored receipts.
 
 An authorized wrong-tool call may carry a bounded `suggestedCall` for exactly
-`workstream_read_resource`, `workstream_view_resource`, their two
-`sidekick`-prefixed twins, or `terminal_import_resource`. The structured-failure
+`read_resource`, `view_resource`, their two
+`sidekick`-prefixed twins, or `import_resource`. The structured-failure
 sanitizer accepts only those strict shapes, the nine registered kinds, bounded
 MIME/reason values, and the existing fixed recovery fields. It does not forward
 converter, provider, or attachment-authored objects.
 
-`terminal_import_resource` is the one member that is not a content read, and it
+`import_resource` is the one member that is not a content read, and it
 is admitted in exactly one form: `{ resourceId }`. That is the create-only
 shape, which refuses a non-empty destination with `destination_exists` rather
 than replacing anything, so a model that follows the suggestion blind cannot
@@ -638,8 +694,8 @@ that built the page.
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
-| `workstream_describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
-| `workstream_query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
+| `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
+| `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
 
 Both are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
 statement, not by the transaction** — an always-rollback transaction is not an
@@ -653,15 +709,15 @@ are handled as untrusted content wherever they surface.
 
 The work-stream runtime now exposes five bounded content operations. The old
 `workstream_read` hard-capped index is replaced by
-`workstream_list_resources`, whose first call accepts an optional natural-
+`list_resources`, whose first call accepts an optional natural-
 language kind and whose page-ID-only continuations can exhaust more than fifty
-resources. `workstream_read_resource` returns 12,000 characters by default and
+resources. `read_resource` returns 12,000 characters by default and
 at most 24,000, with exact characters before and after plus previous/next page IDs.
-`workstream_search_resource` derives bounded ranges from one versioned
+`search_resource` derives bounded ranges from one versioned
 derivative in memory and returns at most five passages and 20,000 characters.
-`workstream_view_resource` returns a
+`view_resource` returns a
 JSON-only inclusion summary plus as many as eight ephemeral visual parts, and
-`workstream_summarize_resource` runs one isolated reader over deterministic,
+`summarize_resource` runs one isolated reader over deterministic,
 server-identified ranges with an optional untrusted prompt. Every continuation is
 reauthorized and bound to the current inventory or derivative version.
 
@@ -678,16 +734,16 @@ that remediation.
 The deferred `rally:multimodal-generation` plugin owns image generation,
 editing, and text-to-speech. It is registered only when the main Azure
 inference endpoint and key are both configured, and Bind exposes its tools as
-`multimodal_generation_generate_image` and
-`multimodal_generation_edit_image`, and
-`multimodal_generation_generate_audio`. All three are serial
+`generate_image` and
+`edit_image`, and
+`generate_audio`. All three are serial
 `record_before_execute` writes with a five-minute timeout.
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
-| `multimodal_generation_generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
-| `multimodal_generation_edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
-| `multimodal_generation_generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
+| `generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
+| `edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
+| `generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
 
 Both calls use Azure's `gpt-image-2` deployment. The caller controls only the
 prompt, title, and advertised size: moderation is fixed to `low`, quality to
@@ -741,15 +797,15 @@ model-actionable drift check. See
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
-| `terminal_read_file` | `{ filePath: string, offset?: integer >= 1, limit?: integer 1..1000 }` | `{ filePath, content, startLine, endLine, totalLines, truncated, nextOffset? }`; at most 256 KiB. |
-| `terminal_edit_file` | `{ filePath: string, oldString: string, newString: string, replaceAll?: boolean }` | `{ filePath, replacements, additions, deletions }`. `oldString` must match exactly once unless `replaceAll` is intentional. |
-| `terminal_write_file` | `{ filePath: string, content: string }` | `{ filePath, created, bytes, additions, deletions }`; this is deliberate complete replacement, not an edit fallback. |
-| `terminal_apply_patch` | `{ patch: string }` | `{ files: [{ path, previousPath?, operation, additions, deletions }], additions, deletions }`; `operation` is `created`, `edited`, `renamed`, or `deleted`. |
-| `terminal_run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. Standard `git` and `gh` commands are available after repository checkout; `read_only` credentials reject remote mutation, while `full_access` may push and manage a PR. |
-| `terminal_checkout_repository` | `{ repositoryFullName: string, requiredRemoteAccess?: "read_only" | "full_access" }` | `{ repository, repositoryId, connectionId, connectionName, baseRef, baseSha, headRef, remoteAccess, localEditsAllowed: true, remoteWritesAllowed, outcome, backup }`; `backup` is the attached recovery resource created before replacing prior workspace state, or `null` when there was nothing to preserve. |
-| `terminal_import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. For a **site** resource `destinationPath` names the directory root to materialize into and the output adds `fileCount`; `filePath` is reused for that root rather than a second key appearing beside it, so the round trip is `filePath` in, `filePath` out and a republish targets what the import returned. `overwrite` is whole-tree replacement, never a merge — merging would leave files a prior version deleted lying in the tree for the next publish to ship back. |
-| `terminal_publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another work stream, is a different document. |
-| `terminal_publish_branch_and_pr` | `{ title: string, body: string }` | `{ repository, baseRef, headRef, commitSha, publishedSha, outcome, pullRequest: { number, url, title, state: "open" } }`; `outcome` is `created`, convergent `updated`, or recovered `unchanged`. |
+| `read_file` | `{ filePath: string, offset?: integer >= 1, limit?: integer 1..1000 }` | `{ filePath, content, startLine, endLine, totalLines, truncated, nextOffset? }`; at most 256 KiB. |
+| `edit_file` | `{ filePath: string, oldString: string, newString: string, replaceAll?: boolean }` | `{ filePath, replacements, additions, deletions }`. `oldString` must match exactly once unless `replaceAll` is intentional. |
+| `write_file` | `{ filePath: string, content: string }` | `{ filePath, created, bytes, additions, deletions }`; this is deliberate complete replacement, not an edit fallback. |
+| `apply_patch` | `{ patch: string }` | `{ files: [{ path, previousPath?, operation, additions, deletions }], additions, deletions }`; `operation` is `created`, `edited`, `renamed`, or `deleted`. |
+| `run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. Standard `git` and `gh` commands are available after repository checkout; `read_only` credentials reject remote mutation, while `full_access` may push and manage a PR. |
+| `checkout_repository` | `{ repositoryFullName: string, requiredRemoteAccess?: "read_only" | "full_access" }` | `{ repository, repositoryId, connectionId, connectionName, baseRef, baseSha, headRef, remoteAccess, localEditsAllowed: true, remoteWritesAllowed, outcome, backup }`; `backup` is the attached recovery resource created before replacing prior workspace state, or `null` when there was nothing to preserve. |
+| `import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. For a **site** resource `destinationPath` names the directory root to materialize into and the output adds `fileCount`; `filePath` is reused for that root rather than a second key appearing beside it, so the round trip is `filePath` in, `filePath` out and a republish targets what the import returned. `overwrite` is whole-tree replacement, never a merge — merging would leave files a prior version deleted lying in the tree for the next publish to ship back. |
+| `publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another work stream, is a different document. |
+| `publish_branch_and_pr` | `{ title: string, body: string }` | `{ repository, baseRef, headRef, commitSha, publishedSha, outcome, pullRequest: { number, url, title, state: "open" } }`; `outcome` is `created`, convergent `updated`, or recovered `unchanged`. |
 
 ### Publishing a directory
 
@@ -789,7 +845,7 @@ absolute path, backslash, NUL, or `..`; `.` names the root and is accepted for
 refused as `invalid_path`. `publish_resource.filePath` is instead relative to
 the host-provided `AVALON_RESOURCE_DIR` (`/workspace/.rally-output`), and its
 refusals say so rather than pointing at the workspace root. Discovery uses
-`terminal_run_command` with `pwd`, `ls`, `find`, `rg --files`, or `rg`; a
+`run_command` with `pwd`, `ls`, `find`, `rg --files`, or `rg`; a
 duplicate `list_files` tool would spend context while teaching the model less
 than the CLI it already knows.
 
@@ -798,7 +854,7 @@ Common failures are designed as loop repairs:
 | Code/path | Model-visible recovery |
 | --- | --- |
 | `not_found`, `path_outside_root`, `invalid_path`, `not_text_file` | The refusal echoes the value it refused, names the root that parameter is relative to, and gives the accepted form; act on that rather than guessing another path. Omit `cwd` (or pass `.`) for the workspace root. For `not_found` on publication, write or copy the file beneath `AVALON_RESOURCE_DIR` first. Inspect with `pwd` and `ls -la`/`find`, or inspect binary metadata with `file`. |
-| `match_not_found`, `match_not_unique` | Call `terminal_read_file` again, copy exact current text with enough surrounding context, then rebuild the edit; use `replaceAll` only when every match should change. This is the revision-drift recovery. |
+| `match_not_found`, `match_not_unique` | Call `read_file` again, copy exact current text with enough surrounding context, then rebuild the edit; use `replaceAll` only when every match should change. This is the revision-drift recovery. |
 | `patch_does_not_apply`, `patch_invalid` | Re-read every affected file and regenerate the whole context-bearing patch; no partial patch is reported as successful. |
 | `destination_exists` | Choose a new import destination or set `overwrite: true` only after confirming replacement is intended. |
 | `destination_not_regular` | Choose an absent destination or a regular file; Rally will not write through links, devices, or directories. |
@@ -807,7 +863,7 @@ Common failures are designed as loop repairs:
 | `command_rejected` | Use one bounded foreground command or a dedicated file tool; do not retry a PTY, detached/background process, or remote shell. Git and GitHub CLI are ordinary bounded commands whose actual authority comes from the selected repository credential. |
 | `sandbox_busy` | Wait the model-visible `retryAfterMs` before checking again. That value is retry cadence, not the lease deadline: an active harness execution owns the workspace through its valid operation lease, while an unsettled retained command blocks until Rally confirms provider quiescence. A `submitting` task renews exact durable authority before each provider mutation, then becomes `running` with the requested command-plus-observation horizon after provider acceptance. Recovery and lifecycle cleanup likewise renew their exact token before later provider mutations and cannot revive an expired token. An accepted `running` command requires whole-sandbox stop before linked handoff because named-session deletion does not prove the process stopped; a pre-acceptance or otherwise unprovable sandbox is retired and advanced to a fresh generation. Final expiry instead commits `expired` and preserves its final-diff reference. Never repeat a prior ambiguous command under a new invocation. |
 | command `timed_out`, `cancelled`, `output_limit_exceeded` | Inspect the final bounded output or `outputResourceId`, reduce the job, and rerun as a new bounded command only when doing so is safe. |
-| `repository_not_configured`, `repository_access_revoked` | Search the authorized GitHub repositories, call `terminal_checkout_repository` with an exact `owner/name`, then retry the repository operation. If policy changed, choose another authorized repository or ask a connector administrator to restore access. |
+| `repository_not_configured`, `repository_access_revoked` | Search the authorized GitHub repositories, call `checkout_repository` with an exact `owner/name`, then retry the repository operation. If policy changed, choose another authorized repository or ask a connector administrator to restore access. |
 | `repository_not_authorized` | Use GitHub repository search and choose a result whose effective access satisfies `requiredRemoteAccess`; do not guess an inaccessible repository or retry unchanged. |
 | `repository_remote_read_only` | Continue local edits and local commits, but do not push, publish a PR, or attempt another remote mutation until connector settings grant `full_access`. |
 | `workspace_backup_failed`, `workspace_backup_changed` | Stop workspace writers and retry checkout; Rally leaves the existing repository and sandbox untouched until the durable recovery copy is verified. |
@@ -911,7 +967,7 @@ future agent tool or plugin, not just this family.
   [...] }` — which is the only form that both passes xAI and survives
   sanitization with its `required` intact, because the branch then carries the
   `properties` the pruning resolves against.
-  `workstream_list_resources` and `workstream_read_resource` are built that way
+  `list_resources` and `read_resource` are built that way
   and never broke. `apps/api/test/tool-schema-sanitization.test.ts` walks every
   authored schema through the real sanitizer and fails on either defect. A tool
   schema Rally does *not* author — a hosted MCP server's, which arrives at run

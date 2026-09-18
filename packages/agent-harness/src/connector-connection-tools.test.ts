@@ -15,8 +15,8 @@ describe("connector connection tool guidance", () => {
     expect(show.name).toBe("show_connector_connection");
     expect(check.description).toContain("Call this first.");
     expect(check.description).toContain("connected, reconnect_required, not_connected, or unavailable");
-    expect(check.description).toContain("core_show_connector_connection with the same connectorId and scope");
-    expect(show.description).toContain("Call only after core_get_connector_connection_state returns");
+    expect(check.description).toContain("show_connector_connection with the same connectorId and scope");
+    expect(show.description).toContain("Call only after get_connector_connection_state returns");
     expect(show.description).toContain("Use the same connectorId and scope.");
     expect(show.description).toContain("do not claim the connector is connected");
   });

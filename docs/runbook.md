@@ -966,7 +966,7 @@ where to look when one misbehaves.
   were refused with "This automation run is no longer running". A run that
   never left `pending` has an `automation_run` alarm entry behind its gate.
 - **A result never reached the room.** Only a run of a room's Sidekick holds
-  `sidekick_post_result`, and only the run posts; look for
+  `post_result`, and only the run posts; look for
   `sidekick_post_result_refused:<code>` or `sidekick_owning_room_archived`
   in the run's tool results. Nothing posts after the run.
 

@@ -99,14 +99,17 @@ export function createWorkstreamArtifactDataTools(
   context: ArtifactDataToolContext,
   modelToolPrefix: "workstream" | "sidekick" = "workstream",
 ): HarnessTool[] {
+  // As in `workstream-attachment-tools.ts`: `rally:workstream` carries no wire
+  // prefix, so only the Sidekick-scoped variant names one.
+  const listResourcesToolName = modelToolPrefix === "sidekick" ? "sidekick_list_resources" : "list_resources";
   async function requireArtifact(reference: string) {
     const artifact = await context.resolveArtifact(reference);
     if (!artifact) {
       throw new ArtifactDataToolError(
         "resource_not_found",
         "That site is not attached or visible to this run. Call "
-        + `${modelToolPrefix}_list_resources with attachmentKind "site" to choose one, then retry.`,
-        { reason: `Call ${modelToolPrefix}_list_resources with attachmentKind "site" and choose a visible site.` },
+        + `${listResourcesToolName} with attachmentKind "site" to choose one, then retry.`,
+        { reason: `Call ${listResourcesToolName} with attachmentKind "site" and choose a visible site.` },
       );
     }
     if (!artifact.stateful) {
