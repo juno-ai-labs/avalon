@@ -3,9 +3,15 @@
 // against the actual API and migrations in api/test/browser-sessions.test.ts.
 export default {
   async fetch(request) {
+    if (new URL(request.url).pathname.endsWith('/resources/document/preview')) {
+      return new Response('<script>document.body.textContent="untrusted"</script>', {
+        headers: { 'Content-Type': 'text/html', 'Content-Disposition': 'inline' },
+      });
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       const pair = new WebSocketPair();
       pair[1].accept();
+      pair[1].addEventListener("close", () => pair[1].close());
       pair[1].addEventListener("message", (event) => pair[1].send(JSON.stringify({
         message: event.data, path: new URL(request.url).pathname,
         cookie: request.headers.get("cookie"), authorization: request.headers.get("authorization"),

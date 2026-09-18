@@ -1039,9 +1039,10 @@ export function ConversationSurface({
    * flag gates presentation only: an artifact's authorization is structural and
    * holds whether or not this is passed.
    */
+  const browserHost = session !== null && 'authentication' in session && session.authentication === 'cookie';
   const siteArtifacts = useMemo(() => {
     if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
-    const bridge = window.rally;
+    const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);
     if (!bridge) return undefined;
     return {
       openArtifact: (resourceId: string) => api.openArtifact(resourceId),
@@ -1056,7 +1057,7 @@ export function ConversationSurface({
         openExternal: bridge.openExternal,
       },
     };
-  }, [api, featureFlags.data?.liveArtifactsEnabled]);
+  }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,

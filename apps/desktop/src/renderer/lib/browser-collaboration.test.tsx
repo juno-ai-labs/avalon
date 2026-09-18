@@ -33,6 +33,7 @@ class BrowserSocket extends EventTarget {
 // Full entry, collaboration surface, API and socket hook. Only browser transport
 // boundaries are substituted, so session reconciliation exercises their wiring.
 it('keeps the live collaboration socket across a focus session refresh', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   BrowserSocket.instances = [];
   vi.stubGlobal('WebSocket', BrowserSocket);
   let selections = 0;

@@ -1,5 +1,6 @@
 import { createQueryClient } from "../../desktop/src/renderer/lib/query-client";
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -10,7 +11,7 @@ import { AccountTrigger } from '@rally/ui/components/account-trigger';
 import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navigation';
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
-import { Button, IconButton, InlineError } from '@rally/ui/components/primitives';
+import { Button, IconButton, InlineError, Modal } from '@rally/ui/components/primitives';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { ShareConversationButton } from '../../desktop/src/renderer/components/scope-sharing-panel';
 import { SidekickPicker } from '../../desktop/src/renderer/components/sidekick-picker';
@@ -29,6 +30,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   const navigate = useNavigate();
   const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [changingArchive, setChangingArchive] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const directory = useQuery({ queryKey: ['shared-directory'], enabled: Boolean(api),
@@ -36,7 +38,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
   const parent = directory.data?.workstreams.find((item) => item.parentId === parentId);
   const archived = parent?.conversations.find((item) => item.substreamId === substreamId)?.archived ?? false;
   const parentArchived = parent?.archived === true || (substreamId === '0' && archived);
-  if (!parentId) return <p>This conversation link is incomplete.</p>;
+  if (!parentId) return <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><p>This conversation link is incomplete.</p></section>;
   const changeArchive = async (value: boolean) => {
     if (!api || changingArchive) return;
     setChangingArchive(true); setArchiveError(null);
@@ -47,10 +49,14 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
     finally { setChangingArchive(false); }
   };
   return <>
+    <Modal open={archiveOpen} onOpenChange={setArchiveOpen} title="Archive substream" description="This substream will leave the active list. You can restore it later.">
+      <Button disabled={changingArchive} onClick={() => setArchiveOpen(false)}>Cancel</Button>
+      <Button disabled={changingArchive} onClick={() => { void changeArchive(true).then(() => setArchiveOpen(false)); }}>Archive substream</Button>
+    </Modal>
     {archiveError ? <InlineError>{archiveError}</InlineError> : null}
-    {archived ? <section className="browser-empty"><h1>{parentArchived ? 'Archived work stream' : 'Archived conversation'}</h1>
+    {archived ? <section className="browser-empty"><NavigationButton onClick={onShowNavigation} /><h1>{parentArchived ? 'Archived work stream' : 'Archived conversation'}</h1>
       {parentArchived ? <p>This work stream must be restored before its conversations can reopen.</p>
-        : substreamId !== '0' && parent?.archived === false
+        : substreamId !== '0' && parent?.archived !== true
           ? <Button disabled={changingArchive} onClick={() => void changeArchive(false)}>Restore substream</Button>
           : <p>This conversation is archived.</p>}</section> :
       <ConversationSurface sidebarScope="conversation" parentKind="workstream" parentId={parentId} substreamId={substreamId}
@@ -70,7 +76,7 @@ function SharedConversation({ onShowNavigation }: { onShowNavigation: () => void
           onRename={async (title) => { await context.rename(title); void queryClient.invalidateQueries({ queryKey: ['shared-directory'] }); }}
           onShowNavigation={onShowNavigation}
           onCopyLink={() => { void navigator.clipboard.writeText(location.href); }}
-          actions={<>{substreamId !== '0' && <IconButton label="Archive substream" disabled={changingArchive} onClick={() => void changeArchive(true)}><Archive size={16} /></IconButton>}
+          actions={<>{substreamId !== '0' && <IconButton label="Archive substream" disabled={changingArchive} onClick={() => setArchiveOpen(true)}><Archive size={16} /></IconButton>}
             {api && session?.workspace && <ShareConversationButton api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={substreamId} />}</>} />} />}
   </>;
 }
@@ -106,18 +112,34 @@ function SharedNavigation({ api, onSignOut, open, onClose }: { api: RallyApi; on
   </NavigationFrame>;
 }
 
+function NavigationButton({ onClick }: { onClick: () => void }): React.JSX.Element {
+  return <IconButton className="mobile-only" label="Show navigation" onClick={onClick}><Menu size={16} /></IconButton>;
+}
+
 function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => void }): React.JSX.Element {
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [mobile, setMobile] = useState(() => matchMedia('(max-width: 920px)').matches);
+  useEffect(() => {
+    const query = matchMedia('(max-width: 920px)');
+    const update = () => setMobile(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
   const { pathname } = useLocation();
   useEffect(() => { setNavigationOpen(false); }, [pathname]);
   const showNavigation = () => setNavigationOpen((open) => !open);
   return <div className="browser-workspace workspace-shell">
-    {navigationOpen && <button className="sidebar-scrim" aria-label="Dismiss navigation" type="button" onClick={() => setNavigationOpen(false)} />}
-    <SharedNavigation api={api} onSignOut={onSignOut} open={navigationOpen} onClose={() => setNavigationOpen(false)} />
+    {mobile ? <Dialog.Root open={navigationOpen} onOpenChange={setNavigationOpen}><Dialog.Portal>
+      <Dialog.Overlay className="browser-navigation-scrim" />
+      <Dialog.Content className="browser-navigation-dialog browser-workspace workspace-shell" aria-describedby={undefined}>
+        <Dialog.Title className="sr-only">Navigation</Dialog.Title>
+        <SharedNavigation api={api} onSignOut={onSignOut} open onClose={() => setNavigationOpen(false)} />
+      </Dialog.Content>
+    </Dialog.Portal></Dialog.Root> : <SharedNavigation api={api} onSignOut={onSignOut} open={false} onClose={() => setNavigationOpen(false)} />}
     <main className="browser-feed main-pane"><Routes>
       <Route path="/workstreams/:parentId" element={<SharedConversationRoute onShowNavigation={showNavigation} />} />
       <Route path="/workstreams/:parentId/substreams/:substreamId" element={<SharedConversationRoute onShowNavigation={showNavigation} />} />
-      <Route path="*" element={<div className="browser-empty"><h1>Shared conversations</h1><p>Choose a conversation to start collaborating.</p></div>} />
+      <Route path="*" element={<div className="browser-empty"><NavigationButton onClick={showNavigation} /><h1>Shared conversations</h1><p>Choose a conversation to start collaborating.</p></div>} />
     </Routes></main>
   </div>;
 }

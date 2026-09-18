@@ -1,3 +1,4 @@
+import { clearAllDrafts } from '../../desktop/src/renderer/lib/draft-cache';
 import { useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema } from "@rally/contracts/regions";
@@ -32,6 +33,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [error, setError] = useState<string | null>(null);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
   const sessionRead = useRef(0);
+  const sessionUser = useRef<string | null>(null);
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
@@ -41,8 +43,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const workspacePath = /^\/app\/workspaces\/([^/]+)\/([^/]+)\/?$/u.exec(location.pathname);
     const workspaceTarget = workspacePath ? z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema })
       .safeParse({ region: workspacePath[1], workspaceId: workspacePath[2] }) : null;
-    const target = parseWorkstreamLinkPathTarget(location.pathname)
-      ?? (workspaceTarget?.success ? workspaceTarget.data : null);
+    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname);
+    const target = parsedTarget?.region && parsedTarget.workspaceId ? parsedTarget
+      : workspaceTarget?.success ? workspaceTarget.data : null;
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
     const fragment = new URLSearchParams(location.hash.slice(1));
     const selectedRegion = ConfiguredRegionSchema.safeParse(target?.region ?? fragment.get("region") ?? initialRegion);
@@ -67,8 +70,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     }
     let restoring: Promise<void> | null = null;
     let invalidated = false;
+    let pendingRenewal = false;
     const restore = (renew = false) => {
-      if (restoring) return;
+      if (restoring) { pendingRenewal ||= renew; return; }
       const read = ++sessionRead.current;
       restoring = (async () => {
         if (renew) await browserRequest(selected, "/session/renew", BrowserSessionSchema, {});
@@ -76,6 +80,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
           ? await browserRequest(selected, "/workspace/select", BrowserSessionSchema, { workspaceId: target.workspaceId })
           : await browserRequest(selected, "/session", BrowserSessionSchema);
         if (!active || read !== sessionRead.current) return;
+        if (sessionUser.current && sessionUser.current !== current.user.id) await clearAllDrafts();
+        if (!active || read !== sessionRead.current) return;
+        sessionUser.current = current.user.id;
         setSession(current);
         setError(null);
         setAccepted((previous) => previous?.acceptedByUserId === current.user.id ? previous : null);
@@ -86,12 +93,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       })().catch((cause: unknown) => {
         if (!active || read !== sessionRead.current) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
+          void clearAllDrafts(); sessionUser.current = null;
           setSession(null); setWorkspaceSession(null); setWorkspaces([]); setAccepted(null);
           setError(cause.status === 403 ? cause.message : null);
         } else setError("Unable to restore your session. Try again.");
       }).finally(() => {
         restoring = null;
-        if (active && invalidated) { invalidated = false; restore(); }
+        if (active && (invalidated || pendingRenewal)) { const renewNext = pendingRenewal; invalidated = false; pendingRenewal = false; restore(renewNext); }
         else if (active && read === sessionRead.current) setChecking(false);
       });
     };
@@ -169,13 +177,16 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   async function redeem(input: { challengeId: string; redemptionId: string; method: "otp" | "magic"; credential: string }) {
     const current = await browserRequest(region, "/email/redeem", BrowserSessionSchema, input);
-    ++sessionRead.current;
+    const read = ++sessionRead.current;
+    await clearAllDrafts();
+    if (read !== sessionRead.current) return;
+    sessionUser.current = current.user.id;
     setSession(current);
     setProof(null);
     sessionChannel.current?.postMessage("session-changed");
     if (!destination) {
       const result = await browserRequest(region, "/workspaces", BrowserWorkspacesSchema);
-      setWorkspaces(result.workspaces);
+      if (read === sessionRead.current) setWorkspaces(result.workspaces);
     }
   }
   async function submit(event: FormEvent) {
@@ -201,7 +212,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     setBusy(true); setError(null);
     try {
       await browserRequest(region, "/logout", z.undefined(), {});
-      ++sessionRead.current;
+      const read = ++sessionRead.current;
+      await clearAllDrafts();
+      if (read !== sessionRead.current) return;
+      sessionUser.current = null;
       setSession(null); setWorkspaces([]); setChallenge(null); setAccepted(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
     } catch { setError("Unable to sign out. Please try again."); }
@@ -210,11 +224,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   async function acceptInvitation() {
     if (!invitation || busy) return;
+    const read = sessionRead.current;
     setBusy(true); setError(null);
     try {
       const result = await browserRequest(invitation.region, "/api/_/sharing/accept", ScopeInvitationResultSchema, invitation.request);
+      if (read !== sessionRead.current) return;
       if (result.status !== "accepted") throw new Error("This invitation is unavailable. Ask the sender for a new invitation.");
       await browserRequest(invitation.region, "/workspace/select", BrowserSessionSchema, { workspaceId: invitation.request.workspaceId });
+      if (read !== sessionRead.current) return;
       setAccepted(result.invitation);
       const [target] = result.invitation.targets;
       if (result.invitation.targets.length === 1 && target) {
@@ -224,7 +241,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     finally { setBusy(false); }
   }
 
-  if (destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
+  if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
       {error && <p role="alert">{error}</p>}
       <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, () => { void signOut(); })}</div>
@@ -235,7 +252,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   return <main className="entry"><a className="wordmark" href="/">Rally</a>
     <section className="entry-card" aria-busy={busy || checking}>
-      {session ? <>
+      {session && !proof ? <>
         <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1><p>Signed in as {session.user.email}</p>
         {accepted ? <nav aria-label="Shared conversations">{accepted.targets.map((target, index) =>
           <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target)}>{target.kind === "workstream" ? "Open work stream" : target.substreamId === "0" ? "Open main conversation" : `Open shared substream${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>

@@ -1,5 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+// These cases control the session clock; IndexedDB transactions have their own
+// runtime suite and must not be coupled to fake session deadlines.
+vi.mock('./draft-cache', () => ({ clearAllDrafts: vi.fn().mockResolvedValue(undefined) }));
 import { BrowserEntry } from '../../../../browser/src/entry';
 
 const user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'guest@example.test', name: 'Guest',
@@ -131,4 +134,81 @@ it('does not overflow a session deadline longer than the browser timer range', a
   await vi.advanceTimersByTimeAsync(duration - 2_147_483_647);
   expect(callback).toHaveBeenCalledOnce();
   cancel();
+});
+
+it('restores the workspace picker for a legacy conversation link', async () => {
+  history.replaceState(null, '', '/app/workstreams/cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+  const fetcher = vi.fn(async (input: string) => input.endsWith('/workspaces')
+    ? Response.json({ workspaces: [workspace] })
+    : Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() }));
+  vi.stubGlobal('fetch', fetcher);
+  render(<BrowserEntry />);
+  expect(await screen.findByRole('link', { name: /Shared team/ })).toBeInTheDocument();
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith('/workspace/select'))).toBe(false);
+});
+
+it('keeps explicit magic-link confirmation visible after a focus session restore', async () => {
+  history.replaceState(null, '', '/login/email#region=global&challenge=cccccccc-cccc-4ccc-8ccc-cccccccccccc&token=proof-token');
+  const fetcher = vi.fn(async (input: string) => input.endsWith('/workspaces')
+    ? Response.json({ workspaces: [workspace] })
+    : Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() }));
+  vi.stubGlobal('fetch', fetcher);
+  render(<BrowserEntry />);
+  expect(await screen.findByRole('heading', { name: 'Confirm your sign-in' })).toBeInTheDocument();
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect(screen.getByRole('heading', { name: 'Confirm your sign-in' })).toBeInTheDocument();
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith('/email/redeem'))).toBe(false);
+});
+
+it('returns to email entry on a non-JSON unauthorized response', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('Unauthorized', { status: 401 })));
+  render(<BrowserEntry />);
+  expect(await screen.findByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('preserves renewal requested while a focus restore is in flight', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const now = Date.parse('2026-09-17T00:00:00.000Z'); vi.setSystemTime(now);
+  const metadata = { user, workspace: null, expiresAt: new Date(now + 100_000).toISOString() };
+  let reads = 0, renewals = 0;
+  let finish: ((response: Response) => void) | undefined;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input.endsWith('/session/renew')) { renewals++; return Response.json(metadata); }
+    if (input.endsWith('/session') && ++reads === 2) return new Promise<Response>((resolve) => { finish = resolve; });
+    if (input.endsWith('/workspaces')) return Response.json({ workspaces: [workspace] });
+    return Response.json(metadata);
+  }));
+  let view: ReturnType<typeof render> | undefined;
+  try {
+    await act(async () => { view = render(<BrowserEntry />); });
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(renewals).toBe(0);
+    await act(async () => { finish!(Response.json(metadata)); });
+    expect(renewals).toBe(1);
+  } finally { view?.unmount(); }
+});
+
+it('does not publish an old account workspace list after focus restores another account', async () => {
+  history.replaceState(null, '', '/login/email#region=global&challenge=cccccccc-cccc-4ccc-8ccc-cccccccccccc&token=proof-token');
+  const other = { ...user, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', email: 'other@example.test' };
+  let listReads = 0;
+  let finish: ((response: Response) => void) | undefined;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input.endsWith('/workspaces')) {
+      if (++listReads === 1) return new Promise<Response>((resolve) => { finish = resolve; });
+      return Response.json({ workspaces: [{ ...workspace, name: 'Other account workspace' }] });
+    }
+    return Response.json({ user: input.endsWith('/email/redeem') ? user : other, workspace: null,
+      expiresAt: new Date(Date.now() + 100_000).toISOString() });
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+  await waitFor(() => expect(finish).toBeDefined());
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  await screen.findByRole('link', { name: /Other account workspace/ });
+  await act(async () => { finish!(Response.json({ workspaces: [workspace] })); });
+  expect(screen.queryByRole('link', { name: /Shared team/ })).toBeNull();
+  expect(screen.getByRole('link', { name: /Other account workspace/ })).toBeInTheDocument();
 });
