@@ -17,6 +17,8 @@ export type ConnectorActorVerification =
 export interface ConnectorActorIdentity {
   userId: string;
   verification: ConnectorActorVerification;
+  /** Attribution may resolve a guest, but it cannot automatically seat them. */
+  accessClass?: "guest";
 }
 
 export interface ConnectorActorResolutionInput {
@@ -80,13 +82,13 @@ export async function resolveConnectorActorIdentities(
               CAST(json_extract(entry.value, '$.verifiedEmail') AS TEXT) AS verified_email
        FROM json_each(?) entry
      ), active_members AS (
-       SELECT user_id FROM workspace_members
+       SELECT user_id, role FROM workspace_members
        WHERE workspace_id = ? AND status = 'active'
      )
-     SELECT -1 AS request_index, member.user_id, 'member' AS row_kind
+     SELECT -1 AS request_index, member.user_id, 'member' AS row_kind, member.role AS member_role
        FROM active_members member
      UNION ALL
-     SELECT requested.request_index, MIN(user.id) AS user_id, 'email' AS row_kind
+     SELECT requested.request_index, MIN(user.id) AS user_id, 'email' AS row_kind, NULL AS member_role
        FROM requested
        JOIN users user ON lower(user.email) = requested.verified_email
        JOIN active_members member ON member.user_id = user.id
@@ -97,6 +99,7 @@ export async function resolveConnectorActorIdentities(
     request_index: number;
     user_id: string;
     row_kind: "member" | "email";
+    member_role: string | null;
   }>();
   const memberIds = (regionalRows.results ?? [])
     .filter((row) => row.row_kind === "member")
@@ -186,7 +189,10 @@ export async function resolveConnectorActorIdentities(
     if (!Number.isInteger(index) || index < 0 || index >= identities.length || identities[index]) continue;
     identities[index] = { userId: row.user_id, verification: "verified_email" };
   }
-  return identities;
+  const guests = new Set(regionalRows.results.filter((row) => row.row_kind === "member" && row.member_role === null)
+    .map((row) => row.user_id));
+  return identities.map((identity) => identity && guests.has(identity.userId)
+    ? { ...identity, accessClass: "guest" as const } : identity);
 }
 
 /**

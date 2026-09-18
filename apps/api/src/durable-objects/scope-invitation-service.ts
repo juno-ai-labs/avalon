@@ -14,6 +14,18 @@ const SealedSchema = z.strictObject({ ciphertext: z.string(), iv: z.string() });
 const DeliverySchema = z.strictObject({ recipientEmail: z.string().email(), text: z.string() });
 const denied = (reason: Extract<ScopeInvitationResult, { status: "denied" }>["reason"]): ScopeInvitationResult => ({ status: "denied", reason });
 
+/** Validate enablement before any forward-only participant handoff. */
+export function scopeInvitationOrigin(env: Env): URL | null {
+  let origin: URL;
+  try {
+    origin = new URL(env.BROWSER_APP_ORIGIN ?? "");
+    if (origin.origin !== env.BROWSER_APP_ORIGIN ||
+      (origin.protocol !== "https:" && !(env.APP_ENV === "development" && origin.protocol === "http:")) ||
+      !env.OAUTH_STATE_ENCRYPTION_KEY || !env.SESSION_SIGNING_KEY) throw new Error("configuration");
+  } catch { return null; }
+  return origin;
+}
+
 /** Product authority stays in the WorkstreamDO that owns the resulting grants. */
 export class ScopeInvitationService {
   private readonly invitations: ScopeInvitationStorage;
@@ -62,13 +74,8 @@ export class ScopeInvitationService {
 
   async create(input: z.infer<typeof CreateScopeInvitationsSchema>): Promise<ScopeInvitationResult> {
     const request = CreateScopeInvitationsSchema.parse(input);
-    let origin: URL;
-    try {
-      origin = new URL(this.env.BROWSER_APP_ORIGIN ?? "");
-      if (origin.origin !== this.env.BROWSER_APP_ORIGIN ||
-        (origin.protocol !== "https:" && !(this.env.APP_ENV === "development" && origin.protocol === "http:")) ||
-        !this.env.OAUTH_STATE_ENCRYPTION_KEY || !this.env.SESSION_SIGNING_KEY) throw new Error("configuration");
-    } catch { return denied("configuration_required"); }
+    const origin = scopeInvitationOrigin(this.env);
+    if (!origin) return denied("configuration_required");
     const prepared = await Promise.all([...new Set(request.emails)].map(async (email) => {
       const id = uuidV7(), token = randomToken();
       const link = new URL("/invite", origin);

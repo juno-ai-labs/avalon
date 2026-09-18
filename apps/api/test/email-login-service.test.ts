@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { createApp } from "../src/app";
-import { AuthService, verifyAccessToken } from "../src/services/auth-service";
+import { AuthService, verifyAccessToken, purgeExpiredEmailLoginChallenges } from "../src/services/auth-service";
 import { configuredEmailLoginPolicy, startEmailLogin, redeemEmailLogin, openEmailLoginSecret, deliverEmailLogin } from "../src/services/email-login-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -135,4 +135,21 @@ it("keeps email login disabled without explicit policy and bounds both public tr
       expect(response.status).toBe(413);
     }
   }
+});
+
+
+it("purges unusable email receipts while preserving active response-loss recovery", async () => {
+  const { env, challengeId, otp } = await challenge();
+  const request = attempt(challengeId, otp);
+  const receipt = await redeemEmailLogin(env, request);
+  const session = await new AuthService(env).resumeEmailLogin(receipt);
+  await purgeExpiredEmailLoginChallenges(env);
+  expect((await new AuthService(env).resumeEmailLogin(await redeemEmailLogin(env, request))).refreshToken).toBe(session.refreshToken);
+  db.prepare("UPDATE sessions SET expires_at='2000-01-01T00:00:00.000Z'").run();
+  await purgeExpiredEmailLoginChallenges(env);
+  expect(db.prepare("SELECT id FROM email_login_challenges WHERE id=?").get(challengeId)).toBeUndefined();
+  const pending = await challenge();
+  db.prepare("UPDATE email_login_challenges SET expires_at=0 WHERE id=?").run(pending.challengeId);
+  await purgeExpiredEmailLoginChallenges(env);
+  expect(db.prepare("SELECT id FROM email_login_challenges").all()).toEqual([]);
 });

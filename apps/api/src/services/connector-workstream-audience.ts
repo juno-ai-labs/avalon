@@ -118,7 +118,7 @@ export async function resolveConnectorAudience(
         verifiedEmail: member.verifiedEmail ?? null,
       })),
     );
-    resolved = identities.map((identity) => identity?.userId ?? null);
+    resolved = identities.map((identity) => identity?.accessClass === "guest" ? null : identity?.userId ?? null);
   } catch (error) {
     // Audience discovery is best effort, but its query is deliberately one
     // operation: one D1 outage produces one bounded log rather than one per
