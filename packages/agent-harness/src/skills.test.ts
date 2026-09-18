@@ -591,6 +591,10 @@ describe("built-in skills", () => {
     // Dedupe is the other half: a timer with no memory re-reports forever.
     expect(body).toContain("keyColumns");
     expect(body).toContain("## Anti-patterns");
+    // `webhook` is a submittable trigger on the very draft tool this skill
+    // drives, so a body that names only the other two event kinds sends a
+    // drafter to the team for something it could have drafted.
+    expect(body).toContain("`webhook`");
   });
 
   it("teaches the site contract the runtime actually enforces", () => {
