@@ -966,7 +966,7 @@ draft scrolled with its middle lines beside the controls.
 ### 2026-09-11 — Connector recovery is a first-class conversation-feed card
 
 **What changed:** The live conversation surface opts into rendering validated
-`show_connector_connection` tool calls as provider cards with connect,
+`core_show_connector_connection` tool calls as provider cards with connect,
 reconnect, pending, and connected states. These rows are person-facing and
 therefore remain outside plugin grouping and settled-work accordions.
 

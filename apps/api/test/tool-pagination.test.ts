@@ -51,6 +51,39 @@ describe("model-facing authored pagination", () => {
     expect(source.execute).not.toHaveBeenCalled();
   });
 
+  it("keeps the page-ID namespace while naming the tools by their unprefixed wire names", () => {
+    // `rally:workstream` advertises `list_resources` with no wire prefix, but a
+    // page ID is still minted and validated as `workstream_<four words>`: the
+    // namespace is stored on issued rows, and `PageIssueSchema` refuses an
+    // empty one. The two were a single field before, so naming either side
+    // after the other is the regression this covers.
+    const authority: PaginationHost = { ...host(), prefix: "workstream", wirePrefix: "" };
+    const [first, next] = withToolPagination(tool(), authority);
+
+    expect(first!.definition.description).toContain("call list_resources_next with the returned nextPageId");
+    expect(first!.definition.description).not.toContain("workstream_list_resources");
+    expect(next!.definition.name).toBe("list_resources_next");
+    expect(next!.definition.description).toContain("Read the next page of list_resources.");
+    expect(next!.definition.description).not.toContain("workstream_list_resources");
+
+    // The page ID keeps the namespace, and the guidance still teaches it.
+    expect(next!.validateInput!({ pageId: "workstream_quiet_amber_rapid_otter" })).toBeNull();
+    const rejected = next!.validateInput!({ pageId: "quiet_amber_rapid_otter" });
+    expect(rejected).toBeTruthy();
+    const message = formatToolArgumentValidationError(rejected!);
+    expect(message).toContain('pageId must start with "workstream_"');
+    expect(message).toContain("call list_resources to start a new read");
+  });
+
+  it("keeps one prefix doing both jobs when a plugin has a wire prefix", () => {
+    // A connector passes the same value for both, which must stay the default
+    // when `wirePrefix` is omitted.
+    const authority: PaginationHost = { ...host(), prefix: "google_2" };
+    const [first, next] = withToolPagination(tool(), authority);
+    expect(first!.definition.description).toContain("call google_2_list_resources_next");
+    expect(next!.definition.description).toContain("Read the next page of google_2_list_resources.");
+  });
+
   it("accepts an exact connection prefix and leaves issuance validation to the authority", async () => {
     const authority = { ...host(), prefix: "google_2" };
     const next = withToolPagination(tool(), authority)[1]!;

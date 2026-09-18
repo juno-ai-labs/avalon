@@ -109,7 +109,17 @@ export const CONNECTOR_CONNECTION_STATE_WIRE_NAME = CONNECTOR_CONNECTION_STATE_T
 export const LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME = `core_${CONNECTOR_CONNECTION_CARD_TOOL_NAME}`;
 export const LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME = `core_${CONNECTOR_CONNECTION_STATE_TOOL_NAME}`;
 
-/** True for either name a connector card row may have been stored under. */
+/**
+ * True for either name a connector card row may have been stored under.
+ *
+ * This is one-directional, and deliberately so: a client built after the rename
+ * renders a card from either spelling, but a client built *before* it compares
+ * against the old constant alone and will read a new `show_connector_connection`
+ * row as ordinary tool activity — the row still says "Prepared a connector",
+ * without the Connect button beside it. Nothing in the renderer can close that;
+ * only shipping the desktop client ahead of the Worker can, so this is a release
+ * sequencing constraint rather than a code one.
+ */
 export function isConnectorConnectionCardWireName(name: string | undefined): boolean {
   return name === CONNECTOR_CONNECTION_CARD_WIRE_NAME
     || name === LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME;

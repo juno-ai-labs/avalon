@@ -812,7 +812,7 @@ without waiting for their execution. Each uses the same Bind harness, inherited
 model and execution principal, explicit opening context, and independent tool
 discovery. Normal authorized writes and recursive delegation are available.
 The obsolete inline child integration, runtime/storage entry points, and
-`run_subagent` surface are removed. Historical schema fields remain
+`workstream_run_subagent` surface are removed. Historical schema fields remain
 for existing data; new background work uses normal independent run recovery. [Agent communication](agent-communication.md) owns the tools,
 teams, reply references, Sidekick discovery and separate stop ownership.
 
@@ -1355,10 +1355,15 @@ duplicate-wire-name check from core plugins to all of them. It was proposed and
 declined in favour of the smaller change.
 
 **Consequences:** Three things a future change has to respect. First, the
-duplicate-wire-name guard still covers core plugins only, so `rally:terminal`
-and `rally:multimodal-generation` — both loadable and both unprefixed — hold a
-standing claim on twelve bare names with no mechanism defending them; check by
-hand, or widen that guard. Second, a durable tool event stores the wire name it
+duplicate-wire-name guard covers less than its name suggests: it iterates Bind's
+`corePlugins`, which the API fills from `createWorkstreamCorePlugins` —
+`rally:core`, `rally:tables`, `rally:memory` only. `rally:workstream`,
+`avalon:agents` and `rally:sidekick-result` are always active and still sit in
+`plugins`, outside it, as do `rally:terminal` and
+`rally:multimodal-generation`. Five of the six plugins unprefixed here therefore
+hold a standing claim on their bare names with nothing at runtime defending it;
+`apps/api/test/plugin-wire-names.test.ts` is the compensating control, and
+widening the guard to all plugins is the change to make if that is not enough. Second, a durable tool event stores the wire name it
 was called under, so `AVALON_TOOL_PROSE` carries both spellings of every
 renamed tool and the card recognizer matches both; deleting a retired spelling
 silently reverts every row written before this change to the humanized raw

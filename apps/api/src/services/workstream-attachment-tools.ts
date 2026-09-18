@@ -116,7 +116,13 @@ export function createWorkstreamAttachmentTools(
   const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
   const modelToolPrefix = options.modelToolPrefix ?? "workstream";
   const capabilityPrefix = options.capabilityPrefix ?? "workstream.resources";
-  const modelToolName = (name: string) => `${modelToolPrefix}_${name}`;
+  // `rally:workstream` advertises these unprefixed, so a workstream-scoped run
+  // must be told the bare name. Only the Sidekick-scoped variant still carries
+  // one. Building this by interpolation is how the rename first missed every
+  // remediation string in this file: they named tools the run does not offer,
+  // beside a `suggestedCall` that named them correctly.
+  const modelToolName = (name: string) =>
+    modelToolPrefix === "sidekick" ? `sidekick_${name}` : name;
   return [
     {
       definition: {
@@ -796,7 +802,7 @@ function assertReadableKind(
   if (kind !== "image") return;
   throw attachmentError(
     "resource_tool_mismatch",
-    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix}_view_resource with the supplied arguments instead.`,
+    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix === "sidekick" ? "sidekick_view_resource" : "view_resource"} with the supplied arguments instead.`,
     {
       actualMimeType: row.mime_type,
       attachmentKind: kind,

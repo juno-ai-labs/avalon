@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   AVALON_CORE_PLUGIN_ID,
+  AVALON_DISCOVERY_TOOL_DEFINITIONS,
   AVALON_MEMORY_PLUGIN_ID,
+  AVALON_SKILL_TOOL_DEFINITIONS,
   AVALON_TABLES_PLUGIN_ID,
   type HarnessPlugin,
+  type HarnessTool,
 } from "@rally/agent-harness";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
@@ -13,6 +16,7 @@ import { createAgentCommunicationPlugin } from "../src/services/agent-communicat
 import { createAvalonMultimodalGenerationPlugin } from "../src/services/multimodal-generation/plugin";
 import { createTerminalPlugin } from "../src/services/terminal/contract";
 import type { TerminalToolExecutors } from "../src/services/terminal/contract";
+import { withToolPagination, type PaginationHost } from "../src/services/tool-pagination";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
@@ -43,6 +47,22 @@ const automationRun = () => ({
   generation: 1,
 }) as never;
 
+/** Page expansion with a projection-only host; nothing here issues a real page. */
+function expandPages(tool: HarnessTool, prefix: string): HarnessTool[] {
+  if (!tool.definition.pagination) return [tool];
+  const host: PaginationHost = {
+    prefix,
+    wirePrefix: prefix === "table" ? prefix : "",
+    connectionId: null,
+    fence: { runId: "run", attemptId: "attempt", owner: "owner" },
+    receipts: {
+      issuePage: async () => `${prefix}_quiet_amber_rapid_otter`,
+      claimPage: async () => ({ inputJson: "{}" }),
+    },
+  };
+  return withToolPagination(tool, host);
+}
+
 const terminalExecutor = async () => ({ output: {}, summary: "test" });
 const terminalExecutors = {
   read_file: terminalExecutor, edit_file: terminalExecutor, write_file: terminalExecutor,
@@ -66,7 +86,12 @@ function allPlugins(): HarnessPlugin[] {
     FIRECRAWL_API_KEY: "test-key",
   });
   const input = workflowInput();
-  const tools = __integrationTesting.createAvalonTools(env, input);
+  // Expanded exactly as `loadHarnessTools` does. `createAvalonTools` is
+  // pre-pagination, so without this the generated `_next`/`_previous`
+  // continuations — which are advertised wire names like any other — would be
+  // missing from the surface this file claims to check.
+  const tools = __integrationTesting.createAvalonTools(env, input)
+    .flatMap((tool) => expandPages(tool, tool.definition.capability.startsWith("table.") ? "table" : "workstream"));
   return [
     ...__integrationTesting.createWorkstreamCorePlugins(tools),
     __integrationTesting.createAvalonWorkstreamPlugin(tools),
@@ -80,6 +105,16 @@ function allPlugins(): HarnessPlugin[] {
       { owningWorkstreamId: "00000000-0000-4000-8000-000000000009" } as never,
     ),
   ].filter((plugin): plugin is HarnessPlugin => plugin !== null);
+}
+
+/**
+ * Bind injects these two itself, unprefixed, rather than taking them from the
+ * host — so a plugin that claimed `load_plugin` or `load_skill` would collide
+ * with something no host-side plugin list contains.
+ */
+function bindInjectedWireNames(): string[] {
+  return [...AVALON_DISCOVERY_TOOL_DEFINITIONS, ...AVALON_SKILL_TOOL_DEFINITIONS]
+    .map((definition) => definition.name);
 }
 
 function plugin(canonicalId: string): HarnessPlugin {
@@ -113,6 +148,9 @@ describe("plugin wire names", () => {
 
   it("lets no two plugins claim the same bare name", () => {
     const claims = new Map<string, string[]>();
+    for (const name of bindInjectedWireNames()) {
+      claims.set(name, [...(claims.get(name) ?? []), "bind:injected"]);
+    }
     for (const target of allPlugins()) {
       if ((target.shortWireName ?? "") !== "") continue;
       for (const name of wireNames(target)) {
@@ -145,6 +183,7 @@ describe("plugin wire names", () => {
       "import_resource",
       "list_agents",
       "list_resources",
+      "list_resources_next",
       "list_wakeups",
       "post_result",
       "publish_branch_and_pr",
@@ -152,6 +191,8 @@ describe("plugin wire names", () => {
       "query_artifact_data",
       "read_file",
       "read_resource",
+      "read_resource_next",
+      "read_resource_previous",
       "reply_to_message",
       "request_elicitation",
       "run_command",

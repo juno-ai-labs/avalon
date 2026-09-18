@@ -104,12 +104,22 @@ sibling `reply_to_message` had the same problem as plain `reply` and was
 renamed rather than re-prefixed — which is the fix available here, and the one
 to reach for if `send_message` turns out to mislead a model in practice.
 
-**Bind only guarantees the absence of a collision for always-active plugins.**
-Its duplicate-wire-name check covers those; for a loadable plugin two identical
-wire names resolve to whichever plugin sorts first by canonical id, silently. So
-an unprefixed loadable plugin is a standing claim on those bare names: before
-giving another plugin an empty prefix, check its names against every unprefixed
-plugin above, and against what a future one would want.
+**Bind's duplicate-wire-name check covers less than "always active".** It
+iterates Bind's own `corePlugins` — discovery, skills, and whatever the host
+passes as `corePlugins`, which on the API side is `createWorkstreamCorePlugins`:
+`rally_core`, `rally_tables`, `rally_memory`, and nothing else. Every other
+plugin, including always-active ones like `rally_workstream`, `rally_agents`
+and `rally_sidekick_result`, is assembled into `plugins` and sits outside the
+guard. For those, two identical wire names resolve to whichever plugin sorts
+first by canonical id, silently.
+
+So an unprefixed plugin is a standing claim on its bare names, and for most of
+them nothing at runtime defends it.
+[`apps/api/test/plugin-wire-names.test.ts`](../apps/api/test/plugin-wire-names.test.ts)
+is what holds that line: it builds every plugin a run can register and fails
+when two unprefixed ones claim the same name. Before giving another plugin an
+empty prefix, check its names there — and if you would rather have the runtime
+guard, widening the check to all plugins is the change to make.
 
 `longRunning` is optional tool-definition metadata, not an input argument.
 True adds a short background-execution hint to the model-visible description
