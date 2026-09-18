@@ -102,7 +102,7 @@ row is written and the resolved value is frozen there.
 Three readers answer "what zone is this automation in", and they do not agree
 once the account moves. The `schedules` row is frozen at derivation; the digest's
 is re-derived; and `runLocalTimezones` (`integrations.ts:6539`) resolves the same
-order *live* on every run, so `core_current_time` reports a local day the run's
+order *live* on every run, so `current_time` reports a local day the run's
 own schedule contradicts. (A fourth, the result email's date, went with the
 deterministic delivery path on 2026-09-03.) Whoever settles the question below
 should settle all three, not the first one they find.

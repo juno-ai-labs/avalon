@@ -238,7 +238,7 @@ Two things are replaced, and both are decisions rather than writers:
   pricing read) emptily. A second chat-completion request is
   refused with a 400 rather than answered again: a seed has exactly one turn
   because a seeded run makes no tool calls, and without tool calls Bind asks
-  once. A question is a call to the real `core_request_elicitation` tool with
+  once. A question is a call to the real `request_elicitation` tool with
   arguments its schema validates, addressed to the room; the run parks on
   `needs_input`, and whoever answers starts an ordinary, unseeded run.
 

@@ -4,7 +4,7 @@ A work stream that exists because of a place in a connected tool — the Slack
 thread `@Rally` was mentioned in, the Linear issue an automation fired on, the
 GitHub pull request a suggestion was built out of — carries that place as a
 resource attached to it, from the moment it is created. The **Sources** section
-of the inspector rail shows it, and the agent's `workstream_list_resources` tool lists it
+of the inspector rail shows it, and the agent's `list_resources` tool lists it
 with the relationship `origin`.
 
 The promise is narrow and worth stating exactly: **where a work stream came from
@@ -26,7 +26,7 @@ only through an explicit watch or deterministic automation.
 
 Origin resources are always references at the model boundary. The message
 attachment manifest cutover does not copy connector origin content into a
-trigger: the agent discovers the origin through `workstream_list_resources` and
+trigger: the agent discovers the origin through `list_resources` and
 hydrates a currently authorized derivative only when the task needs it.
 
 ## Where the code lives
@@ -203,7 +203,7 @@ attaches it where it attaches the email.
   the connector's own normalization, so rejecting it would drop attachments over
   a drifted manifest rather than over a real mistake.
 - **`relationship_type = 'origin'` means the work stream *began* there.** The
-  agent is handed the relationship by `workstream_list_resources`, which is how it tells
+  agent is handed the relationship by `list_resources`, which is how it tells
   the channel it was summoned from apart from a document somebody attached
   afterwards. Nothing *automatic* may treat the two alike — a cleanup sweep or a
   re-attach path that cannot tell them apart would drop the only record of where
@@ -233,7 +233,7 @@ attaches it where it attaches the email.
 
   Concretely, an origin's `content_ref` is always null. An activity's
   `payload_ref` addresses the raw verified webhook body in R2, and
-  `workstream_read_resource` serves a selected model derivative only after the
+  `read_resource` serves a selected model derivative only after the
   shared work-stream visibility boundary authorizes it — so copying it would turn "record
   where this came from" into "publish the provider payload to the run".
   `attachActivityResource` is the one path that still sets it, because there a
@@ -261,7 +261,7 @@ It deliberately does **not** cover:
   resource itself, from the opening stored on its run row; that is
   `AutomationDO`'s and is not rewritten here.
 - **What the model does with the attachment.** The pageable
-  `workstream_list_resources` index and bounded read/search tools are
+  `list_resources` index and bounded read/search tools are
   [`agent-harness.md`](agent-harness.md) and
   [`agent-attachments.md`](agent-attachments.md).
 

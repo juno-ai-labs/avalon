@@ -604,7 +604,7 @@ describe("work-stream naming", () => {
         messageType: kind,
         text: "",
         structuredContentJson: JSON.stringify({
-          invocation: { toolName: "terminal_run_command", status: "completed" },
+          invocation: { toolName: "run_command", status: "completed" },
         }),
         transcriptSequence: 20 + index,
         createdAt: at,

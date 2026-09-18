@@ -97,7 +97,7 @@ stop request to owned conversations; independently owned Sidekicks continue.
 As approved on 2026-09-15, liveness renewals allow Bind to finish the in-flight step and settle its stop,
 while authority checks still precede every new model and tool call.
 
-Model-authored agent-to-agent communication is explicit through `send_message` or `reply`,
+Model-authored agent-to-agent communication is explicit through `send_message` or `reply_to_message`,
 including final results, questions, and updates. Standard assistant messages stay
 in the sender's own transcript. Completion and needs-input settlement never synthesize or forward a message.
 A failed background run emits one host notice to its owning parent:
@@ -205,6 +205,64 @@ stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-09-18 — Agent tools lose their prefix, and `reply` gains an object
+
+**What changed:** `avalon:agents` declares no wire prefix, so its tools reach
+the model as `sidekicks_list`, `create_sidekick`, `start_agent`, `list_agents`,
+`send_message`, `reply_to_message`, and `stop_agent`. The sixth of those was
+`reply`; it is renamed here, which also moves its derived capability from
+`agents.reply` to `agents.reply_to_message`. The mechanism and the rule for the
+prefix are in [`agent-harness.md`](agent-harness.md) and
+[`agent-tools.md`](agent-tools.md); what belongs here is what the prefix was
+carrying for these tools.
+
+**Why:** The plugin is always active, so `agents_` distinguished it from
+nothing — the model can neither load it nor unload it, and no other plugin
+offers a second `start_agent`. But the prefix was not only a namespace for two
+of these names. `start_agent`, `list_agents` and `stop_agent` carry their own
+subject; `agents_reply` and `agents_send_message` were leaving the object of the
+verb to the prefix, and bare they say nothing about *who* they reach. A message
+to a person, or into a connector's channel, is a plausible thing for a model to
+want in the same turn, so that is a wrong reading it could actually take.
+`reply` takes its object back in its own name. `send_message` does not, because
+there is no equally natural name for it that does — `send_agent_message` reads
+as a second kind of message rather than the only kind this tool sends.
+
+**Considered and rejected:** Keeping `agents_` on the whole plugin for the sake
+of those two. It would have paid a prefix on five names that did not need one to
+fix two that did, and the fix for a name that does not say enough is a better
+name.
+
+**Consequences:** Three things stand in for what the prefix was doing for
+`send_message`, and a change here should keep all three: the plugin's
+instructions name the addressee in every sentence that reaches for it; the
+transcript rows say "Messaged a teammate" rather than "Sent a message", so a
+misfire is legible in the feed; and capability checks still bound what the call
+can do. If a model is seen sending an agent message where a person was meant,
+that tool is where to look, and renaming it the way `reply_to_message` was
+renamed is the fix rather than restoring the prefix to all seven. The capability
+rename is safe because nothing reads a frozen scope's `eligibleCapabilities`
+back to authorize a call — it is recorded for forensics, and a scope hash
+already drifts legitimately across a deploy (see `persistImmutableRunScope`).
+A row written before this change stores the wire name `agents_reply`, which is
+neither the current name nor `agents_` plus the current name, so
+`AVALON_TOOL_PROSE` carries it as its own entry rather than through the derived
+mapping the other agent tools use.
+
+One transitional gap is accepted rather than closed. The rename moves both
+`name` and `capability`, which `storedToolPolicyMatches` compares against a
+receipt's stored execution plan. `legacyReceiptIdentity` — the existing
+mechanism for exactly this — is populated only for connector plugins, and
+`avalon:agents` resolves through the loadable-built-in branch, which sets it to
+`null`. So a run resumed across this one deploy that had already completed a
+`reply` call at a given turn replays as a policy mismatch rather than a
+recognized completion: `findCompletedToolResult` returns null and the call lands
+in recoverable-write reconciliation. That fails safe — no duplicate message is
+sent — but reads as a stalled delegation until the run settles. It is bounded to
+in-flight runs at deploy time. Populating `legacyReceiptIdentity` for built-ins
+is the fix if this class of rename happens again; it was not worth building for
+one tool.
 
 ### 2026-09-15 — Remove caller-orchestrated delegation round trips
 

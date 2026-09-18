@@ -79,7 +79,8 @@ describe("multimodal generation contract", () => {
     expect(plugin).toMatchObject({
       canonicalId: "rally:multimodal-generation",
       modelId: "rally_multimodal_generation",
-      shortWireName: "multimodal_generation",
+      // No wire prefix, so a canonical name is also the model-facing one.
+      shortWireName: "",
       preload: false,
       explicit: false,
     });

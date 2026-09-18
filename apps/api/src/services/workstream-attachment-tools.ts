@@ -116,7 +116,13 @@ export function createWorkstreamAttachmentTools(
   const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
   const modelToolPrefix = options.modelToolPrefix ?? "workstream";
   const capabilityPrefix = options.capabilityPrefix ?? "workstream.resources";
-  const modelToolName = (name: string) => `${modelToolPrefix}_${name}`;
+  // `rally:workstream` advertises these unprefixed, so a workstream-scoped run
+  // must be told the bare name. Only the Sidekick-scoped variant still carries
+  // one. Building this by interpolation is how the rename first missed every
+  // remediation string in this file: they named tools the run does not offer,
+  // beside a `suggestedCall` that named them correctly.
+  const modelToolName = (name: string) =>
+    modelToolPrefix === "sidekick" ? `sidekick_${name}` : name;
   return [
     {
       definition: {
@@ -684,7 +690,7 @@ function readSuggestion(
 ): SuggestedAttachmentToolCall {
   return modelToolPrefix === "sidekick"
     ? { tool: "sidekick_read_resource", arguments: { resourceId } }
-    : { tool: "workstream_read_resource", arguments: { resourceId } };
+    : { tool: "read_resource", arguments: { resourceId } };
 }
 
 function skippedViewItem(
@@ -781,7 +787,7 @@ export function siteReadRemediation(
       attachmentKind: "site",
       ...(modelToolPrefix === "sidekick"
         ? {}
-        : { suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId } } }),
+        : { suggestedCall: { tool: "import_resource", arguments: { resourceId } } }),
     },
   );
 }
@@ -796,13 +802,13 @@ function assertReadableKind(
   if (kind !== "image") return;
   throw attachmentError(
     "resource_tool_mismatch",
-    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix}_view_resource with the supplied arguments instead.`,
+    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix === "sidekick" ? "sidekick_view_resource" : "view_resource"} with the supplied arguments instead.`,
     {
       actualMimeType: row.mime_type,
       attachmentKind: kind,
       suggestedCall: modelToolPrefix === "sidekick"
         ? { tool: "sidekick_view_resource", arguments: { resourceIds: [row.id] } }
-        : { tool: "workstream_view_resource", arguments: { resourceIds: [row.id] } },
+        : { tool: "view_resource", arguments: { resourceIds: [row.id] } },
     },
   );
 }

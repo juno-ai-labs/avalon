@@ -670,7 +670,7 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.some((tool) => tool.definition.mode === "write")).toBe(true);
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining([
-        "start_agent", "list_agents", "send_message", "reply", "stop_agent",
+        "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual(["sidekicks_list", "attach", "detach"]);
@@ -733,10 +733,10 @@ describe("connector tools selected for harness runs", () => {
       explicit: false,
     });
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual(["generate_image", "edit_image", "generate_audio"]);
-    expect(withAzure.idempotencyByTool.get("multimodal_generation_generate_image")).toBe("record_before_execute");
-    expect(withAzure.modeByTool.get("multimodal_generation_edit_image")).toBe("write");
-    expect(withAzure.idempotencyByTool.get("multimodal_generation_generate_audio")).toBe("record_before_execute");
-    expect(withAzure.modeByTool.get("multimodal_generation_generate_audio")).toBe("write");
+    expect(withAzure.idempotencyByTool.get("generate_image")).toBe("record_before_execute");
+    expect(withAzure.modeByTool.get("edit_image")).toBe("write");
+    expect(withAzure.idempotencyByTool.get("generate_audio")).toBe("record_before_execute");
+    expect(withAzure.modeByTool.get("generate_audio")).toBe("write");
   });
 
   it("authorizes every built-in plugin this run registered and denies unregistered or invented ids", async () => {

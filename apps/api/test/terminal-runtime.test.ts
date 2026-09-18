@@ -124,7 +124,7 @@ function fixture(
     executionPrincipalJson: JSON.stringify({ type: "user", userId: U }),
     createdAt: Date.parse("2026-08-13") });
   seedToolReceipt(objectStore, {
-    id: I, runId: R, toolCallId: 'call-runtime', toolName: 'terminal_run_command',
+    id: I, runId: R, toolCallId: 'call-runtime', toolName: 'run_command',
   });
   const files = new Map<string, Uint8Array>();
   files.set("/workspace/src/file.txt", new TextEncoder().encode("hello\n"));

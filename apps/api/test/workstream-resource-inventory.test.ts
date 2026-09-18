@@ -247,8 +247,8 @@ describe("work-stream compaction resource inventory", () => {
         rendered.indexOf(orderedRows[index - 1]!),
       );
     }
-    expect(rendered).toContain("Use workstream_list_resources with attachmentKind and limit");
-    expect(rendered).toContain('workstream_list_resources_next({ pageId: "<nextPageId>" })');
+    expect(rendered).toContain("Use list_resources with attachmentKind and limit");
+    expect(rendered).toContain('list_resources_next({ pageId: "<nextPageId>" })');
     expect(rendered).toContain("Follow nextPageId until it is null");
     expect(rendered).not.toMatch(/secret|private|image\/png|application\//u);
     expect(rendered.length).toBeLessThan(1_500);
