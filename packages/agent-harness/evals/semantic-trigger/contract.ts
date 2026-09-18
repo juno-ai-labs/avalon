@@ -74,6 +74,23 @@ export interface CandidateContract {
 
 export interface EvalCase {
   id: string;
+  /**
+   * The standing watch this case belongs to, when it belongs to one.
+   *
+   * The balanced half of the corpus is one condition per case, which is how a
+   * classifier is *taught* a boundary and not at all how it is *used*: a real
+   * Sidekick installs one condition and sees every matching event for months. A
+   * scenario is that — one condition, a series of events, and at most two of them
+   * a genuine match.
+   *
+   * None of these four fields reaches the model. They exist so the report can ask
+   * the question production asks: across three weeks of this watch, how many runs
+   * would it have started that nobody wanted, and did it start the one they did?
+   */
+  scenarioId?: string;
+  scenarioSummary?: string;
+  sequenceIndex?: number;
+  observedAt?: string;
   connector: string;
   eventType: string;
   title: string;
