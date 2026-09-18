@@ -7,6 +7,7 @@ import { ApiError } from "../lib/api-error";
 import { logEvent } from "../observability/logger";
 
 export const requestContext: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
+  c.set("requestReceivedAt", Date.now());
   const incoming = c.req.header("x-request-id");
   const requestId = incoming && /^[A-Za-z0-9._:-]{1,100}$/u.test(incoming) ? incoming : crypto.randomUUID();
   c.set("requestId", requestId);

@@ -257,7 +257,9 @@ export function captureStreamingInferenceRequest(
       ...(context.journey ? { journey: context.journey } : {}),
       ...(context.requestReceivedAt !== undefined ? {
         requestReceivedAt: new Date(context.requestReceivedAt).toISOString(),
-        requestToInferenceStartMs: Math.max(0, providerRequestIssuedAt - context.requestReceivedAt),
+        ...(providerRequestIssuedAt >= context.requestReceivedAt
+          ? { requestToInferenceStartMs: providerRequestIssuedAt - context.requestReceivedAt }
+          : { requestClockSkewed: true }),
       } : {}),
       providerRequestIssuedAt: new Date(providerRequestIssuedAt).toISOString(),
     },

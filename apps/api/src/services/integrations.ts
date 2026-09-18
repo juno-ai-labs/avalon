@@ -3055,6 +3055,7 @@ export async function runWorkstreamHarness(
     ...(input.telemetryRequestReceivedAt !== undefined
       ? { requestReceivedAt: input.telemetryRequestReceivedAt }
       : {}),
+    inferenceStartEligible: (runtime?.lease.attemptNumber ?? 1) === 1,
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;

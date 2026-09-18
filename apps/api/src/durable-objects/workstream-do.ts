@@ -28,6 +28,7 @@ import type {
   ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 import {
+  ParentEffectEnvelopeSchema,
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   isPersonNotificationEffect,
@@ -978,12 +979,11 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * Record a child before it is addressed.
    *
    * Reserving the main conversation of a work stream that does not exist yet
-   * creates this object's row and puts a provisional directory row in the
-   * workspace synchronously, through the one parent-to-workspace RPC that is
-   * kept: the person who created the work stream is about to open it, and the
-   * Worker's visibility checks read the workspace directory. The provisional
-   * row is version 1 of this parent's projection, so the child's first real
-   * aggregate lands as version 2 and replaces it.
+   * creates this object's row and a version-one provisional directory outbox.
+   * Ordinary callers deliver it synchronously. Creation may explicitly defer
+   * that RPC, overlap it with child initialization, and then flush the exact
+   * version-one rows before answering. The child's first real aggregate lands
+   * as version 2 and replaces the provisional projection.
    */
   async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
     await this.initialized;
@@ -1057,11 +1057,23 @@ export class WorkstreamDO extends ConversationParentDurableObject {
     await this.initialized;
     const request = ConversationParentAuthorityRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
-    const provisional = this.dueParentEffects(25).filter(({ effect }) => (
-      effect.kind === "directory_common" || effect.kind === "directory_user"
-    ));
+    const provisional = this.provisionalDirectoryEffects(false);
     if (provisional.length > 0) await this.deliverProvisionalDirectory(provisional);
     await this.armNextAlarm();
+  }
+
+  /** The reservation's exact version-one rows; no unrelated outbox cap or backoff applies. */
+  private provisionalDirectoryEffects(dueOnly: boolean, now = Date.now()): ParentEffectEnvelope[] {
+    const sql = `SELECT payload_json FROM durable_outbox
+      WHERE state IN ('pending', 'inflight')
+        AND source_version = 1
+        AND effect_kind IN ('directory_common', 'directory_user')
+        ${dueOnly ? "AND not_before <= ?" : ""}
+      ORDER BY CASE effect_kind WHEN 'directory_common' THEN 0 ELSE 1 END, message_id`;
+    const rows = dueOnly
+      ? this.parentSql.exec<{ payload_json: string }>(sql, now).toArray()
+      : this.parentSql.exec<{ payload_json: string }>(sql).toArray();
+    return rows.map((row) => ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json)));
   }
 
   /** Reserve one creator-only nonzero child and its immutable preparation receipt. */
@@ -1914,10 +1926,7 @@ export class WorkstreamDO extends ConversationParentDurableObject {
    * ordinary Queue outbox.
    */
   private async drainParentOutboxWithCreationFence(): Promise<void> {
-    const provisional = this.dueParentEffects(25).filter(({ effect, sourceVersion }) => (
-      sourceVersion === 1
-      && (effect.kind === "directory_common" || effect.kind === "directory_user")
-    ));
+    const provisional = this.provisionalDirectoryEffects(true);
     if (provisional.length > 0) await this.deliverProvisionalDirectory(provisional);
     await this.drainParentOutbox();
   }

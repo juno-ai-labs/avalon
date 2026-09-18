@@ -631,8 +631,10 @@ Workflow abstraction; the retirement changed only the work-stream-down runtime.
 the useful Agents SDK lifecycle behavior used by `SubstreamAgent`. The first reference ensures an alarm no later than 30
 seconds; nested long operations share it; the final idempotent disposer
 recomputes the alarm only from durable work. The in-isolate drain is
-deduplication only: it never suppresses persisted scheduling, and its result is
-awaited by the invocation that started it rather than left to `waitUntil`.
+deduplication only: it never suppresses persisted scheduling. Request entrypoints
+register the eager drain with the current invocation's lifecycle and arm the
+durable recovery alarm at the keep-alive horizon before returning; alarm-driven
+drains are awaited by the alarm invocation itself.
 Runtime ping/pong is handled by WebSocket auto-response and does not wake the
 object.
 
@@ -1654,7 +1656,10 @@ directory projection. The former loses recovery after isolate eviction; the
 latter lets a successful create response race the workspace visibility checks.
 
 **Consequences:** durable SQL remains the execution authority and the alarm the
-recovery hint. The eager drain is only the healthy-path scheduler. The ordinary
+recovery hint. Every validated activation source starts the shared eager drain,
+which is only the healthy-path scheduler. Its recovery alarm is armed at the
+keep-alive horizon rather than due-now so it cannot race and falsely reclaim a
+healthy pre-lease drain. The ordinary
 `reserveChild` contract remains synchronously projecting by default; only the
 creation coordinator opts into deferred delivery and must call
 `flushProvisionalDirectory` before publication.

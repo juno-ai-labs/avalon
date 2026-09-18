@@ -139,7 +139,13 @@ async function initializeWorkstream(
 /** Admit one member message through the SubstreamAgent product/RPC compatibility endpoint. */
 async function sendMessage(
   stub: DurableObjectStub,
-  input: { text: string; clientMessageId: string },
+  input: {
+    text: string;
+    clientMessageId: string;
+    telemetryOperationId?: string;
+    telemetryRequestReceivedAt?: number;
+    telemetryJourney?: "workstream_create" | "substream_create" | "message_send";
+  },
 ): Promise<{ turnId: string; deliveryState: string }> {
   const result = await product(stub, {
     operation: "create_message",
@@ -150,6 +156,11 @@ async function sendMessage(
       mentions: [],
       confirmedParticipantUserIds: [],
       attachmentIds: [],
+      ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
+      ...(input.telemetryRequestReceivedAt !== undefined
+        ? { telemetryRequestReceivedAt: input.telemetryRequestReceivedAt }
+        : {}),
+      ...(input.telemetryJourney ? { telemetryJourney: input.telemetryJourney } : {}),
     },
   });
   expect(result.status).toBe(200);
@@ -667,6 +678,38 @@ describe("a message queued behind a live run", () => {
           `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?`,
           "queue-dup-1",
         ).one().count)).toBe(1);
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("replays a message when only its telemetry correlation changes", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message"), assistantTurn("answering telemetry replay")],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+
+      const first = await sendMessage(stub, {
+        text: "same product command",
+        clientMessageId: "queue-telemetry-replay-1",
+        telemetryOperationId: "00000000-0000-7000-8000-000000000101",
+        telemetryRequestReceivedAt: 1_789_689_600_000,
+        telemetryJourney: "message_send",
+      });
+      const replay = await sendMessage(stub, {
+        text: "same product command",
+        clientMessageId: "queue-telemetry-replay-1",
+        telemetryOperationId: "00000000-0000-7000-8000-000000000102",
+        telemetryRequestReceivedAt: 1_789_689_600_500,
+        telemetryJourney: "substream_create",
+      });
+      expect(replay.turnId).toBe(first.turnId);
     } finally {
       await openProviderGate(stub).catch(() => undefined);
       await restoreProviderFetch(stub);

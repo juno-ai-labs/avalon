@@ -4069,6 +4069,7 @@ export class WorkstreamObjectProductService {
   ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
     const receiptInput = { ...input };
+    delete receiptInput.telemetryOperationId;
     delete receiptInput.telemetryRequestReceivedAt;
     delete receiptInput.telemetryJourney;
     const requestHash = workstreamImportHash({
