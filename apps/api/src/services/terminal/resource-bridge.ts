@@ -609,8 +609,8 @@ export function createTerminalResourceBridge(
       if (!row) {
         throw new TerminalToolError(
           "resource_not_found",
-          "That resource is no longer attached or visible to this run. Call workstream_list_resources to choose a currently visible resource, then retry import_resource.",
-          { reason: "Call workstream_list_resources and choose a currently visible resource ID." },
+          "That resource is no longer attached or visible to this run. Call list_resources to choose a currently visible resource, then retry import_resource.",
+          { reason: "Call list_resources and choose a currently visible resource ID." },
         );
       }
       if (row.resource_type === "generated_site") {

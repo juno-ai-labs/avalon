@@ -324,7 +324,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
 
-A run of a room's Sidekick posts its result into that room itself, once, through the `sidekick_post_result` tool of the preloaded `rally:sidekick-result` plugin (`rally_sidekick_result` to the model), which is offered to no other run; the room is named as the single entry in the task context's `sidekick.resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace Sidekick, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for Sidekick runs, and its populated arm says the same thing the plugin's system message does: nothing posts there for the run, and `sidekick_post_result`, called once after the work is done, is the one way. [`automation-lifecycle.md`](automation-lifecycle.md) owns why a Sidekick has no destinations of its own.
+A run of a room's Sidekick posts its result into that room itself, once, through the `post_result` tool of the preloaded `rally:sidekick-result` plugin (`rally_sidekick_result` to the model), which is offered to no other run; the room is named as the single entry in the task context's `sidekick.resultDelivery`. Nothing posts after the run. When the list is empty, which it is for every personal and workspace Sidekick, the `# Result delivery` section says so and tells the run that any sending its instructions ask for is its own work, done with its tools inside the run; left silent, a run that *describes* emailing a summary has not emailed it. The section is rendered only for Sidekick runs, and its populated arm says the same thing the plugin's system message does: nothing posts there for the run, and `post_result`, called once after the work is done, is the one way. [`automation-lifecycle.md`](automation-lifecycle.md) owns why a Sidekick has no destinations of its own.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
@@ -384,7 +384,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. The always-active plugins whose canonical names are already globally unambiguous declare an empty short name and are advertised unprefixed: `rally_discovery` keeps the global controls `list_plugins`, `search_plugins`, and `load_plugin`, `rally_skills` keeps `load_skill` and `read_skill_resource`, and `rally_core` keeps `current_time`, `request_elicitation`, `get_connector_connection_state`, and `show_connector_connection`. `rally_memory` and `rally_tables` are always active too but keep `memory_` and `table_`, because their canonical names are plugin-local verbs and both own a `search`; Bind refuses duplicate always-active wire names outright. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_sidekick_result` (canonical id `rally:sidekick-result`, the same prefix) is preloaded only on a run of a room's Sidekick and holds `sidekick_post_result`. The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. The always-active plugins whose canonical names are already globally unambiguous declare an empty short name and are advertised unprefixed: `rally_discovery` keeps the global controls `list_plugins`, `search_plugins`, and `load_plugin`, `rally_skills` keeps `load_skill` and `read_skill_resource`, and `rally_core` keeps `current_time`, `request_elicitation`, `get_connector_connection_state`, and `show_connector_connection`. `rally_memory` and `rally_tables` are always active too but keep `memory_` and `table_`, because their canonical names are plugin-local verbs and both own a `search`; Bind refuses duplicate always-active wire names outright. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_sidekick_result` (canonical id `rally:sidekick-result`, the same prefix) is preloaded only on a run of a room's Sidekick and holds `post_result`. The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -812,7 +812,7 @@ without waiting for their execution. Each uses the same Bind harness, inherited
 model and execution principal, explicit opening context, and independent tool
 discovery. Normal authorized writes and recursive delegation are available.
 The obsolete inline child integration, runtime/storage entry points, and
-`workstream_run_subagent` surface are removed. Historical schema fields remain
+`run_subagent` surface are removed. Historical schema fields remain
 for existing data; new background work uses normal independent run recovery. [Agent communication](agent-communication.md) owns the tools,
 teams, reply references, Sidekick discovery and separate stop ownership.
 
@@ -1142,7 +1142,7 @@ Per-tool time and the model catalog fetch use a **cancellable** deadline whose t
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
-The same derivative backs `workstream_view_resource`, including after replay or
+The same derivative backs `view_resource`, including after replay or
 compaction. A requested smaller long edge is an ephemeral scale-down and never
 replaces the reusable object. Text derivatives may instead use an isolated
 summary inference: filenames, focus text, and chunks stay in user-role data,
@@ -1314,43 +1314,60 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-09-18 — An always-active plugin stops namespacing what it alone owns
+### 2026-09-18 — A wire prefix has to earn its characters
 
-**What changed:** `rally:core` declares an empty short wire name, so its four
-tools reach the model as `current_time`, `request_elicitation`,
-`get_connector_connection_state`, and `show_connector_connection` rather than
-under a `core_` prefix. `CONNECTOR_CONNECTION_CARD_WIRE_NAME` and
-`CONNECTOR_CONNECTION_STATE_WIRE_NAME` are now the canonical names themselves,
-with `LEGACY_`-named constants and `isConnectorConnectionCardWireName` covering
-what stored rows still carry. `rally:memory` and `rally:tables` keep
-`memory_`/`table_`.
+**What changed:** Six plugins dropped their model-facing wire prefix and now
+advertise their canonical names unchanged: `rally:core` (`current_time`,
+`request_elicitation`, `get_connector_connection_state`,
+`show_connector_connection`), `rally:workstream` (`list_resources`,
+`read_resource`, `schedule_wakeup`, `run_subagent` and the rest),
+`avalon:agents` (`start_agent`, `send_message`, `reply`, …),
+`rally:sidekick-result` (`post_result`), `rally:multimodal-generation`
+(`generate_image`, `edit_image`, `generate_audio`), and `rally:terminal`, whose
+own entry is in [`terminal-workspaces.md`](terminal-workspaces.md).
+`CONNECTOR_CONNECTION_CARD_WIRE_NAME` and `CONNECTOR_CONNECTION_STATE_WIRE_NAME`
+are now the canonical names themselves, with `LEGACY_`-named constants and
+`isConnectorConnectionCardWireName` covering what stored rows still carry.
+`rally:memory`, `rally:tables`, `rally:web`, `rally:sidekicks`, and every
+connector plugin keep theirs.
 
-**Why:** A wire prefix is a namespace, and a namespace is only worth its
-characters where two plugins could collide or where the model has to tell one
-source of a capability from another. Neither is true of an always-active
-plugin: the model cannot load it, cannot unload it, and has no second
-`current_time` to disambiguate it from. `rally_discovery` and `rally_skills`
-had already been carved out for exactly that reason and were the only ones —
-`core_` was left on a plugin that met the same test, so the model read a
-namespace that named a plugin it can never choose.
+**Why:** A prefix is a namespace, and a namespace is only worth its characters
+where two plugins could collide or where the model has to tell one source of a
+capability from another. Neither is true of an always-active plugin — the model
+cannot load it, cannot unload it, and has no second `current_time` to
+disambiguate. It is also not true where the canonical name is already the one
+pretraining taught: `read_file` and `generate_image` are names a model has seen
+tens of thousands of times, and `terminal_read_file` and
+`multimodal_generation_generate_image` are not.
+[`agent-tools.md`](agent-tools.md) now states both halves as the test, because
+"always-active" alone was the rule for one afternoon and `rally:terminal`
+immediately broke it.
 
 **Considered and rejected:** Doing the same for `rally:memory` and
-`rally:tables`, which are equally always-active. Their canonical names are
-plugin-local verbs — `search`, `query`, `create`, `add`, `update` — and both
-plugins own a `search`, so Bind's duplicate always-active wire-name check
-throws before the run starts. Renaming the canonical tools to
-`memory_search`/`table_query` to get around that was rejected too: it hand-rolls
-the prefix the mechanism already renders, and puts the plugin name back in the
-canonical name the tree's rule keeps out of it. The prefix is doing real work
-there, so it stays.
+`rally:tables`. Their canonical names are plugin-local verbs — `search`,
+`query`, `create`, `add`, `update` — and both own a `search`, so Bind's
+duplicate always-active wire-name check throws before the run starts. Renaming
+the canonical tools to `memory_search`/`table_query` to get around that was
+rejected too: it hand-rolls the prefix the mechanism already renders and puts
+the plugin name back in the canonical name the tree's rule keeps out of it.
+Also rejected, and this one deliberately rather than for a reason: widening the
+duplicate-wire-name check from core plugins to all of them. It was proposed and
+declined in favour of the smaller change.
 
-**Consequences:** Empty prefix now means "these canonical names are globally
-unambiguous", not "discovery controls" — a plugin earns one only when every one
-of its tool names stands alone, and `docs/agent-tools.md` states that as the
-test. A durable tool event stores the wire name it was called under, so
-`AVALON_TOOL_PROSE` carries both spellings of the four tools and the card
-recognizer matches both; deleting the `core_` entries silently reverts every row
-written before this change to the humanized raw symbol. Not handled, because it
+**Consequences:** Three things a future change has to respect. First, the
+duplicate-wire-name guard still covers core plugins only, so `rally:terminal`
+and `rally:multimodal-generation` — both loadable and both unprefixed — hold a
+standing claim on twelve bare names with no mechanism defending them; check by
+hand, or widen that guard. Second, a durable tool event stores the wire name it
+was called under, so `AVALON_TOOL_PROSE` carries both spellings of every
+renamed tool and the card recognizer matches both; deleting a retired spelling
+silently reverts every row written before this change to the humanized raw
+symbol. Third, pagination's page-ID namespace and a plugin's wire prefix were
+one field and are now two (`PaginationHost.prefix` and `wirePrefix`): page IDs
+still read `workstream_brave_clever_…`, because that namespace is stored on
+issued rows and validated on the way back in, while the descriptions around
+them name `list_resources`. They are the same string for every connector and
+differ only where a plugin advertises no prefix. Not handled, because it
 self-corrects within a turn: a run resumed across the deploy has old names in
 its transcript history, and a model that copies one instead of reading the tool
 surface gets an unresolved-tool failure. Bind's provider alias fallback splits

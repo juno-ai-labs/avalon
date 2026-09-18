@@ -121,7 +121,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     ? null
     : input.sidekick.resultDelivery.length > 0
       ? `# Result delivery
-- The \`workstream\` destination in the task context's sidekick.resultDelivery is the room that owns this Sidekick. Nothing posts there for you: the one way a result reaches that room is the sidekick_post_result tool, called once with the message the room should read, after the work is done.
+- The \`workstream\` destination in the task context's sidekick.resultDelivery is the room that owns this Sidekick. Nothing posts there for you: the one way a result reaches that room is the post_result tool, called once with the message the room should read, after the work is done.
 - Posting anywhere else the instructions ask for is part of the work, with your own tools, inside this run.`
       : `# Result delivery
 - Rally sends this run's result nowhere. sidekick.resultDelivery is empty, and that is the whole answer: there is no destination configured on this Sidekick and none will be resolved after the run ends.
@@ -208,7 +208,7 @@ ${JSON.stringify(taskContext, null, 2)}
  * The prompt a past run of this work stream left for this one.
  *
  * Unlike a trigger activity, this text is Avalon's own: an earlier authorized
- * run inside this same work stream wrote it through `workstream_schedule_wakeup`,
+ * run inside this same work stream wrote it through `schedule_wakeup`,
  * so it is an instruction rather than evidence. It is still labelled and dated,
  * because a prompt written hours ago may have been overtaken by the transcript
  * that followed it.

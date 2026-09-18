@@ -126,7 +126,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `post_result` tool; and the run prompt context built from the definition. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -467,7 +467,7 @@ row, no activity, and no notification.
 
 A run of a room's automation holds one extra plugin, `rally:sidekick-result`
 (`rally_sidekick_result` to the model), preloaded, with the tool
-`sidekick_post_result`. It is offered only when
+`post_result`. It is offered only when
 `readRunDefinition().owningWorkstreamId` is not null, so a personal or
 workspace automation cannot post into a room at all. The tool asks
 `WorkstreamDO.authority` for the room's generation and archive state, refuses an
@@ -597,7 +597,7 @@ Sidekick's id, exactly what every Sidekick showed before the picker existed.
 - **`AutomationDO` forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
-- **The one way a result reaches a room is `sidekick_post_result`.** Rally
+- **The one way a result reaches a room is `post_result`.** Rally
   posts nothing after a run; the run posts, once, when its instructions say the
   room should hear it. A second delivery path is a duplicate the room reads
   twice.
@@ -662,7 +662,7 @@ or the memory store the automation scope lives in.
   when its alarm fires.
 - **The Queue redelivers a matched event.** `admitExternalEvent` answers
   `sidekick_occurrence_replayed`; the consumer logs it and acks.
-- **A result cannot be posted.** `sidekick_post_result` throws
+- **A result cannot be posted.** `post_result` throws
   `sidekick_owning_room_archived`, `sidekick_owning_room_missing`, or
   `sidekick_post_result_refused:<code>` (a stale generation or an archived
   room decided inside the room's object); the run sees the tool error and says

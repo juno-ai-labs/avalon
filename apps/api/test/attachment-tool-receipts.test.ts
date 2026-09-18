@@ -431,7 +431,7 @@ describe("attachment tool receipts", () => {
         status: "skipped",
         reasonCode: "resource_tool_mismatch",
         reason: "Use read_resource",
-        suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: SECOND_RESOURCE_ID } },
+        suggestedCall: { tool: "read_resource", arguments: { resourceId: SECOND_RESOURCE_ID } },
         visualPartIndex: null,
       }],
     });

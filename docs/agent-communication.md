@@ -206,6 +206,31 @@ owned Sidekick contact. Complete desktop behavior remains an implementation gate
 
 ## Changelog
 
+### 2026-09-18 — Agent tools lose their prefix, and two of them lose their subject with it
+
+**What changed:** `avalon:agents` declares no wire prefix, so its tools reach
+the model as `sidekicks_list`, `create_sidekick`, `start_agent`, `list_agents`,
+`send_message`, `reply`, and `stop_agent`. The mechanism and the rule are in
+[`agent-harness.md`](agent-harness.md) and
+[`agent-tools.md`](agent-tools.md); what belongs here is the cost.
+
+**Why:** The plugin is always active, so `agents_` distinguished it from
+nothing — the model can neither load it nor unload it, and no other plugin
+offers a second `start_agent`.
+
+**Consequences:** `start_agent`, `list_agents` and `stop_agent` carry their own
+subject and read fine bare. `send_message` and `reply` do not. Unprefixed they
+say nothing about *who* they reach, and the obvious wrong reading — a message to
+a person, or into a connector's channel — is a plausible thing for a model to
+want in the same turn. Three things stand in for the prefix, and a change here
+should keep all three: the plugin's instructions name the addressee in every
+sentence that reaches for one of these two; the transcript rows say "Messaged a
+teammate" rather than "Sent a message", so a misfire is legible in the feed;
+and `agent_communication` capability checks still bound what the call can
+actually do. If a model is seen sending an agent message where a person was
+meant, this pair is the first place to look, and better canonical names for
+those two tools are the fix rather than restoring the prefix to all seven.
+
 ### 2026-09-15 — Remove caller-orchestrated delegation round trips
 
 A production image delegation spent seconds in discovery and creation before its

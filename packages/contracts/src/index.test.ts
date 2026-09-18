@@ -1305,7 +1305,7 @@ describe("boundary contracts", () => {
       actualMimeType: "image/png",
       attachmentKind: "image",
       suggestedCall: {
-        tool: "workstream_view_resource",
+        tool: "view_resource",
         arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
       },
       converterPayload: { prompt: "do not forward me" },
@@ -1316,7 +1316,7 @@ describe("boundary contracts", () => {
         actualMimeType: "image/png",
         attachmentKind: "image",
         suggestedCall: {
-          tool: "workstream_view_resource",
+          tool: "view_resource",
           arguments: { resourceIds: ["019ff769-f7a4-70c8-87a7-16722ff2ce43"] },
         },
       },

@@ -2199,7 +2199,7 @@ describe("durable harness attempt runtime", () => {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       toolCallId: "call-stale-attachment",
-      toolName: "workstream_read_resource",
+      toolName: "read_resource",
       inputHash: "stale-attachment-input",
       input: { resourceId: "00000000-0000-4000-8000-000000000099" },
       plan: { operation: "resource.read", mode: "read", idempotency: "safe" },

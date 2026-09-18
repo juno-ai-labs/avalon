@@ -134,7 +134,10 @@ export function createMultimodalGenerationPlugin(
   return {
     canonicalId: AVALON_MULTIMODAL_GENERATION_PLUGIN_ID,
     modelId: "rally_multimodal_generation",
-    shortWireName: "multimodal_generation",
+    // No wire prefix. `generate_image`, `edit_image` and `generate_audio` are
+    // the names a model already knows, and the prefix both pushed them off that
+    // vocabulary and stuttered: `multimodal_generation_generate_image`.
+    shortWireName: "",
     displayName: "Multimodal generation",
     searchAliases: ["image", "generate image", "edit image", "illustration", "picture", "visual", "audio", "speech", "voice", "text to speech"],
     description: "Generate a new image, edit an attached image, or turn text into an AI voice recording.",

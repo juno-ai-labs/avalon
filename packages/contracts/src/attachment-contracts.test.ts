@@ -54,8 +54,8 @@ describe("attachment contracts", () => {
 
   it("allows exact self-healing calls on both attachment surfaces", () => {
     const suggestions = [
-      { tool: "workstream_read_resource", arguments: { resourceId: RESOURCE_ID } },
-      { tool: "workstream_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
+      { tool: "read_resource", arguments: { resourceId: RESOURCE_ID } },
+      { tool: "view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
       { tool: "sidekick_read_resource", arguments: { resourceId: RESOURCE_ID } },
       { tool: "sidekick_view_resource", arguments: { resourceIds: [RESOURCE_ID] } },
     ];
