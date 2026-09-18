@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { TelemetryBootstrapService } from "../src/telemetry/bootstrap";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
 const epochId = "018f22f2-4c22-7abc-8def-0123456789ab";
 const eventId = "018f22f2-4c22-7abc-8def-0123456789ac";
@@ -60,7 +60,7 @@ describe("anonymous telemetry bootstrap", () => {
     [undefined, "global", "geolocation_fallback"],
     ["XX", "global", "geolocation_fallback"],
   ] as const)("routes country %s immediately to %s", async (country, route, routingBasis) => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const service = new TelemetryBootstrapService(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
@@ -89,7 +89,7 @@ describe("anonymous telemetry bootstrap", () => {
   });
 
   it("accepts a pre-workspace creation intent under the fixed anonymous epoch", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const service = new TelemetryBootstrapService(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
@@ -111,7 +111,7 @@ describe("anonymous telemetry bootstrap", () => {
   });
 
   it("rejects expired, tampered, wrong-epoch, and non-onboarding capability use", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const service = new TelemetryBootstrapService(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
@@ -133,7 +133,7 @@ describe("anonymous telemetry bootstrap", () => {
   });
 
   it("accepts only content-free installation health through a bootstrap capability", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const service = new TelemetryBootstrapService(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
@@ -150,7 +150,7 @@ describe("anonymous telemetry bootstrap", () => {
   });
 
   it("replaces an expired journey row before its retention sweep runs", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO telemetry_onboarding_journeys
       (journey_id, anonymous_epoch_id, route, routing_basis, created_at, expires_at, delete_at)
       VALUES (?, ?, 'enterprise', 'ip_geolocation', ?, ?, ?)`).run(
