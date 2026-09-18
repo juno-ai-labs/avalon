@@ -10,7 +10,7 @@ import { TelemetryCollector } from "../src/telemetry/collector";
 import { processTelemetryOutbox } from "../src/telemetry/delivery";
 import { recordDestinationOutcome } from "../src/telemetry/operations";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
 const now = "2026-08-12T20:00:00.000Z";
 
@@ -63,7 +63,7 @@ function exceptionEnvelope(eventId: string) {
 }
 
 function insertAcceptedException(
-  database: ReturnType<typeof migratedSqliteDatabase>,
+  database: ReturnType<typeof migratedObservabilityFixture>,
   delivery: ReturnType<typeof exceptionEnvelope>,
   deleteAt = "2026-11-10T20:00:00.000Z",
 ): void {
@@ -95,7 +95,7 @@ describe("Global telemetry delivery", () => {
   });
 
   it("holds events when an identity transition commits during candidate selection", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at,
       product_analytics_enabled) VALUES ('018f22f2-4c22-7abc-8def-0123456789ad', 'google-1', 'person@example.com', 'Person', ?, ?, 1)`).run(now, now);
     const db = sqliteD1(database);
@@ -130,7 +130,7 @@ describe("Global telemetry delivery", () => {
   });
 
   it.each([false, true])("uses the inclusive cutoff and skips a stale opt-out purge (reenabled: %s)", async (reenabled) => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at,
       product_analytics_enabled, product_analytics_preference_version)
       VALUES ('018f22f2-4c22-7abc-8def-0123456789ad', 'google-1', 'person@example.com', 'Person', ?, ?, 1, 1)`).run(now, now);
@@ -203,14 +203,13 @@ describe("Global telemetry delivery", () => {
       throw new Error("the regional API must not call PostHog directly");
     }));
 
-    insertAcceptedException(identity, exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af"), now);
     await expect(processTelemetryOutbox(env)).resolves.toEqual({
       selected: 1,
       delivered: 1,
       retried: 0,
       terminal: 0,
       suppressed: 0,
-      expired: 1,
+      expired: 0,
     });
     expect(database.prepare(
       "SELECT delivery_state, delivered_at, attempt_count FROM telemetry_accepted_events",
@@ -224,13 +223,13 @@ describe("Global telemetry delivery", () => {
         analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
       })],
     }));
-    expect(identity.prepare("SELECT COUNT(*) AS count FROM telemetry_accepted_events").get()).toEqual({ count: 0 });
+    expect(identity.prepare("SELECT name FROM sqlite_schema WHERE name = 'telemetry_accepted_events'").get()).toBeUndefined();
     identity.close();
     database.close();
   });
 
   it("delegates JavaScript exceptions to the exception RPC method", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const delivery = exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af");
     insertAcceptedException(database, delivery);
     const deliverTelemetryBatch = vi.fn();
@@ -268,7 +267,7 @@ describe("Global telemetry delivery", () => {
   });
 
   it("commits a successful sibling when exception RPC transport rejects", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const ordinaryId = "018f22f2-4c22-7abc-8def-0123456789ab";
     const exception = exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af");
     const env = createTestEnv({
@@ -325,7 +324,7 @@ describe("Global telemetry delivery", () => {
   });
 
   it("translates telemetry RPC transport rejection into durable retry", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
@@ -361,7 +360,7 @@ describe("Global telemetry delivery", () => {
   });
 
   it("retries transient failures without renewing the absolute deadline", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const deliverTelemetryBatch = vi.fn(async () => ({
       postHog: {
         result: "retry" as const,
@@ -401,7 +400,7 @@ describe("Global telemetry delivery", () => {
   });
 
   it("leaves accepted rows untouched while the destination circuit is open", async () => {
-    const database = migratedSqliteDatabase();
+    const database = migratedObservabilityFixture();
     const deliverTelemetryBatch = vi.fn(async () => ({
       postHog: {
         result: "delivered" as const,

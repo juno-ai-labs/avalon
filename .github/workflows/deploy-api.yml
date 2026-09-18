@@ -405,7 +405,8 @@ jobs:
           classification="$(node scripts/classify-pending-d1-migrations.mjs \
             0090_drop_legacy_product_tables.sql \
             0094_retire_agent_inference_payload_ledger.sql \
-            0097_email_routes_use_full_address.sql 0106_configurable_regions.sql <<< "$pending")"
+            0097_email_routes_use_full_address.sql 0106_configurable_regions.sql \
+            0113_drop_legacy_observability_tables.sql <<< "$pending")"
           echo "$classification" >> "$GITHUB_OUTPUT"
 
       - name: List the pending platform migrations

@@ -64,12 +64,13 @@ layer. Explicit telemetry ingestion still acknowledges its existing acceptance
 boundary, and the existing accepted-event delivery machinery is unchanged.
 
 Deployment applies both independent schemas before activating the API Worker.
-The cutover starts fresh; pre-cutover rows in the regional database are inactive
-history, not copied or read by the new delivery path. The reaper continues to
-enforce their existing `delete_at` deadlines in `DB`; the large pre-recovery
-telemetry and audit backlog was already deleted during deployment recovery.
-Applied regional migrations
-remain immutable. Opt-out purges pending events in the background through the
+The cutover starts fresh. Regional migration
+`0113_drop_legacy_observability_tables.sql` discards the four inactive legacy
+observability tables after the compatible Worker deploys and passes health
+verification. The reaper uses only `TELEMETRY_DB` for accepted events, receipts,
+and replay audit; other telemetry tables remain in `DB`. The dedicated databases
+and their data are unaffected. No backfill or old-table compatibility path remains.
+Applied migrations remain immutable. Opt-out purges pending events in the background through the
 request-entry timestamp inclusively after rechecking the disabled preference
 version. This is best-effort across databases, not an atomic cross-database
 transaction. Delivery also checks the canonical user
@@ -1920,6 +1921,15 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-09-18 — Retire regional observability copies after successful cutover
+
+PR #835 deployed the dedicated telemetry and audit databases successfully. Drop
+the inactive regional copies to remove their residual data and identity-migration
+coupling, and stop reaping them. The existing Worker-first migration sequence
+ensures the reaper no longer queries the tables when they are dropped. Keeping
+unused history and permanent dual-database cleanup would leave the original
+coupling in place; the agreed fire-and-forget cutover needs neither.
 
 ### 2026-09-18 — Isolate event and audit storage from identity
 
