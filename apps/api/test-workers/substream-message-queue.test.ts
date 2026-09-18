@@ -139,7 +139,13 @@ async function initializeWorkstream(
 /** Admit one member message through the SubstreamAgent product/RPC compatibility endpoint. */
 async function sendMessage(
   stub: DurableObjectStub,
-  input: { text: string; clientMessageId: string },
+  input: {
+    text: string;
+    clientMessageId: string;
+    telemetryOperationId?: string;
+    telemetryRequestReceivedAt?: number;
+    telemetryJourney?: "workstream_create" | "substream_create" | "message_send";
+  },
 ): Promise<{ turnId: string; deliveryState: string }> {
   const result = await product(stub, {
     operation: "create_message",
@@ -150,6 +156,11 @@ async function sendMessage(
       mentions: [],
       confirmedParticipantUserIds: [],
       attachmentIds: [],
+      ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
+      ...(input.telemetryRequestReceivedAt !== undefined
+        ? { telemetryRequestReceivedAt: input.telemetryRequestReceivedAt }
+        : {}),
+      ...(input.telemetryJourney ? { telemetryJourney: input.telemetryJourney } : {}),
     },
   });
   expect(result.status).toBe(200);
@@ -672,6 +683,38 @@ describe("a message queued behind a live run", () => {
       await restoreProviderFetch(stub);
     }
   });
+
+  it("replays a message when only its telemetry correlation changes", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message"), assistantTurn("answering telemetry replay")],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+
+      const first = await sendMessage(stub, {
+        text: "same product command",
+        clientMessageId: "queue-telemetry-replay-1",
+        telemetryOperationId: "00000000-0000-7000-8000-000000000101",
+        telemetryRequestReceivedAt: 1_789_689_600_000,
+        telemetryJourney: "message_send",
+      });
+      const replay = await sendMessage(stub, {
+        text: "same product command",
+        clientMessageId: "queue-telemetry-replay-1",
+        telemetryOperationId: "00000000-0000-7000-8000-000000000102",
+        telemetryRequestReceivedAt: 1_789_689_600_500,
+        telemetryJourney: "substream_create",
+      });
+      expect(replay.turnId).toBe(first.turnId);
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
 });
 
 describe("a message queued behind an unsettled admission", () => {
@@ -694,16 +737,23 @@ describe("a message queued behind an unsettled admission", () => {
       }).product;
       // `env` is a constructor parameter property: private to the compiler, an
       // ordinary writable field to the runtime this test replaces it in.
-      const held = holdFirstWorkspaceRead(service as unknown as { env: Env });
-      void service.createMessage(AUTH, {
+      return holdFirstWorkspaceRead(service as unknown as { env: Env });
+    });
+    // Enter through the same binding endpoint as production. The successful
+    // preparation returns an activation request to the SubstreamAgent; calling
+    // the product service directly here would discard that handoff and invent
+    // a wake-up failure that the real caller cannot have.
+    void product(stub, {
+      operation: "create_message",
+      auth: AUTH,
+      input: {
         text: input.text,
         clientMessageId: input.clientMessageId,
         mentions: (input.mentions ?? []) as never,
         confirmedParticipantUserIds: [],
         attachmentIds: [],
-      }).catch(() => undefined);
-      return held;
-    });
+      },
+    }).catch(() => undefined);
     const reserved = (): Promise<string | null> => runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ input_id: string }>(
         `SELECT input_id FROM pending_loop_input_mailbox

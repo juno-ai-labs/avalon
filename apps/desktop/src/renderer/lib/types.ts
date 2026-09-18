@@ -1,3 +1,4 @@
+import type { ImportedMessageProvenance } from "@rally/contracts";
 import type { PersonalPresentation, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
@@ -5,9 +6,6 @@ import type {
   AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
   AutomationRunStatus as ContractAutomationRunStatus,
-  NoteDetail as ContractNoteDetail,
-  NoteSummary as ContractNoteSummary,
-  NoteTranscriptSegment as ContractNoteTranscriptSegment,
   Scope as ContractScope,
   GitHubRepositoryAccessSettings as ContractGitHubRepositoryAccessSettings,
   TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
@@ -27,12 +25,13 @@ export type TerminalNetworkPolicyPreview = ContractTerminalNetworkPolicyPreview;
 export type TerminalWorkstreamState = ContractTerminalWorkstreamState;
 export type GitHubRepositoryAccessSettings = ContractGitHubRepositoryAccessSettings;
 
-export type Region = 'global' | 'eu';
+export type { Region } from "@rally/contracts/regions";
+import type { Region } from "@rally/contracts/regions";
 /** How a connection or automation is owned, in the words the UI uses for it. */
 export type Scope = 'you' | 'workspace';
 /**
  * Who may read an object — `personal` is the people in it, `workspace` is
- * everyone. Notes and work streams share this one vocabulary, which is the
+ * everyone. Work streams use this vocabulary, which is the
  * server's, so "private" means the same thing on both.
  */
 export type VisibilityScope = ContractScope;
@@ -42,9 +41,6 @@ export type AutomationLifecycleState = ContractAutomationLifecycleState;
 export type AutomationRunStatus = ContractAutomationRunStatus;
 /** The definition an automation's conversation has submitted, as the wire carries it. */
 export type AutomationDefinition = ContractAutomationDraft;
-export type NoteSummary = ContractNoteSummary;
-export type NoteDetail = ContractNoteDetail;
-export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
 
 export interface WorkspaceMember {
   presentation?: PersonalPresentation | null;
@@ -502,6 +498,7 @@ export interface Message {
     | 'work_accordion';
   text?: string;
   contextLabel?: string;
+  importProvenance?: ImportedMessageProvenance;
   mentions?: MessageMention[];
   attachments?: MessageAttachment[];
   createdAt: string;

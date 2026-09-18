@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from 'cloudflare:workers';
 import { asWorkspaceId, type WorkspaceId } from '@rally/contracts';
@@ -226,7 +227,7 @@ describe('shared Queue indexing pipeline', () => {
 
   it('retries malformed and wrong-region document jobs without touching providers', async () => {
     const result = await consume([{ type: 'search_embedding_batch_v1', phase: 'document' }, {
-      type: 'search_embedding_batch_v1', phase: 'document', reference: { ...resourceMessage(), region: 'eu' }, documentId: 'document',
+      type: 'search_embedding_batch_v1', phase: 'document', reference: { ...resourceMessage(), region: 'enterprise' }, documentId: 'document',
     }]);
     expect(result.explicitAcks).toEqual([]);
     expect(result.retryMessages).toEqual([{ msgId: 'search-0' }, { msgId: 'search-1' }]);
@@ -370,7 +371,7 @@ describe('shared Queue indexing pipeline', () => {
     writes.length = 0;
     expect((await consume([{ ...job, chunkPolicy: 'old-policy' }])).explicitAcks).toEqual(['search-0']);
     expect(send).not.toHaveBeenCalled();
-    expect((await consume([{ ...job, reference: { ...job.reference, region: 'eu' } }])).retryMessages)
+    expect((await consume([{ ...job, reference: { ...job.reference, region: 'enterprise' } }])).retryMessages)
       .toEqual([{ msgId: 'search-0' }]);
     expect(writes).toEqual([]);
     expect(embeddingInputs).toEqual([]);
@@ -432,7 +433,7 @@ describe('shared Queue indexing pipeline', () => {
   });
 
   it('rejects wrong-region references before reading or writing any source', async () => {
-    const result = await consume([{ ...resourceMessage(), region: 'eu' }]);
+    const result = await consume([{ ...resourceMessage(), region: 'enterprise' }]);
     expect(result.explicitAcks).toEqual([]);
     expect(result.retryMessages).toEqual([{ msgId: 'search-0' }]);
     expect(writes).toEqual([]);

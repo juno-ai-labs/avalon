@@ -115,13 +115,24 @@ export function createCloudflareTestBinding<
   return value as unknown as T;
 }
 
+/** The array-buffer overload used by binary KV cache tests. */
+export function createTestBinaryKvNamespace(value: {
+  getWithMetadata: (
+    key: string,
+    type: "arrayBuffer",
+  ) => Promise<KVNamespaceGetWithMetadataResult<ArrayBuffer, unknown>>;
+  put: KVNamespace["put"];
+}): KVNamespace {
+  return value as unknown as KVNamespace;
+}
+
 export function createTestDurableObjectId(value: string): DurableObjectId {
   return value as unknown as DurableObjectId;
 }
 
 export function createTestJurisdictionalDurableObjectId(
   value: string,
-  jurisdiction: "eu" | "us",
+  jurisdiction: "us" | "eu",
 ): DurableObjectId {
   return {
     toString: () => value,

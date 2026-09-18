@@ -179,7 +179,28 @@ scheme and iframe are absent from the renderer CSP and Electron protocol
 registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
-## Changelog
+### 2026-09-16 — One saturated success step for the status dot
+
+**What changed:** `sys.color.success.vivid` is a new token, the one saturated
+step in the success role: `#1fa85c` in light, `#34d276` in dark. The healthy
+dot beside a connection in Settings draws it, with a two-pixel halo at 28% of
+the same colour. Nothing else moved off `success-base`.
+
+**Why:** `success-base` is a sage tuned for text and fills — `#7fae97` in dark
+— and at seven pixels on the dark surface it read as grey. An administrator
+looking at the connections table could not tell a healthy connection from a
+disabled one without reading the badge, which is the one job the dot has.
+
+**Considered and rejected:** Brightening `success-base` itself, which would
+have shifted every success text and fill in the product for the sake of one
+dot. Making the dot larger, which changes the row's rhythm and the alignment
+of every table that uses it. A hard-coded hex in the stylesheet, which a theme
+could not override and `tokens:check` could not see.
+
+**Consequences:** A theme that wants a quieter table sets `vivid` closer to
+`base`; the dot still reads because the halo carries the same colour. The
+automation status dot and the presence dot still draw `success-base`, and this
+token is where they go if the same complaint reaches them.
 
 ### 2026-09-11 — A mask is not a colour
 

@@ -65,15 +65,6 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 2,
-    rankReason: 'Critical path · message admission',
-    role: 'addressing_classifier',
-    key: 'agent-model-addressing-classifier',
-    label: 'Addressing classifier',
-    description: 'Decides whether a message is for the agent, people, both, or uncertain before a work-stream run starts.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 3,
     rankReason: 'Core path · delegated work',
     role: 'inline_child',
     key: 'agent-model-inline-child',
@@ -82,7 +73,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 4,
+    rank: 3,
     rankReason: 'Frequent · terminal runs',
     role: 'workstream_description',
     key: 'agent-model-workstream-description',
@@ -91,7 +82,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 5,
+    rank: 4,
     rankReason: 'Frequent · new work streams',
     role: 'workstream_naming',
     key: 'agent-model-workstream-naming',
@@ -100,16 +91,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 6,
-    rankReason: 'Focused · live and final passes',
-    role: 'meeting_notes',
-    key: 'agent-model-meeting-notes',
-    label: 'Meeting notes',
-    description: 'Produces the live and final meeting-note passes from captured transcript segments.',
-    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 7,
+    rank: 5,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -118,7 +100,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 8,
+    rank: 6,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',
@@ -163,10 +145,10 @@ export const ModelValidationRequestSchema = z.object({
  * import this table directly and read it at runtime.
  */
 export const MANAGED_FLAGS = [
-  { key: 'meeting-recording-enabled', label: 'Meeting Recording Enabled', description: 'True shows meeting-recording actions in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'multiple-workspaces-enabled', label: 'Multiple Workspaces Enabled', description: 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'digests-enabled', label: 'Digests Enabled', description: 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', defaultVariation: 'on' },
+  { key: 'push-notifications-enabled', label: 'Push Notifications Enabled', description: 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', defaultVariation: 'on' },
   { key: 'live-artifacts-enabled', label: 'Live Artifacts Enabled', description: 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.', defaultVariation: 'off' },
 ] as const;
 

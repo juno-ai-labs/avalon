@@ -1,3 +1,4 @@
+import { configuredRegions } from "@rally/contracts/regions";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { logStructuredEvent } from "../observability/logger";
@@ -7,9 +8,7 @@ import {
   type InferenceLakehouseRecord,
 } from "../services/inference-lakehouse";
 
-export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set([
-  "avalon-global-inference-lakehouse",
-]);
+export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-inference-lakehouse`));
 
 /** Published Cloudflare Pipelines ingestion-request limit, checked 2026-08-24. */
 export const PIPELINE_INGEST_REQUEST_BYTES = 5_000_000;
@@ -41,6 +40,14 @@ function overflowRecord(
   };
 }
 
+export class RetiredMeetingInference extends Error {
+  constructor() { super("meeting_notes_retired"); }
+}
+
+export function retiredMeetingInferenceKey(eventId: string): string {
+  return `retired-meeting-inference/${eventId}`;
+}
+
 export async function deliverInferenceLakehousePointer(
   env: Pick<Env, "AVALON_REGION" | "PAYLOADS" | "INFERENCE_LAKEHOUSE">,
   body: unknown,
@@ -50,6 +57,10 @@ export async function deliverInferenceLakehousePointer(
     throw new Error(`inference_lakehouse_pointer_misrouted:${pointer.region}:${env.AVALON_REGION}`);
   }
   if (!env.INFERENCE_LAKEHOUSE) throw new Error("inference_lakehouse_pipeline_binding_missing");
+  if (await env.PAYLOADS.head(retiredMeetingInferenceKey(pointer.eventId))) {
+    await env.PAYLOADS.delete(pointer.objectKey);
+    throw new RetiredMeetingInference();
+  }
   const object = await env.PAYLOADS.get(pointer.objectKey);
   if (!object) throw new Error(`inference_lakehouse_payload_object_missing:${pointer.objectKey}`);
   const serialized = await object.text();
@@ -61,6 +72,13 @@ export async function deliverInferenceLakehousePointer(
   const record = InferenceLakehouseRecordSchema.parse(JSON.parse(serialized) as unknown);
   if (record.event_id !== pointer.eventId || record.region !== pointer.region) {
     throw new Error(`inference_lakehouse_payload_identity_failed:${pointer.eventId}`);
+  }
+
+  if (record.source === "meeting_notes") {
+    // Persist the content-free receipt first so a replay can acknowledge after deletion.
+    await env.PAYLOADS.put(retiredMeetingInferenceKey(pointer.eventId), "retired");
+    await env.PAYLOADS.delete(pointer.objectKey);
+    throw new RetiredMeetingInference();
   }
 
   // The array brackets added by `send` count toward the platform's 5 MB
@@ -112,6 +130,10 @@ export async function consumeInferenceLakehouseQueue(
       });
       message.ack();
     } catch (error) {
+      if (error instanceof RetiredMeetingInference) {
+        message.ack();
+        return;
+      }
       logStructuredEvent(env, "warn", "inference_lakehouse_delivery_failed", {
         queue: batch.queue,
         event_id: parsed.data.eventId,

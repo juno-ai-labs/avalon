@@ -14,8 +14,6 @@ pnpm db:seed
 pnpm dev
 ```
 
-The default Global API is `http://127.0.0.1:8787`; the optional EU development API uses port `8788`. `GET /health` checks D1, R2, Durable Objects, Queue and Workflow bindings, the one-Global-registry route, and regional inbound-email configuration, and reports other provider configuration separately.
-
 After the API is running, use `pnpm smoke:local` for the repeatable authentication, work-stream, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/e2e.md`.
 
 Local authentication is available only when all of these are true:
@@ -26,56 +24,33 @@ Local authentication is available only when all of these are true:
 
 If the local account cannot sign in, run `pnpm env:sync`, confirm `.env.local` remains owner-readable, and restart both processes. Never add a development-auth value to a hosted Worker.
 
+## Connector installation maintenance
+
+For Ashby or Granola registration recovery and a frozen regional fleet operation,
+use [connector installation operations](connector-installation-lifecycle.md#operations).
+The repository command uses the existing regional Ace `demos` credential and
+supports preview, apply, status, resume and cancel. Preview fixes the selected
+connections before any provider mutations; inspect per-target outcomes after an
+operation completes. The route's presence does not authorize an operator run.
+Deployment order for the dedicated Ashby ingress is in
+[API Worker deployment](api-worker-deployment.md#dedicated-ashby-ingress).
+
 ## Required hosted resources
 
-Create independent resource sets for `global` and `eu`:
-
 - A D1 database
-- Turbopuffer search access for gcp-us-west1 (Global) and gcp-europe-west1 (EU),
-  plus Browser Run bindings; see [text search](text-search.md#operations) for
-  provider credentials and pending-intent activation.
+
 - An R2 payload bucket
-- A dedicated telemetry R2 bucket (`avalon-global-telemetry` or the
-  EU-jurisdiction `avalon-eu-telemetry`), separate from workspace payloads
-- Queues need no manual step: the deployment preflight creates every queue the
-  Wrangler files declare, and Cloudflare creates each dead-letter queue on first
-  deploy (see [the migration tracker section](#the-durable-object-migration-tracker)).
-  Lakehouse infrastructure is explicit: before a first deploy or intentional
-  stream replacement, run `pnpm cloudflare:lakehouses:ensure`. If Cloudflare
-  generates IDs that differ from the manifests, the command creates every
-  missing stream, reports all new IDs, and stops before their downstream
-  resources. Update all reported pins in one reviewed commit and rerun
-  reconciliation.
-  Ordinary API deployment only materializes those checked-in IDs into the
-  Global Worker config without calling the Pipelines management API. EU
-  inference analytics are intentionally deferred, so the EU config has no
-  inference Queue or Pipeline binding. The general payload and telemetry R2
-  buckets remain one-time resources created by hand.
+
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
 One account-wide Flagship app, `avalon-api`, holds the agent model-routing and
-client product flags and is bound by both regional Workers; it is not a
+client product flags and is bound by configured regional Workers; it is not a
 per-region resource because a flag holds configuration rather than workspace
-data. Both regions do send it an evaluation context carrying workspace,
+data. Configured deployments do send it an evaluation context carrying workspace,
 work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email
 domains — bounded by the rules in
 [`feature-flags.md`](feature-flags.md#what-may-become-an-attribute).
-
-The checked-in regional Wrangler files reference the provisioned Rally resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
-
-Wrangler validates an R2 binding without proving its named bucket exists. Run
-`pnpm cloudflare:resources:check` after provisioning or changing either regional
-Wrangler file. It is read-only: the R2 half proves each bucket exists, and the
-queue half reports any queue a deployment would create without creating it
-(`pnpm cloudflare:queues:ensure` creates them from a laptop, for break-glass
-only), and the lakehouse half verifies both complete immutable Global resource
-chains. The API deployment runs the same general R2 check before any
-remote migration or Worker deploy, creates missing queues, then locally writes
-the pinned Global Pipeline bindings. It does not check or reconcile lakehouse
-infrastructure. EU has no lakehouse analytical chain by design. A missing
-general bucket is an infrastructure failure even if
-the Wrangler dry build and Worker binding are otherwise deployable.
 
 `avalon-api` and its per-agent flags are provisioned, and both regional Wrangler
 files carry the `app_id`; [the feature-flag
@@ -90,60 +65,47 @@ than the Flagship dashboard so connected clients receive the Queue push.
 Set these shared Worker secrets separately in each regional deployment:
 
 - `TURBO_PUFFER_PROD_API_KEY` (search; development uses a separate DEV key)
+
 - `OPENROUTER_API_KEY`
+
+- `TYPESAFE_API_KEY`
+
 - `AZURE_OPENAI_ENDPOINT`
+
 - `AZURE_OPENAI_API_KEY`
+
 - `AZURE_OPENAI_REALTIME_DEPLOYMENT`
+
 - `FIRECRAWL_API_KEY`
+
 - `RESEND_API_KEY`
+
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`
+
 - `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET`
+
 - `TWITTER_API_IO_API_KEY`
+
 - `SESSION_SIGNING_KEY`
+
 - `OAUTH_STATE_ENCRYPTION_KEY`
+
 - `CONNECTOR_CREDENTIALS_KEY`
+
 - `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
+
 - `TELEMETRY_OPERATORS_JSON`; a JSON map from opaque bearer token to the fixed
   principal (`support` or `security`) accepted by that region's restricted
   telemetry operator surface
-- `DEMO_OPERATORS_JSON`; the same shape, holding the `demos` principal the
-  demo preparation and workspace retirement routes Ace calls accept, and
-  nothing the telemetry surface reads. The token is per region: Global's is what Ace holds as
-  `RALLY_OPERATOR_TOKEN`, EU's as `RALLY_EU_OPERATOR_TOKEN`, and neither value
-  appears in the other region's map. Set and rotated independently of the
-  telemetry map, whose tokens it never has to touch
+
 - `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`; optional, as a pair — the
   internal Slack app operator notifications are posted with, and the channel
   they go to ([`ops-alerting.md`](ops-alerting.md)). Either absent, the Worker
   posts nothing and `/health` reports `opsNotifications` as not or half configured
 
-Set `POSTHOG_PROJECT_TOKEN` only on the Global API Worker
-(`avalon-api-global`) when PostHog delivery is enabled. The private telemetry
-delivery Worker (`avalon-api-telemetry-delivery-global`) must not store the token; the API passes it
-only with an approved private RPC call. The checked-in Global configuration
-fixes `POSTHOG_HOST` to the approved US ingest origin; EU must have neither
-value. Until the token is provisioned,
-regional collection remains healthy and Global accepted rows stay inside Rally
-until their normal deadline. `TELEMETRY_CAPABILITY_SIGNING_KEY` is an optional
-Global-only hardening boundary: when absent, onboarding capabilities use the
-existing Global `SESSION_SIGNING_KEY`; EU always sends the capability to the
-narrow `GLOBAL_TELEMETRY_CONTROL` RPC for verification and receives only a
-route/epoch control projection. An absent `TELEMETRY_OPERATORS_JSON` disables
-only that region's internal operator surface with a 503 and does not disable
-collection. Enabling the dedicated signer is an immediate key cutover: schedule
-it for low traffic or accept that capabilities issued under the session key in
-the preceding hour will fail verification and clients must bootstrap again.
-Rotating whichever key is active has the same one-hour boundary. The desktop
-release workflow also requires repository variables
-`RALLY_GLOBAL_TELEMETRY_R2_BUCKET` and `RALLY_EU_TELEMETRY_R2_BUCKET` so it can
-publish source maps and native symbols to both private regional buckets before
-distribution.
-
 Generate independent signing/encryption material per region. Cloudflare administration credentials belong only in the local deployment environment; they must never become Worker variables.
 
 To rotate connector credentials in one region, keep the old key, set `CONNECTOR_CREDENTIALS_KEY` to a newly generated key, increment `CONNECTOR_CREDENTIALS_KEY_VERSION`, and set `CONNECTOR_CREDENTIALS_KEYS_JSON` to a JSON object such as `{"1":"<old key>"}`. Deploy, exercise connector reads/health checks until every row reports the new version, then remove the old mapping. Never increment the version without retaining every key version still referenced by a row; those rows fail closed until that historical key is restored.
-
-Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
 
 Azure agent inference is a separate opt-in pair:
 `AZURE_INFERENCE_ENDPOINT` and `AZURE_INFERENCE_API_KEY`. Configure both only
@@ -178,33 +140,6 @@ transcription does not.
 | `DeepSeek-V4-Pro` | `deepseek/deepseek-v4-pro` |
 | `grok-4.3` | `x-ai/grok-4.3` |
 
-As verified on the same date, the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
-with DefaultV2 guardrails; their limits are respectively 250,000 TPM / 250 RPM
-and 2,250,000 TPM / 2,250 RPM. On 2026-09-02 the live Sol deployment was
-`Succeeded`, version `2026-07-09`, Generally Available, Global Standard, and
-guarded by DefaultV2, with 2,500,000 TPM / 2,500 RPM, no spillover or priority
-target, and upgrade-on-new-default version policy. Foundry lists both Chat
-completion and Responses; Rally uses `/openai/v1/chat/completions`.
-The inference API reports tokens, not dollar
-cost. In that case, Bind bills with the cached unweighted average of every
-endpoint OpenRouter publishes for the canonical model, including the catalog's
-prompt-token override tiers. The Worker
-`avalon-api-inference-pricing-global` refreshes the OpenRouter endpoint
-inventories hourly. The inventory is the union of the developer-mode manual
-choice list and every Monad production Azure deployment that has an
-OpenRouter identity: sixteen canonical model IDs as of 2026-09-02. It stores one
-record per model in `INFERENCE_PRICING_CACHE`, using the canonical OpenRouter ID
-itself (for example `x-ai/grok-4.3`) as the KV key. Each input, cached-input, and
-output USD-per-million value in a token-priced record remains a decimal JSON
-string. Long-context `overrides` retain their numeric `minPromptTokens`
-threshold and another string-valued input/cache/output triple. Image records
-instead retain OpenRouter's native `billable`, `unit`, and
-string `costUsd` lines—for example FLUX input/output image costs per megapixel—
-so a zero generic token price cannot conceal the actual image charge. Global
-and EU bind the same Cloudflare KV namespace; it contains public provider metadata only,
-never a workspace ID, prompt, usage, or credential. Do not copy the top-level
-OpenRouter catalog price: it is the lowest endpoint price, not the average.
-
 Inference never refreshes this cache, and a route whose primary and fallback
 models are all OpenRouter-only does not read it. Bind reads only the Azure-bound
 models in the current route, rather than coupling every deployment to every
@@ -229,28 +164,13 @@ mechanism: retain stale valid pricing during an upstream outage.
 
 ### Terminal provider activation and recovery
 
-Terminal is fail-closed per region. Global and EU are both enabled against the
-same Daytona environment: `DAYTONA_TARGET=us` and `rally-terminal-1`. Rally does
-not run a separate EU Daytona fleet. Presence of provider values never implies
-availability: a region whose `TERMINAL_REGION_CAPABILITY` is `unsupported`, or
-whose Daytona values are incomplete, omits the plugin. Leave any unverified
-region unsupported until private-sandbox isolation, managed snapshot
-bootstrap, native domain policy, secret-host restriction, stop/archive/restore,
-and deletion behavior have passed for that exact target and provider version.
-There is no Rally cross-region fallback; Daytona itself is the shared
-subprocessor.
-
 An activated region requires:
 
 - `TERMINAL_REGION_CAPABILITY=supported` and
   `TERMINAL_EMERGENCY_DISABLED=false`;
+
 - `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
   `DAYTONA_TERMINAL_SNAPSHOT=rally-terminal-1`; and
-- `DAYTONA_API_KEY` as a regional Worker secret. EU reuses the same Daytona
-  project key already on Global: put that exact value on the EU Worker. Cloudflare
-  cannot copy a secret between Workers, so this is a second `secret put`, not a
-  shared binding. Never put the Daytona project credential in a `VITE_`
-  variable, D1, a sandbox environment value, or a checked-in Wrangler file.
 
 The weekly snapshot rebuild (`.github/workflows/rebuild-terminal-snapshot.yml`)
 reads the same provider values from the `api-production` GitHub environment
@@ -271,6 +191,53 @@ If any required Daytona value is absent, Rally treats that region as
 normal local-development state. Once every value is present, malformed values
 still fail the environment contract so an intended provider rollout cannot
 silently run against the wrong endpoint.
+
+#### Daytona state synchronization
+
+Deploy the API receiver and Terminal provider Worker from the same change before
+provisioning. From the repository root, with the normal Cloudflare operator
+credentials and Daytona key in the local environment, run once per regional API:
+
+```sh
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api terminal:ensure-webhook --config wrangler.global.jsonc
+```
+
+Set `DAYTONA_ORGANIZATION_ID` and `DAYTONA_WEBHOOK_URL` in that operator environment
+(the latter is the regional API's HTTPS URL ending `/ingest/daytona`). Use the
+matching configured deployment URL and Wrangler file for any future region.
+Global is currently the only configured deployment. The Daytona API key must belong to
+the named organization and allow webhook administration. No manual dashboard
+registration or separate Svix account is required. `SVIX_API_URL` is optional
+for a custom Svix server; otherwise the portal token determines its region.
+
+The command initializes Daytona webhooks, obtains an organization-scoped Svix
+portal token, and checks every endpoint page for the URL. It reuses an existing
+registration or upserts a deterministic endpoint when none exists; ambiguous
+duplicate registrations stop setup before any mutation. It installs
+`DAYTONA_WEBHOOK_SECRET` and `DAYTONA_ORGANIZATION_ID` directly through Wrangler
+stdin, probes the deployed signature verifier, then enables delivery and reads
+back the subscription. It never prints or writes the signing secret to disk.
+A failed installation/probe leaves the endpoint disabled; rerun the same command
+to converge. Provisioning temporarily disables an existing endpoint while
+checking its credentials. Periodic reconciliation continues during this window.
+
+Finally, it walks all Daytona sandbox pages and submits signed refresh hints for
+existing labelled sandboxes, including archives. This wakes their observation
+schedule without waiting for the old expiry deadline. Sandboxes already deleted
+before rollout cannot be discovered from Daytona; those old rows are reconciled
+on acquisition or their existing retention alarm. Newly attached generations
+publish an immediate observation deadline. `providerObservation` on the Terminal
+state API exposes the last successful observation and its freshness/error; a
+successful setup probe proves receiver configuration, not lifecycle delivery.
+Use a disposable sandbox to verify actual provider-generated events after rollout.
+
+The receiver accepts only the configured organization, and uses Daytona metadata
+rather than the event's state. Missing metadata is detected by periodic owner
+readback. See [Terminal lifecycle and synchronization](terminal-workspaces.md#network-policy-and-lifecycle)
+for the ownership, ordering, and recovery rules, and
+[Daytona webhooks](https://www.daytona.io/docs/en/webhooks/) and
+[Svix portal authentication](https://docs.svix.com/app-portal#authentication)
+for the provider setup contract.
 
 The managed-snapshot compatibility contract is
 `apps/api/src/services/terminal/snapshot-manifest.ts`: Bash, Python,
@@ -322,11 +289,6 @@ that region deployed.
 
 Once enabled, query the durable aggregate measurements with:
 
-```text
-pnpm terminal:analytics -- --days 7
-pnpm terminal:analytics -- --days 30 --region eu --snapshot rally-terminal-1
-```
-
 The command uses `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` restricted
 to **Account Analytics: Read**. Its start/end line is the actual first and last
 Analytics Engine observation in the requested window, not merely the requested
@@ -376,7 +338,7 @@ Alert on `realtime_transcription_session_release_failed`. The Worker retries the
 Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` only on the Global Worker. They belong exclusively to the platform login client and are never used by Google service connectors.
 
 Set `RESEND_WEBHOOK_SIGNING_SECRET` and `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the
-Global Worker. `RESEND_API_KEY` is required in both regions with Resend's
+Global Worker. `RESEND_API_KEY` is required in configured deployments with Resend's
 **Full access** permission because each owning region retrieves its own full
 message after the Global ingress has routed only signed metadata. An optional
 `RESEND_RECEIVING_API_KEY` can override it later if Rally returns to separate
@@ -387,7 +349,7 @@ regional fallback registry.
 
 `RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
-Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
+Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in configured deployments because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -429,17 +391,6 @@ origins, and the downloads origin redirect cleartext HTTP to HTTPS and return th
 expected `Strict-Transport-Security` header over HTTPS.
 
 ## Deployment order
-
-### Order the EU API certificate before deploying the Rally routes
-
-**`eu.api.rallywith.ai` is two labels deep and the zone's Universal SSL does not
-cover it.** A Universal pack covers `rallywith.ai` and `*.rallywith.ai`, and a
-wildcard matches exactly one label — so this hostname is not in it, and without a
-further certificate it serves a TLS error rather than the EU API. Wrangler
-creates the route and the DNS record regardless, so the symptom is an EU region
-that looks deployed and is unreachable, which reads as an outage rather than as a
-missing certificate. This is the same trap the migration tracker hit; see
-[the tracker's hostname note](#the-durable-object-migration-tracker).
 
 Add `*.api.rallywith.ai` to the **existing Advanced Certificate Manager pack** on
 the `rallywith.ai` zone — the one already covering `*.internal.rallywith.ai`. It
@@ -493,7 +444,6 @@ variables → Actions → Variables**, keeping each value:
 | --- | --- | --- |
 | `AVALON_RELEASE_R2_BUCKET` | `RALLY_RELEASE_R2_BUCKET` | `avalon-desktop-releases` |
 | `AVALON_GLOBAL_TELEMETRY_R2_BUCKET` | `RALLY_GLOBAL_TELEMETRY_R2_BUCKET` | `avalon-global-telemetry` |
-| `AVALON_EU_TELEMETRY_R2_BUCKET` | `RALLY_EU_TELEMETRY_R2_BUCKET` | `avalon-eu-telemetry` |
 
 **The values stay Avalon-named on purpose** — an R2 bucket cannot be renamed, and
 moving one means creating a bucket, copying every object, and repointing the
@@ -548,9 +498,13 @@ objects:
 - The DMG and ZIP blockmaps
 - `<version>/SHA256SUMS`
 
-`stable/darwin/arm64/Rally.dmg` and
-`stable/darwin/arm64/latest-mac.yml` are mutable channel pointers, not releases.
-They must always remain in the public bucket.
+`stable/darwin/arm64/Rally.dmg`, the three `*-mac.yml` manifests,
+`stable-channel.json`, and `release-publication.json` are mutable state, not
+releases. The persistent `release-publish.lock` is operational state. Retention
+must preserve all of them in the public bucket. `latest-mac.yml` is the compatibility
+feed for builds released before channel selection, `faster-mac.yml` advances on
+every desktop release, and `stable-mac.yml` advances no more than once in a
+rolling 24-hour window. The JSON receipt records when Stable last moved.
 
 Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
@@ -576,9 +530,14 @@ Each admitted invocation performs this fail-closed transaction:
 
 1. Page through every active object under `stable/darwin/arm64/`. Parse and sort
    semantic versions, require all five immutable objects for every release, and
-   require the two mutable pointers. An unexpected, duplicate, or incomplete
-   key aborts the run before any copy or deletion.
-2. Select all versions older than the highest five. For each exact candidate
+   require the mutable pointers. A bucket that predates channel selection may
+   temporarily carry only the compatibility manifest; once any new channel
+   pointer exists, both channel manifests and both receipts are required. The
+   release lock is accepted when present but is not required before the first
+   channel-aware publication. An unexpected,
+   duplicate, or incomplete key aborts the run before any copy or deletion.
+2. Select all versions older than the highest five, except the version still
+   named by `stable-mac.yml`. For each exact candidate
    key, stream the source object into the archive with its HTTP and custom
    metadata and `InfrequentAccess`. A matching existing archive object is reused
    without another write, which keeps retries idempotent and avoids resetting
@@ -591,9 +550,11 @@ Each admitted invocation performs this fail-closed transaction:
    changed while copies were in progress. This protects a release that races the
    nightly job.
 5. Delete only the computed, verified candidate-key array. Re-list both sides,
-   require exactly five complete releases plus `Rally.dmg` and
-   `latest-mac.yml` in active storage, prove every candidate is absent from the
-   active bucket, and prove its verified archive copy remains present.
+   require the calculated complete release set plus every mutable pointer in
+   active storage, prove every candidate is absent from the active bucket, and
+   prove its verified archive copy remains present. Stable may make the active
+   set temporarily larger than five when more than five Faster releases land
+   inside its 24-hour window.
 
 The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
 retry after a partial failure; the next nightly invocation safely reuses any
@@ -696,21 +657,10 @@ Edit** on the token, as the permission list above records; a token that can
 only list queues gets `Authentication error [code: 10000]` on the create, and
 the script names the permission.
 
-There is one report queue for both regions, not one per region as with the
+There is one report queue for configured deployments, not one per region as with the
 activity queues: every report converges on the single registry object regardless
 of where it came from, so splitting the transport would isolate nothing. The
 region travels in the message body.
-
-The commands going the other way are split — `avalon-global-migration-commands`
-and `avalon-eu-migration-commands` — because a queue has exactly one consumer
-and only the region's own Worker can address its objects. So the tracker holds
-both producer bindings and each regional API file holds one consumer. Neither
-queue needs creating by hand: they are declared in those Wrangler files like
-every other, and the preflight above creates whichever the account does not
-hold. Their dead-letter queues are left to the platform in the usual way, and
-both are worth watching — a message in one is an object a forced migration
-could not move, which is the count of how many are stuck at no instrumentation
-cost.
 
 Deploy order still does not matter. The tracker's producer bindings are optional
 at runtime, so a tracker deployed before the API Workers have their consumers
@@ -718,12 +668,6 @@ reports the region as unreachable on its page rather than dispatching into
 nothing.
 
 Deploy in any order:
-
-```text
-pnpm deploy:migration-tracker
-pnpm deploy:global
-pnpm deploy:eu
-```
 
 Ordinarily none of that is run by hand. `.github/workflows/deploy-migration-tracker.yml`
 deploys the tracker on a merge to `main` that touches `apps/migration-tracker/`
@@ -904,12 +848,6 @@ ordering and cache-purge safeguards.
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](desktop-icons.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0065_automation_draft_conversation.sql` are live in both D1 databases — confirmed against both remote databases with `pnpm db:migrate:remote:list` and its EU counterpart — and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Rally With AI` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. The public Notion connection and regional OAuth secrets exist; its webhook subscription remains to be created after migration `0071_notion_webhook_setup_nonces.sql` and the matching Worker release land, using the two clipboard commands in `docs/provider-apps.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
-
-Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
-
-The release that first ships the shared Notion ingress is the second such rollout, and it is staged for the same reason: Global adds `EU_NOTION_BRIDGE` bound to `NotionRegionalBridge`, which the deployed EU Worker does not export yet, while EU adds `GLOBAL_NOTION_ROUTER` bound to `NotionRoutingBridge`, which the deployed Global Worker does not export yet. Neither region can be deployed with its full configuration first. Deploy a bootstrap Global Worker carrying the new `NotionRoutingBridge` export and the `notion.with-avalon.com` custom domain but **without** the `EU_NOTION_BRIDGE` binding, then the full EU Worker, then the full Global Worker. Apply `0066_shared_notion_connection_routing.sql` and `0071_notion_webhook_setup_nonces.sql` to both databases first. Until the third stage lands, an EU authorization returns `notion_region_unavailable` rather than completing — the shared callback is live but has nowhere to hand an EU attempt — so set the Notion Worker secrets only after the rollout finishes, which keeps the connector out of the catalog and the connect button disabled in the meantime.
-
 After the migration and Worker release are live, finish the Notion subscription
 without putting either setup material or its signing secret into logs:
 
@@ -930,84 +868,49 @@ For ordinary releases after both entrypoints exist:
    regions plus the Global pricing Worker, validate the exact Wrangler
    configurations with dry runs, and retain all seven startup profiles. See
    [`api-worker-deployment.md`](api-worker-deployment.md).
-2. Create or confirm each region's named Cloudflare resources. The deployment
-   automatically creates the Global inference Queue and locally materializes
-   the checked-in Pipeline stream IDs. It does not create or verify the
-   analytical R2 buckets, Data Catalogs, sinks, streams, or pipelines; use the
-   explicit lakehouse reconciliation procedure above for a fresh account or an
-   intentional replacement. EU has no inference analytics resources in its
-   Worker config. Scoped
-   memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
-   indexes with 1,024 dimensions and cosine distance. Memory embeddings use
-   OpenRouter `qwen/qwen3-embedding-8b` with an explicit 1,024-dimension
-   request; the Workers AI binding remains for Cloudflare-backed PDF OCR.
+
 3. Confirm each configured regional D1 ID belongs to the intended region. Also
    confirm the platform-shared `rally-platform` D1 binding has database ID
    `39b6800c-7945-4c5b-80cb-e7cdd73af14a` in both API and artifact Workers,
    and that the proxied `AAAA *.rallyusercontent.com -> 100::` wildcard DNS
    record exists. The address is a Cloudflare originless placeholder; proxying
    routes the request to the Worker before that address is contacted.
+
 4. Set the regional Worker secrets.
-5. Inspect and apply the platform chain once with
-   `pnpm --filter @rally/api db:platform:migrate:remote:list` and
-   `pnpm --filter @rally/api db:platform:migrate:remote`, then apply the regional
-   D1 migration to EU and Global with `pnpm db:migrate:remote:eu` and
-   `pnpm db:migrate:remote`. Inspect the regional pending set first with
-   `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The
-   unsuffixed `pnpm db:migrate` targets local Wrangler state only and never
-   touches a hosted database.
-6. For an ordinary release, upload both regional Cloudflare Versions without
-   traffic. Within each region, promote the artifact Worker before the API so
-   the reader understands readable stub origins before the writer can mint one;
-   legacy UUID origins remain valid through the cutover. Promote EU to 100%,
-   prove EU health, then promote Global. A Wrangler
-   config or Crash Symbolicator image change uses direct deploy because Versions
-   cannot apply Durable Object migrations or update Container images. For the
-   first inbound-email release and the first shared-Notion-ingress release, use
-   the three-stage bootstrap order above instead.
+
 7. Call `GET /health` after each regional promotion and finally on both APIs
-   with `pnpm health:regions`, which fails unless both regions report `ok`. That
+   with `pnpm health:regions`, which fails unless configured deployments report `ok`. That
    now includes the Worker's own environment contract: a region missing a
    required secret answers `503` here and names the keys, rather than reporting
    healthy while every other route returns `service_misconfigured`.
-8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
-9. Complete one Google identity login in a provider test account.
-10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
-11. Connect **Google Drive + Docs + Sheets** and verify a Drive read, native Docs read/write, and native Sheets read/write against disposable fixtures.
-12. Establish the Drive poll baseline, change the test Doc and Sheet, poll again, and confirm `docs.document_changed` and `sheets.spreadsheet_changed` arrive through Drive change-token polling.
-13. Create an automation from the sidebar, draft it in its conversation, apply it, run it manually, and verify that a repeated **Run now** with the same idempotency key reuses the one run and its child conversation.
-14. After every successful deployment, run the configured Gitleaks gate, commit the complete verified release transaction, and push the authorized current branch. A deployment is not complete until its source and release metadata are present on the remote. Never stage `.env.local`, generated release bundles, dependency directories, or local Cloudflare state.
 
-Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers after the infrastructure prerequisites are satisfied. Do not mark Google capabilities release-ready until the provider credentials and APIs are configured, provider verification is complete where required, and steps 9–12 pass. A failed regional health check blocks desktop distribution for that region.
+8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
+
+9. Complete one Google identity login in a provider test account.
+
+10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
+
+11. Connect **Google Drive + Docs + Sheets** and verify a Drive read, native Docs read/write, and native Sheets read/write against disposable fixtures.
+
+12. Establish the Drive poll baseline, change the test Doc and Sheet, poll again, and confirm `docs.document_changed` and `sheets.spreadsheet_changed` arrive through Drive change-token polling.
+
+13. Create an automation from the sidebar, draft it in its conversation, apply it, run it manually, and verify that a repeated **Run now** with the same idempotency key reuses the one run and its child conversation.
+
+14. After every successful deployment, run the configured Gitleaks gate, commit the complete verified release transaction, and push the authorized current branch. A deployment is not complete until its source and release metadata are present on the remote. Never stage `.env.local`, generated release bundles, dependency directories, or local Cloudflare state.
 
 ### Automated workflows
 
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: eight exact-artifact dry-runs and startup profiles, the shared platform D1 migration chain followed by regional D1 migrations, service-first two-region version upload or direct deployment, artifact-reader-before-API promotion, EU promotion and health, Global service/PostHog/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Before any migration or Worker upload, it fetches a canonical `/app/workspaces/<region>/<workspace>/workstreams/<id>` probe from the live site and requires the work-stream handoff marker; it also requires `latest-mac.yml` on the live update channel to carry the addressed-reader marker written into verified desktop releases. The site, desktop, and API deploy independently on the same merge, so an API run that reaches this gate before either reader—or after a failed reader release—stops safely and is re-run after both are live; the previous API keeps emitting only link shapes deployed readers understand. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including both D1 migration chains), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and locally materializes the two pinned Global lakehouse bindings before migrations without calling the Pipelines management API; the EU deploy config intentionally contains no lakehouse binding. Lakehouse creation and drift verification use explicit operator reconciliation. The workflow does not create unrelated resources, confirm regional D1 IDs, create the wildcard artifact DNS record, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
-  Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
-- **The durable automation lifecycle cutover ran on 2026-08-28** and its three
-  one-shot deploy steps (the single-region refusal, the preflight, and the
-  apply) have been removed from `deploy-api.yml`. Everything it produced was
-  deleted with the first automation object on 2026-09-03 (Wrangler tag `v9`),
-  so the bullet below is history: there is no campaign ledger, no cutover
-  script, and no legacy state left to repair. They were deliberately
-  temporary: left in place, the refusal permanently bans an EU-only or
-  Global-only deploy in the name of a cutover that has already happened. Both
-  regions ran it in one release, and the record of what it did is in this
-  document's history and in the `automation-lifecycle.md` changelog.
-- `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the Electron desktop test suite (`pnpm --filter @rally/desktop test`), and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, records the release config on `main`, and deploys the landing site from `main`'s then-current tip. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
+
+- `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the Electron desktop test suite (`pnpm --filter @rally/desktop test`), and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks configured regional APIs, publishes the immutable payloads, promotes the release manifest, records the release config on `main`, and deploys the landing site from `main`'s then-current tip. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
 
 ### Deploying the Sidekick class rename
 
-1. Deploy PR #583's compatibility release: both exports, v9 `AutomationDO`
-   binding, EU then Global. Verify existing object identities and content.
-2. Deploy the migration tracker accepting both class names. After compatibility
-   validation, deploy the rename release (v10 `renamed_classes`, `SidekickDO`
-   binding and report identity, legacy queued-command adapter), EU then Global.
 3. Compare namespace IDs, stored object IDs, accepted revisions, definition and
    address fingerprints, and existing run history. Keep `:automation:` key bytes.
+
 4. Only after verification, ship a separate cleanup removing the old Worker export.
 
 After the rename, recover with a compatible forward deployment; do not point
@@ -1063,7 +966,7 @@ where to look when one misbehaves.
   were refused with "This automation run is no longer running". A run that
   never left `pending` has an `automation_run` alarm entry behind its gate.
 - **A result never reached the room.** Only a run of a room's Sidekick holds
-  `sidekick_post_result`, and only the run posts; look for
+  `post_result`, and only the run posts; look for
   `sidekick_post_result_refused:<code>` or `sidekick_owning_room_archived`
   in the run's tool results. Nothing posts after the run.
 
@@ -1102,13 +1005,72 @@ A release that fails *after* the bump is pushed leaves `main` bumped and unpubli
 
 The API and the desktop app are ordered by their own durations rather than by coordination between runners. A merge that changes both starts the two workflows together; the Workers deploy in minutes while the signed, notarized app takes tens of minutes, so the API is live long before anything reaches the update channel. The guarantee that matters is not the start order but the regional health gate, which runs after the verified build and before the payloads are published, and blocks distribution when a region is unhealthy. Each workflow serializes itself through its own concurrency group, all of them non-cancelling with `queue: single`: a run already in flight is never killed, and a newer arrival supersedes the older *pending* one. For releases that is the intended policy — intermediate versions do not need to ship, and the newest pending run carries the newest work.
 
+One verified artifact set serves two desktop release channels. The publisher
+always advances `faster-mac.yml` and the legacy `latest-mac.yml`; the latter is
+kept so an older installation can receive the build that introduces channel
+selection. `stable-mac.yml` is the default for channel-aware builds. It advances
+only when `stable-channel.json` proves that at least 24 hours have elapsed since
+the previous public Stable promotion. Faster's manifest is also the durable
+newest candidate for Stable: the hourly `promote-desktop-stable.yml` workflow
+promotes it on the first scheduled run after the gate opens even when no newer
+desktop release is published. GitHub schedules may run late, so the workflow
+provides a minimum interval rather than an exact promotion time. The receipt is
+written after the Stable manifest is publicly verified, so upload time cannot
+shorten the interval. If the receipt is missing or behind the manifest after an
+interrupted publish, either reconciler repairs it at the current time and skips
+that promotion. This deliberately delays Stable rather than risking two
+promotions inside one day. Before the first channel-aware release, the cron sees
+both manifests absent and exits successfully, so deploying the workflow does
+not disturb current installations.
+
+The cron has its own `desktop-stable-promotion` concurrency group. Sharing the
+release workflow's `queue: single` group would let an hourly tick cancel a
+pending desktop release. Both paths instead serialize the authoritative R2
+read, decision, and writes through the same `release-publish.lock`. A cron that
+finds an active lock fails visibly and the next hourly run retries. This may be
+ordinary contention with a live publisher, but it also ensures an abandoned
+lock cannot freeze Stable behind indefinitely green scheduled runs. Likewise,
+the promoter treats a failure to mark its lock released as a failed run.
+
+The setting is a device preference, not an account or workspace preference.
+Electron Updater selects `stable-mac.yml` or `faster-mac.yml` from the embedded,
+signature-checked generic feed. Changing channels never enables downgrade: a
+Mac moving from Faster to Stable stays on its installed version until Stable
+advances past it. Changing the selection also invalidates any check, download,
+or restart prompt from the previous feed. Rally disables install-on-quit for a
+staged previous-channel build, waits for active updater work to settle, and then
+checks the newly selected feed; only a download from that feed re-enables
+install-on-quit. The site and `Rally.dmg` continue to advertise the newest
+published desktop release; the channel choice governs automatic updates.
+
 The release and the site deployment deliberately keep separate groups. Sharing one would order them, but `single` cancels the pending member when another queues, so a site deployment could discard a pending release. The residual overlap runs in both directions. A standalone site deployment of an older commit landing immediately after a release could restore the superseded version; the guard is `check-site-release-config.mjs`, which runs against the live channel in the step immediately before the publish, leaving only a seconds-wide window. In the other direction the release itself redeploys the site as its final step, and until 2026-08-27 it built that site from its own checkout — the release commit, by then up to a build's length behind — so a site fix that merged and deployed during the 1.182.0 build was reverted in production for twenty-five minutes. The release now builds the site from the tip of `main`, fetched inside that final step. Every push-triggered `deploy-site.yml` run deploys a commit on `main`, so the fetched tip is never older than one of those; a manual dispatch of that workflow against another branch sits outside the guarantee, and the next release will overwrite whatever it deployed. The race that remains is bounded by work rather than by any timing measurement: for the release to regress the site, an entire `deploy-site.yml` run — runner acquisition, checkout, install, full lint and typecheck, the site tests, and its deploy — would have to finish inside the span of the release's site step, which performs a strict subset of that work. That group is declared at **workflow** level, so the planning job runs inside the queue rather than ahead of it. When the plan is made matters: a plan made while another release is in flight reads a release record that run has not finished writing, so it picks a version that release is about to take, and the bump step can no longer tell a genuine resume of a failed release from a version that has just shipped — that merge's run then dies at the tag or at publish, and its desktop work ships in no release until an unrelated later push happens to match `paths:`. Planning inside the queue settles the record before it is read. The cost is that a plan now waits behind a running release before it can even skip. The admission filter still excludes unrelated packages; an admitted contract change outside the desktop closure consumes only this cheap planner job. Ubuntu release verification has a team-selected 60-minute ceiling after the full repository suite exceeded the previous 30-minute budget. It runs only the Electron desktop tests and release invariants; the broader test suites remain in repository CI. This keeps unrelated backend tests out of the desktop release queue while bounding how long a wedged verification can hold it.
 
 The tag is created locally so the existing guards can verify it against HEAD, and is pushed immediately after the payloads are published and the channel is promoted — before the release config is recorded and before the site is deployed. A release that fails before publication leaves no tag, so the same version can be retried by re-running the workflow or by merging a fix. After publication the release is live to updaters and cannot be retried, because a rebuild is not byte-identical and the immutable-object guard rejects it; the tag therefore has to exist by then, so that the remaining steps can be re-run or dispatched on their own. Pushing the tag with `GITHUB_TOKEN` deliberately does not start another run.
 
-`latest-mac.yml` is also the boundary for orphan recovery. A failed attempt can upload one or more versioned objects before it reaches that final commit point, and a freshly notarized retry will not reproduce their bytes. While the live manifest is absent or still names the preceding version, the publisher replaces a mismatched object under the pending version only when the live manifest does not reference that object, verifies the replacement in R2, purges the exact public URL, and streams the ordinary query-free response through SHA-512 before promotion. Once the live manifest names that version, both a mismatch and a missing object are hard failures: published release bytes are never rewritten or regenerated from a fresh build. A missing manifest also fails closed when the checked-in site record says that version already shipped.
+`release-publication.json` is the recovery boundary for a publication that has
+begun changing mutable objects. After every immutable artifact is verified but
+before `Rally.dmg` or any manifest moves, the publisher durably records the exact
+manifest bytes and validated site-record inputs. A retry of that same version
+uses this receipt rather than the newly rebuilt signing output, restores the
+canonical DMG from the receipt-named immutable object, and idempotently finishes
+Stable, its cadence receipt, Faster, the compatibility manifest, and the site
+record. The publisher validates the legacy manifest, both channel manifests,
+both receipts, and the future site record before its first write, so an orphan
+or ahead Stable receipt cannot leave another manifest partially advanced.
 
-Every live publisher first atomically creates `${prefix}/release-publish.lock` in the release bucket with R2's conditional `If-None-Match: *` write. This remote mutex covers GitHub Actions and the documented local command, so a second publisher exits before it reads or changes release state. R2 does not provide conditional deletion, so the key persists: the owner conditionally changes its acquired ETag from `active` to `released`, and the next publisher conditionally changes that released ETag back to `active`. Every ownership transition is atomic, and a paused old process has no unconditional cleanup that could change a newer publisher's lock after manual recovery. If publication succeeds but marking the lock released fails, it reports that the release shipped and continues so the workflow can push the tag and release record; the surviving active lock fails the next publisher until it is repaired. If the process or runner is terminated without cleanup, confirm no publisher is active, inspect that exact lock, and delete only that object before retrying; the lock deliberately has no guessed lease that could expire underneath a slow notarized release.
+Before this recovery boundary, a failed attempt can upload one or more
+versioned objects and a freshly notarized retry will not reproduce their bytes.
+While no prepared receipt or live manifest names that version, the publisher
+may replace a mismatched orphan under the pending version, then repeats every
+hash and public-domain verification. Once the prepared receipt or a live
+manifest names that version, recovery uses the recorded exact bytes; published
+release bytes are never regenerated from a fresh build. If publication stops
+after `release-publication.json` appears, rerun the same release workflow or tag
+instead of rebuilding a different version or manually copying channel
+manifests. A missing compatibility manifest still fails closed when the
+checked-in site record says that version already shipped.
+
+Every live publisher first atomically creates `${prefix}/release-publish.lock` in the release bucket with R2's conditional `If-None-Match: *` write. This remote mutex covers GitHub Actions and the documented local command, so a second publisher exits before it reads or changes release state. R2 does not provide conditional deletion, so the key persists: the owner conditionally changes its acquired ETag from `active` to `released`, and the next publisher conditionally changes that released ETag back to `active`. Every ownership transition is atomic, and a paused old process has no unconditional cleanup capable of changing a newer publisher's lock after manual recovery. If publication succeeds but marking the lock released fails, the release publisher reports that the release shipped and continues so the workflow can push the tag and release record; the scheduled Stable promoter instead fails because it has no post-publication record to finish. Either way the surviving active lock makes subsequent runs red until it is repaired. If a process or runner is terminated without cleanup, first confirm in GitHub Actions and the local release environment that no publisher or promoter is active. Inspect that exact R2 key's `state` and `owner` metadata, then delete only `${prefix}/release-publish.lock` and rerun the failed workflow. Never delete a lock merely because it is old: the lock deliberately has no guessed lease that could expire underneath a slow notarized release.
 
 ##### When a release does not happen
 
@@ -1136,17 +1098,6 @@ If publication and the tag push succeeded but recording the config failed, do no
 
 The site build only queries the live channel when the config is unpublished: `pnpm deploy` sets `RALLY_RELEASE_DISCOVERY=1`, and `discoverDesktopRelease` returns the configured version immediately when `published` is `true`, falling back to reading `latest-mac.yml` and verifying the canonical installer when it is not. That makes the committed config authoritative for a published channel, and it is why a standalone site deploy between a release and its recorded config would advertise the superseded version. The download link is the canonical `Avalon.dmg` regardless, so the failure is a wrong version string rather than a broken download. `scripts/check-site-release-config.mjs` runs in both site deployments and fails on that mismatch, naming the fix; an unreachable manifest is reported and passed over rather than blocking an unrelated copy change.
 
-Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable
-`CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API and Ace
-deployments and in `site-production` for the site deployment, plus the existing
-`desktop-release` environment for the macOS release. `api-production` also holds
-`ACE_FLAGSHIP_API_TOKEN`, restricted to Flagship Write on the Avalon account,
-and `ACE_RALLY_OPERATOR_TOKEN` and `ACE_RALLY_EU_OPERATOR_TOKEN`, each equal to
-a token in that region's `DEMO_OPERATORS_JSON` under the `demos` role and
-present in no other region's; the Ace workflow installs all three as encrypted
-Worker secrets and refuses to deploy without them. Regional API Worker
-secrets are never held by Actions; they are set per region with Wrangler.
-
 Deployments cannot overlap. Each workflow declares a concurrency group, so a second run waits for the first to finish, and a burst of merges collapses to the newest commit: GitHub keeps only one run pending per group and drops the superseded ones. Runs already in progress are never cancelled, so a migration cannot be interrupted halfway. Each run deploys the commit that triggered it, not the tip of `main` at the time it starts.
 
 The one interaction the platform does not sequence is an API deployment overlapping a macOS release, because they are separate workflows. The visible symptom is the desktop release failing its regional health gate while a Worker deployment is mid-flight; re-dispatch the tag once the API run is green. Avoid tagging a desktop release in the same minutes as an API-touching merge.
@@ -1155,7 +1106,7 @@ Because API deployment is continuous, a merge to `main` is a production release.
 
 ### The window between a migration and the Worker that needs it
 
-The deploy job applies both regions' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
+The deploy job applies configured deployments' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
 
 Migrations `0090_drop_legacy_product_tables.sql`,
 `0094_retire_agent_inference_payload_ledger.sql`, and
@@ -1209,11 +1160,10 @@ registered alongside: they cost nothing and they are what a rollback lands on.
 The **Rally Google Connectors** client owns the Gmail, Calendar, Drive, Docs, and Sheets scopes and has these redirect URIs:
 
 - Global connector: `https://api.rallywith.ai/connections/google/callback`
-- EU connector: `https://eu.api.rallywith.ai/connections/google/callback`
 
 `https://rallywith.ai/auth/desktop/` is Rally's browser handoff for login and connector outcomes, and `rallywithai://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
 
-Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on both regional Workers. The connector runtime deliberately has no fallback to the login credentials.
+Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on configured regional Workers. The connector runtime deliberately has no fallback to the login credentials.
 
 Settings exposes two authorization presets over one `google` connector family:
 
@@ -1226,11 +1176,10 @@ The production-approved connector scopes use `gmail.modify` for the Gmail capabi
 
 Google connector ingestion currently polls Gmail history, Calendar sync/completion cursors, and Drive changes. Drive change-token polling is also the change source for Docs and Sheets. Do not configure or claim Gmail Pub/Sub watch delivery, Calendar notification channels, Drive push notifications, or any Google webhook; none is implemented.
 
-Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; public-site telemetry uses `https://with-avalon.com` and `https://www.with-avalon.com`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
-
 ## Realtime operations and cost controls
 
 - Use deterministic region/workspace IDs for `WorkspaceDO`, region/workspace/work-stream IDs for model-free `WorkstreamDO`, and append the external substream ID for each independently provisioned `SubstreamAgent`. Never allocate an object per socket, user, turn, tool call, or retry.
+
 - Respect the authority boundary. REST reads the selected `SubstreamAgent`, its
   parent holds aggregate metadata/outbox, and D1 contains only authority
   routing plus unrelated relational workspace data;
@@ -1239,14 +1188,18 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   optimization. The active checkpoint lives in `active_output_turns` and
   60-KiB `active_output_chunks`, is updated per batched delta, and is removed at
   terminal state. Do not collapse it into one unbounded value.
+
 - Every object constructor applies only bounded, append-only SQL migrations under `blockConcurrencyWhile()`. Diagnose failures through `_sql_schema_migrations`; a hash mismatch means history was edited, `schema_ahead` means the Worker is older than the object, and a foreign-key violation requires quarantine. Product data never moves through a hidden KV importer.
+
 - Keep `acceptWebSocket` and serialized attachments. Replacing them with the standard WebSocket API prevents Durable Object hibernation.
+
 - Keep exact text `ping`/`pong` in `setWebSocketAutoResponse`. The
   SubstreamAgent feed jitters its heartbeat across 45–55 seconds; WorkspaceDO
   and WorkstreamDO control sockets use a fixed 50-second
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
+
 - Expect one native Chromium WorkspaceDO socket per signed-in Electron
   renderer/workspace, plus one main-process Node WorkstreamDO metadata socket
   and one substream `0` feed for the active work stream, every pin, the five most
@@ -1257,18 +1210,21 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   foreground presence rather than socket counts. Brokered frames are limited to
   1 MB, and a failed managed-network attempt must follow Electron's remaining
   PAC directives in order rather than inventing a direct fallback.
+
 - Verify foreground message ingress on the workspace socket: drop
   the connection after `create_message` but before its private receipt, confirm
   reconnect resends the same `clientMessageId`, and confirm exactly one
   sequenced `transcript_turn_upserted` event and canonical turn exist. A socket attachment from before
   the session-claim deployment should receive `socket_reconnect_required` and a
   1012 close on its first attempted write.
+
 - Verify workspace convergence by mutating timezone, Terminal policy,
   membership/invitations, and connector health from another client. The
   WorkspaceDO socket must advance its topic waterline and refetch only the mapped
   query roots. A reconnect after several changes must receive one newest-waterline
   event with the union of missed topics. Force a replay-window miss and confirm
   the desktop invalidates every workspace surface once rather than polling.
+
 - Verify aggregate convergence by changing title/description/state/read and
   mention metadata, evicting WorkstreamDO, then subscribing again. Confirm each
   transition created `workstream_state_changes` and `durable_outbox` rows with
@@ -1280,26 +1236,20 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   remove the row on authorization revocation. Reconnect the WorkspaceDO socket
   after missing a state push and confirm its resident directory reload repairs
   the gap without a timer.
+
 - Batch model `stream_delta` broadcasts. The direct child loop may use its reference-counted 30-second keep-alive alarm only while active work exists; avoid per-connection alarms and periodic room health polling.
-- Resolve every workspace-scoped object through
-  `durableObjectStubForWorkspace`: Global must derive IDs from
-  `jurisdiction("us")`, EU from `jurisdiction("eu")`, and every child must use
-  the affinity stored in `workspaces`, the Global binding, and WorkspaceDO.
-  Expect `wnam`/`enam` for Global or `weur`/`eeur` for EU; selecting the western
-  value solely from jurisdiction is reserved for migration, background creation,
-  or missing request metadata.
-  Direct namespace and low-level resolver calls are linted regionalization
-  defects. A hint remains best effort and never proves residency; inspect
-  `ctx.id.jurisdiction`/constructor failures for the hard lock.
+
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.
+
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Rally ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
+
 - The renderer starts its mono PCM16 24 kHz `AudioWorklet` before the transcription service connects, buffers in memory, and batches the backlog within the shared `@rally/contracts/realtime-transcription` frame limits. Batches leave at 100 ms intervals, carrying up to about four seconds of unchanged audio each; Stop drains the backlog before explicitly committing. The existing 10-second connection deadline now starts with capture and covers the ticket, handshake, and backlog drain; expiry cancels the request and releases capture. See [dictation startup](conversation-surfaces.md#dictation-capture-and-connection-startup). Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
 ### WorkstreamDO authority steady-state operations
 
-Both regions completed the one-time maintenance cutover and are permanently at
+Configured deployments completed the one-time maintenance cutover and are permanently at
 `durable_object_open` in `workstream_authority_control`. The campaign machinery
 (the cron importer, the per-object import RPCs, and the deploy workflow's
 cutover steps) has been retired; the control row, the route directory, and the
@@ -1343,15 +1293,13 @@ the runtime router was bypassed; quarantine and fix that path, and never recreat
 the table or fall back to D1. Identity, membership, routing, migration/control,
 audit, and telemetry remain valid D1 writers.
 
-## Timezones
-
-- Store only supported IANA names. Existing users and Global workspaces are migrated to `America/Los_Angeles`; existing EU workspaces are migrated to `Europe/London`.
 - Electron supplies the Mac timezone during ticket exchange. It seeds an account whose
   `timezone_source` is still `client` and never writes over one somebody chose in settings;
   a client that sends no zone leaves the account alone, because there is no server-side default.
-- New Global workspaces default to `America/Los_Angeles`; new EU workspaces default to `Europe/London`.
+
 - Owners and admins may change the workspace timezone. Every user may change their personal
   timezone, which records `timezone_source = 'user'` and stops sign-in reseeding it.
+
 - Calendar automation precedence is explicit trigger timezone, then the automation **author's**
   timezone for personal scope, then the workspace timezone — resolved at acceptance, inside the
   automation's own object, rather than when the draft was compiled, so the scope chosen on the
@@ -1359,8 +1307,6 @@ audit, and telemetry remain valid D1 writers.
   the runtime cannot format refuses acceptance with `sidekick_timezone_invalid` rather than
   falling back silently. The resolved zone is then frozen with the schedule: changing the
   author's account timezone afterwards does not move an accepted automation's calendar runs.
-
-## Observability views and retention
 
 ### Log shape
 
@@ -1386,20 +1332,20 @@ wants: it indexes the object's properties as queryable fields and renders its
 
 - **Never `JSON.stringify` an entry.** A serialized entry arrives as one opaque
   string, and no saved view below can filter it.
+
 - **Never log a bare object either.** Without `message`, the row lists as a
   blank line and has to be expanded before it identifies itself. The API logger
   derives one from `event` plus whichever of `method`, `path`, `status`, `code`,
   `flow`, `phase`, `component`, and `duration_ms` the entry carries —
   `http_request GET /notes 200 96ms`, `perf_flow workstream_create api 812ms` —
   and a caller may pass its own `message` instead.
+
 - Keep the summary a restatement of indexed fields. Filter on the fields, not on
   message text; anything only the message says is unqueryable. `message` is
   therefore reserved: a field that holds an opaque provider string is `detail`.
+
 - Name the event, not the sentence. `event` is snake_case and stable, because
   the saved views below filter on it; the prose belongs in the field values.
-- The logger already records `region`, `app_version`, and `build_sha`. A field
-  named `region` would overwrite the Worker's own, so a different region — an
-  EU workspace resolved from Global — is `workspace_region`.
 
 The desktop client logs to a terminal or DevTools rather than to Workers Logs,
 so its logger keeps human-readable lines and only owns the scope tag and level.
@@ -1529,7 +1475,6 @@ the schema grows:
 
 | Column | Meaning |
 | --- | --- |
-| `index1` | `<source>:<region>` sampling cohort, for example `workstream:eu`; never a unique run ID |
 | `blob1` | schema version (`harness_run_v1`) |
 | `blob2` | source (`workstream`) |
 | `blob3` | terminal status |
@@ -1581,18 +1526,6 @@ GROUP BY source, status
 ORDER BY source, status
 ```
 
-For a dashboard, group the same weighted measures with
-`toStartOfInterval(timestamp, INTERVAL '1' HOUR)`. Use `count()` as a sample-size
-quality signal, not as the run count; `SUM(_sample_interval)` estimates events,
-and `quantileExactWeighted(..., _sample_interval)` is the supported percentile
-form. Filter on `index1 = 'workstream:eu'` or `index1 = 'workstream:global'` for
-a regional view. Do not use this dataset for exact billing, deduplication, run lookup, or
-crash recovery. End-to-end `double1`, calls, tokens, cost, and routed attempts
-remain usable on failed rows. Bind currently cannot return its detailed
-runToolLoop timing object after a thrown failed/stopped path, so filter
-`double11 = 1` before aggregating turns, model/tool time, or output rate; never
-interpret the placeholder zeros as measured time.
-
 Query the SQL API with a token restricted to **Account Analytics: Read**, or
 connect Grafana through the documented ClickHouse datasource. Analytics Engine
 retains data for three months. Its published limits currently include 10
@@ -1639,16 +1572,6 @@ resource, command, path, output, or credential identifier. The dataset therefore
 answers fleet/image questions, not exact-work-stream diagnosis. Exact state
 continues to come from regional D1 and structured Workers Logs.
 
-`pnpm terminal:analytics` sends sampling-aware SQL to Cloudflare's documented
-[Analytics Engine SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/).
-It reports the actual observed start/end, estimated operation counts, and
-average/p50/p95/max total latency. Create is decomposed into allocation and
-policy read-back; bootstrap into read-back, compatibility installation, and
-verification; start is labeled as stopped-sandbox warming or archived restore.
-It also expands the fixed installed-capability set into human-readable counts.
-Use `--days 1..90`, `--region global|eu|all`, and an optional safe snapshot name.
-Analytics Engine retains these points for three months.
-
 The report intentionally refuses to recommend an owned image before 100
 successful bootstraps in the selected cohort. At or beyond that sample, a
 compatibility-install p95 above ten seconds triggers a prebuilt-snapshot
@@ -1681,17 +1604,18 @@ buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
 no wider dashboard access than a responder needs. Moving those two secrets off
 the query string is the only fix that removes them from the capture.
 
-Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs or the Global lakehouse: some upstreams quote the request back inside it, and the key-based redactor has no way to recognise member content arriving inside provider prose. The Global lakehouse keeps the exact request and the bounded classification; EU inference has no analytical archive. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
-
-Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. The read-only release check must report all saved-query drift at once so a partial repair cannot make the next release discover one definition at a time.
-
 Connector polls have a 20-second adapter cancellation deadline inside a 25-second Workflow step. The step uses three exponentially backed-off retries. A terminal timeout or provider failure moves the connection into a deterministic degraded/error state and emits only structured, redacted metadata; it must never leave the workflow waiting indefinitely.
 
 That deadline must be a **cancellable** one — `createDeadline`/`withDeadline` from `apps/api/src/lib/deadline.ts`, disposed in a `finally`. `AbortSignal.timeout()` cannot be cancelled, so a poll that finished in a second still held its Workflow invocation open for the remaining nineteen. The runtime eventually cancelled each one as a hang and counted it as an uncaught exception, which is what put a steady ~560 errors a day on `avalon-api-global` while every workflow instance reported `complete`. The same rule applies to any deadline created inside a Workflow step, queue consumer, or Durable Object alarm: those invocations end when the handler returns, so an armed timer outlives the work it guarded. Inside a request handler the timer dies with the response and either form is safe.
 
 The deadlines long enough to matter have been converted: the connector poll (20s), the Slack public-channel sync in the activity queue consumer (3 minutes), and the two inside the bind loop's Workflow step — per-tool-call (`TOOL_DEFAULT_TIMEOUT_MS`, 30s) and plugin reauthorization (30s). Not yet converted are the fixed 5–10 second `slackApi` calls in `slack-agent-service.ts`, which hold a queue invocation open for at most ten seconds each; they are the same class and are tracked as follow-up work rather than fixed here. Any new deadline in one of these contexts uses the cancellable form.
 
-Inline read-only subagents use independent ceilings configured with `HARNESS_CHILD_MAX_*`. The production defaults are four model iterations, eight tool calls, 90 seconds, 12,000 tokens, 100 cents, four active credential plugins, 64 KiB of tool schemas, four total runs per chain (the root plus at most three inline children), eight active children per workspace, and depth one. A child inherits and narrows the parent's persisted authority; raising these limits must never enable writes, recursion, or mid-run scope expansion.
+Background agents run independent work-stream Bind loops and inherit the source
+conversation's model override and execution principal. They use normal tool
+capabilities and execution protections. The retired inline-child
+`HARNESS_CHILD_MAX_*` settings do not control this surface. See
+[agent communication](agent-communication.md) for ownership, continuation,
+message delivery, and archive behavior.
 
 ### Inspecting a run's raw inference
 
@@ -1700,15 +1624,6 @@ the model was actually asked. When the question is *why did the agent do that* �
 a fabricated value, a tool the model never called, a question it should not have
 needed to ask — the answer is the recorded request body, and this section turns a
 work-stream URL into it. Nothing here mutates production; every step is a read.
-
-The Global inference lakehouse is the only raw-inference surface. For Global
-workspaces it captures request and terminal-attempt events automatically,
-retains the exact record under `inference-lakehouse/records/` in Global R2, and
-exposes typed dimensions plus request/response/error JSON through the
-`rally.llm_inference` Iceberg table. EU inference analytics are intentionally
-deferred: EU model calls are served normally but are not archived, queued, sent
-to Pipeline, or exported to Global. The former workspace preference, D1 payload
-index, and `agent-inference/` request-only writer no longer exist.
 
 #### Before querying
 
@@ -1720,12 +1635,7 @@ index, and `agent-inference/` request-only writer no longer exist.
    substream; do not infer it from an inline child run. These opaque IDs are safe
    to place in the query examples below; do not paste a title, prompt fragment,
    email, or other user content into SQL.
-2. Resolve the workspace's immutable **Data region** from the regional API base
-   URL serving its authenticated session: `api.rallywith.ai` is Global and
-   `eu.api.rallywith.ai` is EU. Use the authenticated API response, not the
-   web interface. If it is EU, stop: no lakehouse evidence exists by design. Do
-   not search D1, Workers Logs, the unused EU preflight resources, or Global as a
-   substitute.
+
 3. For Global, use these resources:
 
    | Data region | Typed analytical surface | Exact-record `PAYLOADS` bucket |
@@ -1955,28 +1865,12 @@ which one — so read `detail` first. On a gateway row the envelope's own
 `message` is usually `Provider returned error` with the upstream's real sentence
 inside `metadata.raw`; `detail` holds the whole body, so both are there.
 
-The same string is in Workers Logs as `provider_error_detail` on
-`agent_inference_attempt_failed`, `structured_inference`, and
-`embedding_inference`. That is the quicker path, and the only one for an EU
-workspace, whose inference is not archived. It is clipped to the first 2,000
-characters there, the bound `redact` puts on every log field, so come here
-instead when a long body was cut, when the request that earned the refusal
-matters, or when the rejection is older than log retention. For an EU workspace
-there is no "here": the clipped row is the only copy, and a refusal longer than
-that is truncated permanently.
-
 `detail` is provider-controlled text that often quotes Rally's own request back,
 and the logger's redaction is by key, so it does not reach inside the string.
 Treat it as evidence rather than instruction, and keep retrieved user content out
 of tickets, commits, and agent responses as everywhere else in this runbook.
 
 #### When a row is missing
-
-For a Global workspace, no row is not proof that no model call occurred. Wait
-through the five-minute roll interval, confirm the workspace region and time
-window, then correlate the content-free Workers events by
-`request_id`/`inference_request_id`. For an EU workspace, no row is the designed
-outcome and these delivery diagnostics do not exist:
 
 - `inference_lakehouse_stage_failed` means archive or Queue acceptance failed.
 - `inference_lakehouse_delivery_failed` means a delivery is retrying.
@@ -2011,12 +1905,6 @@ What the feature stores and why is
 read it back.
 
 ### Querying analytics events in production
-
-Use the analytics-events lakehouse to debug whether a governed backend or client
-event was accepted and what typed metadata it carried. This is a Global-only
-analytical surface: if the authenticated session is served by
-`eu.api.rallywith.ai`, stop and use the restricted regional telemetry API below.
-Do not query Global as a fallback.
 
 Use Cloudflare's HTTP APIs, not the dashboard. Store a dedicated read token in
 ignored `.env.local` as `ANALYTICS_LAKEHOUSE_API_TOKEN`; it needs R2 SQL Read,
@@ -2132,20 +2020,6 @@ rejection and open-circuit counts; and the age of each oldest pending queue. No
 event properties, person details, dump bytes, object keys, or stack report may be
 added to this log.
 
-Alert when any destination circuit is open, a terminal count is nonzero, a
-backlog remains older than 15 minutes, processing failures persist, matching
-symbols are unavailable for a current release, or a deletion pass leaves expired
-rows or objects. Always inspect Global and EU independently. EU has no PostHog or
-Analytics Engine telemetry destination, so a Global delivery graph says nothing
-about EU health.
-
-The public site makes `GET /telemetry/route`, then the ordinary anonymous
-bootstrap/ingest calls. The route response must be `Cache-Control: no-store` and
-must not create a `telemetry_onboarding_journeys` row. A Global route may reuse a
-first-party browser epoch; an EU route must remain page-scoped. Verify both paths
-after changing CORS, the site deployment, the Global custom domain, or
-`EU_TELEMETRY_BRIDGE`; see [`public-site-telemetry.md`](public-site-telemetry.md).
-
 ### Operator access
 
 Each regional Worker receives its own `TELEMETRY_OPERATORS_JSON` secret. It is a
@@ -2161,37 +2035,22 @@ bearer token and each value is a fixed principal:
 }
 ```
 
-The other role is `security`. Use independent tokens in Global and EU, add a new
+The other role is `security`. Use independent tokens in configured deployments, add a new
 token before removing its predecessor during rotation, and never put a token in a
 URL, log, ticket, or shell history.
 
-`DEMO_OPERATORS_JSON` is a second secret of exactly this shape, one per region,
-whose principals carry the `demos` role and are accepted only by the surfaces
-Ace calls (workspace retirement, and demo preparation once it ships). It is
-separate so that adding or rotating Ace's token never requires re-entering the
-telemetry tokens, which cannot be read back once set. To add Ace's token:
-generate one (`openssl rand -hex 32`) and an operator UUID, set the map with
-`wrangler secret put DEMO_OPERATORS_JSON --config wrangler.global.jsonc` from
-`apps/api` (and `wrangler.eu.jsonc` with a different token for EU), then store
-the same token as `ACE_RALLY_OPERATOR_TOKEN` (`ACE_RALLY_EU_OPERATOR_TOKEN`) in
-the `api-production` GitHub environment. A `demos` principal placed in the
-telemetry map reaches nothing, and a telemetry principal placed in the demo map
-is refused by role. Requests use `Authorization: Bearer <token>`
-against the owning regional API under `/internal/telemetry`:
-
 - `GET /status` returns the fixed regional operational snapshot to either role.
+
 - `POST /replay` accepts `{ "eventId", "reason" }` only from a `security`
   principal. Replay is Global-only; `reason` is `destination_recovery` or
   `incident_response`.
+
 - `GET /crashes/<crash-id>/raw?reason=customer_support` is for `support`;
   `reason=incident_response` is for `security`. It streams one regional dump and
   records the principal, reason, and fixed result code in
   `telemetry_crash_access_audit`.
-- EU additionally exposes `GET /eu/crash-issues?limit=<1-100>` and
-  `POST /eu/crash-free-launches` with canonical `{ "from", "to" }` timestamps.
-  The same paths return `404` from Global.
 
-Start with `/status` in both regions. Use replay only for a known terminal Global
+Start with `/status` in configured deployments. Use replay only for a known terminal Global
 event, and request raw bytes only when the reason genuinely requires them; neither
 operation is an exploratory listing surface.
 
@@ -2253,41 +2112,10 @@ Every attempt writes `telemetry_crash_access_audit`; logs and audit rows never
 contain the R2 key or dump contents. Do not download a dump merely to inspect
 whether it exists.
 
-### Cross-region route failure
-
-Check the route stored on the event or crash generation and the routing basis. A
-workspace binding is authoritative; an onboarding route is the immediate coarse
-classification made when the epoch began. Never rewrite the route, copy the row,
-or fall EU telemetry back to Global. Restore the named `EU_TELEMETRY_BRIDGE`,
-regional D1/R2, or processor and allow the existing regional retry to continue
-within its original deadline. If an affirmative-EU pre-workspace dump was saved,
-treat that as prohibited-data handling, not as a delivery problem.
-
-### Preference inconsistency
-
-A disabled account must have nonessential local reporting and upload stopped,
-the current Crashpad generation invalidated, attributable undelivered regional
-event/profile/crash work suppressed or deleted, and no later profile delivery.
-The desktop enables only after the canonical compare-and-set succeeds and reads
-the preference fail-closed on each authenticated startup. Reconcile the canonical
-Global preference and opaque EU projection by version; never enable from a stale
-local `true`. Essential content-free reliability remains eligible.
-
 ### Retention or deletion failure
-
-Deadlines are absolute: local material is eligible for at most 14 days; regional
-accepted/outbox/receipt/profile/audit/full-crash state and raw dumps for at most 90
-days; EU semantic and minimized crash contributions for at most 13 months. Retry
-the regional lifecycle job in bounded batches and verify both D1 and the dedicated
-telemetry bucket. Do not extend `delete_at`, renew a contribution from issue
-recurrence, or keep an object after its index is deleted. A dormant desktop
-physically purges expired Crashpad generations on its next launch before upload or
-starting the next generation.
 
 [`telemetry.md`](telemetry.md) owns the mechanisms and limits behind these
 procedures.
-
-## Incident response
 
 ### OpenRouter unavailable
 
@@ -2376,10 +2204,6 @@ Mark the connection `needs_reconnect` and preserve affected automation state. Th
 
 Do not copy records between deployments. Confirm the desktop-selected region, session claim, workspace region, and target API agree. V1 has no workspace-region migration path.
 
-### Stuck cross-region onboarding reservation
-
-An unknown EU RPC/runtime failure intentionally leaves the Global `platform_workspace_bindings` row in `pending`, even after `pending_expires_at`. Do not delete or reuse it based on time alone: the original regional action may still commit. First inspect the EU user's `workspace_members` and `regional_onboarding_operations` records for the pending operation ID. If membership committed, the user's next `GET /onboarding` discovery activates the existing binding. Only when there is no membership, no operation journal row, and no in-flight RPC may an operator delete that exact pending Global row and let the user retry. Record the reconciliation in the incident log.
-
 ### Credential-key rotation
 
 Retain the previous regional key during rotation. Decrypt with the stored key version, re-encrypt with the new active version and connection-bound authenticated data, verify provider access, then retire the old key after all rows have migrated.
@@ -2404,6 +2228,6 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 
 ### Finishing the artifact retirement
 
-Retiring artifacts is staged across two releases, for the reason [the migration window](#the-window-between-a-migration-and-the-worker-that-needs-it) gives: the Worker that is live while a migration applies still reads `artifacts` on every `GET /workstreams/:id/context`, so the table cannot go in the same release as the code that stopped reading it. `0069_retire_artifact_messages.sql` therefore only retires the `'artifact'` message type. **A later release still owes a `DROP TABLE artifacts` migration**, and it is safe to write once no deployed Worker reads the table — after the release carrying that code removal is live in both regions.
+Retiring artifacts is staged across two releases, for the reason [the migration window](#the-window-between-a-migration-and-the-worker-that-needs-it) gives: the Worker that is live while a migration applies still reads `artifacts` on every `GET /workstreams/:id/context`, so the table cannot go in the same release as the code that stopped reading it. `0069_retire_artifact_messages.sql` therefore only retires the `'artifact'` message type. **A later release still owes a `DROP TABLE artifacts` migration**, and it is safe to write once no deployed Worker reads the table — after the release carrying that code removal is live in configured deployments.
 
-The R2 objects are the third step and are not reachable from a migration at all. The retired `create_artifact` tool wrote them under `<region>/<workspace>/artifacts/<artifact-id>.txt` in both regions, and `artifacts.content_ref` holds their only pointers — so sweep them **before** the drop lands, or enumerate them from the table first, or they become unreferenced with nothing left to enumerate. Delete by prefix once per region — `wrangler r2 object delete` per key, or a bucket lifecycle rule on the prefix — and confirm the prefix lists empty afterwards. Do it deliberately rather than as part of a deploy: the objects are the last copy of anything an agent wrote there, so anything worth keeping has to be pulled out first.
+The R2 objects are the third step and are not reachable from a migration at all. The retired `create_artifact` tool wrote them under `<region>/<workspace>/artifacts/<artifact-id>.txt` in configured deployments, and `artifacts.content_ref` holds their only pointers — so sweep them **before** the drop lands, or enumerate them from the table first, or they become unreferenced with nothing left to enumerate. Delete by prefix once per region — `wrangler r2 object delete` per key, or a bucket lifecycle rule on the prefix — and confirm the prefix lists empty afterwards. Do it deliberately rather than as part of a deploy: the objects are the last copy of anything an agent wrote there, so anything worth keeping has to be pulled out first.

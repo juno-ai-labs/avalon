@@ -8,6 +8,7 @@ import {
   type ConnectorPollingActivitySource,
   type ConnectorWebhookActivitySource,
 } from "./types";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { FetchLike } from "./provider-utils";
 
 /** Logging is diagnostic only: a sink failure must never become a connector failure. */
@@ -25,9 +26,20 @@ export function observeConnector(
 }
 
 export function connectorObservationErrorCode(error: unknown): string {
-  if (error instanceof ConnectorError) return error.code;
+  if (error instanceof ConnectorError) return zodDiagnosticCode(error.cause, "schema") ?? error.code;
   if (error instanceof Error && error.name === "AbortError") return "request_aborted";
-  return "unexpected_error";
+  // A schema rejection is the one "unexpected" error that knows exactly what
+  // went wrong. A provider answering 200 with a body this adapter does not
+  // model is an ordinary Tuesday — the shape drifts, a field goes null, an
+  // array holds objects where it held strings — and the whole diagnosis is the
+  // path. Collapsing it to `unexpected_error` discards that and leaves an
+  // operator comparing two identical log lines.
+  // `schema`, not `response`: this classifies every adapter operation, and
+  // `executeTool` parses the *model's* arguments with the same `.parse` —
+  // `notion.ts:824` is one of several. Naming the provider there would pin a
+  // model's malformed input on the provider, which is a worse lie than the
+  // generic code it replaces.
+  return zodDiagnosticCode(error, "schema") ?? "unexpected_error";
 }
 
 export function connectorObservationFailureLevel(error: unknown): ConnectorLogLevel {
@@ -300,6 +312,34 @@ function instrumentWebhook(
         }),
       );
     },
+    // Carried through by name, like the two above. This wrapper is the only
+    // copy of the source the host ever sees, so an optional method left out
+    // here is silently absent everywhere — the first `derive` was.
+    ...(source.derive ? {
+      derive(connection, activity, event, signal) {
+        registerConnectionObservation(connection, connectorType, observer);
+        return observeAsync(
+          observer,
+          connectorType,
+          "webhook_derive",
+          {
+            ...connectionFields(connection),
+            delivery_id: event.deliveryId,
+            provider_account_id: event.providerAccountId,
+            event_type: event.eventType,
+          },
+          () => source.derive!(connection, activity, event, signal),
+          (derived) => ({
+            outcome: derived.outcome,
+            derived_event_types: derived.activities.map((entry) => entry.eventType),
+            ...(derived.failure ? {
+              failure_code: derived.failure.code,
+              ...(derived.failure.status !== undefined ? { failure_status: derived.failure.status } : {}),
+            } : {}),
+          }),
+        );
+      },
+    } : {}),
   };
 }
 
@@ -438,6 +478,13 @@ export function instrumentConnectorAdapter(
           (result) => ({
             activity_count: result.activities.length,
             stream_error_count: result.streamErrors?.length ?? 0,
+            // A poll whose every stream failed logs as `succeeded` with a
+            // count. The codes are the adapter's own or a schema rejection's
+            // paths — never the messages, which can carry provider text and
+            // already reach the connection row.
+            ...(result.streamErrors?.length
+              ? { stream_error_codes: [...new Set(result.streamErrors.map((entry) => entry.code))] }
+              : {}),
             provider_resource_ids: activityResourceIds(result.activities),
           }),
         );
@@ -495,7 +542,13 @@ export function instrumentConnectorAdapter(
           "tool_input_validate",
           { tool_name: name, ...providerIdentifierFields(connectorType, args) },
           () => adapter.validateToolInput!(name, args),
-          (error) => ({ outcome: error === null ? "valid" : "invalid" }),
+          // A returned `ZodError` had its paths in hand and logged the word
+          // `invalid`; the same rejection thrown would have been named. Paths
+          // and issue codes are the tool's schema, not the model's values.
+          (error) => ({
+            outcome: error === null ? "valid" : "invalid",
+            ...(error === null ? {} : { code: zodDiagnosticCode(error, "tool_input") }),
+          }),
         );
       },
     } : {}),
@@ -548,6 +601,20 @@ export function instrumentConnectorAdapter(
             outcome: result.ok ? (result.warning ? "degraded" : "healthy") : "unhealthy",
             reconnect_required: result.reconnectRequired ?? false,
             warning_present: Boolean(result.warning),
+            // An adapter that *returns* `ok: false` had its reason in hand and
+            // dropped it here, while one that *throws* got a `code` logged four
+            // lines down. Granola returns, so "Granola webhook endpoint identity
+            // is missing" — the entire diagnosis, already computed — reached the
+            // log as the word `unhealthy` and nothing else.
+            //
+            // `message` is deliberately not what is logged. It is written for a
+            // person and an adapter may fill it from a caught provider error:
+            // `x.ts` returns the provider body's own `message` field verbatim.
+            // `redact` keys on field names, so nothing would catch that. Only
+            // `reasonCode`, which an adapter writes as a literal, crosses here.
+            // A degraded result carries one for the same reason: its `warning`
+            // is prose too.
+            ...(result.reasonCode === undefined ? {} : { reason_code: result.reasonCode }),
             duration_ms: Date.now() - startedAt,
             ...fields,
           },

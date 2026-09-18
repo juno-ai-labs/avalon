@@ -16,7 +16,6 @@ deep-link scheme, and the work-stream email domain.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/wrangler.global.jsonc` | Global Worker routes and every canonical URL it hands out (`PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, the four ingress base URLs, `ALLOWED_ORIGINS`, `DESKTOP_DEEP_LINK_URI`, `WORKSTREAM_EMAIL_DOMAIN`). |
-| `apps/api/wrangler.eu.jsonc` | The same for the EU Worker; `eu.api.rallywith.ai` is the one hostname needing a certificate order. |
 | `apps/site/wrangler.jsonc` | The four site routes: both Rally and both Avalon. |
 | `packages/contracts/src/desktop-deep-link.ts` | The one list of deep-link schemes — minted, legacy, and accepted. Every other surface reads it. |
 | `apps/api/src/lib/workstream-email-address.ts` | The minted email domain and the legacy domains still accepted inbound. |
@@ -34,19 +33,16 @@ deep-link scheme, and the work-stream email domain.
 | `apps/site/public/_headers` | The site's CSP `connect-src`, which permits both API origins. |
 | `config/provider-apps/*.json` | The provider registrations to apply by hand, per provider. |
 
-## How it works
-
-### The ten hostnames
+### The migrated hostnames
 
 | Canonical hostname | Serves | Superseded hostname, still served |
 | --- | --- | --- |
 | `rallywith.ai` | Public marketing and legal site; `PUBLIC_WEB_BASE_URL`; the origin every canonical work-stream link is minted on | `with-avalon.com` |
 | `www.rallywith.ai` | Second custom domain on the same site Worker | `www.with-avalon.com` |
 | `api.rallywith.ai` | Global regional API; packaged desktop default; site telemetry ingest; sandbox allowlist | `api.with-avalon.com` |
-| `eu.api.rallywith.ai` | EU regional API | `eu.api.with-avalon.com` |
 | `github.rallywith.ai` | GitHub App smart ingress — `/ingest/github` and the setup URL | `github.with-avalon.com` |
 | `linear.rallywith.ai` | Linear webhook ingress | `linear.with-avalon.com` |
-| `notion.rallywith.ai` | Notion callback and webhook, answering for both regions | `notion.with-avalon.com` |
+| `notion.rallywith.ai` | Notion callback and webhook, answering for configured deployments | `notion.with-avalon.com` |
 | `slack.rallywith.ai` | Slack events, interactivity, commands | `slack.with-avalon.com` |
 | `automation.rallywith.ai` | Inbound work-stream and automation mail (Resend MX) | `automation.with-avalon.com` |
 | `downloads.rallywith.ai` | R2 custom domain for desktop installers and the update feed | `downloads.with-avalon.com` |
@@ -55,6 +51,16 @@ Eight are attached to a Worker by a `routes` entry, listing the Rally pattern
 and the Avalon pattern side by side. `automation.` is mail only and carries no
 Worker route. `downloads.` is an R2 custom domain, configured outside this
 repository.
+
+### New Ashby hostname
+
+`ashby.rallywith.ai` is a new hostname with no Avalon predecessor. Its custom
+domain belongs to `avalon-connector-ashby-global`, configured by
+`apps/api/wrangler.ashby.global.jsonc`. It must not also be assigned to the Global
+API Worker. The dedicated entry point routes exact signed webhook bytes to the
+owning regional service and serves no connection-management or model endpoints.
+OAuth callbacks stay on the regional API hosts. Granola registrations retain their
+existing regional API URLs; adoption does not rewrite provider subscriptions.
 
 ### What is canonical, and what that means
 
@@ -116,7 +122,7 @@ becomes the current scheme with no other edit.
 
 `app://rallywithai` is the packaged renderer's origin, and it is **not** purely
 internal: it is the `Origin` header on every API request and WebSocket upgrade
-the desktop makes, so both regional Workers list `app://rallywithai` and `app://avalon`
+the desktop makes, so configured regional Workers list `app://rallywithai` and `app://avalon`
 in `ALLOWED_ORIGINS`. A shipped build sends `app://avalon` and cannot be made to
 send anything else, so this follows the same rule as the deep-link scheme —
 switch what is written, widen what is accepted.
@@ -177,7 +183,7 @@ manually; see [`provider-apps.md`](provider-apps.md).
 
 OAuth callbacks are the exception and are genuinely dual: those lists are
 multi-valued, so each manifest registers the Rally and the Avalon callback for
-both regions and a connection completes on whichever origin the client used.
+configured deployments and a connection completes on whichever origin the client used.
 
 ## Invariants
 
@@ -214,7 +220,7 @@ both regions and a connection completes on whichever origin the client used.
 
 This document owns the hostname inventory and the dual-serving rules. It does
 not own what any individual host does: [`regionalization.md`](regionalization.md)
-owns the Global/EU split and the shared ingress design,
+owns the configured deployment split and the shared ingress design,
 [`provider-apps.md`](provider-apps.md) owns the registrations,
 [`workstream-email-addresses.md`](workstream-email-addresses.md) owns the
 address format and allocator, [`workstream-links.md`](workstream-links.md) owns
@@ -228,35 +234,17 @@ envelope schema identifier, and the desktop's stored-data namespace. The package
 scope (`@rally/*`) and the `Rally` product string moved too, and neither needed a
 compatibility window — nothing outside a build reads either.
 
-What remains deliberately Avalon-named is the infrastructure whose name is a
-Cloudflare resource identifier rather than anything a caller sends: Worker names
-(`avalon-api-global`, `avalon-site`), R2 buckets (`avalon-desktop-releases`,
-`avalon-global-telemetry`, `avalon-eu-telemetry`), queue names, Vectorize index
-names, and the Worker variables `AVALON_REGION` and `AVALON_*` bindings. Renaming
-one of those is a create-and-migrate operation against live state, not an edit —
-a bucket cannot be renamed at all — and none of them is addressable from outside,
-so none carries the constraint that makes a hostname hard to move. The PostHog
-event and property names (`avalon_*`) are a third case: renaming them is a single
-edit, but it splits every dashboard and funnel at the rename date, which is a
-product-analytics decision rather than an engineering one.
-
-## Failure modes and limits
-
-- **`eu.api.rallywith.ai` serves a TLS error without an ACM pack.** It is two
-  labels deep and the zone's Universal SSL covers one. Wrangler creates the
-  route and DNS record regardless, so an unreachable EU region looks deployed.
-  The certificate is ordered before the deploy —
-  [`runbook.md`](runbook.md#order-the-eu-api-certificate-before-deploying-the-rally-routes)
-  has the procedure. The other nine hostnames are single-label and covered.
 - **Rally senders are rejected until Rally DKIM/SPF is live.** Resend verifies a
   sending domain, not an address, so `invites@rallywith.ai` and
   `notifications@rallywith.ai` do not inherit the Avalon verification.
+
 - **Web analytics attribute every visit to the canonical domain.** A site
   telemetry envelope reports a `pathname` and deliberately nothing else about
   its origin, so `$host` is reconstructed from `PUBLIC_WEB_BASE_URL`. While both
   domains answer, traffic arriving on either is filed under the canonical one.
   Splitting acquisition by domain needs the site to report its own host, which
   is a registered telemetry property and a privacy-boundary decision.
+
 - **A provider switched but not verified is silent.** A webhook pointed at a
   host that does not serve produces no error here — deliveries simply stop.
   Switch one provider at a time and confirm ingress before the next.
@@ -277,6 +265,14 @@ resolving and reporting the domain it arrived on.
 Nothing here exercises DNS, certificates, or a provider registration. Those fail
 only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
+
+## Apple association
+
+The Apple association is another hostname-coupled release surface. Only
+`rallywith.ai` and `www.rallywith.ai` appear in desktop associated-domain
+entitlements. Moving either requires serving the association on the new host
+before releasing the corresponding entitlement; legacy origins remain browser
+handoffs. See [work-stream links](workstream-links.md#apple-universal-links).
 
 ## Changelog
 
@@ -494,7 +490,7 @@ is migrating off, with nothing to notice.
 ### 2026-08-25 — The renderer origin and the export scheme move too
 
 **What changed:** The packaged renderer's origin became `app://rallywithai`, with
-`app://avalon` added to `ALLOWED_ORIGINS` in both regions rather than replaced.
+`app://avalon` added to `ALLOWED_ORIGINS` in configured deployments rather than replaced.
 The message-export scheme became `rallywithai-export://` outright, with no legacy
 accepted. `apps/api/test/domain-migration-config.test.ts` now asserts the
 deployed configs against both.
@@ -548,28 +544,10 @@ being merely stale and starts being wrong: it would attribute Rally traffic to
 Avalon for the entire migration, which is exactly the period the number is
 being watched.
 
-**Considered and rejected:** Naming the EU API `eu-api.rallywith.ai` to stay
-inside the zone's Universal SSL wildcard and avoid a certificate order. Rejected
-because the ACM pack on that zone is already bought, already covers
-`*.internal.rallywith.ai`, and holds up to 50 hostnames, so extending it costs
-an order rather than money — and the name is public and effectively permanent,
-which is a poor thing to trade for one pre-deploy step.
-
 Also rejected: adding the Avalon API hosts to the Terminal sandbox network
 baseline alongside the Rally ones. A sandbox reaches Avalon at whatever
-`PUBLIC_API_BASE_URL` names, which is Rally in both regions, so the old hosts
+`PUBLIC_API_BASE_URL` names, which is Rally in configured deployments, so the old hosts
 would have been unreachable entries — and the baseline is bounded by
 `TERMINAL_NETWORK_MAX_TARGETS`, so each one would have taken a slot away from
 every workspace's own domain allowance. That is a user-visible limit being
 spent on nothing.
-
-**Consequences:** Two zones must stay deployable together: the Cloudflare API
-token needs Zone Read and Workers Routes on both, and dropping either zone's
-routes 404s addresses that are already indexed and unfurled. `eu.api.rallywith.ai`
-cannot be deployed before its certificate is active. Rally DKIM/SPF must be live
-before the Rally senders are, since Resend verifies the domain rather than the
-address. Provider webhooks remain single-valued and are switched one at a time;
-until each is moved, that provider is still calling the Avalon ingress. Web
-analytics cannot split acquisition by domain while both answer. And
-`downloads.with-avalon.com` is now permanent — every DMG already shipped polls
-it — so it is the one hostname on this list that has no retirement.

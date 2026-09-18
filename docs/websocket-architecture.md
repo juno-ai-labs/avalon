@@ -13,6 +13,14 @@ substream `0` under the automation, dialled through the same broker and the
 same `/socket/conversations/:parentId/:substreamId` route, opened on demand
 by that page rather than proactively, and with no control socket beside it.
 
+The native iOS client is a fourth deployment surface on the same ticketed
+routes, not a mode of this Electron topology. It has no Node broker. Its retain
+set is the navigation stack — workspace, the parent on the stack, the visible
+feed, and Main of that parent — plus presence-free feeds for directory rows
+that stayed on screen for one second, documented in
+[`ios-client.md`](ios-client.md). It does not open the pin/recent/running swarm
+or keep sockets across suspend.
+
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
 short-lived ticket, subprotocol, and server admission contract;
@@ -42,6 +50,8 @@ protocol inside each Durable Object.
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket through the hibernation API. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
+| `apps/ios/Rally/Network/RallySocketPolicy.swift` | iOS retain set: navigation-shaped, not the desktop swarm. |
+| `apps/ios/Rally/Network/RallySocketPool.swift` | Opens and closes iOS `URLSessionWebSocketTask` owners to match that set. |
 
 ## Sidekick library synchronization
 
@@ -51,8 +61,6 @@ rows invalidate the broader library and attachment REST queries alongside detail
 and run queries. This matters when authoring happens in a different window: its
 local query cache cannot invalidate the library's cache. The existing workspace
 push supplies that signal without an additional broadcast channel or polling.
-
-## How it works
 
 ### The topology
 
@@ -79,13 +87,13 @@ routing, or the Worker-to-object hop.
 
 The WorkspaceDO socket stays in Chromium because there is exactly one for the
 active workspace and therefore no swarm to serialize. It supplies the sidebar's
-authoritative directory and the command queue used to send messages. A
-WorkstreamDO control socket supplies complete work-stream metadata. The
-matching SubstreamAgent socket for substream `0` supplies the
-canonical feed snapshot, ordered live events, replay, and older-page responses.
-Neither member of the pair carries message creation: the composer submits a
-command through WorkspaceDO. WorkspaceDO's explicit foreground signal is the
-sole source for current-client viewer presence; socket warmth is not attention.
+authoritative directory and presence. A WorkstreamDO control socket supplies
+complete work-stream metadata. The matching SubstreamAgent socket for the
+addressed conversation supplies the canonical feed snapshot, ordered live
+events, replay, older-page responses, and the private receipts for message and
+conversation commands sent directly by the composer. WorkspaceDO's explicit
+foreground signal is the sole source for current-client viewer presence; socket
+warmth is not attention.
 
 An automation's conversation rides the same broker and the same route kind as
 a work stream's feed, addressed by the automation id as the parent, but not the
@@ -207,8 +215,22 @@ The control and feed state machines reconnect independently with their existing
 jittered backoff. A failure in one does not delay the other's ticket request or
 handshake. Snapshot waterlines and replay rules decide whether a reconnected
 frame advances cached state; transport warmth is never treated as authority.
+Every workspace, control, and feed attempt acquires its ticket through the same
+bounded request primitive. Workspace, control, and an already-open feed use the
+existing 10-second request boundary; a feed still opening uses that attempt's
+existing 10/20/40-second whole-open budget so ticket acquisition cannot defeat
+the cold-open ladder. The boundary rejects its caller and aborts the underlying
+fetch independently: shared credential renewal or a transport that does not
+settle after cancellation therefore cannot leave the loop's in-flight guard set
+forever. Timeout is a retryable `ticket_timeout`, distinct from a ticket response
+that fails normally and from an offline transition. Owner teardown and an
+explicit offline transition abort the same attempt immediately. Transcription
+remains outside this persistent-socket boundary because capture owns that
+short-lived request's cancellation and timeout lifecycle.
 
-Normal route changes do not destroy a retained owner. A full main-frame
+Normal route changes do not destroy a retained owner. Each socket owner also
+retains its query entries while mounted, independently of screen observers. The [local-cache contract](local-cache.md#a-live-subscription-owns-its-in-memory-state)
+owns those lifetimes and explicit eviction. A full main-frame
 navigation, reload, or window close calls `closeOwner` with the renderer's
 `webContents` ID and terminates every Node socket belonging to it. A renderer
 crash performs the same owner teardown. An ordinary socket close removes that
@@ -217,6 +239,14 @@ oversized UTF-8 reasons are rejected before IPC and a native close exception
 terminates and forgets the affected socket.
 Server access revocation remains terminal and prevents the affected state
 machine from reconnecting.
+
+Application foreground is also a recovery edge for an unresolved conversation
+command. The renderer listens to main's application-focus signal rather than
+document visibility alone, because a visible window can lose application focus
+without becoming hidden. An already-closed feed bypasses its throttled reconnect
+timer immediately. An open feed replays the unresolved operation IDs once more,
+requests a single-flight canonical snapshot, and probes liveness without
+replacing an older pong deadline. Feeds with no pending command do nothing.
 
 ### Best practices for extending proactive coverage
 
@@ -389,7 +419,6 @@ move WorkspaceDO or dictation transport into Node.
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
-
 The broker tests use a socket factory double because they prove Electron
 ownership and event routing, not workerd behavior. Upgrade construction and
 hibernation assertions belong in `apps/api/test-workers/`; Node's `Response`
@@ -414,10 +443,10 @@ after a send, not to verify socket or WorkspaceDO command admission.
 ## Regional impact
 
 The renderer obtains ticket URLs from the workspace's existing regional API
-client, and main accepts only origins derived from the configured Global and EU
+client, and main accepts only origins derived from the configured configured deployments
 API base URLs. The broker neither chooses nor changes a workspace's region. The
 regional Worker verifies the ticket's region before resolving the Durable Object
-binding, and no socket payload crosses between Global and EU.
+binding, and no socket payload crosses between configured deployments.
 
 ## Security and trust model
 
@@ -478,6 +507,129 @@ explicit product states rather than speculative guesses.
 
 ## Changelog
 
+### 2026-09-17 — Foreground recovery reconciles unresolved commands
+
+**What changed:** When Electron returns to the foreground with a substream
+command still awaiting its private receipt, that feed replays the command with
+the same operation ID, requests one canonical snapshot, and immediately probes
+the current socket with the existing heartbeat deadline. Feeds without an
+unresolved command do no foreground reconciliation work.
+
+**Why:** Production timing probes proved that messages and assistant replies
+could be durably committed while a background-throttled renderer remained on
+`Sending message`. The socket was owned by Electron main, but protocol receipts
+and transcript cache updates were processed in the renderer, so a delayed or
+lost renderer turn could strand the optimistic message until the window was
+raised even though the server path had completed normally.
+
+**Considered and rejected:** Disabling Electron background throttling globally
+would keep every hidden renderer running and pay a continuous CPU and power cost
+for a recovery needed only while a command is unresolved. Replaying under a new
+operation ID was also rejected because it would turn recovery into a duplicate
+mutation rather than reuse the room's existing idempotency boundary.
+
+**Consequences:** Foreground recovery is bounded to the affected feed and uses
+the same command, snapshot, and heartbeat primitives as reconnect recovery. A
+healthy socket settles from its replayed private receipt; an unresponsive socket
+closes after the existing pong deadline and reconnects through the normal
+cursor-based path.
+
+Shipped in [#818](https://github.com/juno-ai-labs/avalon/pull/818).
+
+### 2026-09-15 — Socket ticket acquisition cannot strand reconnect loops
+
+**What changed:** Workspace, WorkstreamDO control, and SubstreamAgent feed
+connections now acquire tickets through one attempt-scoped request boundary.
+It settles the caller after the owning attempt's existing budget even if the
+underlying fetch or shared credential renewal remains pending, aborts on offline
+and owner teardown, and reports `ticket_timeout` separately before the ordinary
+jittered retry begins. Cold feed opens retain their 10/20/40-second whole-open
+ladder; workspace, control, and already-open feed attempts use ten seconds.
+
+**Why:** An API deployment closed the live socket swarm while several ticket
+requests were starting. A feed that had opened previously did not arm the
+bounded cold-opening timer, and workspace and control tickets had no deadline
+at all. Their raw promises never settled, so each loop kept its `connecting` or
+`ticketRequestInFlight` guard forever. The active transcript then could not use
+its live feed to page beyond the latest opening range even though every
+canonical turn remained stored.
+
+**Considered and rejected:** Extending only the feed's cold-opening timer would
+leave workspace and control vulnerable and would still couple ticket recovery
+to whether a transcript had opened before. Relying only on `AbortController`
+was also rejected because credential renewal can outlive fetch cancellation;
+the owning caller must settle independently. A new timeout value was
+unnecessary: the first work-stream opening already established ten seconds as
+the request-and-connection budget.
+
+**Consequences:** Every ticket API accepts cancellation, every socket owner
+aborts its pending ticket on offline and teardown, and telemetry can distinguish
+a hung request from an ordinary rejected ticket. Adding another persistent
+socket kind requires using the same bounded acquisition primitive rather than
+awaiting its ticket API directly. Transcription remains deliberately outside
+the boundary because capture owns its short-lived request's cancellation and
+timeout lifecycle.
+
+Shipped in the pull request for this change.
+
+### 2026-09-14 — iOS retains a navigation-shaped set, not the desktop swarm
+
+**What changed:** The native iOS client now owns a retain set: one workspace
+socket, one control socket for the parent on the stack, the visible feed, and
+Main of that parent while a child or the substream list is showing, plus
+presence-free feeds for directory rows that stayed on screen for one second
+(the same delay as desktop hover). Child rows on the substream list warm as
+soon as they appear. Sidekick chats stay on-demand until their
+row warms. Tickets stay single-use; send reuses a live connection;
+foreground remints only dropped sockets in that set. Later directory pages
+are `list_workstreams` on the workspace socket; subscribe overlays page one
+instead of truncating a scrolled list. Every iOS live connection is one
+`RallyTicketedSocket`: the ticket is a subprotocol, the handshake Origin is
+`app://rallywithai`, `subscribe` waits for
+open, and a retain pass does not cancel that handshake. Directory pages and
+the conversation snapshot arrive on those sockets, not as REST boots. A
+dropped control stream without metadata still delivers an empty child list
+once. Older history is a fenced `load_transcript_range` (snapshot id, half-open
+sequence range, event waterline). The iOS feed asks only after the
+bottom-anchored list has settled and the reader is on the oldest edge. A ticket already minted for a feed that is
+still in the retain set is used, even when a later retain pass asked for
+presence.
+
+**Why:** Switching chats on a phone is popping and pushing the stack, not
+hovering a sidebar of pins. Copying Electron's pin/recent/running swarm would
+hold sockets `URLSessionWebSocketTask` cannot keep across suspend, for rows
+the phone does not show at once. Reminting on every send was spending a
+one-use ticket to re-handshake an open feed. Replacing the directory with
+subscribe's first page threw away rows already paged; a button to load older
+messages was a second paging control next to the terminal row. Applying the
+retain set once per directory-row disappear cancelled the control socket
+before metadata. Sending `subscribe` before the handshake completed dropped
+the frame, then marked the socket connected so the next retain pass skipped
+it, and the child list never left its wait. A REST work-stream list or Main
+boot next to the same subscribe payload is two producers for one field.
+`URLSession` omits `Origin` on the upgrade; without `app://rallywithai` the
+Worker refuses the handshake before it reads the ticket, and the directory
+never paints. A `load_transcript_range` that named only `beforeSequence`
+never matched the room's fenced request, so older history never arrived.
+Asking that range because the first layout reported offset 0, then scrolling
+to the newest row on every tail change, emptied the LazyVStack between jumps.
+Throwing away a ticket because a tap upgraded presence during mint made the
+first open a second handshake.
+
+**Considered and rejected:** Porting the five-minute retain TTL, the
+pin/recent/running selection, or a guessed extra-socket ceiling. The
+navigation stack plus the visible row already names the set. A defensive cap
+would be a number this change does not own. Also rejected: a REST directory
+page or Main transcript boot beside the same subscribe payload, including as
+a fallback when the handshake 403s for a missing Origin. Also rejected:
+dropping a minted conversation ticket because a later retain pass asked for
+presence on the same feed. Also rejected: paging older transcript from a
+LazyVStack index-0 sentinel on a bottom-anchored iOS feed.
+
+**Consequences:** Desktop pool policy is unchanged. An iOS change to "keep
+more feeds" has to go through the same proactive-coverage tests in this
+document: name the interaction, select from memory, no guessed swarm.
+
 ### 2026-09-10 — The feed hook paints from the local cache and treats a seed as no opening
 
 **What changed:** `useWorkstreamSocket` reads the conversation's row from the
@@ -522,7 +674,6 @@ while successful completion promotes the same sockets. The speculative flag does
 not omit transcript data: it suppresses viewing effects, so background freshness
 still uses the normal snapshot path.
 
-
 ### 2026-09-09 — Overlap cold-open workspace and conversation admission
 
 Workspace details previously blocked the workspace socket, and the shell then
@@ -535,7 +686,6 @@ A mounted feed consumer, rather than a route alone, now admits viewing, so an
 opening deep link cannot mark unread work viewed behind a loading/onboarding
 screen. Account/workspace changes still tear down the complete connection scope.
 
-
 ### 2026-09-08 — Ignore protocol additions at every receive boundary
 
 Unknown event types are no-ops on workspace, control, conversation, and dictation
@@ -543,7 +693,6 @@ streams. The shared receive parser strips additive fields while preserving known
 field validation; outgoing and stored schemas remain strict. Ticket URLs and
 broker handshakes discard query configuration, so a new metadata capability can
 no longer prevent the entire connection from opening. Appearance is unconditional.
-
 
 ### 2026-09-08 — Refresh Sidekick surfaces through workspace synchronization
 

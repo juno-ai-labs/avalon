@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { notifyOps, renderOpsNotification } from "../src/observability/ops-slack-notifier";
@@ -177,7 +178,7 @@ describe("ops Slack notifier", () => {
   });
 
   it("bounds every field and escapes Slack markup, so no value can ping or link", () => {
-    const text = renderOpsNotification("eu", {
+    const text = renderOpsNotification("enterprise", {
       event: "slack_ingress_job_exhausted",
       summary: "Given up <!channel>.",
       fields: { code: "x".repeat(1_000), detail: "<@U123> & <https://example.com|here>" },
@@ -188,7 +189,7 @@ describe("ops Slack notifier", () => {
     expect(text).toContain("Given up &lt;!channel&gt;.");
     expect(text).toContain("• detail: &lt;@U123&gt; &amp; &lt;https://example.com|here&gt;");
     expect(text).not.toMatch(/<[!@]/u);
-    expect(text.startsWith(":rotating_light: *[eu]* `slack_ingress_job_exhausted`")).toBe(true);
+    expect(text.startsWith(":rotating_light: *[enterprise]* `slack_ingress_job_exhausted`")).toBe(true);
   });
 
   it("keeps every value on its own line, whatever whitespace it carried", () => {

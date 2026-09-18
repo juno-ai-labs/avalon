@@ -1,3 +1,4 @@
+import regions from '../../config/regions.json';
 /**
  * Remote-development-only Durable Object ID classifier.
  *
@@ -10,11 +11,8 @@ export default {
   async fetch(request, environment) {
     if (request.method !== 'POST') return new Response('method_not_allowed', { status: 405 });
     const input = await request.json();
-    const namespace = input.region === 'global'
-      ? environment.GLOBAL_SUBSTREAM_AGENTS
-      : input.region === 'eu'
-        ? environment.EU_SUBSTREAM_AGENTS
-        : null;
+    const region = regions[input.region];
+    const namespace = region && environment[`${region.bindingPrefix}_SUBSTREAM_AGENTS`];
     if (!namespace) {
       return new Response('invalid_request', { status: 400 });
     }
@@ -22,7 +20,7 @@ export default {
       if (!Array.isArray(input.objectNames)) {
         return new Response('invalid_request', { status: 400 });
       }
-      const regionalNamespace = namespace.jurisdiction(input.region === 'global' ? 'us' : 'eu');
+      const regionalNamespace = namespace.jurisdiction(region.jurisdiction);
       return Response.json({
         objects: input.objectNames.map((objectName) => {
           try {

@@ -1,7 +1,7 @@
+const PUSH_NOTIFICATIONS_FLAG_KEY = "push-notifications-enabled";
 import type { ClientFeatureFlags, ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
 import { resolveDigestsEnabled } from "./digest-flags";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
@@ -17,12 +17,8 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * been given yet has nothing it must do, so an unbound binding, an unreachable
  * Flagship, a missing flag, and a mistyped value all resolve to off.
  *
- * Two fields do not follow that rule, for two different reasons:
+ * Digests deliberately keep their existing default:
  *
- * - `controlTowerRefreshSeconds` is a cadence, not a feature — a recording
- *   that never refreshes is not a safe answer to an outage. Resolved by
- *   `control-tower-flags.ts`, which fails to a checked-in default the way a
- *   model flag does.
  * - `digestsEnabled` is a feature, but one that already defaults on for every
  *   existing person — hiding the Digest settings section is what an operator
  *   opts someone *into*, not the safe answer to an outage. Resolved by
@@ -32,7 +28,7 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  *   workspace" check combined with this one in application code. See
  *   `docs/digests.md#the-run`.
  *
- * Both are served here because this is the one route a client asks for
+ * The value is served here because this is the one route a client asks for
  * server-decided values. Anything else added with no safe "off" belongs in a
  * module of its own for the same reason, and is served from here the same way.
  *
@@ -59,18 +55,12 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * did not exist in Flagship — off for everyone, with no operator able to turn
  * it on and nothing failing to say so.
  *
- * The two keys below that carry no annotation are the two that deliberately
- * sit outside Ace, so the annotation also reads as the answer to "does an
- * operator manage this?" `developer-settings` is a per-device staff toggle
- * driven through Wrangler; `control-tower-refresh-seconds`, over in
- * `control-tower-flags.ts`, is a cadence rather than a Boolean. Both are
- * covered by an allowlist in Ace's `protocol.test.ts`, which fails on any
- * *other* served key that opts out this way.
+ * `developer-settings` deliberately sits outside Ace as a per-device staff
+ * toggle driven through Wrangler. Ace's protocol test allowlists that key.
  */
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
-export const MEETING_RECORDING_FLAG_KEY: ProductFeatureFlagKey = "meeting-recording-enabled";
 export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
 export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
 export const LIVE_ARTIFACTS_FLAG_KEY: ProductFeatureFlagKey = "live-artifacts-enabled";
@@ -181,15 +171,13 @@ export async function resolveClientFeatureFlagsForSubject(
   };
   const [
     developerSettings,
-    meetingRecordingEnabled,
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
-    controlTowerRefreshSeconds,
+    pushNotificationsEnabled,
   ] = await Promise.all([
     resolveBooleanClientFlag(env, subject, DEVELOPER_SETTINGS_FLAG_KEY, context),
-    resolveBooleanClientFlag(env, subject, MEETING_RECORDING_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, SUGGESTED_WORK_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, MULTIPLE_WORKSPACES_FLAG_KEY, context),
     resolveBooleanClientFlag(env, subject, LIVE_ARTIFACTS_FLAG_KEY, context),
@@ -202,23 +190,21 @@ export async function resolveClientFeatureFlagsForSubject(
     subject.workspaceId
       ? resolveDigestsEnabled(env, { userId: subject.userId, workspaceId: subject.workspaceId })
       : Promise.resolve(true),
-    // Resolved through its own module: a cadence fails to a working default
-    // rather than to off. It reuses this request's loaded attributes through
-    // the loader's isolate cache rather than being handed `context`, so both
-    // callers of that resolver — this route and the meeting-notes generator —
-    // describe the subject identically.
-    resolveControlTowerRefreshSeconds(env, {
-      userId: subject.userId,
-      ...(subject.workspaceId ? { workspaceId: subject.workspaceId } : {}),
-    }),
+    resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, context),
   ]);
   return {
     developerSettings,
-    meetingRecordingEnabled,
     suggestedWorkEnabled,
     multipleWorkspacesEnabled,
     liveArtifactsEnabled,
     digestsEnabled,
-    controlTowerRefreshSeconds,
+    pushNotificationsEnabled,
   };
+}
+
+export async function resolvePushNotificationsEnabled(env: Env, subject: ClientFeatureFlagSubject): Promise<boolean> {
+  const attributes = await loadFlagTargetingAttributes(env, subject);
+  return resolveBooleanClientFlag(env, subject, PUSH_NOTIFICATIONS_FLAG_KEY, {
+    ...attributes, region: env.AVALON_REGION, appEnv: env.APP_ENV, ...subject,
+  });
 }

@@ -29,8 +29,6 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
 | `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
-## How it works
-
 ### Loading and allocation
 
 `rally:terminal` is a built-in deferred plugin. Bind can discover it without
@@ -229,10 +227,92 @@ The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
-observed provider state after ambiguous calls. Before stop
-or deletion Rally saves a bounded Git diff (or a summary when the diff is too
-large) as a generated resource. Filesystem archives are not copied to R2; after
-expiry a participant explicitly starts fresh and the next tool gets a new root.
+observed provider state after ambiguous calls.
+
+**Daytona owns provider state; Rally owns identity, authority, leases, and
+retention intent.** Acquisition reads metadata before reusing the recorded
+sandbox. A stale `running` row over a Daytona archive is restored with `start`,
+preserving the sandbox ID, generation, and filesystem.
+
+| Provider observation | Acquisition action |
+| --- | --- |
+| Running | Reuse and refresh Rally's retention deadlines. |
+| Stopped or archived | Start the same sandbox; Daytona restores archived files. |
+| Error with `recoverable: true` | Recover the same sandbox from Daytona's backup. |
+| Error with no recoverability verdict | Preserve the identity and return unavailable. |
+| Explicitly unrecoverable error or explicit deleted state | Confirm deletion, then replace the generation. |
+| Unexpected metadata 404 | Preserve the ID and generation; return unavailable and reconcile again. |
+| Transitional or unknown | Preserve the identity and retry after the transition. |
+
+A start or recovery timeout does not establish loss. Acquisition reads metadata
+again and accepts a completed start, waits out a transition, or replaces only
+when the provider explicitly establishes loss. Failed deletion does not release
+the old generation while the sandbox still exists. Authority changes remain an
+independent reason to replace: the same files cannot cross a principal or
+resource-visibility boundary.
+
+`observeTerminalSandbox`, `stopTerminalSandbox`, and `deleteTerminalSandbox`
+share the metadata boundary across acquisition and task cleanup. A runner,
+command, file, or session `404` is not sandbox absence. Only the sandbox metadata
+lookup records observed absence; unexpected absence alone cannot retire the
+binding. An archived sandbox has no runner but retains its filesystem. A failed
+explicit deletion may still reconcile against metadata absence, because the
+caller already chose deletion; an incidental stop failure has no such authority.
+
+Scheduled lifecycle work also reads metadata before preservation or mutation.
+If Daytona already archived the sandbox, Rally records `archived` without
+attempting a toolbox command. Daytona SDK `archive()` only accepts the operation;
+Rally retains the due archive deadline on its last stable `stopped` intent
+and uses the existing scheduled retry until metadata confirms completion, even
+when an accepted archive request still reads back as stopped. Expiry recovers
+a recoverable failed sandbox before attempting final-diff preservation. SDK
+`start()` and `recover()` wait for provider lifecycle state, which is insufficient
+proof of toolbox availability. Restore and recovery run a no-op command and
+download `/etc/hostname` before admitting work. Both read-only probes must
+succeed. Healthy running acquisitions do not preflight the toolbox: the first
+requested operation establishes its own availability, and an operation failure
+preserves the sandbox binding. File absence comes from a successful filesystem
+inspection, never a download-endpoint 404. Failed restore probes return `sandbox_unavailable`;
+no user command is replayed and no fixed readiness sleep is imposed. The two
+extra toolbox requests apply only to restore/recovery, including adopting a
+running provider sandbox when Rally's intent is still stopped. Scheduled
+cleanup likewise retains unexpected missing metadata before expiry and restores
+its stable due state so the existing scheduler can retry.
+These semantics were verified against the installed SDK 0.204.0 and Daytona's
+[sandbox lifecycle](https://www.daytona.io/docs/sandboxes) and
+[recovery guidance](https://www.daytona.io/docs/en/troubleshooting/).
+
+Provider state is persisted separately in `terminal_provider_observation`.
+Acquisition, signed Daytona events, and WorkspaceDO's existing Terminal alarm
+all use `refreshTerminalProviderObservation`. Each read reserves an object-owned
+request token before calling Daytona; settlement checks that token, sandbox ID,
+and generation. Polling never takes a mutation lease or extends retention. A
+failed lookup preserves the last successful observation and records
+`provider_unavailable`; it does not record a lost sandbox.
+
+The directory's next Terminal deadline includes the observation deadline, even
+for archived sandboxes and active runs. Refresh is scheduled every sixty seconds,
+matching the existing held-sandbox scheduler cadence. This is an eventual view:
+provider latency, alarm retries, and directory delivery can add delay. The state
+API exposes `providerObservation` with `observedAt`, `nextObserveAt`, recovery
+verdict, and error code; its existing `state` field remains Rally's lifecycle
+intent. Callers must not present the intent as a fresh Daytona observation.
+
+`POST /ingest/daytona` verifies Svix signatures against the raw body and the
+standard five-minute replay window, then checks the configured organization.
+Events only trigger metadata readback; their state and timestamp do not overwrite
+storage. Provider labels route to an active workspace in the receiving region,
+and the current sandbox ID/generation must match. Each configured regional endpoint can
+subscribe to the shared organization; Global is currently the only deployment. Duplicate and out-of-order delivery is
+safe. An already-deleted sandbox has no routing labels to read, so its owning
+alarm detects absence; there is deliberately no second ownership database.
+Daytona documents `sandbox.created` and `sandbox.state.updated`, not a separate
+sandbox-deleted subscription.
+
+Before stopping a running sandbox Rally captures a bounded Git diff where
+possible. It cannot capture a fresh diff from an archive without restoring it.
+Daytona retains the full archived filesystem; published resources are separate
+Rally objects, and unpublished files must not be presumed expendable.
 
 A participant stop aborts the live harness observation, not a Daytona process
 out of band. The still-owning attempt first settles the in-flight Terminal
@@ -458,6 +538,8 @@ workspace policy into WorkspaceDO:
   for the revisioned preview/confirm/read-back protocol and full history;
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state;
+- `terminal_provider_observation` for generation-fenced provider readback, freshness,
+  errors, and the next observation deadline (SubstreamAgent schema 57);
 - `terminal_tasks` for durable command submission and one final result;
 - `terminal_imported_resources` for generation-scoped deterministic imports;
 - `terminal_repository` for the exact GitHub repository, refs, and
@@ -478,9 +560,8 @@ reconciliation facts and never authorize a request.
 
 All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
-owning Rally region. Daytona is one shared environment: both the Global and EU
-Workers are `supported` on `DAYTONA_TARGET=us` and the same `rally-terminal-1`
-snapshot. Sandbox files therefore run on that one Daytona fleet regardless of
+owning Rally region. Daytona is one shared environment: the configured Global Worker is
+`supported` on `DAYTONA_TARGET=us` and the `rally-terminal-1` snapshot. Sandbox files therefore run on that one Daytona fleet regardless of
 the Rally workspace region. That is a subprocessor exception, not a Rally
 cross-region bridge — no Terminal D1, R2, or GitHub-token record falls back to
 Global.
@@ -515,7 +596,7 @@ recovery ledger.
 
 ## Operations
 
-A sandbox's warm-stop, archive, and expiry deadlines are workspace alarm
+A sandbox's provider-observation, warm-stop, archive, and expiry deadlines are workspace alarm
 entries derived from `next_terminal_action_at` in the workspace directory
 ([`durable-object-alarms.md`](durable-object-alarms.md)). When the pass finds
 the sandbox held by a live run it is re-checked a minute later; after a
@@ -552,7 +633,7 @@ reconciliation.
 
 ### The owned snapshot and its weekly rebuild
 
-Both regions create sandboxes from `rally-terminal-1`, built by
+Configured deployments create sandboxes from `rally-terminal-1`, built by
 `pnpm --filter @rally/api terminal:build-snapshot` from the base image pinned
 as `TERMINAL_SNAPSHOT_BASE_IMAGE` in `snapshot-manifest.ts`
 (`daytonaio/sandbox:0.9.0`; the environment variable of the same name
@@ -639,7 +720,8 @@ utility additionally supplies one fixed `operation_detail`: `path.resolve`,
 `file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
 `file.temp_cleanup`, `resource.publish.inspect_before`,
 `resource.publish.inspect_after`, `resource.import.inspect`,
-`resource.import.finalize`, `repository.bootstrap`, `instructions.probe`, one
+`resource.import.stage`, `resource.import.finalize`, `repository.bootstrap`,
+`instructions.probe`, one
 of the six `repository.publish.*` inspection phases, `lifecycle.final_diff`,
 `lifecycle.backup`, or `lifecycle.backup_cleanup`.
 
@@ -689,6 +771,140 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-09-18 — Terminal's tools take the names the model already knows
+
+**What changed:** `rally:terminal` declares an empty short wire name, so its
+nine tools reach the model as `read_file`, `edit_file`, `write_file`,
+`apply_patch`, `run_command`, `checkout_repository`, `import_resource`,
+`publish_resource`, and `publish_branch_and_pr`. The plugin system message, the
+tool descriptions, and every runtime remediation string that names a tool
+(`runtime.ts`, `tools.ts`, `repository.ts`, the resident-context instruction
+blocks, and the attachment contracts) were updated with it. The tools themselves,
+their capabilities, modes, idempotency and timeouts are untouched.
+
+**Why:** `read_file` and `run_command` are among the most heavily represented
+tool names in any model's pretraining, and `terminal_` pushed all nine off that
+vocabulary for a namespace that was distinguishing them from nothing. This is
+the third design test in `docs/agent-tools.md` — does every name match what the
+model already learned — and Terminal was the plugin failing it hardest.
+
+**Considered and rejected:** Widening Bind's duplicate-wire-name check from core
+plugins to every plugin as part of this. It was proposed and explicitly declined
+in favour of the smaller change, so read the consequence below as a known,
+accepted gap rather than an oversight.
+
+**Consequences:** Terminal is the first *loadable* plugin with no prefix, and
+Bind's duplicate-wire-name guard (`bind-runtime.ts`) covers core plugins only.
+Two loadable plugins advertising the same wire name resolve to whichever sorts
+first by canonical id, with nothing raised — so `read_file`, `run_command` and
+the other seven are now a standing claim, and the next plugin that wants one has
+no mechanism stopping it from taking it. Check by hand, or widen that guard when
+a second unprefixed loadable plugin is proposed. Separately, these nine tools had
+no `AVALON_TOOL_PROSE` entry and were rendering in the transcript as the
+humanized wire name ("Terminal run command"); they have real prose now, keyed
+under both spellings, because a durable tool event stores the name it was called
+under and old and new rows for one action would otherwise read differently in the
+same feed.
+
+### 2026-09-14 — Preserve Daytona identity through archive and error recovery
+
+**What changed:** Provider snapshots carry Daytona's recovery verdict, the
+provider Worker exposes `recoverSandbox`, and acquisition recovers recoverable
+errors without replacing the generation. Shared stop/delete reconciliation
+reconciles explicit deletion against metadata. Unexpected metadata absence
+preserves the binding, and restore/recovery independently check command and
+file readiness before admitting work. Healthy acquisitions use the requested
+operation itself to establish availability, avoiding two extra requests per run. Scheduled cleanup adopts provider
+archival and confirms asynchronous archival before recording completion.
+Provider observation now has its own persisted ordering and freshness, shared by
+acquisition, signed webhook readback, and periodic workspace scheduling. The setup
+command provisions Svix through Daytona API-key authentication and seeds refresh
+for existing provider sandboxes. Endpoint upserts explicitly carry their UID
+and subsequent secret/readback calls use the returned endpoint ID; Svix does
+not assign a path UID to an omitted body field.
+
+**Why:** PR #740 restored archived sandboxes correctly but equated every error
+with permanent loss. Its replacement path could delete a recoverable filesystem
+and abandon an identity after failed deletion. Existing cleanup also treated a
+runner `404` as sandbox deletion and trusted archive submission as completion.
+Retention deadlines alone left the internal view stale between tool calls; an
+archived sandbox could remain labelled running for weeks. Live archive tests
+also reproduced toolbox 404s while metadata remained 200, including approximately
+29 seconds after a successful start. A fresh SDK object showed the same failure;
+replacing the workspace or adding a guessed sleep would not model readiness.
+
+**Considered and rejected:** Reverting the whole PR would remove necessary
+provider read-back and independent site import support. Adding another retry
+loop or copying archived files to Rally storage would duplicate Daytona's own
+lifecycle instead of honoring its recovery and persistence contract. A successful start response is not a
+substitute for checking both command and file availability during restore.
+Preflighting every healthy acquisition was also rejected: it adds two sequential
+round trips when the requested operation can establish its own availability.
+
+**Consequences:** Restore and recovery keep the same ID and generation. Unknown
+recoverability fails closed; only an explicit loss verdict permits automatic
+replacement. Provider lookup failures cannot authorize deletion. The original
+2026-09-13 entry below records the superseded all-errors-are-lost policy.
+Webhook setup is a deployment step, and observed state is explicitly timestamped.
+Periodic reconciliation pays one metadata GET per retained sandbox per minute,
+even when no lifecycle transition is due; webhooks add two GETs (routing then
+ordered readback). We accept this simple polling cost to recover missed events
+without introducing a routing index or a second state machine.
+
+Pull request: [#774](https://github.com/juno-ai-labs/avalon/pull/774).
+
+### 2026-09-13 — Acquisition asks Daytona what the sandbox is, and replaces one it has lost
+
+**What changed:** `TerminalSandboxCoordinator.acquire` no longer branches on
+`lifecycle_state` for a row that already names a sandbox. It reads the provider
+state back once per acquisition, before any other provider call, and drives from
+that — use `running`, start `stopped` or `archived`, retry everything else, and
+replace a sandbox reported `expired`, `failed`, or absent by bumping the
+generation through `replaceGeneration` and provisioning its successor under the
+same lease. The replacement emits `terminal_sandbox_replaced_after_loss` and a
+`start_fresh` acquisition action. A start that throws re-observes before
+deciding, so a restore still in flight is a retry rather than a discarded
+workspace, and provider failures leave acquisition as a typed
+`sandbox_unavailable` instead of Daytona's own text. `sandboxState` now names
+all twenty-two states the Daytona SDK publishes and answers `unknown` for
+anything it does not, so the mapping's fallback is no longer a verdict.
+
+**Why:** A work stream that published a site could never update it again. The
+row said `running` while Daytona had auto-archived the sandbox, archiving
+releases the runner, and every file and command call answered `404 Sandbox with
+ID … does not have a runner`. Nothing recovered: the raw provider error went to
+the model, which reported a platform outage and advised waiting, and an
+`archived` row has no pending deadline for the lifecycle pass to act on, so the
+dead id survived to the thirty-day expiry. The two schedules were always going
+to diverge — Rally stops at five minutes and archives at sixty, Daytona stops at
+fifteen and archives at sixty on its own clock — and the row was being trusted
+as though only Rally could move the sandbox.
+
+**Considered and rejected:** *Reporting the loss and letting a participant start
+fresh*, which is what the error strings have always said to do — except that
+`startFresh` is behind no route and refuses any state but `expired` or `failed`,
+so the advice named a repair nobody could perform. *Replacing on any failed
+start*, which would discard a workspace for a restore that merely outran its
+own deadline. *Trusting the row and retrying the tool*, which is the behavior
+this replaces.
+
+**What a future change has to respect:** the read-back is one provider GET per
+acquisition — once per harness run, not once per tool, because the run-local
+acquisition cache still holds — it happens before anything else touches the
+provider, and every branch below it decides from the observed state rather than
+the row. **Replacement is entered only from states Daytona reports as
+destroyed or errored.** Review caught this the wrong way round: the state
+mapping collapsed thirteen of Daytona's twenty-two states into `failed`, so a
+tool call landing inside the auto-stop or auto-archive this document describes
+would have deleted the workspace a retry five seconds later would have restored
+— the recovery causing the loss it exists to prevent. A new provider state is
+therefore added to the mapping deliberately or it arrives as `unknown` and
+waits. A replacement is destructive by design: it costs the run its scratch
+files, which is acceptable only because nothing durable lives solely in a
+sandbox. If that ever stops being true — a file the product cannot reconstruct
+from R2, the repository, or the final diff — this path needs a preservation step
+before `replaceGeneration`, not a quieter failure.
 
 ### 2026-09-11 — A work-stream Sidekick publishes into the room that owns it
 
@@ -887,7 +1103,7 @@ system message is asserted verbatim in `terminal-contract.test.ts`, and its
 directory literals are pinned to the exported constants, so a wording change
 edits both and a moved directory fails the test rather than the prompt.
 
-### 2026-09-08 — Both regions create sandboxes from the Rally-owned snapshot
+### 2026-09-08 — Configured deployments create sandboxes from the Rally-owned snapshot
 
 **What changed:** `DAYTONA_TERMINAL_SNAPSHOT` is `rally-terminal-1` in both
 regional Wrangler configs. The snapshot was built by `terminal:build-snapshot`
@@ -934,7 +1150,7 @@ two operations on one sandbox, which the blocking version could never produce.
 The workflow interpolated a
 dispatch input into shell in a job holding the Daytona key, and a pull request
 opened with `GITHUB_TOKEN` runs no CI, which for the one automated change to
-both regions' production config meant merging ungated.
+configured deployments' production config meant merging ungated.
 
 **Considered and rejected:** Landing the branch first and letting the weekly
 rebuild open the adoption pull request: two merges for one outcome, and the
@@ -1167,33 +1383,6 @@ fail-closed; anything added to `TERMINAL_SNAPSHOT_PROBES` must stay independent
 of the others, because they no longer run in a defined order. The probe now
 writes into `/workspace/.rally/tmp`, which the bootstrap already owns and the
 probe already asserts.
-
-### 2026-08-30 — EU Terminal is a supported regional deployment
-
-**What changed:** The EU Worker declares `TERMINAL_REGION_CAPABILITY=supported`
-and keeps `DAYTONA_TARGET=us`, the same Daytona environment Global already
-uses. Onboarding no longer tells people Terminal is unavailable in the
-European Union.
-
-**Why:** EU workspaces were shipping without a sandbox while Global had one.
-Rally operates Daytona as a single environment, not a second regional sandbox
-fleet, so enabling EU Terminal means pointing that Worker at the existing
-`us` target rather than inventing a separate Daytona region.
-
-**Considered and rejected:** Declaring `DAYTONA_TARGET=eu` from Daytona's
-published region list. Rally does not run a separate EU Daytona setting;
-treating the two Rally regions as two Daytona fleets would have advertised a
-target the account does not use. Also rejected was leaving the onboarding
-copy in place after the Worker gate opened: the notice is hardcoded, so it
-would have kept telling people the capability was missing after it was not.
-
-**Consequences:** EU sandbox files run on the same Daytona fleet as Global.
-Rally-owned Terminal rows, resource bytes, and GitHub tokens stay in the EU
-Worker. EU uses the same Daytona project key as Global, set as its own Worker
-secret — Cloudflare cannot copy `DAYTONA_API_KEY` from Global. Runtime still
-degrades to `unsupported` if that EU secret (or another required Daytona
-value) is absent. Settings continues to read availability from the regional
-API rather than from hardcoded copy.
 
 ### 2026-08-29 — The Terminal network policy moves behind typed WorkspaceDO methods
 
@@ -1889,7 +2078,7 @@ caller may repeat only a typed not-committed Terminal operation; receipt
 failures retain conservative
 write guidance; stale cards converge from receipt authority; and latency
 consumers can distinguish provider work from acquisition and total wait. The
-production matrix must still be rerun in both regions after deployment.
+production matrix must still be rerun in configured deployments after deployment.
 
 ### 2026-08-21 — Terminal writes republish the directory deadline again, and policy transitions keep their per-path lease semantics
 

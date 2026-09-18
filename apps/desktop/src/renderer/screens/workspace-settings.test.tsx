@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema } from '@rally/contracts';
@@ -23,6 +24,7 @@ const api = vi.hoisted(() => ({
   updateGitHubRepositoryAccessSettings: vi.fn(),
   getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
+  connectorInstallation: vi.fn(),
   createWebhookConnection: vi.fn(),
   rotateWebhookSecret: vi.fn(),
   createXConnection: vi.fn(),
@@ -53,6 +55,7 @@ const setDebugEnabled = vi.hoisted(() => vi.fn());
 const setMenuBarEnabled = vi.hoisted(() => vi.fn());
 const setLaunchAtLogin = vi.hoisted(() => vi.fn());
 const setProductAnalyticsEnabled = vi.hoisted(() => vi.fn());
+const setReleaseChannel = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const leaveWorkspace = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
@@ -69,10 +72,10 @@ vi.mock('../lib/app-session', () => ({
         appVersion: '0.1.0',
         isPackaged: false,
         platform: 'darwin',
-        api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+        api: { global: 'https://api.rallywith.ai', enterprise: 'https://enterprise.api.rallywith.ai' },
         devAuthEnabled: true,
       },
-      session: { apiBaseUrl: 'https://eu.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' } },
+      session: { apiBaseUrl: 'https://enterprise.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' } },
       leaveWorkspace,
       signOut,
       pendingConnectorOAuth,
@@ -90,6 +93,7 @@ vi.mock('../lib/platform', () => ({
     setMenuBarEnabled,
     setLaunchAtLogin,
     setProductAnalyticsEnabled,
+    setReleaseChannel,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -106,6 +110,7 @@ vi.mock('../lib/platform', () => ({
       };
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' };
@@ -113,7 +118,7 @@ const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Rally Studio',
-  region: 'eu',
+  region: 'enterprise',
   timezone: 'Europe/London',
   currentUser: owner,
 };
@@ -127,7 +132,7 @@ const invitation: WorkspaceInvitation = {
   acceptedAt: null,
   createdAt: '2026-08-01T00:00:00.000Z',
 };
-const inviteUrl = 'https://rallywith.ai/invite/#region=eu&token=private-token-value-long-enough';
+const inviteUrl = 'https://rallywith.ai/invite/#region=enterprise&token=private-token-value-long-enough';
 
 function createTestQueryClient(): QueryClient {
   return new QueryClient({
@@ -217,11 +222,13 @@ function applicationSettings(
   overrides: Partial<DesktopApplicationSettings> = {},
 ): DesktopApplicationSettings {
   return {
+    releaseChannel: 'stable',
+    releaseChannelAvailable: true,
     lockdownMode: false,
     lockdownAvailable: true,
     debugEnabled: false,
     developerSettingsAvailable: true,
-    menuBarEnabled: true,
+    pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
     menuBarAvailable: true,
     menuBarPresent: true,
     launchAtLogin: true,
@@ -331,12 +338,12 @@ describe('Workspace settings', () => {
         capabilities: [],
         status: 'healthy',
       },
-      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
       signingSecret: 'whsec_one-time-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
     api.rotateWebhookSecret.mockResolvedValue({
-      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
       signingSecret: 'whsec_rotated-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
@@ -388,6 +395,7 @@ describe('Workspace settings', () => {
       productAnalyticsEffective: productAnalyticsEnabled,
       nativeCrashRestartRequired: !productAnalyticsEnabled,
     }));
+    setReleaseChannel.mockImplementation(async (releaseChannel: 'stable' | 'faster') => applicationSettings({ releaseChannel }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
       isAutomatic: false,
@@ -442,17 +450,18 @@ describe('Workspace settings', () => {
     renderSettings();
     await screen.findByRole('navigation', { name: 'Settings sections' });
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    fireEvent.change(search, { target: { value: 'Connect workspace' } });
+    fireEvent.change(search, { target: { value: 'Connect for workspace' } });
     expect(document.querySelector('[data-setting-result="provider:google-mail-calendar"]')).toBeNull();
-    fireEvent.change(search, { target: { value: 'Connect only for me' } });
+    fireEvent.change(search, { target: { value: 'Connect for me' } });
     expect(document.querySelector('[data-setting-result="provider:x"]')).toBeNull();
     fireEvent.keyDown(search, { key: 'Escape', isComposing: true });
-    expect(search).toHaveValue('Connect only for me');
+    expect(search).toHaveValue('Connect for me');
     fireEvent.keyDown(search, { key: 'Escape' });
     expect(search).toHaveValue('');
   });
 
   it.each(coreSettingsProvider.entries)('reveals registered setting $key without executing it', async ({ definition }) => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getConnections.mockResolvedValue([
       { id: 'github-one', connectorType: 'github', scope: 'workspace', displayName: 'GitHub One',
         capabilities: [], status: 'healthy', settingsKind: 'github_repository_access' },
@@ -508,7 +517,7 @@ describe('Workspace settings', () => {
     ) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
     openSettingsSection('Workspace');
-    expect(await screen.findByText('Data region', undefined, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     // The destructive review-and-confirm flow is not sitting in the middle of
     // the preferences list, and Workspace does not pay for its read.
     expect(screen.queryByText('Terminal network access')).not.toBeInTheDocument();
@@ -675,7 +684,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const card = (await screen.findByText('Custom MCP server')).closest('article');
-    fireEvent.click(await enabledConnectAction(card!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(card!, 'Connect for workspace'));
     // The labels carry their help text too, so each matcher is anchored on the
     // field's own name rather than the whole string.
     fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'Acme docs' } });
@@ -719,7 +728,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const card = (await screen.findByText('Custom MCP server')).closest('article');
-    fireEvent.click(await enabledConnectAction(card!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(card!, 'Connect for me'));
     fireEvent.change(screen.getByLabelText(/^Name/u), { target: { value: 'My docs' } });
     fireEvent.change(screen.getByLabelText(/^Server URL/u), {
       target: { value: 'https://mcp.acme.test/mcp' },
@@ -1037,7 +1046,7 @@ describe('Workspace settings', () => {
 
     const mailCard = (await screen.findByText('Google Mail + Calendar', undefined, { timeout: 10_000 })).closest('article');
     expect(mailCard).not.toBeNull();
-    expect(within(mailCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
+    expect(within(mailCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
     // The card's name renders from the static provider list, but the button
     // stays disabled until the connector catalog answers — `providerAvailable`
     // is `catalog.data?.includes(...) ?? false`. Clicking before then is a
@@ -1045,7 +1054,7 @@ describe('Workspace settings', () => {
     // "Number of calls: 0" rather than anything naming the real cause. Every
     // other connect click in this file already waits for this; this one did
     // not, and lost the race on a loaded machine.
-    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'google',
       'you',
@@ -1054,7 +1063,7 @@ describe('Workspace settings', () => {
 
     const driveCard = screen.getByText('Google Drive + Docs + Sheets').closest('article');
     expect(driveCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(driveCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(driveCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'google',
       'workspace',
@@ -1069,8 +1078,8 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    const personalButton = await enabledConnectAction(driveCard!, 'Connect only for me');
-    const workspaceButton = await enabledConnectAction(driveCard!, 'Connect workspace');
+    const personalButton = await enabledConnectAction(driveCard!, 'Connect for me');
+    const workspaceButton = await enabledConnectAction(driveCard!, 'Connect for workspace');
 
     fireEvent.focus(personalButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1101,9 +1110,9 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect workspace' });
+    const workspaceButton = within(driveCard!).getByRole('button', { name: 'Connect for workspace' });
     await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
-    expect(workspaceButton).toHaveAccessibleName('Connect workspace');
+    expect(workspaceButton).toHaveAccessibleName('Connect for workspace');
 
     fireEvent.focus(workspaceButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1118,14 +1127,14 @@ describe('Workspace settings', () => {
     const notionCard = (await screen.findByText('Notion')).closest('article');
     expect(notionCard).not.toBeNull();
     expect(screen.getByText(/workspace automations use only the connections explicitly bound to them/iu)).toBeVisible();
-    const personalButton = await enabledConnectAction(notionCard!, 'Connect only for me');
+    const personalButton = await enabledConnectAction(notionCard!, 'Connect for me');
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'notion',
       'you',
       ['notion.personal.mcp'],
     ));
-    const workspaceButton = await enabledConnectAction(notionCard!, 'Connect workspace');
+    const workspaceButton = await enabledConnectAction(notionCard!, 'Connect for workspace');
     fireEvent.click(workspaceButton);
 
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
@@ -1148,10 +1157,10 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
-    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
 
     await waitFor(() => expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43)));
-    await enabledConnectAction(mailCard!, 'Connect only for me');
+    await enabledConnectAction(mailCard!, 'Connect for me');
     expect(screen.queryByText('Google authorization was cancelled.')).not.toBeInTheDocument();
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
@@ -1280,7 +1289,7 @@ describe('Workspace settings', () => {
     openSettingsSection('Connections');
 
     const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
-    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
 
     expect(await within(mailCard!).findByText('Waiting…')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Refresh Google · adam@example.com' }))
@@ -1293,14 +1302,14 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'linear',
       'you',
       ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
     ));
 
-    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(linearCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'linear',
       'workspace',
@@ -1323,14 +1332,14 @@ describe('Workspace settings', () => {
     // the workspace button below already does is needed here too. Without it
     // this click can land on a still-disabled button and go nowhere, which is
     // what it did once under a loaded `pnpm test`.
-    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',
       'you',
       ['slack.personal.mcp'],
     ));
 
-    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(slackCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'slack',
       'workspace',
@@ -1362,14 +1371,14 @@ describe('Workspace settings', () => {
     const granolaCard = (await screen.findByText('Granola')).closest('article');
     expect(granolaCard).not.toBeNull();
 
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for me'));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'granola',
       'you',
       ['granola.personal.read'],
     ));
 
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
 
     const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
     expect(within(dialog).getByRole('heading', { name: 'Generate the key in Granola' })).toBeVisible();
@@ -1387,11 +1396,31 @@ describe('Workspace settings', () => {
 
     const apiKey = `grn_${'a'.repeat(24)}`;
     fireEvent.change(apiKeyInput, { target: { value: apiKey } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect workspace' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
 
-    await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey));
+    await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey, expect.any(String)));
     expect(await screen.findByText('No personal connections yet')).toBeVisible();
     expect(screen.getByText('No workspace connections yet')).toBeVisible();
+  });
+
+  it('opens the existing Granola installation when setup loses its response', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+    const granolaCard = (await screen.findByText('Granola')).closest('article');
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
+    const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
+    api.createGranolaWorkspaceConnection.mockRejectedValue(new Error('Response lost'));
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000018', connectorType: 'granola', scope: 'workspace',
+      displayName: 'Granola workspace events', capabilities: ['granola.workspace.read'], status: 'error',
+    }]);
+    api.connectorInstallation.mockResolvedValue({ installation: null });
+    fireEvent.change(within(dialog).getByLabelText('Workspace API key'), { target: { value: `grn_${'a'.repeat(24)}` } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for workspace' }));
+    await screen.findByRole('dialog', { name: 'Workspace events' });
+    expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000018');
+    expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Manage events for Granola workspace events', hidden: true })).toBeInTheDocument();
   });
 
   it('offers the read-only X connector only at workspace scope', async () => {
@@ -1400,9 +1429,9 @@ describe('Workspace settings', () => {
 
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
-    expect(within(xCard!).queryByRole('button', { name: 'Connect only for me' })).not.toBeInTheDocument();
+    expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
 
-    fireEvent.click(await enabledConnectAction(xCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(xCard!, 'Connect for workspace'));
     await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith(['x.read']));
     expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
   });
@@ -1413,7 +1442,7 @@ describe('Workspace settings', () => {
 
     const webhookCard = (await screen.findByText('Inbound webhook')).closest('article');
     expect(webhookCard).not.toBeNull();
-    fireEvent.click(await enabledConnectAction(webhookCard!, 'Connect only for me'));
+    fireEvent.click(await enabledConnectAction(webhookCard!, 'Connect for me'));
 
     const dialog = await screen.findByRole('dialog', { name: 'Create inbound webhook' });
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Support intake' } });
@@ -1429,7 +1458,7 @@ describe('Workspace settings', () => {
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
     ));
     expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000019',
     );
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveAttribute('type', 'password');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Copy secret' }));
@@ -1446,7 +1475,7 @@ describe('Workspace settings', () => {
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
     expect(within(xCard!).getByText('Unavailable')).toBeVisible();
-    const connect = within(xCard!).getByRole('button', { name: 'Connect workspace' });
+    const connect = within(xCard!).getByRole('button', { name: 'Connect for workspace' });
     expect(connect).toHaveAttribute('aria-disabled', 'true');
     fireEvent.focus(connect);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -1470,8 +1499,8 @@ describe('Workspace settings', () => {
 
     const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
-    expect(within(xCard!).queryByRole('button', { name: 'Connect only for me' })).not.toBeInTheDocument();
-    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect workspace' });
+    expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
+    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect for workspace' });
     await waitFor(() => {
       expect(workspaceButton).toHaveAttribute('aria-disabled', 'true');
     });
@@ -1497,10 +1526,10 @@ describe('Workspace settings', () => {
       const slackCard = (await screen.findByText('Slack')).closest('article');
       expect(slackCard).not.toBeNull();
       await waitFor(() => {
-        expect(within(slackCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled();
+        expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
       });
       expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
-      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
+      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect for workspace' });
       await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
@@ -1523,7 +1552,7 @@ describe('Workspace settings', () => {
 
     const slackCard = (await screen.findByText('Slack')).closest('article');
     expect(slackCard).not.toBeNull();
-    const workspaceButton = await enabledConnectAction(slackCard!, 'Connect workspace');
+    const workspaceButton = await enabledConnectAction(slackCard!, 'Connect for workspace');
     fireEvent.click(workspaceButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'slack',
@@ -1551,8 +1580,8 @@ describe('Workspace settings', () => {
       const linearCard = (await screen.findByText('Linear')).closest('article');
       expect(linearCard).not.toBeNull();
       // The catalog query gates enablement; `findByText` resolves before it.
-      await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled());
-      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect workspace' });
+      await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
+      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect for workspace' });
       await waitFor(() => expect(workspaceButton).toHaveAttribute('aria-disabled', 'true'));
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
@@ -1575,7 +1604,7 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    const workspaceButton = await enabledConnectAction(linearCard!, 'Connect workspace');
+    const workspaceButton = await enabledConnectAction(linearCard!, 'Connect for workspace');
     fireEvent.click(workspaceButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'linear',
@@ -1606,13 +1635,13 @@ describe('Workspace settings', () => {
 
     const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
     expect(driveCard).not.toBeNull();
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' }))
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for workspace' }))
       .toHaveAttribute('aria-disabled', 'true'));
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled());
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
 
     const linearCard = screen.getByText('Linear').closest('article');
     expect(linearCard).not.toBeNull();
-    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for workspace' })).toBeEnabled());
   });
 
   it('lets members connect Linear personally without offering a workspace installation', async () => {
@@ -1621,8 +1650,8 @@ describe('Workspace settings', () => {
 
     const linearCard = (await screen.findByText('Linear')).closest('article');
     expect(linearCard).not.toBeNull();
-    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect only for me' })).toBeEnabled());
-    expect(within(linearCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
+    expect(within(linearCard!).queryByRole('button', { name: 'Connect for workspace' })).not.toBeInTheDocument();
   });
 
   it('does not request tool inventories for disabled connections', async () => {
@@ -1776,17 +1805,17 @@ describe('Workspace settings', () => {
     expect(dialog).toBeVisible();
 
     await act(async () => resolveRotation({
-      endpoint: 'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      endpoint: 'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
       signingSecret: 'whsec_rotated-secret',
       signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     }));
     expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
-      'https://eu.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      'https://enterprise.api.rallywith.ai/ingest/webhook/00000000-0000-7000-8000-000000000099',
     );
     expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveValue('whsec_rotated-secret');
   });
 
-  it('hides connection refresh actions from non-admin members', async () => {
+  it('allows members to refresh their personal connections while hiding workspace controls', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
       connectorType: 'google',
@@ -1808,7 +1837,7 @@ describe('Workspace settings', () => {
 
     expect(await screen.findByText('Google · sam@example.com')).toBeVisible();
     expect(screen.getByText('Linear · Rally')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Refresh Google · sam@example.com' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh Google · sam@example.com' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Delete Linear · Rally' })).not.toBeInTheDocument();
@@ -1841,13 +1870,11 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
 
-  it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
+  it('lets an owner create, copy, and revoke an invite', async () => {
     renderSettings();
     openSettingsSection('Workspace');
 
-    expect(await screen.findByText('Data region', undefined, { timeout: 10_000 })).toBeVisible();
-    expect(screen.getByText('European Union')).toBeVisible();
-    expect(screen.getByText('Locked')).toBeVisible();
+    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Email address' }), {
@@ -1861,7 +1888,7 @@ describe('Workspace settings', () => {
       { timeout: 10_000 },
     );
     expect(await screen.findByText('Invitation emailed', undefined, { timeout: 10_000 })).toBeVisible();
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }, { timeout: 10_000 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy invite link' }, { timeout: 10_000 }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(inviteUrl), { timeout: 10_000 });
 
     fireEvent.click(screen.getByRole('button', { name: `Revoke invitation for ${invitation.email}` }));
@@ -1914,10 +1941,10 @@ describe('Workspace settings', () => {
   it('searches individual settings without switching panes until a result is selected', async () => {
     renderSettings();
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    fireEvent.change(search, { target: { value: 'region' } });
+    fireEvent.change(search, { target: { value: 'organization' } });
     expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Data region Workspace' }));
-    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', 'workspaceRegion'));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace Workspace' }));
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', 'workspaceIdentity'));
     expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
     fireEvent.change(search, { target: { value: 'does not exist' } });
     expect(screen.getByText('No settings found')).toBeVisible();
@@ -1968,7 +1995,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -1994,7 +2021,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2052,13 +2079,25 @@ describe('Workspace settings', () => {
     expect(toggle).toBeChecked();
   });
 
+  it('defaults to Stable and switches this Mac to the Faster update channel', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const channel = await screen.findByRole('combobox', { name: 'Update channel' });
+    expect(channel).toHaveTextContent('Stable');
+    fireEvent.click(channel);
+    fireEvent.click(screen.getByRole('option', { name: /Faster/u }));
+
+    await waitFor(() => expect(setReleaseChannel).toHaveBeenCalledWith('faster'));
+    expect(channel).toHaveTextContent('Faster');
+  });
+
   it('controls product analytics and explains regional crash behavior', async () => {
     renderSettings();
     openSettingsSection('Application');
 
     const toggle = await screen.findByRole('switch', { name: 'Product analytics' });
     expect(toggle).toBeChecked();
-    expect(screen.getByText(/EU telemetry stays in Rally’s EU platform/u)).toBeVisible();
 
     fireEvent.click(toggle);
     await waitFor(() => expect(setProductAnalyticsEnabled).toHaveBeenCalledWith(false));
@@ -2080,7 +2119,7 @@ describe('Workspace settings', () => {
     for (const retired of ['Build', 'Platform', 'Regional API', 'Realtime']) {
       expect(screen.queryByText(retired), retired).not.toBeInTheDocument();
     }
-    expect(screen.queryByText('https://eu.api.rallywith.ai')).not.toBeInTheDocument();
+    expect(screen.queryByText('https://enterprise.api.rallywith.ai')).not.toBeInTheDocument();
   });
 
   it('offers no telemetry inspector in the staff-only Developer section', async () => {
@@ -2107,7 +2146,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: false,
       menuBarPresent: false,
       launchAtLogin: false,
@@ -2134,7 +2173,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: false,
@@ -2156,7 +2195,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: false,
@@ -2175,7 +2214,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       // The write succeeded; creating the item did not.
       menuBarPresent: false,
@@ -2199,7 +2238,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: false,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: false,
       menuBarAvailable: true,
       menuBarPresent: false,
       launchAtLogin: true,
@@ -2218,7 +2257,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: false,
       menuBarPresent: false,
       launchAtLogin: true,
@@ -2257,7 +2296,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2292,7 +2331,7 @@ describe('Workspace settings', () => {
       // reports the effective value, so this reads off however the file reads.
       debugEnabled: false,
       developerSettingsAvailable: false,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2313,7 +2352,7 @@ describe('Workspace settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2325,11 +2364,13 @@ describe('Workspace settings', () => {
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
 
     announceApplicationSettings({
+      releaseChannel: 'stable',
+      releaseChannelAvailable: true,
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: true,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2344,11 +2385,13 @@ describe('Workspace settings', () => {
     // The flag going off takes the section with it, without a reload, and takes
     // the effective preference to off on the way past.
     announceApplicationSettings({
+      releaseChannel: 'stable',
+      releaseChannelAvailable: true,
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2530,7 +2573,7 @@ describe('Closing the settings window with Escape', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2667,7 +2710,7 @@ describe('Closing the settings window with Escape', () => {
     openSettingsSection('Connections');
 
     const granolaCard = (await screen.findByText('Granola')).closest('article');
-    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect workspace'));
+    fireEvent.click(await enabledConnectAction(granolaCard!, 'Connect for workspace'));
     const dialog = await screen.findByRole('dialog', { name: 'Connect Granola workspace' });
 
     // Radix closes the dialog on this keystroke itself. The window listener sees

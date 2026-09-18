@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DRAFT_CACHE_TTL_MS,
@@ -168,17 +169,17 @@ describe('draft cache', () => {
   });
 
   it('clears one regional workspace without touching a same-id workspace in another region', async () => {
-    const euKey = workstreamDraftKey('eu', 'shared-workspace', '1');
+    const enterpriseKey = workstreamDraftKey('enterprise', 'shared-workspace', '1');
     const globalKey = workstreamDraftKey('global', 'shared-workspace', '2');
-    await writeDraftText(euKey, 'leave this one');
+    await writeDraftText(enterpriseKey, 'leave this one');
     await writeDraftText(globalKey, 'keep this one');
-    await cacheAttachment(euKey, 'eu-file', 'eu');
+    await cacheAttachment(enterpriseKey, 'enterprise-file', 'enterprise');
     await cacheAttachment(globalKey, 'global-file', 'global');
 
-    await clearWorkspaceDrafts('eu', 'shared-workspace');
+    await clearWorkspaceDrafts('enterprise', 'shared-workspace');
 
-    expect(await readDraftText(euKey)).toBeNull();
-    expect(await readDraftAttachments(euKey)).toEqual([]);
+    expect(await readDraftText(enterpriseKey)).toBeNull();
+    expect(await readDraftAttachments(enterpriseKey)).toEqual([]);
     expect((await readDraftText(globalKey))?.text).toBe('keep this one');
     expect(await readDraftAttachments(globalKey)).toHaveLength(1);
   });
@@ -194,13 +195,13 @@ describe('draft cache', () => {
     await writeDraftText('new-automation:shared-workspace:draft-one', 'new automation');
     await cacheAttachment('workstream:room-one', 'legacy-file', 'legacy');
 
-    await migrateLegacyDrafts('eu', 'shared-workspace');
+    await migrateLegacyDrafts('enterprise', 'shared-workspace');
 
-    const roomKey = workstreamDraftKey('eu', 'shared-workspace', 'room-one');
+    const roomKey = workstreamDraftKey('enterprise', 'shared-workspace', 'room-one');
     expect((await readDraftText(roomKey))?.text).toBe('existing room');
     expect(await readDraftAttachments(roomKey)).toHaveLength(1);
-    expect((await readDraftText(newWorkstreamDraftKey('eu', 'shared-workspace')))?.text).toBe('new room');
-    expect((await readDraftText(newAutomationDraftKey('eu', 'shared-workspace', 'draft-one')))?.text)
+    expect((await readDraftText(newWorkstreamDraftKey('enterprise', 'shared-workspace')))?.text).toBe('new room');
+    expect((await readDraftText(newAutomationDraftKey('enterprise', 'shared-workspace', 'draft-one')))?.text)
       .toBe('new automation');
     expect(await readDraftText('workstream:room-one')).toBeNull();
     expect(await readDraftAttachments('workstream:room-one')).toEqual([]);

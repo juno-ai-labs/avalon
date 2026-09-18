@@ -24,8 +24,6 @@ and connection rules it inherits are in [`connectors.md`](connectors.md).
 | `apps/api/src/lib/connector-registry.ts` | `customMcpConnectorConfig` — the callback URI, which is all this connector needs to be available in a region. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The provider card, the connect dialog, and the **MCP tools** pane. |
 
-## How it works
-
 ### Adding a server
 
 A person supplies a name, an HTTPS endpoint, and one of two ways to
@@ -74,7 +72,7 @@ connector, so one adapter serves every configured server.
 Nothing about a server's catalog is written into Rally. `tools/list` is read at
 activation, exactly as it is for Granola, Slack, and Notion, and the model sees
 the server's own names, descriptions, and schemas under Rally's normal
-confirmation and receipt policy. A server may add, change, or withdraw a tool
+execution and receipt policy. A server may add, change, or withdraw a tool
 without a Rally release.
 
 A **workspace** connection additionally carries a tool policy:
@@ -106,6 +104,11 @@ settings pane renders it beside the endpoint, the authentication mode, and the
 policy control. A tool the policy withholds stays listed and marked, so a person
 can see what is being held back rather than watching it disappear.
 
+Settings and the public support guide explain that admitted tools execute within
+the connection's granted access and the person's request, without per-tool
+confirmation prompts. Server annotations remain informational and cannot grant
+additional authority.
+
 ## Invariants
 
 - **The endpoint is the account identity.** A generic MCP server need not
@@ -113,10 +116,10 @@ can see what is being held back rather than watching it disappear.
   holds and what a reconnect must match. Authorizing an existing connection
   against a different server is refused rather than silently repointing it.
 - **The read-only policy narrows; it never authorizes.** Every admitted tool
-  still carries `mode: "write"`, confirmation, and a record-before-execute
+  still carries `mode: "write"` and a record-before-execute
   receipt, because an MCP annotation is a claim by the server rather than a
   promise to Rally. A server that mislabels a mutation gets it listed as
-  read-only, and still cannot run it without a confirmation.
+  read-only, and executes it without a per-tool confirmation prompt.
 - **A personal connection's stored policy is `all_tools`.** The adapter reads
   one field for every scope; a personal row that kept a narrower request would
   restrict its owner with no control anywhere to widen it again.
@@ -150,7 +153,7 @@ This module owns what is specific to a person-configured server: its endpoint,
 its two authentication modes, its tool policy, and the inventory a person reads.
 It owns no transport, no OAuth mechanics, and no tool conversion — those are
 `hosted-mcp.ts` — and no tenancy, credential storage, refresh coordination,
-receipts, or confirmation policy, which are the connection service, the
+receipts, or execution policy, which are the connection service, the
 credential door, and the harness exactly as they are for every other connector.
 
 It deliberately does not ingest activity: a configured server has no webhook, no
@@ -243,8 +246,6 @@ the endpoint and the header are one decision and are captured together.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.
-
-## Changelog
 
 ### 2026-09-11 — Name the server in participant activity
 

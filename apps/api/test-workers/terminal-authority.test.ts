@@ -158,7 +158,7 @@ function seedEffect(state: DurableObjectState, effectId: string, runId: string, 
     `INSERT INTO tool_effects (
        effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
        tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json
-     ) VALUES (?, ?, 0, ?, ?, 'terminal_run_command', 'write', 'hash', 'rev', 'admitted', ?, '{}')`,
+     ) VALUES (?, ?, 0, ?, ?, 'run_command', 'write', 'hash', 'rev', 'admitted', ?, '{}')`,
     effectId,
     runId,
     position,
@@ -1526,7 +1526,7 @@ describe("Terminal authority on real workerd", () => {
       });
 
       expect(published.length).toBeGreaterThan(0);
-      expect(published.at(-1)).toBe(new Date(2_000_000).toISOString());
+      expect(published.at(-1)).toBe(new Date(0).toISOString());
     });
 
     it("clears the published deadline when the sandbox expires", async () => {
@@ -2221,5 +2221,74 @@ describe("Terminal authority on real workerd", () => {
       });
       expect(orphan.status).toBe(409);
     });
+  });
+});
+
+
+describe("provider observations", () => {
+  async function setup() {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRunRow(state, RUN_A, "running");
+    });
+    await reserve(stub, RUN_A);
+    await terminal(stub, "attachProviderSandbox", {
+      generation: 1, sandboxId: "daytona-observed", lifecycleState: "archived",
+      idleExpiresAt: Date.now() + 100_000, archiveDueAt: Date.now() + 200_000,
+      expireDueAt: Date.now() + 30 * 86400_000, now: Date.now(),
+    });
+    return stub;
+  }
+  const identity = { sandboxId: "daytona-observed", generation: 1 };
+  it("persists ordered observations across eviction without changing retention or active-run authority", async () => {
+    const stub = await setup();
+    const before = (await terminal(stub, "sandbox")).value;
+    const first = (await terminal(stub, "beginProviderObservation", identity)).value;
+    const second = (await terminal(stub, "beginProviderObservation", identity)).value;
+    const result = { ...identity, requestId: second, state: "archived", recoverable: null, errorCode: null };
+    expect((await terminal(stub, "settleProviderObservation", result)).value).toBe(true);
+    expect((await terminal(stub, "settleProviderObservation", { ...result, requestId: first, state: "running" })).value).toBe(false);
+    await evictDurableObject(stub);
+    expect((await terminal(stub, "providerObservation")).value).toMatchObject({ state: "archived", errorCode: null });
+    expect((await terminal(stub, "sandbox")).value).toEqual(before);
+  });
+  it("upgrades an existing version-56 sandbox without changing its identity or retention", async () => {
+    const stub = await setup();
+    const before = (await terminal(stub, "sandbox")).value;
+    // Version 57 only adds this table. Remove it and its receipt to reconstruct
+    // the exact preceding schema while retaining the populated Terminal rows.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("DROP TABLE terminal_provider_observation");
+      state.storage.sql.exec("DELETE FROM _sql_schema_migrations WHERE version = 57");
+      state.storage.sql.exec("UPDATE object_versions SET schema_version = 56 WHERE id = 1");
+    });
+    await evictDurableObject(stub);
+    expect((await terminal(stub, "sandbox")).value).toEqual(before);
+    expect((await terminal(stub, "providerObservation")).value).toBeNull();
+    expect((await terminal(stub, "beginProviderObservation", identity)).value).toEqual(expect.any(String));
+  });
+
+  it("rejects a response for a replaced generation", async () => {
+    const stub = await setup();
+    const requestId = (await terminal(stub, "beginProviderObservation", identity)).value;
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE terminal_workspace SET generation = generation + 1, sandbox_id = 'replacement' WHERE id = 1");
+    });
+    expect((await terminal(stub, "settleProviderObservation", {
+      ...identity, requestId, state: "absent", recoverable: null, errorCode: null,
+    })).value).toBe(false);
+    expect((await terminal(stub, "providerObservation")).value).toBeNull();
+  });
+  it("publishes a refresh deadline for an archived sandbox with distant expiry", async () => {
+    const stub = await setup();
+    const before = Date.now();
+    const effects = await terminalCommonEffects(stub, "beginProviderObservation", identity);
+    const deadline = Date.parse(effects.at(-1)!);
+    expect(deadline).toBeGreaterThanOrEqual(before + 60_000);
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 60_000);
+    const observation = (await terminal(stub, "providerObservation")).value as { nextObserveAt: number };
+    expect(observation.nextObserveAt).toBe(deadline);
   });
 });

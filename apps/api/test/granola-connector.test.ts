@@ -2,7 +2,8 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
-import { decryptString, encryptString } from "../src/lib/crypto";
+import { ApiError } from "../src/lib/api-error";
+import { encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
@@ -50,104 +51,17 @@ afterEach(() => {
 });
 
 describe("Granola workspace connection", () => {
-  it("registers a workspace webhook and stores both secrets only in the encrypted connection envelope", async () => {
-    const { auth, database, env } = fixture();
-    const requests: Array<{ url: URL; body: unknown; authorization: string | null }> = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-      requests.push({
-        url,
-        body: init?.body ? JSON.parse(String(init.body)) : null,
-        authorization: new Headers(init?.headers).get("authorization"),
-      });
-      return new Response(JSON.stringify({
-        id: "whe_1234567890abcd",
-        signing_secret: `whsec_${btoa("webhook-signing-secret")}`,
-      }), { status: 201, headers: { "content-type": "application/json" } });
-    }));
-
-    const result = await new ConnectionService(env, auth).createGranolaWorkspace({
-      apiKey: API_KEY,
-      capabilities: ["granola.workspace.read"],
-    });
-    expect(result.connection).toMatchObject({
-      connectorType: "granola",
-      scope: "workspace",
-      displayName: "Granola workspace",
-      grantedCapabilities: ["granola.workspace.read"],
-    });
-    expect(JSON.stringify(result)).not.toContain(API_KEY);
-    expect(JSON.stringify(result)).not.toContain("webhook-signing-secret");
-    expect(requests).toEqual([expect.objectContaining({
-      url: new URL("https://public-api.granola.ai/v1/webhook-endpoints"),
-      authorization: `Bearer ${API_KEY}`,
-      body: {
-        url: expect.stringMatching(/^https:\/\/api\.example\.test\/ingest\/granola\//u),
-        scopes: ["workspace"],
-        events: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
-      },
-    })]);
-
-    const row = database.prepare(
-      `SELECT id, encrypted_credentials, credential_iv, provider_account_id, config_json
-       FROM connector_connections WHERE connector_type = 'granola'`,
-    ).get() as Record<string, unknown>;
-    expect(String(row.encrypted_credentials)).not.toContain(API_KEY);
-    expect(row.provider_account_id).not.toContain(API_KEY);
-    expect(row.config_json).toBe("{}");
-    const decrypted = JSON.parse(await decryptString(
-      String(row.encrypted_credentials),
-      String(row.credential_iv),
-      CREDENTIAL_KEY,
-      String(row.id),
-    ));
-    expect(decrypted).toEqual({
-      apiKey: API_KEY,
-      webhookEndpointId: "whe_1234567890abcd",
-      webhookSigningSecret: `whsec_${btoa("webhook-signing-secret")}`,
-    });
-    expect(database.prepare(
-      "SELECT metadata_json FROM audit_events WHERE target_id = ?",
-    ).get(String(row.id))).toEqual({
-      metadata_json: JSON.stringify({
-        provider: "granola",
-        scope: "workspace",
-        capabilities: ["granola.workspace.read"],
-      }),
-    });
-  });
-
-  it("rejects a second active workspace key before contacting Granola", async () => {
-    const { auth, database, env } = fixture();
-    database.prepare(
-      `INSERT INTO connector_connections
-       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-        granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
-        created_at, updated_at)
-       VALUES ('existing', ?, 'granola', 'workspace', NULL, 'Granola workspace',
-               '["granola.workspace.read"]', 'plugin_granola', 'healthy', '{}', '{}',
-               '2026-01-01', '2026-01-01')`,
-    ).run(WORKSPACE_ID);
-    const providerFetch = vi.fn();
-    vi.stubGlobal("fetch", providerFetch);
-    await expect(new ConnectionService(env, auth).createGranolaWorkspace({
-      apiKey: API_KEY,
-      capabilities: ["granola.workspace.read"],
-    })).rejects.toMatchObject({ status: 409, code: "granola_workspace_connection_exists" });
-    expect(providerFetch).not.toHaveBeenCalled();
-  });
-
+  // Workspace setup moved to the real workerd installation suite.
   it("accepts an offset webhook timestamp and re-enqueues its canonical activity on provider retry", async () => {
     const { auth, database, env, payloadPut, queueSend } = fixture();
     const secretBytes = new TextEncoder().encode("webhook-signing-secret");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      id: "whe_1234567890abcd",
-      signing_secret: `whsec_${base64(secretBytes)}`,
-    }), { status: 201, headers: { "content-type": "application/json" } })));
-    const created = await new ConnectionService(env, auth).createGranolaWorkspace({
-      apiKey: API_KEY,
-      capabilities: ["granola.workspace.read"],
-    });
+    const connectionId = crypto.randomUUID();
+    const encrypted = await encryptString(JSON.stringify({ apiKey: API_KEY, webhookEndpointId: "whe_1234567890abcd", webhookSigningSecret: `whsec_${base64(secretBytes)}` }), CREDENTIAL_KEY, connectionId);
+    database.prepare(`INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, display_name, encrypted_credentials, credential_iv,
+       granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES (?, ?, 'granola', 'workspace', NULL, 'Granola workspace', ?, ?, '["granola.workspace.read"]', 'plugin_granola_fixture', 'healthy', '{}', '{}', ?, ?)`)
+      .run(connectionId, auth.workspaceId, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
     const event = {
       event_id: "11111111-1111-4111-8111-111111111111",
       event_type: "note.generated",
@@ -168,8 +82,8 @@ describe("Granola workspace connection", () => {
     };
     const service = new ConnectionService(env);
 
-    const first = await service.ingestGranolaWebhook(created.connection.id, rawBody, headers);
-    const retry = await service.ingestGranolaWebhook(created.connection.id, rawBody, headers);
+    const first = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+    const retry = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
 
     expect(first).toMatchObject({ duplicate: false });
     expect(retry).toEqual({ duplicate: true, activityId: first.activityId });
@@ -179,6 +93,106 @@ describe("Granola workspace connection", () => {
     expect(payloadPut).toHaveBeenCalledTimes(2);
     expect(database.prepare("SELECT count(*) AS count FROM activities").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 1 });
+  });
+
+  it("stores the transcript a share implies beside the share, once, and answers a retry from both", async () => {
+    // Granola never sends `note.generated` for a note generated privately and
+    // shared into the workspace afterwards; the share is all the workspace
+    // hears. The adapter asks Granola for the note and, when its summary
+    // exists, the ingress stores `note.generated` beside the share, so a
+    // Sidekick on "Transcript added" runs for it.
+    const { auth, database, env, payloadPut, queueSend } = fixture();
+    const secretBytes = new TextEncoder().encode("webhook-signing-secret");
+    const connectionId = crypto.randomUUID();
+    const encrypted = await encryptString(JSON.stringify({ apiKey: API_KEY, webhookEndpointId: "whe_1234567890abcd", webhookSigningSecret: `whsec_${base64(secretBytes)}` }), CREDENTIAL_KEY, connectionId);
+    database.prepare(`INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, display_name, encrypted_credentials, credential_iv,
+       granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES (?, ?, 'granola', 'workspace', NULL, 'Granola workspace', ?, ?, '["granola.workspace.read"]', 'plugin_granola_fixture', 'healthy', '{}', '{}', ?, ?)`)
+      .run(connectionId, auth.workspaceId, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
+    const noteReads: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      noteReads.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${API_KEY}`);
+      return Response.json({ id: "not_1234567890abcd", summary_markdown: "## Recap", summary_text: "Recap" });
+    }));
+    const event = {
+      event_id: "44444444-4444-4444-8444-444444444444",
+      event_type: "note.access_granted",
+      note_id: "not_1234567890abcd",
+      occurred_at: "2026-09-16T12:51:00-04:00",
+    } as const;
+    const rawBodyText = JSON.stringify(event);
+    const rawBody = new TextEncoder().encode(rawBodyText);
+    const timestamp = Math.floor(Date.now() / 1_000);
+    const signature = await hmacBase64(secretBytes, `${event.event_id}.${timestamp}.${rawBodyText}`);
+    const headers = { webhookId: event.event_id, webhookTimestamp: String(timestamp), webhookSignature: `v1,${signature}` };
+    const service = new ConnectionService(env);
+
+    const first = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+    const retry = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+
+    expect(first).toMatchObject({ duplicate: false });
+    expect(first.derivedActivityIds).toHaveLength(1);
+    expect(retry).toEqual({ duplicate: true, activityId: first.activityId, derivedActivityIds: first.derivedActivityIds });
+    expect(noteReads).toEqual(["GET /v1/notes/not_1234567890abcd", "GET /v1/notes/not_1234567890abcd"]);
+    // Both rows reach the consumer, and a retry re-enqueues both.
+    expect(queueSend.mock.calls.map(([message]) => (message as { activityId: string }).activityId))
+      .toEqual([first.activityId, first.derivedActivityIds![0], first.activityId, first.derivedActivityIds![0]]);
+    expect(payloadPut).toHaveBeenCalledTimes(2);
+    expect(database.prepare("SELECT event_type, provider_event_id, dedupe_key, metadata_json FROM activities ORDER BY event_type").all()).toEqual([
+      { event_type: "note.access_granted", provider_event_id: event.event_id, dedupe_key: event.event_id, metadata_json: JSON.stringify({ noteId: "not_1234567890abcd", changedFields: [] }) },
+      {
+        event_type: "note.generated",
+        provider_event_id: event.event_id,
+        dedupe_key: `${event.event_id}:generated`,
+        metadata_json: JSON.stringify({ noteId: "not_1234567890abcd", changedFields: [], derivedFrom: "note.access_granted" }),
+      },
+    ]);
+    expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 1 });
+  });
+
+  it("refuses a verified delivery whose event Rally does not model, by name, before any receipt", async () => {
+    // Granola's own list has three events and Rally's understanding of it has
+    // been wrong once. An unknown name used to fail schema validation as a
+    // 500, which Standard Webhooks retries for four days before Granola
+    // disables the endpoint; now it is the named 400 every other ingress gives.
+    const { auth, database, env, payloadPut, queueSend } = fixture();
+    const secretBytes = new TextEncoder().encode("webhook-signing-secret");
+    const connectionId = crypto.randomUUID();
+    const encrypted = await encryptString(JSON.stringify({ apiKey: API_KEY, webhookEndpointId: "whe_1234567890abcd", webhookSigningSecret: `whsec_${base64(secretBytes)}` }), CREDENTIAL_KEY, connectionId);
+    database.prepare(`INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, display_name, encrypted_credentials, credential_iv,
+       granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES (?, ?, 'granola', 'workspace', NULL, 'Granola workspace', ?, ?, '["granola.workspace.read"]', 'plugin_granola_fixture', 'healthy', '{}', '{}', ?, ?)`)
+      .run(connectionId, auth.workspaceId, encrypted.ciphertext, encrypted.iv, new Date().toISOString(), new Date().toISOString());
+    const event = {
+      event_id: "33333333-3333-4333-8333-333333333333",
+      event_type: "note.regenerated",
+      note_id: "not_1234567890abcd",
+      occurred_at: "2026-08-07T13:00:00-07:00",
+    } as const;
+    const rawBodyText = JSON.stringify(event);
+    const timestamp = Math.floor(Date.now() / 1_000);
+    const signature = await hmacBase64(secretBytes, `${event.event_id}.${timestamp}.${rawBodyText}`);
+    const headers = { webhookId: event.event_id, webhookTimestamp: String(timestamp), webhookSignature: `v1,${signature}` };
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const refusal = await new ConnectionService(env).ingestGranolaWebhook(connectionId, new TextEncoder().encode(rawBodyText), headers)
+      .then(() => null, (error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(ApiError);
+    expect(refusal).toMatchObject({ status: 400, code: "unsupported_webhook_event", details: { provider: "granola", eventType: "note.regenerated" } });
+    expect((refusal as ApiError).message).toContain("note.regenerated");
+    expect(warnings.mock.calls.map(([entry]) => entry)).toContainEqual(expect.objectContaining({
+      event: "connector_webhook_event_refused", connector_type: "granola", connection_id: connectionId, event_type: "note.regenerated",
+    }));
+    expect(queueSend).not.toHaveBeenCalled();
+    expect(payloadPut).toHaveBeenCalledTimes(1);
+    expect(database.prepare("SELECT count(*) AS count FROM activities").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 0 });
+    warnings.mockRestore();
   });
 
   it("claims the receipt through the typed object RPC without a credential crossing in plaintext", async () => {
@@ -306,6 +320,116 @@ describe("Granola workspace connection", () => {
       expect(exchange).not.toContain("webhook-signing-secret");
     }
   });
+
+  it("queues the share and the transcript it implies as two events through the workspace object, and two again on retry", async () => {
+    // The path production runs: the workspace object claims the receipt and
+    // every activity leaves through the Queue. A share of a generated note is
+    // two queue messages with their own ingress identities, the transcript
+    // carrying the note's occurrence key as its own field; a retry sends the
+    // same two again, and the object dedupes them — never one, never three.
+    const connectionId = "00000000-0000-4000-8000-000000000011";
+    const secretBytes = new TextEncoder().encode("webhook-signing-secret");
+    const signingSecret = `whsec_${base64(secretBytes)}`;
+    const regional = new DatabaseSync(":memory:");
+    databases.push(regional);
+    regional.exec(`
+      CREATE TABLE connector_ingress_routes (
+        connection_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        region TEXT NOT NULL,
+        connector_type TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        provider_account_id TEXT,
+        provider_user_id TEXT,
+        status TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO connector_ingress_routes
+        (connection_id, workspace_id, region, connector_type, scope, status, updated_at)
+      VALUES ('${connectionId}', '${WORKSPACE_ID}', 'global', 'granola', 'workspace',
+              'active', '2026-01-01T00:00:00.000Z');
+    `);
+    const workspace = createTestWorkspaceDO({
+      workspaceId: WORKSPACE_ID,
+      regionalDatabase: regional,
+      register: (created) => { databases.push(created); },
+    });
+    const encrypted = await encryptString(
+      JSON.stringify({ apiKey: API_KEY, webhookEndpointId: "whe_1234567890abcd", webhookSigningSecret: signingSecret }),
+      CREDENTIAL_KEY,
+      connectionId,
+    );
+    workspace.objectDatabase.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+        display_name, encrypted_credentials, credential_iv, credential_key_version,
+        granted_scopes_json, status, cursor_json, config_json,
+        created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'granola', 'workspace', NULL, 'workspace:abc', 'Granola workspace',
+               ?, ?, 1, '["granola.workspace.read"]', 'healthy', '{}', '{}',
+               '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'plugin_granola')`,
+    ).run(connectionId, WORKSPACE_ID, encrypted.ciphertext, encrypted.iv);
+    const rpcs = workspaceObjectRpcs(workspace.instance, ["executeRuntimeSql", "claimWebhookReceipt"]);
+    const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => rpcs,
+      jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
+    });
+    const queueSend = vi.fn<(message: unknown) => Promise<void>>(async () => undefined);
+    const env = createTestEnv({
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      PUBLIC_API_BASE_URL: "https://api.example.test",
+      CONNECTOR_CREDENTIALS_KEY: CREDENTIAL_KEY,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(async () => null) }),
+      ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send: queueSend }),
+      WORKSPACE_DOS: binding,
+    });
+    const noteReads: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      noteReads.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      return Response.json({ id: "not_2234567890abcd", summary_markdown: "## Recap", summary_text: "Recap" });
+    }));
+    const event = {
+      event_id: "55555555-5555-4555-8555-555555555555",
+      event_type: "note.access_granted",
+      note_id: "not_2234567890abcd",
+      occurred_at: "2026-09-16T12:51:00-04:00",
+    } as const;
+    const rawBodyText = JSON.stringify(event);
+    const rawBody = new TextEncoder().encode(rawBodyText);
+    const timestamp = Math.floor(Date.now() / 1_000);
+    const signature = await hmacBase64(secretBytes, `${event.event_id}.${timestamp}.${rawBodyText}`);
+    const headers = { webhookId: event.event_id, webhookTimestamp: String(timestamp), webhookSignature: `v1,${signature}` };
+    const service = new ConnectionService(env);
+
+    const first = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+    const retry = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+
+    expect(first.duplicate).toBe(false);
+    expect(first.derivedActivityIds).toHaveLength(1);
+    expect(retry.duplicate).toBe(true);
+    expect(noteReads).toEqual(["GET /v1/notes/not_2234567890abcd", "GET /v1/notes/not_2234567890abcd"]);
+    const queued = queueSend.mock.calls.map(([message]) => message as {
+      kind: string;
+      request: { ingressEventId: string; event: { activity: { eventType: string; dedupeKey: string; occurrenceKey?: string; metadata: Record<string, unknown> } } };
+    });
+    expect(queued.map((message) => message.kind)).toEqual(Array(4).fill("workspace_connector_event"));
+    expect(queued.map((message) => message.request.event.activity.eventType))
+      .toEqual(["note.access_granted", "note.generated", "note.access_granted", "note.generated"]);
+    expect(new Set(queued.slice(0, 2).map((message) => message.request.ingressEventId)).size).toBe(2);
+    expect(queued[1]!.request.event.activity).toMatchObject({
+      dedupeKey: `${event.event_id}:generated`,
+      occurrenceKey: `granola:${connectionId}:note:not_2234567890abcd:transcript`,
+      metadata: { noteId: "not_2234567890abcd", changedFields: [], derivedFrom: "note.access_granted" },
+    });
+    expect(queued[0]!.request.event.activity.occurrenceKey).toBeUndefined();
+    expect(queued[0]!.request.ingressEventId).toBe(first.activityId);
+    expect(queued[1]!.request.ingressEventId).toBe(first.derivedActivityIds![0]);
+  });
 });
 
 describe("Granola personal automation catalog", () => {
@@ -374,6 +498,67 @@ describe("Granola personal automation catalog", () => {
         ],
       }),
     ]);
+  });
+
+  it("names the tool and field a drifted catalog failed, and lists nothing from it", async () => {
+    const { database, env } = fixture();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const connectionId = "00000000-0000-4000-8000-000000000011";
+    const encrypted = await encryptString(
+      JSON.stringify({ accessToken: "personal-token" }),
+      CREDENTIAL_KEY,
+      connectionId,
+    );
+    database.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+        display_name, encrypted_credentials, credential_iv, credential_key_version,
+        granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
+        created_at, updated_at)
+       VALUES (?, ?, 'granola', 'personal', ?, 'granola:person', 'Granola', ?, ?, 1,
+               '["granola.personal.read"]', 'plugin_granola', 'healthy', '{}', '{}',
+               '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run(connectionId, WORKSPACE_ID, USER_ID, encrypted.ciphertext, encrypted.iv);
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      const id = request.id as string;
+      if (request.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: { protocolVersion: "2025-06-18", capabilities: {} },
+        }, { headers: { "mcp-session-id": "session-1" } });
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          tools: [
+            // The catalog drifted: a schema that is not an object schema.
+            { name: "query_granola_meetings", inputSchema: { type: "array" } },
+            { name: "list_meetings", inputSchema: { type: "object" } },
+          ],
+        },
+      });
+    }));
+
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(
+      env,
+      WORKSPACE_ID,
+      USER_ID,
+    );
+
+    // The plugin is left out of the catalog, and the row names the tool and
+    // the field rather than the class name `ZodError`.
+    expect(catalog).toEqual([]);
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "dynamic_connector_tools_unavailable",
+      surface: "automation_creator",
+      error_code: expect.stringMatching(/^dynamic_connector_tools_unavailable:tools\.0\.inputSchema/u),
+    }));
+    warning.mockRestore();
   });
 });
 
@@ -468,7 +653,7 @@ function fixture() {
     ),
   });
   const payloadPut = vi.fn(async () => null);
-  const queueSend = vi.fn(async () => undefined);
+  const queueSend = vi.fn<(message: unknown) => Promise<void>>(async () => undefined);
   const auth: AuthContext = {
     sessionId: "session",
     userId: USER_ID,

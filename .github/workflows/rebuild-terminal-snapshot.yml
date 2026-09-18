@@ -139,7 +139,7 @@ jobs:
           SNAPSHOT: ${{ steps.snapshot.outputs.name }}
         run: |
           set -euo pipefail
-          for config in apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; do
+          for config in apps/api/wrangler.global.jsonc; do
             perl -pi -e \
               's/("DAYTONA_TERMINAL_SNAPSHOT":\s*)"[^"]*"/$1 . chr(34) . $ENV{SNAPSHOT} . chr(34)/e' \
               "$config"
@@ -151,7 +151,7 @@ jobs:
               exit 1
             fi
           done
-          if git diff --quiet -- apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; then
+          if git diff --quiet -- apps/api/wrangler.global.jsonc; then
             echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -162,7 +162,7 @@ jobs:
           git checkout -b "$branch"
           # By path: `-a` would sweep anything the build or the gate left in the
           # tree into a production-config pull request.
-          git add apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc
+          git add apps/api/wrangler.global.jsonc
           git commit -qm "Daytona Snapshot Upgrade: adopt $SNAPSHOT"
           git push -u origin "$branch"
 

@@ -107,6 +107,7 @@ export function createTerminalProviderRpcClient(
     createSandbox: async (input) => unwrap((await session()).createSandbox(input, callbacks())),
     prepareSandbox: async (idOrName, allowList) => unwrap((await session()).prepareSandbox(idOrName, allowList, callbacks())),
     getSandbox: async (idOrName) => unwrap((await session()).getSandbox(idOrName, callbacks())),
+    recoverSandbox: async (idOrName) => unwrap((await session()).recoverSandbox(idOrName, callbacks())),
     startSandbox: async (idOrName) => unwrap((await session()).startSandbox(idOrName, callbacks())),
     stopSandbox: async (idOrName) => unwrap((await session()).stopSandbox(idOrName, callbacks())),
     archiveSandbox: async (idOrName) => unwrap((await session()).archiveSandbox(idOrName, callbacks())),

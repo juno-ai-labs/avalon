@@ -1,3 +1,5 @@
+import { useSearchParams } from "react-router-dom";
+import { SessionImportDialog } from "../components/session-import-dialog";
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -184,6 +186,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   const routeProjectId = useParams<{ projectId: string }>().projectId;
   const owningProjectId = projectId === 'route' ? routeProjectId : projectId;
   const { api } = useAppSession();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -201,7 +204,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [recipientQuery, setRecipientQuery] = useState('');
-  const [recipientPickerOpen, setRecipientPickerOpen] = useState(owningProjectId === undefined);
+  const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -290,11 +293,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     )));
     setPickerOpen(false);
   }, [members.data, owningProject?.scope, personalProjectParticipantIds, workspace.currentUser.id]);
-  useEffect(() => {
-    if (owningProjectId !== undefined || launching) return;
-    const frame = requestAnimationFrame(() => recipientInputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [launching, owningProjectId]);
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -712,6 +710,9 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
         <h2 className="sr-only" id="new-workstream-heading">Start a new work stream</h2>
+        {!launching && owningProjectId === undefined && searchParams.get('import') === 'session' && <SessionImportDialog open onOpenChange={(open) => {
+          if (!open) setSearchParams((params) => { params.delete('import'); return params; }, { replace: true, state: location.state });
+        }} />}
         {owningProjectId !== undefined && <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Work-stream participants">
             {owningProject?.scope === 'personal' ? (
@@ -791,10 +792,11 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             api={api ?? undefined}
             ariaLabel="Opening work-stream message"
             attachments={attachmentDraft.attachments}
-            autoFocus={owningProjectId !== undefined}
+            autoFocus
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
+            key={draftKey}
             layout="message-capsule"
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}

@@ -190,8 +190,6 @@ This changes acquisition and distribution, not workspace or work-stream
 semantics. Download authorization is not account authorization. There is no approved-account list or invitation-only account creation/sign-in.
 An already-obtained installer does not require an additional access approval.
 
-## Decision log
-
 ### 2026-09-09 — Ship intake and manual downloads as the first slice
 
 **Decided:** Implement normalized request persistence, frozen acknowledgement
@@ -234,15 +232,6 @@ owns concrete migration filenames, deployment prerequisites and erasure operatio
    exclusive distribution. The implementation PR assigns migration filenames
    and records any scope changes when they land.
 
-## Data model
-
-Global regional D1 holds pre-workspace access requests, frozen acknowledgement
-content, and standalone grants. The regional migration chain creates empty
-schema in EU as well. Workspace grants must live in their invitation's region;
-EU invite email addresses must not be copied into Global for convenience.
-Grants store only the token digest, source, optional source identity, timestamps,
-and operator attribution. Raw URLs are returned only to the issuing caller.
-
 ### Data lifecycle and privacy requests
 
 Acquisition records do not inherit workspace deletion: they are collected before
@@ -265,13 +254,6 @@ or invitation, revoke access before deleting attribution, and reconcile/cancel
 pending sends before erasure so a delayed worker cannot recreate the data.
 Global acquisition erasure does not delete a Rally account or workspace.
 
-For a regional workspace invitation, fulfill lookup and erasure in its owning
-region using existing invitation/identity routing. EU addresses, research and
-message content stay in EU; a support operation must not copy them into Global
-as a lookup shortcut. Provider-side deletion follows the provider's supported
-privacy process; record unresolved provider retention separately rather than
-claiming a local deletion erased external copies.
-
 The first intake slice needs an operator runbook for locating and erasing its
 request and manual-grant records through existing administration access. It has
 no background invitation sender or research records. Before the invitation phase
@@ -279,24 +261,6 @@ ships, implement durable invitation suppression and deletion of pending/send
 records, including protection against a sender racing with erasure. Automatic
 age-based cleanup and a self-service privacy UI are deferred; the documented
 operator procedure handles requests in the meantime.
-
-## Regional impact
-
-Pre-workspace access requests and manual grants are Global acquisition data.
-The shared migration chain creates empty schema in both regions; it does not
-make Global intake available in EU. Workspace invitation grants and recipient
-information stay in the invitation's owning region. EU email addresses and
-research must not be copied to Global for operator convenience. Privacy lookup
-and erasure use the regional procedure above without changing workspace routing.
-
-The first Ace issuer writes only Global manual/acquisition grants. Workspace
-invitation grants are issued by the existing authenticated invitation service in
-the workspace's region; this PRD grants Ace no new direct EU D1 write authority.
-A workspace download URL carries a non-secret owning-region locator so the
-shared download page redeems through that region's API. The locator grants no
-access: the selected regional API must validate the bearer token against its own
-grant record, with no cross-region fallback on failure. The invitation phase adds
-that regional handoff; the initial manual-download page targets Global only.
 
 ## Security and trust model
 

@@ -61,12 +61,9 @@ when its internal callers have migrated independently of the deployed binding.
 | `apps/migration-tracker/src/access.ts` | Cloudflare Access assertion verification: signature, issuer, audience. Authorization itself is the Access policy's. |
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger, and the two regional command-queue producer bindings. |
-| `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding and the `avalon-<region>-migration-commands` consumer in each region. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
 | `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `SubstreamAgent`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
 | `scripts/substream-agent-jurisdiction-probe/` | A remote-development-only Worker that parses enumerated IDs through unrestricted external bindings and returns their encoded jurisdiction without opening an object. |
-
-## How it works
 
 ### The report
 
@@ -98,8 +95,8 @@ being recorded as delivered — and the row records `failed` as readily as
 `current`, so an object that recovers by rollback is not deduped into silence.
 
 The report goes onto the `avalon-migration-reports` Queue, consumed by this
-Worker. One queue serves both regions, unlike the per-region activity queues:
-both regions' reports converge on the single registry object by design, so a
+Worker. One queue serves configured deployments, unlike the per-region activity queues:
+configured deployments' reports converge on the single registry object by design, so a
 second queue would split the transport without splitting the destination. The
 region travels in the message body, where the contract validates it. Not a
 service-binding RPC, for the reasons in [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md):
@@ -210,20 +207,13 @@ The region's own API Worker consumes it, resolves the object by ID, and calls
 
 Three deliberate choices, in the order they matter:
 
-- **A queue, not the tracker calling the objects.** The tracker holds no binding
-  to any object it observes, and could not acquire one that reached both
-  regions: a Durable Object is addressable only from a Worker that binds its
-  namespace, and the EU objects belong to the EU Worker. Even with bindings it
-  would be wrong — the fan-out is hundreds of cold starts, and no single
-  invocation should hold that open. The queue is what turns it into a paced
-  stream: 100 messages a batch, a backlog as the shock absorber, five retries
-  and a dead-letter queue per message.
 - **Split per region, unlike the report queue.** A queue has exactly one
   consumer, and the consumer here *must* be the region's own Worker. That is the
   decisive test in [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md), and
   it lands the opposite way to the reports, which converge on one registry
   object and therefore share one queue. Same document, same test, different
   answer, because the destination differs.
+
 - **RPC inside the hop.** The consumer calls `forceMigration` and reads the
   answer — the version the object ended on, and whether its receipt was
   accepted — so it can log an object that came back below the version *this
@@ -511,7 +501,6 @@ report is out of scope by design.
 | The object is already awake | Its constructor does not run again, so nothing is applied; the call reports the version it is already on. Normally that version is current, because a deploy cycles isolates. An object still running the previous build reports the old version and stays `behind` on the site — the run row cannot say it did not move. |
 | The dispatch throws partway through a run | The run is recorded as `failed` with the count that actually landed. The messages already accepted are still delivered. |
 | A class holds more objects than one run sends | The run stops at 5,000, is marked `truncated`, and the page says so. Running it again continues. |
-| The manual `SubstreamAgent` fleet wake sees legacy unrestricted IDs | The account inventory includes every jurisdiction in the namespace, while the product Worker deliberately addresses only `us` or `eu`. The local probe classifies the jurisdiction encoded in each ID; unrestricted or wrong-region IDs are counted as skipped and never sent to a regional command queue. |
 | The manual fleet wake cannot reach its local jurisdiction probe | Apply mode refuses to enqueue anything. A dry run without the probe reports only stored-object counts and leaves eligible/skipped counts unknown. |
 | The transcript backfill sees an active writer, moved source, partial projection, or conflicting checkpoint | The object-local transaction commits nothing and no receipt. The fleet command records the object error locally and exits nonzero; it never skips the conflict or reports partial success. |
 | The transcript backfill is replayed | The object recomputes its source digest, exact participant-prefix order, and checkpoint counts. It writes nothing and returns the original receipt with `applied=false`, or fails reconciliation if an owning source row changed. |
@@ -541,7 +530,6 @@ banner carrying the error.
 | `pnpm --filter @rally/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
 | `pnpm --filter @rally/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
 | `node --test scripts/force-substream-agent-migrations.test.mjs` | Dry-run safety, stored-object filtering, jurisdiction filtering, 100-message queue batches, queue drain, DLQ growth, and ambiguous resource discovery. |
-| `node --test scripts/backfill-substream-agent-transcripts.test.mjs` | Exact 389 Global/3 EU targeting for projection and payload-transfer modes, bounded regional RPC batches, count-drift refusal, per-object recovery receipts, partial-failure persistence, and replay totals. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/workstream-transcript-runtime.test.ts`) | The production object RPC against real workerd SQLite, including a real PITR bookmark, atomic projection receipt, and idempotent reconciliation. |
 
 Traps:
@@ -635,7 +623,7 @@ every read rather than only for the thing it added.
 
 ## Regional impact
 
-One tracker and one queue serve both regions, because **a migration report is
+One tracker and one queue serve configured deployments, because **a migration report is
 operational metadata about infrastructure, not workspace content**: an opaque
 object identifier, a class name, a schema version, and a migration error that
 describes code. There is no personal data in it and nothing a workspace owns, so
@@ -648,29 +636,10 @@ gate a crossing that needs gating today. The report now literally
 travels on a Queue, so it is the same crossing under the same rule rather than an
 analogous one.
 
-The command going the other way is split, and the same section of
-[`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) is what decides both.
-Its decisive test is whether splitting the transport would change where the data
-comes to rest or who processes it. For a report the answer is no — one registry
-object either way — so there is one queue. For a command the answer is yes and
-it is not even optional: a queue has exactly one consumer, and only the Global
-Worker can address a Global object. So `avalon-global-migration-commands` and
-`avalon-eu-migration-commands` are separate, each with its own dead-letter
-queue, and neither consumer reaches into the other region's namespaces.
-
 A command carries less than a report does: a class name, an object ID, an opaque
 object name, a region, and two UUIDs the tracker minted. It clears the same bar
 through the same guard, and the same review gate applies — the day a Durable
 Object name grows a legible field, this stops carrying it.
-
-The report queue is shared between the regions rather than split like
-`avalon-eu-activities`. The split there exists because an EU activity's payload
-must be handled in region. Nothing in a migration report has that property, and
-the destination is one account-wide registry object either way, so a second queue
-would double the resources while isolating nothing. Concretely — a Durable Object
-ID, a name whose every segment is a region token, a UUID, or one of a small fixed
-allowlist of role words, a class name, a component key, schema version numbers, a
-build identifier, and migration error text that describes code.
 
 The guard is `isOpaqueDurableObjectName`, applied twice: the producer drops a
 name that does not match, and the tracker refuses the whole report if one reaches
@@ -828,8 +797,6 @@ The run cap of 5,000 is not a capacity estimate; it is a guard on the blast
 radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
-## Changelog
-
 ### 2026-09-08 — Keep renamed current identities monotonic
 
 Late legacy reports retain their original labels in event history but cannot
@@ -838,7 +805,6 @@ Queue delivery is unordered, so accepting both names without this guard could
 hide renamed objects from the operator's exact-class migration selection.
 Chronology alone is insufficient for objects discovered by a namespace sweep
 before their first report. Namespace sweeps remain authoritative.
-
 
 ### 2026-09-08 — Stage the Sidekick namespace rename with operational compatibility
 
@@ -855,7 +821,7 @@ export and continues reporting that deployed class to the tracker. Both regional
 configs remain at v9. A later class-rename release must change tracker class
 contracts, report identities, inventory grouping, and force-migration dispatch
 together with the regional binding; changing only the Cloudflare class would
-strand the operational migration view. Verify existing objects in both regions
+strand the operational migration view. Verify existing objects in configured deployments
 before that release and retain the old export until verification completes.
 
 ### 2026-09-03 — AutomationDO joins the tracked fleet and AutomationAgent leaves it
@@ -1027,15 +993,6 @@ later backfill RPC fails.
 
 ### 2026-08-26 — A manual SubstreamAgent fleet wake respects jurisdictions
 
-**What changed:** an operator script can eagerly construct every stored,
-region-addressable `SubstreamAgent` through the existing migration-command
-queues after a coordinated deploy. Apply is fail-closed behind a local Wrangler
-remote-preview probe that reads the jurisdiction encoded in each enumerated ID;
-the script sends only `us` IDs to Global and `eu` IDs to EU, batches commands by
-100, waits for both command queues to drain, and refuses success if a DLQ grows.
-Dry run is the default. The focused Node suite covers inventory, classification,
-dispatch, batching, and failure guards.
-
 **Why:** the ordered-transcript schema release needed current workstreams awake
 immediately instead of eventually on traffic. The Cloudflare account inventory
 is the only complete list, but its namespace listing spans jurisdictional and
@@ -1092,16 +1049,6 @@ zero is not an assertion that no migration work occurred.
 
 ### 2026-08-22 — The tracker can force a class through a migration
 
-**What changed:** the site gained `/migrations`, where an operator picks a
-Durable Object class and every live object of it is sent one message on a new
-per-region queue — `avalon-global-migration-commands` and
-`avalon-eu-migration-commands` — which the region's own API Worker consumes and
-turns into a `forceMigration` RPC on the object. `MigratableDurableObject` is a
-new base that `ScheduledDurableObject` and `BlockDashboardAgent` both extend; it
-owns the migration report every constructor used to wire up by hand and the
-`forceMigration` method, and it requires each class to declare its schema once.
-Registry schema v4 adds `migration_runs`.
-
 **Why:** the tracker could say a class was behind and nothing could be done
 about it from here. A Durable Object applies its schema when it wakes, and an
 object nobody touches does not wake, so a class could sit behind a deploy
@@ -1114,7 +1061,7 @@ the list, and the list is the hard part.
 
 - **A queue, split per region, rather than the tracker calling objects.** The
   tracker holds no binding to any object it observes and could not hold one that
-  reached both regions — a Durable Object is addressable only from a Worker that
+  reached configured deployments — a Durable Object is addressable only from a Worker that
   binds its namespace. A queue has exactly one consumer, and the consumer here
   *must* be the region's own Worker, which is the decisive test in
   [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md) and the reason these
@@ -1414,7 +1361,7 @@ is there to catch exactly it.
 
 The namespaces reach the component *through its objects*, on `namespace_id` from
 the sweep and `component`/`region` from the report. Grouping them by class
-instead reads correctly and is wrong: the same classes run in both regions, so a
+instead reads correctly and is wrong: the same classes run in configured deployments, so a
 class deleted from one Worker would go on looking live because the other Worker
 still has it. Review caught that in the first version of this change; "retires
 only the region whose namespace is gone" is the test that holds it.
@@ -1678,7 +1625,7 @@ only at the moment it applies one.
 **Consequences:** `avalon-migration-reports` and its dead-letter queue are hosted
 resources that must exist before either Worker deploys; in exchange there is no
 script-to-script deploy ordering, which an RPC binding would have imposed. It is
-one queue for both regions on purpose — see **Regional impact** — so anything
+one queue for configured deployments on purpose — see **Regional impact** — so anything
 that later needs per-region isolation of the transport has to justify why the
 shared destination is no longer acceptable. A new Durable Object class must wrap its migration call in
 `withMigrationReport` or it is invisible to the tracker — nothing enforces that

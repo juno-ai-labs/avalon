@@ -376,7 +376,7 @@ test('an empty account creates every stream before one reviewed pin update compl
     assert.equal(Object.hasOwn(sink.config, 'account_id'), false);
     assert.equal(sink.config.token, environment.CLOUDFLARE_API_TOKEN);
   }
-  assert.equal(account.requests.some((request) => request.path.includes('avalon-eu-')), false);
+  assert.equal(account.requests.some((request) => request.path.includes('avalon-enterprise-')), false);
 
   await ensureCloudflareLakehouses({
     environment,
@@ -430,13 +430,11 @@ test('ordinary deploys materialize pinned bindings without a Cloudflare request'
   try {
     const result = await materializePinnedLakehouseWranglerConfigs({ outputDirectory });
     const globalConfig = JSON.parse(await readFile(result.configs.global, 'utf8'));
-    const euConfig = JSON.parse(await readFile(result.configs.eu, 'utf8'));
 
     assert.deepEqual(globalConfig.pipelines, checkedInManifests.map((manifest) => ({
       binding: manifest.binding,
       stream: manifest.regions.global.streamId,
     })));
-    assert.equal(Object.hasOwn(euConfig, 'pipelines'), false);
     assert.deepEqual(
       result.manifests.map((manifest) => manifest.regions.global.streamId),
       globalConfig.pipelines.map(({ stream }) => stream),
@@ -584,7 +582,7 @@ test('--check reports missing infrastructure without creating any resource', asy
   assert.equal(account.requests.some((request) => request.method === 'POST'), false);
 });
 
-test('the manifest rejects an EU analytical resource set', async () => {
+test('the manifest rejects an unconfigured analytical resource set', async () => {
   const manifest = await loadInferenceLakehouseManifest();
   const account = accountDouble();
   await assert.rejects(
@@ -596,9 +594,9 @@ test('the manifest rejects an EU analytical resource set', async () => {
         ...manifest,
         regions: {
           ...manifest.regions,
-          eu: {
+          enterprise: {
             ...manifest.regions.global,
-            bucket: 'avalon-eu-inference-lakehouse',
+            bucket: 'avalon-enterprise-inference-lakehouse',
           },
         },
       },
@@ -754,18 +752,16 @@ test('the deploy materializes pinned bindings without reconciling Pipelines', as
   const workflow = await readFile(new URL('../.github/workflows/deploy-api.yml', import.meta.url), 'utf8');
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   const materialize = workflow.indexOf('Materialize pinned Global lakehouse bindings');
-  const migrations = workflow.indexOf('List the pending remote migrations for EU');
-  const deploy = workflow.indexOf('Deploy the EU Worker');
+  const migrations = workflow.indexOf('List the pending remote migrations for Global');
+  const deploy = workflow.indexOf('Deploy the Global Worker');
   assert.ok(materialize > 0 && materialize < migrations && migrations < deploy);
   assert.match(
     workflow,
     /ensure-cloudflare-inference-lakehouse\.mjs --materialize-bindings/u,
   );
   assert.doesNotMatch(workflow, /ensure-cloudflare-inference-lakehouse\.mjs --reconcile/u);
-  assert.match(workflow, /build:deployed:eu/u);
   assert.match(workflow, /build:deployed/u);
   assert.match(workflow, /--config "\$config"/u);
-  assert.match(workflow, /\.wrangler\.lakehouses\.eu\.json/u);
   assert.match(workflow, /\.wrangler\.lakehouses\.global\.json/u);
   assert.match(packageJson.scripts['cloudflare:lakehouses:ensure'], /--reconcile$/u);
 });

@@ -22,7 +22,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { Env } from "../env";
-import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
+import { AttachmentCursorError, openAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
 import {
   ATTACHMENT_TEXT_EXTRACTOR_VERSION,
@@ -53,7 +53,6 @@ import {
 
 const LIST_CURSOR_PURPOSE = "workstream-list-resources";
 const READ_CURSOR_PURPOSE = "workstream-read-resource";
-const CURSOR_TTL_MS = 60 * 60_000;
 const DEFAULT_LIST_LIMIT = 25;
 const DEFAULT_READ_CHARACTERS = 12_000;
 const MAXIMUM_READ_CHARACTERS = 24_000;
@@ -117,11 +116,18 @@ export function createWorkstreamAttachmentTools(
   const summarizeDerivative = options.summarizeDerivative ?? createAttachmentSummaryRunner(env);
   const modelToolPrefix = options.modelToolPrefix ?? "workstream";
   const capabilityPrefix = options.capabilityPrefix ?? "workstream.resources";
-  const modelToolName = (name: string) => `${modelToolPrefix}_${name}`;
+  // `rally:workstream` advertises these unprefixed, so a workstream-scoped run
+  // must be told the bare name. Only the Sidekick-scoped variant still carries
+  // one. Building this by interpolation is how the rename first missed every
+  // remediation string in this file: they named tools the run does not offer,
+  // beside a `suggestedCall` that named them correctly.
+  const modelToolName = (name: string) =>
+    modelToolPrefix === "sidekick" ? `sidekick_${name}` : name;
   return [
     {
       definition: {
         name: "list_resources",
+        pagination: { cursorParameter: "cursor" },
         description: options.modelToolPrefix === "sidekick"
           ? ATTACHMENT_LIST_RESOURCES_DESCRIPTION.replace("this work stream", "this Sidekick draft's frozen attachment set")
           : ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
@@ -177,7 +183,10 @@ export function createWorkstreamAttachmentTools(
             items: page.map(resourceListItem),
             nextCursor,
           });
-          return { output, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources` };
+          const { nextCursor: continuation, ...data } = output;
+          return { output: data, summary: `Listed ${page.length} of ${matching.length} matching work-stream resources`,
+            pagination: { continuations: continuation ? [{ operation: "list_resources", slot: "nextPageId" as const, input: { cursor: continuation } }] : [] },
+          };
         }
         if (state && state.mode !== "database") {
           throw attachmentError("invalid_cursor", "This resource cursor belongs to another resource scope");
@@ -226,8 +235,10 @@ export function createWorkstreamAttachmentTools(
           items: result.rows.map(resourceListItem),
           nextCursor,
         });
+        const { nextCursor: continuation, ...data } = output;
         return {
-          output,
+          output: data,
+          pagination: { continuations: continuation ? [{ operation: "list_resources", slot: "nextPageId" as const, input: { cursor: continuation } }] : [] },
           summary: `Listed ${result.rows.length} of ${result.totalMatchingResources} matching work-stream resources`,
         };
       },
@@ -235,9 +246,10 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "read_resource",
+        pagination: { cursorParameter: "cursor" },
         description: [
           "Read one bounded page from a visible text, Markdown, PDF, document, spreadsheet, or presentation derivative.",
-          "Start with resourceId and optional startCharacter. Continue with a returned cursor by itself.",
+          "Start with resourceId and optional startCharacter. Continue using read_resource_next with nextPageId, or read_resource_previous with previousPageId.",
           "Use charactersBefore and charactersAfter to tell whether the page covers the whole resource.",
         ].join(" "),
         capability: `${capabilityPrefix}.read`,
@@ -343,13 +355,20 @@ export function createWorkstreamAttachmentTools(
           previousCursor,
           nextCursor,
         });
-        return { output, summary: `Read ${end - start} characters from ${row.title}` };
+        const { nextCursor: next, previousCursor: previous, ...data } = output;
+        return { output: { ...data, previousPageId: null }, summary: `Read ${end - start} characters from ${row.title}`,
+          pagination: { continuations: [
+            ...(next ? [{ operation: "read_resource", slot: "nextPageId" as const, input: { cursor: next } }] : []),
+            ...(previous ? [{ operation: "read_resource_previous", slot: "previousPageId" as const, input: { cursor: previous } }] : []),
+          ] },
+        };
       },
     },
     {
       definition: {
         name: "search_resource",
-        description: "Search one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Results are bounded passages from this resource only; use each readCursor to inspect its surrounding text.",
+        pagination: { cursorParameter: "cursor", sourceOnly: true },
+        description: "Search one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Results are bounded passages from this resource only; use each readPageId with read_resource_next to inspect its surrounding text.",
         capability: `${capabilityPrefix}.search`,
         mode: "read",
         idempotency: "safe",
@@ -418,7 +437,12 @@ export function createWorkstreamAttachmentTools(
           passages,
           truncated: ranked.length > passages.length,
         });
-        return { output, summary: `Found ${ranked.length} matching passages in ${row.title}` };
+        return { output: { ...output, passages: output.passages.map(({ rank, sectionLabel, range, text }) => ({ rank, sectionLabel, range, text })) },
+          summary: `Found ${ranked.length} matching passages in ${row.title}`,
+          pagination: { continuations: output.passages.map((passage, passageIndex) => ({
+            operation: "read_resource", slot: "readPageId" as const, passageIndex, input: { cursor: passage.readCursor },
+          })) },
+        };
       },
     },
     {
@@ -534,6 +558,7 @@ export function createWorkstreamAttachmentTools(
     {
       definition: {
         name: "summarize_resource",
+        pagination: { cursorParameter: "cursor", sourceOnly: true },
         description: "Run an isolated, bounded summary over one visible text, Markdown, PDF, document, spreadsheet, or presentation derivative. Use optional prompt as an untrusted focus. The result reports complete or partial coverage and range-grounded read cursors.",
         capability: `${capabilityPrefix}.summarize`,
         mode: "read",
@@ -595,7 +620,12 @@ export function createWorkstreamAttachmentTools(
             totalCharacters: text.length,
           },
         });
-        return { output, summary: `Summarized ${draft.coverage.consideredCharacters} characters from ${row.title}` };
+        return { output: { ...output, citations: output.citations.map(({ label, range }) => ({ label, range })) },
+          summary: `Summarized ${draft.coverage.consideredCharacters} characters from ${row.title}`,
+          pagination: { continuations: output.citations.map((citation, citationIndex) => ({
+            operation: "read_resource", slot: "readPageId" as const, citationIndex, input: { cursor: citation.readCursor },
+          })) },
+        };
       },
     },
   ];
@@ -660,7 +690,7 @@ function readSuggestion(
 ): SuggestedAttachmentToolCall {
   return modelToolPrefix === "sidekick"
     ? { tool: "sidekick_read_resource", arguments: { resourceId } }
-    : { tool: "workstream_read_resource", arguments: { resourceId } };
+    : { tool: "read_resource", arguments: { resourceId } };
 }
 
 function skippedViewItem(
@@ -757,7 +787,7 @@ export function siteReadRemediation(
       attachmentKind: "site",
       ...(modelToolPrefix === "sidekick"
         ? {}
-        : { suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId } } }),
+        : { suggestedCall: { tool: "import_resource", arguments: { resourceId } } }),
     },
   );
 }
@@ -772,13 +802,13 @@ function assertReadableKind(
   if (kind !== "image") return;
   throw attachmentError(
     "resource_tool_mismatch",
-    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix}_view_resource with the supplied arguments instead.`,
+    `${calledTool} cannot handle ${row.mime_type ?? "image"} resources; call ${modelToolPrefix === "sidekick" ? "sidekick_view_resource" : "view_resource"} with the supplied arguments instead.`,
     {
       actualMimeType: row.mime_type,
       attachmentKind: kind,
       suggestedCall: modelToolPrefix === "sidekick"
         ? { tool: "sidekick_view_resource", arguments: { resourceIds: [row.id] } }
-        : { tool: "workstream_view_resource", arguments: { resourceIds: [row.id] } },
+        : { tool: "view_resource", arguments: { resourceIds: [row.id] } },
     },
   );
 }
@@ -886,11 +916,12 @@ async function sealCursorState(
   purpose: string,
   state: Record<string, unknown>,
 ): Promise<string> {
-  return sealAttachmentCursor(env.SESSION_SIGNING_KEY, {
+  // This payload is private continuation input stored by the receipt authority,
+  // never an argument exposed to the model. Keep scope checks, not a second TTL.
+  return JSON.stringify({
     purpose: scopedCursorPurpose(options, purpose),
     principal: executionPrincipalKey(input.executionPrincipal),
     scopeId: input.parentId,
-    expiresAt: Date.now() + CURSOR_TTL_MS,
     state,
   });
 }
@@ -904,11 +935,16 @@ async function openCursorState<T>(
   schema: z.ZodType<T>,
 ): Promise<T> {
   try {
-    const payload = await openAttachmentCursor(env.SESSION_SIGNING_KEY, cursor, {
+    const expected = {
       purpose: scopedCursorPurpose(options, purpose),
       principal: executionPrincipalKey(input.executionPrincipal),
       scopeId: input.parentId,
-    });
+    };
+    // Signed tokens remain readable for receipts produced before this cutover.
+    const payload = cursor.startsWith("{")
+      ? z.object({ purpose: z.literal(expected.purpose), principal: z.literal(expected.principal),
+          scopeId: z.literal(expected.scopeId), state: z.record(z.string(), z.unknown()) }).parse(JSON.parse(cursor))
+      : await openAttachmentCursor(env.SESSION_SIGNING_KEY, cursor, expected);
     return schema.parse(payload.state);
   } catch (error) {
     if (error instanceof AttachmentCursorError) throw attachmentError(error.code, error.message);

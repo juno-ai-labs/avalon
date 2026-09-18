@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -93,12 +94,12 @@ describe('theme', () => {
   it('keeps the preference beside the other device preferences', () => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ version: 1, selectedRegion: 'eu' }),
+      JSON.stringify({ version: 1, selectedRegion: 'enterprise' }),
     );
 
     persistThemeChoice('dark');
 
-    expect(readDevicePreferences()).toEqual({ version: 1, selectedRegion: 'eu', theme: 'dark' });
+    expect(readDevicePreferences()).toEqual({ version: 1, selectedRegion: 'enterprise', theme: 'dark' });
     expect(readThemeChoice()).toBe('dark');
   });
 

@@ -1,4 +1,7 @@
+import { stableUuid } from "../lib/stable-uuid";
 import {
+  PreparedConversationSchema,
+  type PreparedConversation,
   ExternalActorSchema,
   PendingTranscriptInputSchema,
   type ExternalActor,
@@ -12,6 +15,7 @@ import {
   type WorkstreamTranscriptSnapshot,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
+import { personMentionMarkdownRanges } from "@rally/contracts/citations";
 import {
   SubstreamContextCaptureSchema,
   SubstreamContextMessageSchema,
@@ -27,6 +31,7 @@ import {
   bindLoopNonSystemMessageCount,
   BIND_LOOP_PROJECTOR_VERSION,
   modelMessageWithoutProvenance,
+  pendingBindToolBatch,
   projectBindLoopMessages,
   type BindCompactionCommit,
   type BindLoopMessage,
@@ -240,7 +245,7 @@ export interface PendingInputDeliveryEffectInput {
   turnId: string;
   transcriptSequence: number;
   attentionOrdinal: number;
-  actor: PendingLoopInputRow["actor"];
+  actor: PendingLoopInputRow["actor"] | "assistant";
   authorUserId: string | null;
   authorNameSnapshot: string | null;
   text: string;
@@ -574,6 +579,9 @@ export class WorkstreamTranscriptStorage {
     transition: BindLoopTransition,
     now = Date.now(),
     executionFence?: TranscriptExecutionFence,
+    enqueueRegionalEffectsInTransaction?: (
+      deliveries: readonly PendingInputDeliveryEffectInput[],
+    ) => void,
   ): Promise<void> {
     const previous = this.readBindProjection(transition.loopId);
     const next = applyBindLoopTransition(previous, transition);
@@ -585,7 +593,13 @@ export class WorkstreamTranscriptStorage {
       this.writeBindState(transition, next, facts, now);
       if (transition.kind === "assistant_accepted") {
         if (!facts.appendedFactId) throw new Error("assistant_projection_fact_missing");
-        this.projectAssistantTurn(transition, facts.appendedFactId, now);
+        const delivery = this.projectAssistantTurn(transition, facts.appendedFactId, now);
+        if (delivery) {
+          if (!enqueueRegionalEffectsInTransaction) {
+            throw new Error("assistant_mention_effect_enqueue_required");
+          }
+          invokeSynchronousEffectEnqueue(enqueueRegionalEffectsInTransaction, [delivery]);
+        }
       }
       if (executionFence) {
         this.advanceLoopBindRevisionInTransaction(
@@ -1537,6 +1551,15 @@ export class WorkstreamTranscriptStorage {
     const steps: PreparedPendingBindStep[] = [];
     const keys: string[] = [];
     if (inputs.length === 0) return { steps, next: previous, keys };
+    // A derived input is a `protocol_user_appended` like any other, so any
+    // withheld batch refuses it — and this preparer runs before the settlement
+    // transaction, which means the throw failed the whole settled step rather
+    // than the delivery. The predicate is the whole batch, not a question:
+    // there is nothing loud to preserve on this path, because the throw becomes
+    // a terminal `run_state_persistence_failed` on a step that had completed.
+    // Undelivered is the honest outcome: nothing is marked delivered, and the
+    // next settled step appends it.
+    if (pendingBindToolBatch(previous) !== null) return { steps, next: previous, keys };
     const alreadyProjected = new Set(this.currentBindProvenanceKeys(
       previous.loopId,
       inputs.map((entry) => entry.provenance),
@@ -1616,7 +1639,7 @@ export class WorkstreamTranscriptStorage {
       || beforeLoop.bind_state_revision !== input.expectedBindStateRevision) {
       throw new Error("bind_loop_head_conflict");
     }
-    const pending = this.oldestActivationInput();
+    const pending = this.oldestActivationInput(previous);
     if (!pending || pending.input_id !== input.expectedInputId) {
       throw new Error("substream_loop_activation_input_changed");
     }
@@ -1648,7 +1671,7 @@ export class WorkstreamTranscriptStorage {
           input.expectedBindStateRevision,
         );
       }
-      const currentPending = this.oldestActivationInput();
+      const currentPending = this.oldestActivationInput(previous);
       if (!currentPending || !samePendingInput(pending, currentPending)) {
         throw new Error("substream_loop_activation_input_changed");
       }
@@ -1760,6 +1783,29 @@ export class WorkstreamTranscriptStorage {
   async appendParticipantMessage(input: ParticipantMessageInput): Promise<number> {
     const prepared = await this.prepareParticipantMessage(input);
     return this.storage.transactionSync(() => this.appendPreparedParticipantMessage(prepared));
+  }
+
+  /** Prepare facts for any new conversation. The caller owns identity and its publication fence. */
+  async prepareConversation(input: {
+    conversation: PreparedConversation;
+    firstTurnId: string;
+    clientMessageId: string;
+    human: { userId: string; snapshot: { displayName: string; avatarUrl: string | null } };
+    now: number;
+  }): Promise<PreparedParticipantMessage[]> {
+    const conversation = PreparedConversationSchema.parse(input.conversation);
+    return Promise.all(conversation.messages.map(async (message, index) => this.prepareParticipantMessage({
+      turnId: index === 0 ? input.firstTurnId : await stableUuid(["prepared-turn", input.firstTurnId, index]),
+      actor: message.role === "user" ? "human" : "assistant",
+      authorUserId: message.role === "user" ? input.human.userId : null,
+      authorSnapshot: message.role === "user" ? input.human.snapshot : null,
+      ...(index === 0 ? { clientMessageId: input.clientMessageId } : {}),
+      messageType: "text", text: message.text,
+      structuredContentJson: message.structuredContent == null ? null : JSON.stringify(message.structuredContent),
+      externalActorJson: null, producedByRunId: null,
+      messageSequenceNumber: index + 1, attentionOrdinal: index + 1,
+      createdAtUtc: new Date(input.now).toISOString(),
+    })));
   }
 
   async prepareParticipantMessage(input: ParticipantMessageInput): Promise<PreparedParticipantMessage> {
@@ -3366,12 +3412,12 @@ export class WorkstreamTranscriptStorage {
     transition: Extract<BindLoopTransition, { kind: "assistant_accepted" }>,
     rootFactId: string,
     now: number,
-  ): void {
+  ): PendingInputDeliveryEffectInput | null {
     const existing = this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
       `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
       transition.turnId,
     ).toArray()[0];
-    if (existing) return;
+    if (existing) return null;
     if (transition.transcriptSequence === null) {
       throw new Error("workstream_assistant_reservation_missing_sequence");
     }
@@ -3394,15 +3440,19 @@ export class WorkstreamTranscriptStorage {
     };
     const sequence = transition.transcriptSequence;
     const activityId = `${transition.turnId}:activity`;
+    const content = typeof message.content === "string" ? message.content : "";
+    const mentions = this.authoritativeAssistantPersonMentions(content);
+    const attentionOrdinal = mentions.length > 0 ? this.nextAttentionOrdinal() : null;
     this.sql.exec(
       `INSERT INTO participant_transcript_turns
          (transcript_sequence, turn_id, entry_kind, actor, author_user_id,
           root_fact_id, activity_id, attention_ordinal, revision, created_at, updated_at)
-       VALUES (?, ?, 'conversation', 'assistant', NULL, ?, ?, NULL, 1, ?, ?)`,
+       VALUES (?, ?, 'conversation', 'assistant', NULL, ?, ?, ?, 1, ?, ?)`,
       sequence,
       transition.turnId,
       rootFactId,
       activityId,
+      attentionOrdinal,
       now,
       now,
     );
@@ -3428,7 +3478,7 @@ export class WorkstreamTranscriptStorage {
       );
       blockIndex += 1;
     }
-    if (typeof message.content === "string" && message.content.length > 0) {
+    if (content.length > 0) {
       this.sql.exec(
         `INSERT INTO participant_transcript_blocks
            (turn_id, block_id, block_index, block_kind, fact_id, revision, updated_at)
@@ -3440,6 +3490,22 @@ export class WorkstreamTranscriptStorage {
         now,
       );
       blockIndex += 1;
+    }
+    if (attentionOrdinal !== null) {
+      this.insertPendingMentions(transition.turnId, attentionOrdinal, mentions, now);
+      const advanced = this.sql.exec<{
+        next_attention_ordinal: number;
+      } & Record<string, SqlStorageValue>>(
+        `UPDATE workstream
+            SET next_attention_ordinal = next_attention_ordinal + 1, updated_at = ?
+          WHERE id = 1 AND next_attention_ordinal = ?
+          RETURNING next_attention_ordinal`,
+        now,
+        attentionOrdinal,
+      ).toArray()[0];
+      if (advanced?.next_attention_ordinal !== attentionOrdinal + 1) {
+        throw new Error("assistant_mention_attention_changed");
+      }
     }
     for (let callIndex = 0; callIndex < (message.tool_calls?.length ?? 0); callIndex += 1) {
       const call = message.tool_calls![callIndex]!;
@@ -3480,6 +3546,51 @@ export class WorkstreamTranscriptStorage {
       { kind: "transcript_turn", turnId: transition.turnId },
       now,
     );
+    if (attentionOrdinal === null) return null;
+    const mentionedUserIds = [...new Set(mentions.map((mention) => mention.targetUserId!))];
+    return {
+      inputId: transition.turnId,
+      turnId: transition.turnId,
+      transcriptSequence: sequence,
+      attentionOrdinal,
+      actor: "assistant",
+      authorUserId: null,
+      authorNameSnapshot: null,
+      text: content,
+      mentionedUserIds,
+      confirmedParticipantUserIds: [],
+      affectedUserIds: mentionedUserIds,
+      activatedParticipants: [],
+    };
+  }
+
+  /**
+   * Model text can name an identity, but it cannot grant one. Only canonical
+   * links whose ids still belong to active participants become transcript
+   * mention authority; every other link remains ordinary rendered text.
+   */
+  private authoritativeAssistantPersonMentions(text: string): PendingInputMentionDescriptor[] {
+    const ranges = personMentionMarkdownRanges(text);
+    if (ranges.length === 0) return [];
+    const activeUserIds = new Set(boundParameterChunks([
+      ...new Set(ranges.map((range) => range.personId)),
+    ]).flatMap((ids) => this.sql.exec<{
+      user_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT user_id FROM participants
+        WHERE status = 'active' AND user_id IN (${ids.map(() => "?").join(", ")})`,
+      ...ids,
+    ).toArray().map((row) => row.user_id.toLowerCase())));
+    return ranges
+      .filter((range) => activeUserIds.has(range.personId))
+      .map((range, mentionIndex) => ({
+        mentionIndex,
+        mentionKind: "person" as const,
+        targetUserId: range.personId,
+        connectorType: null,
+        startOffset: range.startOffset,
+        endOffset: range.endOffset,
+      }));
   }
 
   private insertParticipantStatus(input: {
@@ -3647,7 +3758,7 @@ export class WorkstreamTranscriptStorage {
     ).toArray();
   }
 
-  private oldestActivationInput(): PendingLoopInputRow | undefined {
+  private visibleActivationInputs(): PendingLoopInputRow[] {
     return this.sql.exec<PendingLoopInputRow>(
       `SELECT input_id, loop_id, input_sequence, prepared_turn_id,
               admitted_after_transcript_sequence, mode, actor, author_user_id,
@@ -3664,8 +3775,98 @@ export class WorkstreamTranscriptStorage {
                AND preparing.state = 'preparing'
                AND preparing.input_sequence < pending_loop_inputs.input_sequence
           )
-        ORDER BY input_sequence LIMIT 1`,
+        ORDER BY input_sequence`,
+    ).toArray();
+  }
+
+  private oldestActivationInput(
+    projection: BindLoopProjectionState | null,
+  ): PendingLoopInputRow | undefined {
+    return this.inputsBindCanAccept(projection, this.visibleActivationInputs())[0];
+  }
+
+  /**
+   * The pending input that can start this loop's next cycle, or `undefined`
+   * while nothing in the queue can move it on.
+   */
+  nextActivationInput(loopId: string): PendingLoopInputRow | undefined {
+    return this.oldestActivationInput(this.readBindProjection(loopId));
+  }
+
+  /**
+   * The withheld calls of an open question, and nothing else.
+   *
+   * A batch withheld for any other reason is a run's own to repair from its
+   * tool receipts, and it keeps the behaviour it has: the queue stays FIFO and
+   * Bind refuses the head loudly, rather than a silent stall nothing reports.
+   */
+  private openQuestionToolCallIds(projection: BindLoopProjectionState): Set<string> {
+    const withheld = pendingBindToolBatch(projection);
+    if (!withheld) return new Set();
+    const open = new Set<string>();
+    for (const call of withheld.calls) {
+      const asked = this.sql.exec<{ elicitation_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE tool_call_id = ?`,
+        call.receiptToolCallId,
+      ).toArray()[0];
+      if (asked) open.add(call.receiptToolCallId);
+    }
+    return open.size === withheld.calls.length ? open : new Set();
+  }
+
+  /**
+   * Pending inputs in the order Bind will take them.
+   *
+   * The queue is FIFO because that is the order the room said things in. Bind's
+   * protocol is not: while the last assistant step holds an unanswered
+   * question, every user message is refused, because a tool result has to
+   * follow its own call directly. The one input that moves the loop on is the
+   * answer to that question — and it is admitted *behind* whatever was queued
+   * while the question was on screen. Handing Bind the queue head there threw
+   * on every attempt, and a pending input that throws stays where it is: the
+   * queue stopped at its head, the answer behind it was never promoted, and
+   * the question could not be dismissed by anyone, because the card is drawn
+   * from the canonical turn the promotion writes. The answer therefore goes
+   * first. That is a reordering, not a hold: the tool result an answer appends
+   * settles the batch, so the rest of the queue follows it in the same pass, in
+   * arrival order. Only a question still unanswered holds anything back.
+   */
+  private inputsBindCanAccept(
+    projection: BindLoopProjectionState | null,
+    pendingInputs: readonly PendingLoopInputRow[],
+  ): PendingLoopInputRow[] {
+    const openToolCallIds = projection === null
+      ? new Set<string>()
+      : this.openQuestionToolCallIds(projection);
+    if (openToolCallIds.size === 0) return [...pendingInputs];
+    const answers = new Map<string, PendingLoopInputRow>();
+    for (const pending of pendingInputs) {
+      const toolCallId = this.answeredQuestionToolCallId(pending);
+      if (toolCallId === null || !openToolCallIds.has(toolCallId)) continue;
+      if (!answers.has(toolCallId)) answers.set(toolCallId, pending);
+    }
+    const closing = [...answers.values()];
+    // Every question answered, or none of the queue moves. One question still
+    // open leaves the batch unsettled, and `lastAssistantStepIsSettled` is
+    // false for an unsettled batch however many of its siblings are closed —
+    // so appending anything else here is the exact refusal this selector
+    // exists to avoid, not a queue that could have drained a little further.
+    // The rest is parked, not dropped: it is the same queue on the next pass,
+    // and the last answer releases it.
+    if (answers.size !== openToolCallIds.size) return closing;
+    const closed = new Set(closing);
+    return [...closing, ...pendingInputs.filter((pending) => !closed.has(pending))];
+  }
+
+  /** The withheld tool call this pending input closes, when it is an answer to one. */
+  private answeredQuestionToolCallId(pending: PendingLoopInputRow): string | null {
+    const { elicitationId } = parsePendingInputMaterial(pending).authorization;
+    if (elicitationId === null) return null;
+    const row = this.sql.exec<{ tool_call_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT tool_call_id FROM elicitation_requests WHERE elicitation_id = ?`,
+      elicitationId,
     ).toArray()[0];
+    return row === undefined ? null : String(row.tool_call_id);
   }
 
   private async preparePendingBindAppends(
@@ -3688,7 +3889,7 @@ export class WorkstreamTranscriptStorage {
     // in the pass, which is also the order the room saw them in.
     const scanThrough = this.transcriptThrough();
     const appendedInThisPass = new Set<string>();
-    for (const pending of pendingInputs) {
+    for (const pending of this.inputsBindCanAccept(previous, pendingInputs)) {
       const material = parsePendingInputMaterial(pending);
       // The transition below appends `bindPayload`, which is always the user
       // message the model reads; the canonical payload's role follows the
@@ -4841,9 +5042,10 @@ function sameOrderedInputPrefix(
 }
 
 function invokeSynchronousEffectEnqueue(
-  enqueue: (deliveries: readonly PendingInputDeliveryEffectInput[]) => void,
+  enqueue: ((deliveries: readonly PendingInputDeliveryEffectInput[]) => void) | undefined,
   deliveries: readonly PendingInputDeliveryEffectInput[],
 ): void {
+  if (!enqueue) return;
   const returned = enqueue(deliveries) as unknown;
   if (returned && (typeof returned === "object" || typeof returned === "function")
     && "then" in returned) {

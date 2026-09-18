@@ -680,6 +680,16 @@ interface ModalProps {
   children?: ReactNode;
   footer?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement | null>;
+  /**
+   * Refuse Escape and a click outside, leaving the footer as the only way out.
+   *
+   * For the dialog that shows a value exactly once — a generated signing secret
+   * that cannot be asked for again — where a stray click costs the
+   * administrator a delete-and-reconnect across two products. Everywhere else
+   * an accidental dismissal costs a reopen, and taking Escape away from a
+   * person to save them a reopen is the wrong trade.
+   */
+  dismissible?: boolean;
 }
 
 export function Modal({
@@ -690,6 +700,7 @@ export function Modal({
   children,
   footer,
   initialFocusRef,
+  dismissible = true,
 }: ModalProps): React.JSX.Element {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -703,7 +714,20 @@ export function Modal({
              this before dismissing and skips the dismissal when the event is
              defaultPrevented. A native KeyboardEvent, so no `nativeEvent`. */
           onEscapeKeyDown={(event) => {
-            if (isComposingKeyEvent(event)) event.preventDefault();
+            if (!dismissible || isComposingKeyEvent(event)) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (!dismissible) {
+              event.preventDefault();
+              return;
+            }
+            // Menus portal to the document, so a click on one is "outside" the
+            // dialog content even when the trigger lives inside it. Treating
+            // that as a dismissal closes the participant dialog on Remove.
+            const target = event.target;
+            if (target instanceof Element && target.closest('.menu-content')) {
+              event.preventDefault();
+            }
           }}
           onOpenAutoFocus={(event) => {
             const initialFocus = initialFocusRef?.current;

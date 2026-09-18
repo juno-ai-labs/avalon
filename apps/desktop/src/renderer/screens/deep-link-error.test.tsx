@@ -19,6 +19,7 @@ vi.mock('../lib/platform', () => ({
       };
     },
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 describe('the deep-link failure window', () => {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { ConnectorError, SlackWorkspaceBotScopes } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
@@ -857,5 +858,45 @@ describe("unfurl audience check", () => {
     })) as unknown as typeof fetch);
 
     await expect(slackChannelIsExternallyShared(logEnv, "tok", "CGENERAL")).resolves.toBeNull();
+  });
+});
+
+describe("a Slack answer this binary does not model", () => {
+  it("names the field in the reason that reaches the connection row and the ingress job", () => {
+    // `invalid_slack_data` is persisted on the ingress job and written to the
+    // connection's `error_json`, and it said only that something in Slack's
+    // body was off. The path is schema shape; the body's values stay behind.
+    const rejection = z.strictObject({ channel: z.strictObject({ is_private: z.boolean() }) })
+      .safeParse({ channel: { is_private: "member content must remain absent" } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    const reason = __slackAgentTesting.slackErrorReason(rejection.error);
+    expect(reason).toBe("invalid_slack_data:channel.is_private:invalid_type");
+  });
+
+  it("reads the field the adapter attached to a malformed response, which is how one actually arrives", () => {
+    // `slackApiResponse` parses the body and throws `provider_error` with the
+    // paths attached; a raw `ZodError` never reaches these helpers in
+    // production. The word `provider_error` alone is what an outage says.
+    const wrapped = new ConnectorError("provider_error", "Slack conversations.info returned a malformed response", {
+      formErrors: [],
+      fieldErrors: { channel: ["Invalid input"] },
+      responseIssues: "channel.is_private:invalid_type",
+    });
+    expect(__slackAgentTesting.slackErrorReason(wrapped)).toBe("invalid_slack_data:channel.is_private:invalid_type");
+    // A detail that is not code-shaped is not a path list, and is not carried.
+    expect(__slackAgentTesting.slackErrorReason(new ConnectorError("provider_error", "x", { responseIssues: "member content: alice@example.com" })))
+      .toBe("provider_error");
+  });
+
+  it("persists one ingress code per drift, not one per array slot", () => {
+    // The exhausted-job notice dedups on exact `error_code` equality, and
+    // Slack's origin shapes are bounded arrays of strict objects: without the
+    // fold, one contract drift would page once per element index.
+    const rejection = z.strictObject({ nearbyMessages: z.array(z.strictObject({ text: z.string().max(3) })) })
+      .safeParse({ nearbyMessages: [{ text: "ok" }, { text: "ok" }, { text: "member content must remain absent" }] });
+    if (rejection.success) throw new Error("expected a rejection");
+    expect(__slackAgentTesting.slackIngressErrorCode(rejection.error)).toBe("invalid_slack_data:nearbyMessages.n.text:too_big");
+    expect(__slackAgentTesting.slackIngressErrorCode(new Error("Error"))).toBe("slack_ingress_failed");
   });
 });

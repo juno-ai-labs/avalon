@@ -187,4 +187,53 @@ describe("materializing a Sidekick's declared tables across the rename", () => {
     ]);
     expect(await counts()).toEqual({ tables: 1, mutations: 1 });
   });
+
+  it("names the offending field when a declaration is refused across the RPC boundary", async () => {
+    // The publication alarm reaches this method one write after the
+    // registration write `parseRpcInput` was introduced for. A `ZodError`
+    // thrown here was reduced by the RPC serializer to a bare `Error` — no
+    // issues, no message — so the alarm's failure row carried `code: ""`, its
+    // operator notice `handler_error:Error`, and the Sidekick's
+    // `applied_effects_revision` trailed with no reason on record.
+    const scope = WorkspaceMemoryScopeSchema.parse(await workspace().ensureMemoryScope({
+      workspaceId: WORKSPACE_ID,
+      proposedScopeId: SCOPE_ID,
+      kind: "sidekick",
+      ownerId: AUTOMATION_ID,
+      at: AT,
+    }));
+    const harnessRunId = `automation-apply:${AUTOMATION_ID}:${REVISION}`;
+    const rejection = await workspace().createMemoryTable({
+      workspaceId: WORKSPACE_ID,
+      memoryTableId: "table-seen-entries",
+      memoryScopeId: scope.memoryScopeId,
+      name: DECLARED.name,
+      description: DECLARED.description,
+      usageInstructions: DECLARED.usageInstructions,
+      keyColumnIdsJson: JSON.stringify(["table-seen-entries:column:0"]),
+      provenanceJson: JSON.stringify({ source: "automation_definition", automationId: AUTOMATION_ID, definitionRevision: REVISION }),
+      // The declaration's shape drifted: a column list where the object
+      // expects column rows.
+      columns: "url",
+      mutation: {
+        memoryTableMutationId: "mutation-drifted",
+        receiptId: `${harnessRunId}:0`,
+        operation: "create",
+        actorPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        harnessRunId,
+        workstreamId: AUTOMATION_ID,
+        rationale: "Declared by the Sidekick's definition",
+        inputHash: await preRenameInputHash(),
+        mutationJson: "{}",
+        resultJson: JSON.stringify({ memoryTableId: "table-seen-entries", name: DECLARED.name }),
+      },
+      at: AT,
+    } as never).then(() => null, (error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(Error);
+    const message = (rejection as Error).message;
+    expect(message).toContain("create_memory_table_invalid");
+    expect(message).toContain("columns");
+    expect(await counts()).toEqual({ tables: 0, mutations: 0 });
+  });
 });

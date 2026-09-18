@@ -1,3 +1,4 @@
+import { configuredRegions } from "@rally/contracts/regions";
 import {
   asWorkspaceId,
   ProductFeatureFlagFanoutMessageSchema,
@@ -13,10 +14,7 @@ import {
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { logInfo, logWarn } from "../observability/logger";
 
-const QUEUES = new Set([
-  "avalon-global-product-feature-flags",
-  "avalon-eu-product-feature-flags",
-]);
+const QUEUES = new Set(configuredRegions.map((region) => `avalon-${region}-product-feature-flags`));
 
 export function isProductFeatureFlagQueue(queue: string): boolean {
   return QUEUES.has(queue);

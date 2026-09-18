@@ -1,7 +1,7 @@
 # Feature flags
 
 Rally evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
-through the `FLAGS` binding on both regional Workers. The binding owns two
+through the `FLAGS` binding on configured regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
@@ -11,33 +11,22 @@ own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
-Four modules read the binding, one per kind, and **nothing else calls
+Three modules read the binding, one per kind, and **nothing else calls
 `env.FLAGS` directly**:
 
 | Module | Owns | Fails |
 | --- | --- | --- |
 | `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
 | `apps/api/src/services/client-feature-flags.ts` | The features the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
-| `apps/api/src/services/control-tower-flags.ts` | Control Tower's refresh cadence | **Open** — to the checked-in default, because a cadence has no off |
 | `apps/api/src/services/digest-flags.ts` | The `digests-enabled` kill switch | **Open** — to enabled, because a digest already sends by default and an outage must not silently stop it |
 
 Failure direction is the reason these are separate modules rather than one
 resolver with a parameter. A client feature that fell back the way a model flag
-does would ship an unreleased feature on the first Flagship outage; a cadence
-that failed closed would leave a recording meeting with no briefing at all,
-which is not a safe reading of an outage; a digest kill switch that failed
+does would ship an unreleased feature on the first Flagship outage; a digest kill switch that failed
 closed would turn every digest off on the first Flagship hiccup, which is a
 product regression triggered by infrastructure rather than a decision anybody
 made. Because the pin lives with the model flags, every answer to "which model
 does this run use" still comes from one file.
-
-The cadence is the one flag whose value has to be the *same* value in two places.
-The desktop reads it through `GET /feature-flags` and snapshots it for the length
-of one meeting; that snapshot then travels with each generate request, so the
-prompt describes the schedule the client is actually keeping. The resolver is
-consulted server-side only when a request carries no cadence. A flag change
-therefore reaches a meeting at its next recording rather than mid-way through one
-— see [`meeting-notes.md`](meeting-notes.md).
 
 `apps/api/src/services/flag-targeting-attributes.ts` is the companion all of them
 evaluate through: it turns the ids a caller happens to hold into the attributes a
@@ -52,15 +41,12 @@ The rest:
 | `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
 | `apps/ace` | Access-protected editor and write authority for the managed user-facing product flags. See [`ace.md`](ace.md). |
 | `apps/api/src/queues/product-feature-flag-consumer.ts`, `WorkspaceDO.notifyProductFeatureFlagChanged` | Regional key-only fan-out and private per-user socket refresh. |
-| `packages/contracts` — `AGENT_MODEL_OVERRIDES`, `CONTROL_TOWER_REFRESH_SECONDS` | The closed set of pinnable models, and the one definition of the cadence both ends read. |
+| `packages/contracts` — `AGENT_MODEL_OVERRIDES` | The closed set of pinnable models. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream or substream being started, and the locked pill inside one that already exists. |
 | `apps/api/src/services/substream-creation-service.ts` | Where a substream's pin is written, on the confirmation that creates it. See [`substream-creation.md`](substream-creation.md). |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
-| `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | The `FLAGS` binding on each deployment. |
-
-## How it works
 
 ### Why a flag rather than a Worker variable
 
@@ -76,25 +62,30 @@ and Rally keeps running unchanged when Flagship is unreachable.
 
 ### One flag per agent
 
-Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
+Each adjustable model-using agent type uses a flag keyed
+`agent-model-<agent>`. Background agents use the work-stream agent type and
+inherit the source conversation's model override:
 
 | Agent | Flag key | Default model | Fallback models |
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Inline subagent | `agent-model-inline-child` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
-The first three names match the `AgentInferenceSource` values written to the
-inference ledger, so a ledger row and a flag key name the same agent; an
+Message addressing is deliberately absent from this table and from Ace. Its
+evaluated cascade fixes JEV as primary and
+`deepseek/deepseek-v4-flash-0731` through `wafer/fast` as the low-reasoning
+fallback, with no model or provider fallbacks. Changing either side requires a
+new evaluation and deploy; leaving an editable Flagship value in front of the
+measured route would let production silently diverge from its evidence. The
+work-stream entry matches the `AgentInferenceSource` value written to the
+inference ledger, so a ledger row and its flag key name the same agent; an
 automation run and the conversation that drafts one are `workstream` runs on
 the work-stream agent's flag. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness classifier helper; work-stream naming, the two halves of suggested work, and the
+agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
 Durable-memory query and document embeddings use the same gateway's native
 OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
@@ -214,10 +205,10 @@ whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
 the budget and the failure code. Do not answer a pinned run's provider outage by
 adding fallbacks here.
 
-It reaches only the work-stream agent, which is also what drafts an
-automation and runs one. The inline subagent keeps its own flag: it is a
-distinct agent, and the whole point of giving it a flag was that it can be
-moved on its own.
+It reaches the work-stream agent, which also authors Sidekicks, runs their
+occurrences, and executes background work. A background agent inherits its
+source conversation's override. The retired inline-child flag does not control
+these agents.
 
 The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
 `@rally/contracts` — because a pin bypasses the rollout, so what it can reach
@@ -323,7 +314,6 @@ A caller supplies only these, and only what it knows:
 | Attribute | Value |
 | --- | --- |
 | `agent` | The role key, e.g. `workstream` |
-| `region` | `AVALON_REGION` — `global` or `eu` |
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
 | `workstreamId` | Present on work-stream, subagent, and classifier evaluations |
@@ -363,10 +353,10 @@ that were sent.
 
 `userPlatformId` is the one to reach for when a rollout is per *person* rather
 than per workspace. `userId` names a regional `users` row, and one person with
-workspaces in both regions has one in each — bucketing on it would place them in
+workspaces in configured deployments has one in each — bucketing on it would place them in
 a different bucket per region and hand them a half-rolled-out feature on one of
 them. The platform id is established once by the Global control plane and is
-immutable in both regions ([`regionalization.md`](regionalization.md)). It is
+immutable in configured deployments ([`regionalization.md`](regionalization.md)). It is
 absent only for an account predating that control plane, and an absent attribute
 does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
@@ -391,7 +381,7 @@ loader, not at the rule author's discretion:
 - **One carve-out: `workspaceSlug`.** It is user-authored text — the workspace
   name typed at onboarding, slugified, with eight characters of the workspace id
   appended (`workspace-service.ts`) — so it can name a company, a team, or, on a
-  solo account, a person, and it crosses from both regions. It is sent anyway,
+  solo account, a person, and it crosses from configured deployments. It is sent anyway,
   because the alternative is rules written against uuids, and a rule nobody can
   read six weeks later is a rollout nobody can safely revert. This is the one
   exception; a second one is a decision, not a precedent.
@@ -491,18 +481,15 @@ behave. There are seven today:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `meeting-recording-enabled` | boolean | `false` | Whether Electron shows meeting-recording actions |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
 | `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
-| `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false, "meetingRecordingEnabled": false,
+false,
 "suggestedWorkEnabled": false,
-"digestsEnabled": true, "multipleWorkspacesEnabled": false,
-"controlTowerRefreshSeconds": 60 }` — resolved for the
+"digestsEnabled": true, "multipleWorkspacesEnabled": false }` — resolved for the
 signed-in person. It answers under *identity* auth rather than workspace auth:
 eligibility belongs to the account, and a device that has not chosen an
 workspace yet still has to be told the feature is off rather than read a
@@ -513,22 +500,6 @@ every other absence in this flag's evaluation resolves to.
 The fields are not all the same kind of answer, and the response schema says
 so. Six of the seven Boolean features default to off; `digestsEnabled` is the
 one exception, for the same reason it is discussed on its own below.
-`controlTowerRefreshSeconds` is a setting with no off: it defaults to the
-cadence the client would have used anyway, and both ends read that number
-from one definition —
-`CONTROL_TOWER_REFRESH_SECONDS` in `@rally/contracts` — so an unreachable
-Flagship, an older service, and the desktop fallback cannot disagree. The
-resolver clamps what Flagship serves to that range before serving it, because
-every refresh is an inference: a flag typed in milliseconds would otherwise turn
-one meeting into thousands of runs. A clamp logs
-`control_tower_refresh_flag_clamped` rather than passing quietly.
-
-The desktop reads the cadence from the **renderer** that acts on it — the
-meeting screen, once when it opens — rather than through the main-process poll
-below. A meeting window exists for one meeting, and a cadence that changed
-underneath a recording would move the transcript's own segment boundaries
-mid-conversation.
-
 The managed product Boolean names deliberately end in **Enabled**, as do their
 camel-case response fields. `true` therefore always means the surface may be
 shown and `false` means it is hidden; no caller has to infer whether a bare name
@@ -541,7 +512,7 @@ controls for discovery and visibility, not authorization, entitlements, or
 server-side kill switches. A hidden Suggested Work surface may skip its own
 fetch and impressions because nothing was drawn, but the Suggested Work API
 remains available. The same rule applies to workspace-template,
-meeting-recording, and multiple-workspace operations. Turning the
+and multiple-workspace operations. Turning the
 multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
 
@@ -608,10 +579,6 @@ configuration changes can take
 The regional object evaluates after that delay; it does not trust a value from
 the administrative write response.
 
-Meeting recording hides its actions in the sidebar, macOS menu, and
-meeting screen. Neither flag is checked by an API route or by the Electron IPC
-handler that performs an already-selected action.
-
 `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` in
 `apps/desktop/src/main/developer-settings-flag.ts` — one minute — is how long a
 flag change takes to reach a running app. The poll lives in the **main
@@ -652,11 +619,9 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **Nothing calls `env.FLAGS` outside the three resolvers.** They exist as
   separate modules because they fail in opposite directions; a shared resolver
   with a parameter is one place for that direction to be chosen wrongly.
-- **Model flags fail open, client feature flags fail closed, the cadence falls
-  back to the checked-in default, and the digest kill switch fails open too.**
+- **Model flags fail open, client feature flags fail closed, and the digest kill switch fails open too.**
   A client feature that failed open would ship an unreleased feature on the
-  first Flagship outage; a cadence that failed closed would leave a recording
-  meeting with no briefing at all; a digest kill switch that failed closed
+  first Flagship outage; a digest kill switch that failed closed
   would stop every digest on the first Flagship hiccup.
 - **A route plan is one flag value, never two flags.** A variation change is
   atomic, so an agent can never serve a new default model against the previous
@@ -693,7 +658,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
   that were sent.
 - **Bucket a per-person rollout on `userPlatformId`, never `userId`.** `userId`
-  names a regional row, and one person with workspaces in both regions has one in
+  names a regional row, and one person with workspaces in configured deployments has one in
   each; bucketing on it hands them a half-rolled-out feature on one region.
 - **What may leave the Worker is decided at the loader, not by the rule author.**
   Ids, counts, ages, schema enums, and the *domain* half of an email address —
@@ -710,8 +675,8 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   `client-feature-flags.ts` describes the person, evaluates the flag, and serves
   the answer; changing who is in is a flag change with a changelog entry, not a
   deploy.
-- **Product Boolean flag names explain true.** `meeting-recording-enabled` maps
-  to `meetingRecordingEnabled`; a bare or negatively named Boolean invites one
+- **Product Boolean flag names explain true.** `suggested-work-enabled` maps
+  to `suggestedWorkEnabled`; a bare or negatively named Boolean invites one
   layer to invert another.
 - **A product-flag notification carries a key, never a value.** Two people in
   one workspace may match different rules, so WorkspaceDO evaluates each user
@@ -719,17 +684,12 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **Ace is the managed product-flag write path.** Flagship has no documented
   webhook or Queue notification surface; a dashboard edit changes evaluation
   but cannot wake connected Avalon clients.
-- **The cadence has one definition** — `CONTROL_TOWER_REFRESH_SECONDS` in
-  `@rally/contracts` — read by the resolver, the service default, and the desktop
-  fallback, and the resolver clamps what Flagship serves to that range before
-  serving it. Every refresh is an inference; a flag typed in milliseconds would
-  otherwise turn one meeting into thousands of runs.
 - **Evaluation is per run, not per model turn.** A flag change reaches an
   in-flight run only at its next admission.
 
 ## Boundary
 
-This document owns the `FLAGS` binding, the four resolvers, the attribute loader,
+This document owns the `FLAGS` binding, the three resolvers, the attribute loader,
 and the one thing that overrides a flag. It does not own the agents themselves or
 what they do with the model they are handed:
 
@@ -843,8 +803,6 @@ attribute test is deliberately scoped to the fields its rule covers rather than
 asserting over the whole payload — a broad assertion passes by accident on the
 `workspaceSlug` carve-out.
 
-## Operations
-
 ### Provisioning
 
 Both regional Workers bind the **one** `avalon-api` Flagship app
@@ -863,22 +821,14 @@ would mean maintaining two copies of every flag that are meant to stay
 identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
 
-What both regions do send this one app is the evaluation context, and since the
-attributes above it carries facts about EU workspaces, work streams, and people
-as well as Global ones. That is the reason the attribute boundary is drawn where
-it is rather than left to whoever adds the next rule: what crosses is a slug, a
-count, an age, a schema-declared enum, an id, and an email domain — never a
-name, an address, or anything a person wrote. Widening that set is a data
-decision about both regions at once, not a local change to a loader.
-
 Ace automatically ensures all ten `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
 `multiple-workspaces-enabled`,
-`live-artifacts-enabled`, and `digests-enabled` exist on every
+`live-artifacts-enabled`, `push-notifications-enabled`, and `digests-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
-defaults off except
-`digests-enabled`, which defaults **on** — a digest already sends by default
+defaults off except `push-notifications-enabled`, which defaults **on** for
+everyone from launch, and `digests-enabled`, which defaults **on** — a digest already sends by default
 for every existing person, so provisioning it must not be the thing that
 silently stops delivery; see [`digests.md`](digests.md#the-run). Once created,
 edit product flags and each model flag's current default route through Ace
@@ -945,18 +895,6 @@ pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type bool
   --rule "serve=on; when=userEmailDomain equals juno-labs.com"
 ```
 
-Then the cadence, seeded at the checked-in default so provisioning changes
-nothing. It is served to everyone rather than scoped by a rule — it is a tuning
-knob, not a feature somebody is let into — so it is created with no rules and
-retargeted only to stage a change:
-
-```bash
-pnpm exec wrangler flagship flags create <APP_ID> control-tower-refresh-seconds --type number \
-  -V current=60 \
-  --default current \
-  -d "Seconds between Control Tower refreshes while a meeting records. 15-600; the service clamps"
-```
-
 **The staff scope is that `--rule`, and it is the only thing holding it.**
 Nothing in the Worker narrows the flag, so a `developer-settings` served with no
 rule reaches every account it is evaluated for. `create` takes rules, so give it
@@ -970,7 +908,7 @@ to, so `set … -V on` would hand the section to everyone regardless of the rule
 
 To stage it among staff, roll out within that rule and bucket by
 `userPlatformId` — not `userId`, which would bucket a person with workspaces in
-both regions twice. There is no workspace worth keeping consistent here, because
+configured deployments twice. There is no workspace worth keeping consistent here, because
 the section describes one person's device:
 
 ```bash
@@ -1039,13 +977,8 @@ Bucket the rollout by `workspaceId` rather than `workstreamId` or `userId`: it
 keeps every agent in a workspace on one generation, so a work-stream run and the
 subagents and classifiers around it stay consistent.
 
-Because both regions share the app, a rollout reaches both unless you scope it.
+Because configured deployments share the app, a rollout reaches both unless you scope it.
 To stage one region first, target `region` instead:
-
-```bash
-pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
-  --add-rule "serve=next; when=region equals eu"
-```
 
 The same shape reaches any attribute in the table above — the dogfooding
 workspaces before anyone else, then the teams, then everybody:
@@ -1137,7 +1070,7 @@ To exercise a real flag locally you need Cloudflare credentials and
    Ace keeps a key that does not end in `-enabled`, the way `developer-settings`
    does — the suffix is the rule, not a list.
 6. Add the flag to the table above and create the rules that scope it. There is
-   one app for both regions, so it is created once — and a flag created without
+   one app for configured deployments, so it is created once — and a flag created without
    its rule is live and unscoped until the rule lands. Ace provisions with no
    rules at the default variation, so for a feature that is off for everyone
    until the rule lands, which is the safe order.
@@ -1151,7 +1084,40 @@ entity, emit it only when it is known, keep it inside the boundary above, and
 add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
+## Apple push
+
+`push-notifications-enabled` defaults on for everyone and is provisioned by Ace. The client
+contract exposes `pushNotificationsEnabled`; the same boolean evaluator gates
+both intent enqueue and delivery. Turning it off stops queued sends as well as
+hiding the Notifications section.
+
 ## Changelog
+
+### 2026-09-17 — Addressing leaves the model-flag catalog
+
+**What changed:** Message addressing no longer has an
+`agent-model-addressing-classifier` Flagship role, Worker model variable, Ace
+editor row, or provisioning entry. The agent harness owns one fixed JEV primary
+and exact DeepSeek/`wafer/fast` fallback as a single measured cascade.
+
+**Why:** The JEV request, `0.5` threshold, fallback model, provider, and low
+reasoning effort were evaluated together. Keeping only the fallback model
+editable would make the operator surface claim a supported degree of freedom
+that invalidates the accuracy and latency evidence behind the cascade.
+
+**Considered and rejected:** Retaining a disabled or empty-default flag for
+emergency substitution. An emergency edit would still create an unmeasured
+route, while provider failures already take the explicit fallback path and a
+real model change can ship as one reviewed constant after evaluation.
+
+**Consequences:** Existing remote copies of the retired flag are inert and may
+be deleted independently; runtime code never evaluates them. Ace catalog parity
+now guards only genuinely adjustable roles, and addressing model changes require
+an eval-backed code change.
+
+### 2026-09-14 — Retire built-in meeting controls
+
+Meeting recording, Control Tower cadence, and the meeting-notes model role were removed because the built-in feature is retired. Dictation uses the existing transcription configuration and has no dependency on these flags. Historical entries below describe earlier releases.
 
 ### 2026-09-10 — A substream can carry a model pin, and the model control has one home in every layout
 
@@ -1330,7 +1296,7 @@ wrong — the feature was simply off for everyone with no way to change it.
 
 **Considered and rejected:** Making the Worker create an absent flag on first
 evaluation. That puts flag provisioning on a request path, needs Flagship write
-credentials in both regional Workers where only read access belongs, and would
+credentials in configured regional Workers where only read access belongs, and would
 create a flag with no rule — live and unscoped — at whatever moment the first
 poll arrives.
 

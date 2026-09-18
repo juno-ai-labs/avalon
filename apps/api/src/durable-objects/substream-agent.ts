@@ -1,3 +1,11 @@
+import { parseRpcInput } from "../lib/rpc-input";
+import { ToolPageError } from "./tool-page-storage";
+import { workstreamImportHash } from "./workstream-import-hash";
+import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AgentCommunicationService } from "../services/agent-communication-service";
+import { RegionSchema } from "@rally/contracts/regions";
+import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
+import { conversationParentStub } from "../services/conversation-parent-client";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
@@ -171,7 +179,7 @@ import {
   HarnessRunOperationRequestSchema,
   mutatesRunState,
 } from "./workstream-harness-run-protocol";
-import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
+import { WorkstreamIdentityStorage, type WorkstreamProvisionInput } from "./workstream-identity-storage";
 import {
   type IdentityOperationRequest,
   IdentityOperationRequestSchema,
@@ -219,6 +227,8 @@ import {
 } from "./workstream-object-product";
 import {
   AdmitExternalMessageInputSchema,
+  AdmitAgentMessageInputSchema,
+  type AdmitAgentMessageInput,
   AnswerExternalElicitationInputSchema,
   ExternalMessageAdmissionResultSchema,
   type ExternalMessageAdmissionResult,
@@ -379,7 +389,7 @@ const ProductAuthSchema = z.strictObject({
   sessionId: z.string().min(1).max(200),
   userId: UserIdSchema,
   workspaceId: WorkspaceIdSchema,
-  region: z.enum(["global", "eu"]),
+  region: RegionSchema,
   role: z.enum(["owner", "admin", "member"]),
   // Absent: `sessionId` names a `sessions` row and is verified there.
   // `"connector"`: a connector ingress already verified the link that binds
@@ -899,6 +909,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  /** Queue-acceptance passes serialize without making execution wait for them. */
+  private externalProjectionDrain: Promise<void> = Promise.resolve();
   /** Post-run delivery/maintenance proceeds independently of inference. */
   private readonly externalSettlementDrain = new DurableAgentDrain();
   /** Fresh terminal outcomes retain metrics that are not part of the durable receipt. */
@@ -1738,7 +1750,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: string;
   }> {
     await this.initialized;
-    const request = z.strictObject({
+    const request = parseRpcInput(z.strictObject({
       schemaVersion: z.literal(1),
       workspaceId: z.string().min(1),
       workstreamId: z.string().min(1),
@@ -1757,7 +1769,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         audienceKind: z.enum(["workspace", "restricted"]),
         audienceUserIds: z.array(z.string().min(1)),
       }),
-    }).parse(input);
+    }), input, "append_watched_resource_event");
     // The receipt is the event and the registration that matched it: the same
     // event redelivered for the same watch is one row, and the same event
     // matched by a second watch on another resource is another.
@@ -1976,12 +1988,117 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  /** Internal runtime metadata, never a transcript or a participant-facing inspection API. */
+  async agentRuntimeInfo() {
+    await this.initialized;
+    const identity = this.identityRows.identity();
+    if (!identity) return null;
+    const background = this.state.storage.sql.exec<{ execution_principal_json: string; stopped_at: number | null }>(
+      "SELECT execution_principal_json, stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0];
+    return {
+      name: identity.title, description: identity.description,
+      status: background?.stopped_at != null ? "stopped" : this.loop.loop()?.status ?? "idle",
+      background: !!background,
+      executionPrincipal: background ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json)) : null,
+    };
+  }
+
+  /** One host RPC; keep bootstrap, identity projection and principal initialization on their existing paths. */
+  async initializeDelegatedAgent(input: {
+    bootstrap: SubstreamRuntimeBootstrapRequest;
+    provision: WorkstreamProvisionInput;
+    executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
+  }): Promise<DurableObjectRpcResult> {
+    const boot = await this.bootstrapRuntime(input.bootstrap);
+    if (boot.status !== 200) return boot;
+    const provision = await this.executeIdentityOperation({
+      workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
+      substreamId: input.bootstrap.substreamId ?? "0", operation: "provision", args: [input.provision],
+    });
+    if (provision.status !== 200) return provision;
+    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal });
+    return provision;
+  }
+
+  async initializeBackgroundAgent(input: { executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"] }) {
+    await this.initialized;
+    const principal = ExecutionPrincipalSchema.parse(input.executionPrincipal);
+    this.state.storage.sql.exec(
+      "INSERT OR IGNORE INTO background_agent (id, execution_principal_json) VALUES (1, ?)", JSON.stringify(principal),
+    );
+  }
+
+  /** Ownership is resolved by the host's workspace team authority before this RPC. */
+  async stopOwnedAgent() {
+    await this.initialized;
+    this.state.storage.transactionSync(() => {
+      const now = Date.now();
+      // Hold future admissions; never terminate or settle an active Bind step
+      // here. Active execution observes the same fenced stop as foreground work.
+      this.state.storage.sql.exec("UPDATE background_agent SET stopped_at = COALESCE(stopped_at, ?) WHERE id = 1", now);
+      const loop = this.loop.loop();
+      if (loop?.status === "executing" && loop.active_execution_id !== null
+        && loop.active_execution_epoch !== null && loop.lease_owner !== null) {
+        this.loop.requestStopInTransaction({
+          executionId: loop.active_execution_id,
+          executionEpoch: loop.active_execution_epoch, leaseOwner: loop.lease_owner,
+          expectedLoopRevision: loop.revision, reason: "stopped_by_parent", now,
+        });
+      }
+    });
+    return { stopped: true as const };
+  }
+
+  /** Persist a teammate input and request an independent loop activation. */
+  async admitAgentMessage(input: AdmitAgentMessageInput): Promise<
+    { accepted: true; messageId: string } | { accepted: false; code: string }
+  > {
+    await this.initialized;
+    const request = AdmitAgentMessageInputSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity) return { accepted: false, code: "agent_destination_unavailable" };
+    if (identity.workspaceId !== request.workspaceId
+      || identity.parentId !== request.workstreamId
+      || agentIdForAddress({
+        parentKind: identity.parentKind, parentId: identity.parentId,
+        substreamId: asSubstreamId(this.externalSubstreamId()),
+      }) !== request.recipientAgentId) return { accepted: false, code: "agent_destination_mismatch" };
+    const parent = await conversationParentStub(this.env, {
+      workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId,
+    });
+    const authority = await parent.authority({ workspaceId: asWorkspaceId(identity.workspaceId), parentId: identity.parentId });
+    if (!authority.exists || authority.archived) return { accepted: false, code: "workstream_archived" };
+    if (authority.authorityGeneration !== this.objectStore.realtimeAuthorityGeneration()) {
+      return { accepted: false, code: "workstream_authority_generation_stale" };
+    }
+    try {
+      const background = this.state.storage.sql.exec<{ execution_principal_json: string }>(
+        "SELECT execution_principal_json FROM background_agent WHERE id = 1",
+      ).toArray()[0];
+      const result = await this.product.admitSystemActivation({
+        ...request,
+        executionPrincipal: background
+          ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json))
+          : request.executionPrincipal,
+      });
+      if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
+      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+      return { accepted: true, messageId: result.turn.turnId };
+    } catch (error) {
+      if (error instanceof Error && error.message === "workstream_archived") {
+        return { accepted: false, code: "workstream_archived" };
+      }
+      throw error;
+    }
+  }
+
   /** Authoritative current readers for privacy decisions made outside this object. */
   async sidekickAttachments(input: { workspaceId: string; workstreamId: string; removeId?: string }): Promise<string[]> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema, removeId: IdSchema.optional() }).parse(input);
     const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || identity.parentKind !== "workstream") {
       throw new Error("sidekick_attachment_identity_mismatch");
     }
     if (request.removeId) this.state.storage.sql.exec(`DELETE FROM sidekick_attachments WHERE sidekick_id = ?`, request.removeId);
@@ -2114,6 +2231,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       parts: operation.preparedContext.parts.map((part) => part.content),
     } });
     return { installed: true };
+  }
+
+  /** The private-child receipt authorizes initialization before parent publication. */
+  async installPreparedConversation(input: {
+    workspaceId: string; workstreamId: string; substreamId: string;
+    operationId: string; conversation: PreparedConversation;
+  }) {
+    await this.initialized;
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== input.workspaceId || identity.parentId !== input.workstreamId
+      || this.externalSubstreamId() !== input.substreamId || input.substreamId === "0") throw new Error("substream_target_identity_mismatch");
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSTREAM_DOS,
+      asWorkspaceId(input.workspaceId), workstreamDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId), asWorkstreamId(input.workstreamId)));
+    const conversation = parseRpcInput(PreparedConversationSchema, input.conversation, "prepared_conversation");
+    const operation = await parent.readPrivateChildPreparation({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.workstreamId, operationId: input.operationId });
+    if (!operation || operation.substreamId !== input.substreamId || !["confirming", "ready"].includes(operation.status)) throw new Error("substream_preparation_not_ready");
+    if (operation.preparedConversationHash !== workstreamImportHash(conversation)) throw new Error("private_child_initialization_conflict");
+    return this.product.installPreparedConversation({ workspaceId: asWorkspaceId(input.workspaceId),
+      userId: asUserId(operation.creatorUserId), sessionId: input.operationId, region: this.env.AVALON_REGION, role: "member" },
+      input.operationId, conversation, operation.status === "ready");
   }
 
   /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */
@@ -2308,8 +2445,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     );
     if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const value = await method.apply(this.toolReceipts, parsed.data.args);
-    return { status: 200, payload: { ok: true, value: value ?? null } };
+    try {
+      const value = await method.apply(this.toolReceipts, parsed.data.args);
+      return { status: 200, payload: { ok: true, value: value ?? null } };
+    } catch (error) {
+      if (error instanceof ToolPageError) return { status: 400, payload: { ok: false, error: error.message } };
+      throw error;
+    }
   }
 
   /**
@@ -3010,8 +3152,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // fail for cosmetic reasons: a refused broadcast used to abort this
         // handler after the run was committed, leaving a run with no executor,
         // no alarm, and a member-facing 500 over a work stream that exists.
-        await span.step("workstream.room.loop.activate", () =>
-          this.requestExecutionReceiptActivation(result.harnessRunId, result.workflowInput));
+        if (result.harnessRunId && result.workflowInput) {
+          const { harnessRunId, workflowInput } = result;
+          await span.step("workstream.room.loop.activate", () =>
+            this.requestExecutionReceiptActivation(harnessRunId, workflowInput));
+          await this.armAlarmDuringRunDrain();
+          this.resumePersistentLoopDrain();
+        }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({
           workstream: result.workstream,
@@ -3177,7 +3324,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               updated_at = ? WHERE run_id = ? AND terminalized_at IS NULL`,
       JSON.stringify(input), Date.now(), Date.now(), runId,
     );
-    await this.state.storage.setAlarm(Date.now() + 1);
   }
 
   private async requestPersistentLoopActivation(
@@ -3195,11 +3341,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         request.receiptRunId,
         request.workflowInput,
       );
-      return;
     }
-    // Pending inputs and the singleton loop are the durable work. The alarm is
-    // only a wake-up hint; recovery derives it again from those rows.
-    await this.state.storage.setAlarm(Date.now() + 1);
+    // Pending inputs and the singleton loop are the durable work. Start their
+    // drain in this invocation, with an alarm at the keep-alive horizon as the
+    // eviction recovery hint. A due-now alarm can race and falsely reclaim the
+    // healthy drain before it has acquired its durable execution lease.
+    await this.armAlarmDuringRunDrain();
+    this.resumePersistentLoopDrain();
   }
 
   /** Run the one persistent loop in the current invocation. Durable SQL, not
@@ -3210,6 +3358,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const loop = this.loop.loop();
       if (loop?.status === "executing" && loop.lease_expires_at !== null
         && loop.lease_expires_at > now) return "deferred";
+      const localProgressAt = this.agentDrain.lastProgress ?? this.agentDrain.activeSince;
+      if (localProgressAt !== null && now - localProgressAt < KEEP_ALIVE_INTERVAL_MS) {
+        return "deferred";
+      }
       if (this.agentDrain.abandonActive()) {
         logWarn(this.env, "substream_loop_stale_drain_reclaimed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
@@ -3234,20 +3386,41 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return "drained";
   }
 
-  private async drainPersistentLoop(ownsDrain: () => boolean): Promise<void> {
+  /**
+   * Start newly committed loop work in this invocation. Durable input rows and
+   * the alarm remain the restart authority; this only removes the alarm
+   * scheduler from the latency-critical healthy path.
+   */
+  private resumePersistentLoopDrain(): void {
+    this.state.waitUntil(this.drainLoopToCompletion().catch((error: unknown) => {
+      logWarn(this.env, "substream_loop_drain_failed", {
+        workspace_id: this.objectStore.identity()?.workspaceId,
+        workstream_id: this.objectStore.identity()?.parentId,
+        substream_id: this.externalSubstreamId(),
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }));
+  }
+
+  private async drainPersistentLoop(
+    ownsDrain: () => boolean,
+  ): Promise<void> {
     while (ownsDrain()) {
       this.agentDrain.touch();
-      await this.drainRegionalEffects();
-      if (!ownsDrain()) return;
 
       const preparation = await this.product.resumeOldestInputPreparation();
+      if (!ownsDrain()) return;
       if (preparation === "active") return;
-      if (preparation === "settled") continue;
+      if (preparation === "settled") {
+        void this.requestExternalProjectionDrain();
+        continue;
+      }
 
       const activation = await this.claimPersistentLoopExecution();
       if (!activation) return;
       if (!ownsDrain()) return;
       this.activeLoopExecution = activation.execution;
+      void this.requestExternalProjectionDrain();
       try {
         const identity = { workspaceId: activation.input.workspaceId, parentId: activation.input.parentId };
         await this.product.recordWorkflowStarted(
@@ -3312,7 +3485,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (this.activeLoopExecution?.leaseOwner === activation.execution.leaseOwner) {
           this.activeLoopExecution = null;
         }
-        if (ownsDrain()) this.agentDrain.touch();
+        if (ownsDrain()) {
+          this.agentDrain.touch();
+          void this.requestExternalProjectionDrain();
+        }
       }
     }
   }
@@ -3326,7 +3502,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `SELECT archived_at FROM workstream WHERE id = 1`,
     ).toArray()[0];
     if (authority && authority.archived_at !== null) return null;
+    const backgroundStopped = this.state.storage.sql.exec<{ stopped_at: number | null }>(
+      "SELECT stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0]?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
+    // A stopped agent can still recover its active lease to let Bind settle
+    // the stop and any tool receipts. Only a new execution is held here.
+    if (backgroundStopped && loop.status !== "executing") return null;
     if (loop.status === "executing") {
       if (loop.lease_expires_at === null || loop.active_execution_id === null
         || loop.active_execution_epoch === null || loop.lease_expires_at > now) return null;
@@ -3355,7 +3537,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       };
     }
 
-    const pending = this.loop.pendingInputs()[0];
+    // Not the head of the queue: while a question the model asked is still
+    // withheld, Bind takes only its answer, whatever was queued ahead of it.
+    const pending = this.transcript.nextActivationInput(loop.loop_id);
     if (pending) {
       const identity = this.objectStore.identity();
       const projection = this.transcript.readBindProjection(loop.loop_id);
@@ -3364,9 +3548,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         executionPrincipal: z.unknown(),
         reason: z.string().min(1).max(500),
         telemetryOperationId: z.string().nullable().optional(),
+        telemetryRequestReceivedAt: z.number().int().nonnegative().nullable().optional(),
+        telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
         seed: DemoSeedSchema.nullable().optional(),
+        agentExchange: AgentExchangeSchema.optional(),
       }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
@@ -3380,6 +3567,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         triggerMessageId: pending.prepared_turn_id,
         activityId: null,
         executionPrincipal: authorization.executionPrincipal,
+        ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
+        backgroundAgent: this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0,
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -3393,6 +3582,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
                 : {}),
             }
           : {}),
+        ...(authorization.telemetryRequestReceivedAt !== null
+          && authorization.telemetryRequestReceivedAt !== undefined
+          ? { telemetryRequestReceivedAt: authorization.telemetryRequestReceivedAt }
+          : {}),
+        ...(authorization.telemetryJourney ? { telemetryJourney: authorization.telemetryJourney } : {}),
         ...(authorization.slackOrigin ? { slackOrigin: authorization.slackOrigin } : {}),
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
@@ -4140,7 +4334,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ).toArray()[0];
         return row ? SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
       },
-      attachedSidekickIds: () => this.externalSubstreamId() === "0"
+      attachedSidekickIds: () => this.objectStore.identity()?.parentKind === "workstream"
         ? this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id)
         : [],
       saveSidekickSkills: (snapshot) => {
@@ -4156,7 +4350,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           if (!snapshot.activeRefs.includes(ref)) snapshot.activeRefs.push(ref);
           this.state.storage.sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
           const source = snapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
-          if (source && this.externalSubstreamId() === "0" && this.objectStore.identity()?.parentKind === "workstream") {
+          if (source && this.objectStore.identity()?.parentKind === "workstream") {
             this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_attachments (sidekick_id, attached_at) VALUES (?, ?)`, source.id, Date.now());
           }
         });
@@ -4191,7 +4385,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
-        });
+        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects));
         await this.flushSemanticRealtimeOutboxBestEffort();
       },
       commitBindCompaction: async (compaction) => {
@@ -4495,7 +4689,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         metrics: outcome.metrics,
       });
     }
-    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
+    emitCorrelatedRunOutcome(executionEnv, input);
 
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
@@ -4547,6 +4741,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         final_turn_id: outcome.finalTurnId,
       });
     }
+    if (input.backgroundAgent && outcome.status === "failed") {
+      await new AgentCommunicationService(this.env, input).notifyFailure(outcome.error?.code ?? "unknown reason");
+    }
+    // Hidden workers publish results only through explicit messaging tools. Their
+    // local final response must not be projected into the parent's Slack room.
+    if (input.backgroundAgent) return settlementDiagnosticCode;
     const elicitationMessage = outcome.status === "needs_input"
       ? await this.product.elicitationMessageForRunForRuntime(input.harnessRunId)
       : null;
@@ -4555,6 +4755,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // cleanup may still run without a final turn, but no adapter may invent or
     // stream response prose that the canonical transcript does not contain.
     const text = canonicalExternalResultText(message);
+
     if (input.digestDeliveryId) {
       await settleDigestRun(
         this.env,
@@ -4870,6 +5071,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   override async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
+    const requestReceivedAt = Date.now();
     await this.storageReady;
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let decoded: unknown;
@@ -4993,7 +5195,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     if (parsed.data.type === "create_message") {
-      await this.createSocketMessage(socket, attachment, parsed.data);
+      await this.createSocketMessage(socket, attachment, parsed.data, requestReceivedAt);
       return;
     }
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
@@ -5200,6 +5402,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: SocketAttachment,
     command: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "create_message" }>,
+    requestReceivedAt: number,
   ): Promise<void> {
     await inFlowSpan(this.env, "workstream.room.create_message", {
       flow: "workstream_message_send",
@@ -5245,6 +5448,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const result = await this.admitMessage(auth, {
           ...command.payload,
           telemetryOperationId: command.operationId,
+          telemetryRequestReceivedAt: requestReceivedAt,
+          telemetryJourney: "message_send",
         }, span, true);
         this.sendSocketCommandResult(socket, {
           type: "client_command_succeeded",
@@ -5685,6 +5890,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return (await this.socketAdmissionAuth(attachment))?.auth ?? null;
   }
 
+  /** Content-free operator inventory, including retired conversations. */
+  async meetingRetirementInventory(resourceIds: string[] = []) {
+    await this.storageReady;
+    const ids = z.array(z.string().uuid()).parse(resourceIds);
+    const sql = this.state.storage.sql;
+    const retired = sql.exec<{ resource_id: string }>(
+      'SELECT resource_id FROM retired_meeting_attachment_ids ORDER BY resource_id',
+    ).toArray();
+    const selected = [...new Set([...ids, ...retired.map(row => row.resource_id)])];
+    const selectedJson = JSON.stringify(selected);
+    const imports = sql.exec<{ resource_id: string; destination_path: string; sandbox_generation: number }>(
+      'SELECT resource_id, destination_path, sandbox_generation FROM terminal_imported_resources WHERE resource_id IN (SELECT value FROM json_each(?))', selectedJson,
+    ).toArray();
+    const toolCopies = selected.length === 0 ? 0 : sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM tool_effects effect
+      WHERE EXISTS (SELECT 1 FROM json_tree(effect.input_json) field
+        WHERE field.key IN ('resourceId', 'resource_id') AND field.value IN (SELECT value FROM json_each(?)))`, selectedJson).one().count;
+    return {
+      identity: sql.exec('SELECT workstream_key, parent_workspace_key FROM workstream WHERE id = 1').toArray()[0] ?? null,
+      retiredResourceIds: retired.map(row => row.resource_id),
+      imports, toolCopies,
+    };
+  }
+
   protected override migrationPlan(): DurableObjectMigrationPlan {
     return {
       component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
@@ -5819,6 +6047,81 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   protected override async runDueAlarmWork(): Promise<void> {
     this.loopDrainDeferred = false;
+    const now = Date.now();
+    const nextRegionalEffectAt = this.objectStore.nextRegionalEffectDueAt();
+    const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
+    const nextSearchProjectionAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
+    const nextAuthorizationProjectionDueAt = nextAuthorizationProjectionAt(this.state.storage.sql);
+    const nextLoopAt = this.nextLoopWorkAt(now);
+    const nextExternalSettlementAt = this.nextExternalSettlementAt();
+    // A timer that fired above may have left the index behind the table.
+    this.syncAgentTimerAlarms();
+
+    const projectionDue = (nextRegionalEffectAt !== null && nextRegionalEffectAt <= now)
+      || (nextSearchProjectionAt !== null && nextSearchProjectionAt <= now)
+      || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now);
+    const loopDue = nextLoopAt !== null && nextLoopAt <= now;
+    if (!projectionDue
+      && !loopDue
+      && !(nextSemanticRealtimeAt !== null && nextSemanticRealtimeAt <= now)
+      && !(nextExternalSettlementAt !== null && nextExternalSettlementAt <= now)) return;
+
+    if (nextExternalSettlementAt !== null && nextExternalSettlementAt <= now) {
+      if (this.externalSettlementDrain.abandonActive()) {
+        logWarn(this.env, "substream_external_settlement_stale_drain_reclaimed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.parentId,
+          substream_id: this.externalSubstreamId(),
+        });
+      }
+      this.resumeExternalSettlementDrain();
+    }
+
+    // Pending canonical events must precede ephemeral run output. Keep this
+    // local ordering barrier ahead of activation; cross-authority projections
+    // below are independent and must not gate execution readiness.
+    if (nextSemanticRealtimeAt !== null && nextSemanticRealtimeAt <= now) {
+      await this.flushSemanticRealtimeOutboxBestEffort();
+    }
+
+    // Schedule the execution lane first, then begin the projection lane without
+    // awaiting either one. Preparation, claim, and settlement request more
+    // serialized passes when they may have committed new projection work.
+    const loopDrain = loopDue ? this.drainLoopToCompletion() : null;
+    if (projectionDue) void this.requestExternalProjectionDrain();
+    try {
+      if (loopDrain) this.loopDrainDeferred = await loopDrain === "deferred";
+    } finally {
+      // A final joined pass observes work committed by a short loop and waits
+      // for every earlier pass. The lane catches its own failures, so a Queue
+      // outage cannot poison this tail or prevent a later alarm from retrying.
+      if (loopDrain || projectionDue) await this.requestExternalProjectionDrain();
+    }
+  }
+
+  private requestExternalProjectionDrain(): Promise<void> {
+    const drain = this.externalProjectionDrain.then(async () => {
+      try {
+        await this.drainDueExternalProjections();
+      } catch (error) {
+        logWarn(this.env, "substream_external_projection_drain_failed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.parentId,
+          substream_id: this.externalSubstreamId(),
+          reason: diagnosticErrorCode(error, "external_projection_drain_failed"),
+        });
+      }
+    });
+    this.externalProjectionDrain = drain;
+    return drain;
+  }
+
+  /**
+   * Deliver cross-authority projections that are due now. These sends share a
+   * serialized lane beside agent execution: durable outbox rows remain the
+   * retry authority, while Queue acceptance never delays claiming loop work.
+   */
+  private async drainDueExternalProjections(): Promise<void> {
     const authzIdentity = this.objectStore.identity();
     if (authzIdentity) {
       try {
@@ -5831,34 +6134,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     await this.flushSearchProjectionOutbox();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
-    const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
-    const hasLoopWork = this.nextLoopWorkAt() !== null;
-    const nextExternalSettlementAt = this.nextExternalSettlementAt();
-    // A timer that fired above may have left the index behind the table.
-    this.syncAgentTimerAlarms();
-    if (nextEffectAt === null && nextSemanticRealtimeAt === null
-      && !hasLoopWork && nextExternalSettlementAt === null) return;
-
-    if (nextExternalSettlementAt !== null && nextExternalSettlementAt <= Date.now()) {
-      if (this.externalSettlementDrain.abandonActive()) {
-        logWarn(this.env, "substream_external_settlement_stale_drain_reclaimed", {
-          workspace_id: this.objectStore.identity()?.workspaceId,
-          workstream_id: this.objectStore.identity()?.parentId,
-          substream_id: this.externalSubstreamId(),
-        });
-      }
-      this.resumeExternalSettlementDrain();
-    }
-
-    if (nextSemanticRealtimeAt !== null && nextSemanticRealtimeAt <= Date.now()) {
-      await this.flushSemanticRealtimeOutboxBestEffort();
-    }
-
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
       await this.drainRegionalEffects();
     }
-
-    this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
   }
 
   /**
@@ -6372,7 +6650,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (authority && authority.archived_at !== null) return null;
     const loop = this.loop.loop();
     if (loop?.status === "executing") return loop.lease_expires_at;
-    if (loop && this.loop.pendingInputs().length > 0) return now;
+    // What the loop can take, not what is queued. A room parked on a question
+    // with a message queued behind it has pending input and no work: waking on
+    // it would re-arm at `now` on every alarm, for as long as the question
+    // stays open. Admitting the answer arms its own wake.
+    if (loop) {
+      if (this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
+      // The room then goes quiet with messages still queued, and an
+      // `elicitation_requests` row only ever moves `pending -> answered`, so a
+      // question nobody answers — the reader missed the card, or left — stalls
+      // it with no expiry to end the wait. The stall is correct; being unable
+      // to see it is not, and this is the one branch where the loop stops
+      // without an error to find it by.
+      const queued = this.loop.pendingInputs();
+      if (queued.length > 0) {
+        logWarn(this.env, "substream_loop_parked_with_queued_input", {
+          loop_id: loop.loop_id,
+          queued_input_count: queued.length,
+        });
+      }
+    }
     const preparation = this.product.nextRecoverableInputPreparationAt(now);
     if (preparation !== null) return preparation;
     // An admission this isolate is still preparing is in-memory work standing
@@ -6562,6 +6859,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ? this.objectStore.activeStreamCheckpoints()
         : [],
       activeCompaction: this.objectStore.activeCompaction(),
+      activeInferenceDelays: this.objectStore.activeInferenceDelays(),
     });
   }
 
@@ -6724,6 +7022,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       initialContextChunkCount: initialContextChunks.length,
       activeStreams,
       activeCompaction,
+      activeInferenceDelays: workstream.harnessStatus === "running"
+        ? this.objectStore.activeInferenceDelays().filter((delay) => delay.harnessRunId === workstream.latestHarnessRunId)
+        : [],
     }) as SocketSnapshotEvent;
     let event = snapshotEvent();
     let encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
@@ -7073,6 +7374,7 @@ applyRetirementGate(SubstreamAgent, {
     // fences the object out of existence rather than out of use. What recovery
     // must not do, re-arm an alarm, is prevented by those methods being inert.
     "startRuntimeRecovery",
+    "meetingRetirementInventory",
   ],
   drop: {
     fetch: () => retiredObjectResponse(),

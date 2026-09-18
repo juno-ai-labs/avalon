@@ -1,4 +1,4 @@
-import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
+import { isRetiredMeetingTelemetry, TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import {
   telemetryDeliveryRpcCall,
@@ -35,8 +35,6 @@ async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
     "telemetry_accepted_events",
     "telemetry_delivery_receipts",
     "telemetry_crash_access_audit",
-    "telemetry_eu_crash_contributions",
-    "telemetry_eu_events",
     "telemetry_identity_links",
     "telemetry_ingest_rate_buckets",
     "telemetry_onboarding_journeys",
@@ -103,8 +101,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   const telemetryDelivery = env.TELEMETRY_DELIVERY;
   const postHogHost = env.POSTHOG_HOST;
   const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
-  if (env.AVALON_REGION !== "global"
-    || !postHogHost
+  if (!postHogHost
     || !postHogProjectToken
     || !telemetryDelivery) return summary;
   await processProfileOutbox(env);
@@ -120,8 +117,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
             u.product_analytics_enabled
      FROM telemetry_accepted_events e
      LEFT JOIN users u ON u.id = e.subject_user_id
-     WHERE e.route = 'global'
-       AND e.delivery_state IN ('pending', 'retrying')
+     WHERE e.delivery_state IN ('pending', 'retrying')
        AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= ?)
        AND e.delete_at > ?
        AND (e.subject_user_id IS NULL OR NOT EXISTS (
@@ -138,7 +134,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   for (const row of pending.results) {
     const parsed = TelemetryEnvelopeSchema.parse(JSON.parse(row.envelope_json)) as TelemetryEnvelope;
     const attributableNonessential = row.subject_user_id !== null && parsed.category !== "essential";
-    if (attributableNonessential && row.product_analytics_enabled !== 1) {
+    if (isRetiredMeetingTelemetry(parsed) || (attributableNonessential && row.product_analytics_enabled !== 1)) {
       await env.DB.prepare(
         "DELETE FROM telemetry_accepted_events WHERE event_id = ? AND delivery_state IN ('pending', 'retrying')",
       ).bind(row.event_id).run();

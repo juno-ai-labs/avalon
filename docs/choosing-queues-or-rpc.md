@@ -87,7 +87,9 @@ made to satisfy them without rebuilding RPC on top of it, which
   touches again.
 - **The work is genuinely fire-and-forget**: telemetry, projections,
   notifications, audit trails, anything where the sender's job is done the moment
-  the fact is recorded somewhere durable.
+  the fact is recorded somewhere durable. A runtime `waitUntil` deferral is not
+  that durable hand-off: use it only for observational work that may be lost
+  before acceptance, never when retry must survive deployment or runtime reset.
 - **The two sides should deploy independently.** A service binding names a
   *script*, and deploying a caller before its target script exists fails the
   deploy. A queue is a resource both sides bind to, so neither ordering breaks.
@@ -251,13 +253,6 @@ wrong when everyone is converging on one.
 
 ## Splitting per region
 
-Rally deploys the same Worker twice, as Global and EU, with separate D1, R2,
-Durable Object namespaces, keys, and secrets. So every hop raises a second
-question after the mechanism is chosen: **one resource for both regions, or one
-per region?** `avalon-global-activities` and `avalon-eu-activities` are split.
-`avalon-migration-reports` is not. Both are right, and the difference between
-them is the whole of this section.
-
 [`regionalization.md`](regionalization.md) owns the boundary itself — what is
 Global, what is regional, and what is allowed to cross. This section is only
 about the shape of the resource carrying it.
@@ -269,18 +264,10 @@ processes it?** If it would not, do not split. Two pipes into one funnel is not
 isolation; it is two of everything to provision, configure, monitor, and keep in
 step, bought for nothing.
 
-### Go — split per region when any of these holds
-
-- **The consumer must be regional.** A queue has exactly one consumer, so if the
-  work has to be done by the EU Worker against EU-resident stores, it needs its
-  own queue. This is a platform constraint, not a preference, and it settles most
-  cases on its own.
-- **The payload is workspace or user content.** Anything a workspace owns has to
-  be handled in its region. This is the reason the activity queues are split: an
-  EU activity's body is processed by EU code against EU D1 and EU R2.
 - **The regions genuinely need different policy** — retention, retry budget, or
   batch window differing for a stated compliance or product reason, not from
   drift.
+
 - **One region's volume alone approaches a per-resource ceiling.** Settle this
   with [arithmetic, not a dashboard](#deciding-without-measurement): estimate
   messages per user action times users, compare against 5,000 a second, and put
@@ -303,35 +290,23 @@ schema version, and an error describing code, all converging on one account-wide
 registry object by design. A second queue would have doubled the resources and
 isolated nothing, so there is one.
 
-The forced-migration commands travelling the other way are the same subsystem
-answering the same test the other way round, which is why they are worth reading
-side by side. Their payload is just as opaque, and the volume is just as far from
-any ceiling — but the destination is not shared. A Durable Object can only be
-addressed from a Worker that binds its namespace, and a queue has exactly one
-consumer, so the Global commands must be consumed by the Global Worker and the
-EU commands by the EU one. **The destination decides the split, not the
-payload**, and the two halves of one subsystem landing on opposite answers is the
-clearest available demonstration of that.
-
-### Best practices when you do split
-
 - **Name by region, consistently**: `avalon-<region>-<purpose>`, plus a
   region-named dead-letter queue for each. A shared DLQ behind split queues
   defeats the split at exactly the moment it matters.
+
 - **Keep one binding name across both configs.** `ACTIVITY_QUEUE` points at a
   different queue in each regional Wrangler file, so one code path serves both
   regions and region selection stays deployment configuration rather than
   application logic. Never branch on region in code to pick a binding.
-- **Keep the consumer configuration identical unless there is a reason**, and
-  record the reason where it diverges. Rally's EU activity consumer carries the
-  comment `Matches Global; the reasoning is recorded there` — that one line is
-  what stops the two drifting apart silently.
+
 - **Never let a regional consumer reach into the other region's stores.** A
   regional queue with cross-region bindings behind it is not a regional
   subsystem; it is a residency hole with a tidy name.
+
 - **Still carry the region in the message body.** The queue implies it, but a
   message that states it is self-describing in a log and in a stored row, and it
   catches a misrouted producer that the queue's name never would.
+
 - **No Global fallback.** A message that cannot be handled in its region fails
   and retries there; it does not get rerouted to the other one.
 
@@ -382,14 +357,6 @@ in a way the preflight was never asked about.
   convention, so it has to say why in a comment next to the resource, or the
   next reader will "fix" it.
 
-The forced-migration hop is the worked example, because it uses all of these at
-once. Its two producer bindings sit in `apps/migration-tracker/wrangler.jsonc`,
-because the tracker is what sends; its consumers sit one each in
-`apps/api/wrangler.global.jsonc` and `apps/api/wrangler.eu.jsonc`, because only
-that region's Worker binds that region's Durable Object namespaces. The report
-queue going the other way is the mirror image — one consumer on the tracker, and
-a producer binding in each regional API file pointing at the same name.
-
 ### Verifying it landed in the right file
 
 Two of the three placement errors are refused by
@@ -410,12 +377,6 @@ surface, role, and queue name in `ensure-cloudflare-queues.test.mjs`, so a queue
 that moves between files fails the suite and adding one is a deliberate edit to
 that list — which is where to look first. For what a deploy would actually
 carry, the dry-run builds print the resolved bindings per surface:
-
-```text
-pnpm --filter @rally/api build      # global
-pnpm --filter @rally/api build:eu
-pnpm --filter @rally/migration-tracker build
-```
 
 ### What none of that checks
 
@@ -516,18 +477,16 @@ it.
 | Hop | Mechanism | Regional shape | Why |
 | --- | --- | --- | --- |
 | Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue, then typed WorkspaceDO RPC | One shared Queue per region | Fan-in from webhooks and polls; nothing waits on the outcome. After authoritative ingress, an ID-only process pointer returns to the same Queue for native retry, and each delivery claims/settles its named WorkspaceDO by RPC. Product flows intentionally share the regional Queue at Rally's current scale. |
-| Global inference archive into Pipeline (`INFERENCE_LAKEHOUSE_QUEUE`) | Queue | Global only | The model call must not wait for an analytical sink, retries must outlive its request, and a backlog is preferable to inference failure. The message stays small by carrying a verified R2 pointer. EU inference analytics are intentionally deferred: its Worker has no producer, consumer, Pipeline binding, or cross-region fallback. See [`inference-lakehouse.md`](inference-lakehouse.md). |
-| Durable Object migration reports into the tracker | Queue | Shared | Many objects converge on one registry object, and a deploy or a cutover wakes them together. Shared because that registry object is the destination for both regions and the payload is opaque infrastructure metadata. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
+| Durable Object migration reports into the tracker | Queue | Shared | Many objects converge on one registry object, and a deploy or a cutover wakes them together. Shared because that registry object is the destination for configured deployments and the payload is opaque infrastructure metadata. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | Forced migrations into the objects that must apply them (`avalon-<region>-migration-commands`) | Queue | Split | An operator picks a class on the migration tracker and every live object of it is woken, which is hundreds of cold starts no single invocation should hold open. Split because a queue has exactly one consumer and only the region's own Worker binds its namespaces — the constraint below decides it outright. The consumer's call into each object is RPC because it reads back the version the object landed on. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | Access revocation into the socket-holding objects (`ACCESS_REVOCATION_QUEUE`) | Queue | Split | The Worker that ends a membership or a session walks away; nothing it returns depends on the sockets closing. Each object is one hop, so a hop that fails retries alone rather than restarting the walk, and the consumer's calls into the objects are RPC because it reads back the children each one names. Split because the objects, the sessions, and the memberships never cross the boundary. See [`access-revocation.md`](access-revocation.md). |
 | Ace product-flag change into connected clients | Shared Queue, then split Queues, then RPC | Shared fan-out; regional delivery | A successful Flagship write must wake every current workspace without holding the operator request open. The shared consumer enumerates both regional D1 directories and sends one key-only message per workspace to the queue consumed by that region's API. The regional Worker RPCs its WorkspaceDO because only that Worker owns the namespace; the object needs the call but no response affects the Queue acknowledgement beyond success. Values never travel through the fan-out because each connected user may match a different rule. See [`ace.md`](ace.md). |
-| Global ↔ EU bridges (`EU_IDENTITY_BRIDGE`, the routing bridges) | RPC | Crosses, by design | The caller needs the answer — a membership, a region, a verified delivery. [`regionalization.md`](regionalization.md) owns them. |
 | A conversation's effects into its parent (`ACTIVITY_QUEUE`, `conversation_effect`) | Queue, then typed parent RPC | Split | A `SubstreamAgent` commits a directory, viewer, activity, or notification effect with its product transaction and walks away; the alarm sends the envelope inline and deletes the outbox row when the Queue accepts it, and the consumer calls `receiveChildEffects` on whichever parent (`WorkstreamDO` or `AutomationDO`) the envelope names. Nothing loads an envelope back and nothing acknowledges one to the child; the parent's receipt makes a redelivery a no-op. This was the one RPC hop in the pipeline, kept for per-stub ordering the receipts made unnecessary. See [`workstream-durable-object.md`](workstream-durable-object.md#durable-object-communication-rpc-versus-queue). |
 | A parent's effects into the workspace (`ACTIVITY_QUEUE`, `parent_effect`) | Queue, then typed WorkspaceDO RPC | Split | The parent's aggregate, an automation's own sidebar row, and the immutable activity and notification effects, the same way: envelope inline, row deleted on `sendBatch`, the consumer choosing `applyWorkstreamDirectoryEffects`, `applyAutomationDirectory`, or `applyWorkstreamRegionalEffect` by effect kind. Replaces the opaque wake-up, the load-back RPC, and the acknowledge RPC. |
 | A matched connector event into its destination (`ACTIVITY_QUEUE`, `workspace_external_event_delivery_v1`) | Queue, then typed RPC | Split | One message per matched registration, carrying the registration, the destination, and the event; `AutomationDO.admitExternalEvent` and `SubstreamAgent.appendWatchedResourceEvent` are idempotent on the event, so there is no delivery ledger and no lease. |
 | Worker to a conversation parent (`WorkstreamDO`, `AutomationDO`) | RPC | Same region | The caller needs the answer: `reserveChild` at creation, because the child cannot be initialized before its parent has recorded it and the provisional directory row has to exist before the creator's first open; `authorizeViewer` and `authority`, because a ticket cannot be issued without the decision. |
 | A run's loop to its `AutomationDO` | RPC | Same region | `readRunDefinition` at loop start and `readRunState` before each provider write: the run cannot build its prompt, or spend a credential, without the answer. |
-| A run's `sidekick_post_result` tool to the owning room | RPC | Same region | The room's `authority` and then its substream `0` `appendAutomationActivation`; the tool result the model reads is the room's `appended`, `replayed`, or `refused`. |
+| A run's `post_result` tool to the owning room | RPC | Same region | The room's `authority` and then its substream `0` `appendAutomationActivation`; the tool result the model reads is the room's `appended`, `replayed`, or `refused`. |
 | Worker to `SubstreamAgent` product calls (`WorkstreamObjectClient`) | RPC | Same region | Reads and writes whose results the request returns to the desktop. |
 | `WorkspaceDO` typed product SQL | RPC | Same region | A conversation with one specific object, with rows coming back. |
 
@@ -536,7 +495,7 @@ it.
 - [`architecture.md`](architecture.md) — the deployment surfaces these hops run
   between.
 - [`regionalization.md`](regionalization.md) — what a message is allowed to carry
-  across the Global/EU boundary, whichever mechanism carries it.
+  across the configured deployment boundary, whichever mechanism carries it.
 - [`workstream-durable-object.md`](workstream-durable-object.md) — the Durable
   Object hierarchy and its RPC contracts.
 - [`access-revocation.md`](access-revocation.md) — a worked example of the two

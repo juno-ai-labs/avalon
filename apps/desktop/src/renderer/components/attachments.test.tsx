@@ -421,6 +421,25 @@ describe('attachment presentation', () => {
     expect(text.tagName).toBe('PRE');
   });
 
+  it('fades a name past 200 characters instead of growing the chip without bound', () => {
+    const longName = `${'a'.repeat(201)}.txt`;
+    const attachment: MessageAttachment = {
+      id: 'resource-long-name', fileName: longName, mimeType: 'text/plain',
+      sizeBytes: 16, contentAvailable: true, createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    render(<MessageAttachments attachments={[attachment]} loadContent={vi.fn()} onOpen={vi.fn()} />);
+    expect(document.querySelector('.attachment-file-name')).toHaveClass('is-long-name');
+  });
+
+  it('does not fade a name at or under 200 characters', () => {
+    const attachment: MessageAttachment = {
+      id: 'resource-short-name', fileName: `${'a'.repeat(196)}.txt`, mimeType: 'text/plain',
+      sizeBytes: 16, contentAvailable: true, createdAt: '2026-08-04T00:00:00.000Z',
+    };
+    render(<MessageAttachments attachments={[attachment]} loadContent={vi.fn()} onOpen={vi.fn()} />);
+    expect(document.querySelector('.attachment-file-name')).not.toHaveClass('is-long-name');
+  });
+
   it('renders a document derivative as Markdown', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-document',

@@ -159,7 +159,7 @@ export class ProductAnalyticsPreferenceService {
       throw new ApiError(409, 'telemetry_preference_conflict', 'The analytics preference changed on another installation');
     }
 
-    if (this.env.AVALON_REGION === 'eu' && !input.enabled) {
+    if (this.env.AVALON_REGION !== 'global' && !input.enabled) {
       await this.env.DB.prepare(
         `UPDATE users SET product_analytics_enabled = 0, updated_at = ?
          WHERE id = ? AND product_analytics_preference_version = ?`,
@@ -179,7 +179,7 @@ export class ProductAnalyticsPreferenceService {
           operationId,
         });
     if (result.result === 'conflict') {
-      if (this.env.AVALON_REGION === 'eu') {
+      if (this.env.AVALON_REGION !== 'global') {
         await applyRegionalPreferenceProjection(this.env, this.userId, {
           preferenceSubjectHandle: handle,
           enabled: result.enabled,
@@ -191,7 +191,7 @@ export class ProductAnalyticsPreferenceService {
     if (result.enabled !== input.enabled || result.version !== input.expectedVersion + 1) {
       throw new ApiError(409, 'telemetry_preference_conflict', 'The analytics preference changed on another installation');
     }
-    if (this.env.AVALON_REGION === 'eu') {
+    if (this.env.AVALON_REGION !== 'global') {
       const updated = await this.env.DB.prepare(
         `UPDATE users SET product_analytics_enabled = ?, product_analytics_preference_version = ?, updated_at = ?
          WHERE id = ? AND preference_subject_handle = ? AND product_analytics_preference_version = ?`,

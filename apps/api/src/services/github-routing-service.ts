@@ -1,3 +1,5 @@
+import { regionalBindings } from "../lib/regional-bindings";
+import { isConfiguredRegion, configuredRegions } from "@rally/contracts/regions";
 import {
   ConnectorError,
   verifyGitHubWebhook,
@@ -217,7 +219,7 @@ export class GitHubRoutingService {
       // User authorization revocation is user-scoped rather than installation-
       // scoped. Each regional data plane must match the sender against its own
       // encrypted personal connections.
-      return this.dispatch(bytes, headers, delivery, ["global", "eu"]);
+      return this.dispatch(bytes, headers, delivery, configuredRegions);
     }
     if (delivery.installationId === null) {
       throw new ConnectorError(
@@ -249,9 +251,10 @@ export class GitHubRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).setupGitHub(installationId, state);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_GITHUB_BRIDGE) {
+    const bridge = regionalBindings(this.env, region).github;
+    if (this.env.AVALON_REGION === "global" && bridge) {
       return unwrapRegionalResult(
-        await this.env.EU_GITHUB_BRIDGE.setupGitHub({ installationId, state }),
+        await bridge.setupGitHub({ installationId, state }),
       );
     }
     throw new ApiError(503, "github_region_unavailable", `The ${region} GitHub connector service is unavailable`);
@@ -265,9 +268,10 @@ export class GitHubRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).failProviderAttempt("github", state, errorCode);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_GITHUB_BRIDGE) {
+    const bridge = regionalBindings(this.env, region).github;
+    if (this.env.AVALON_REGION === "global" && bridge) {
       return unwrapRegionalResult(
-        await this.env.EU_GITHUB_BRIDGE.failGitHubSetup({ state, errorCode }),
+        await bridge.failGitHubSetup({ state, errorCode }),
       );
     }
     throw new ApiError(503, "github_region_unavailable", `The ${region} GitHub connector service is unavailable`);
@@ -281,8 +285,9 @@ export class GitHubRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ProviderWebhookService(this.env).ingestGitHub(rawBody, headers);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_GITHUB_BRIDGE) {
-      return unwrapRegionalResult(await this.env.EU_GITHUB_BRIDGE.ingestGitHub({
+    const bridge = regionalBindings(this.env, region).github;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      return unwrapRegionalResult(await bridge.ingestGitHub({
           rawBody: exactArrayBuffer(rawBody),
           headers,
         }));
@@ -449,7 +454,7 @@ export class GitHubRoutingService {
 
 function validateGitHubRouteStatus(input: GitHubRouteStatusInput): void {
   if (!/^\d{1,32}$/u.test(input.installationId)
-    || !["global", "eu"].includes(input.region)
+    || !isConfiguredRegion(input.region)
     || !input.workspaceId) {
     throw new ApiError(422, "invalid_github_route", "The GitHub installation route is invalid");
   }

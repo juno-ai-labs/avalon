@@ -70,10 +70,15 @@ objects today.
   a group is always. A parent rebuild written against it therefore runs with
   enforcement *on*, and `DROP TABLE` then fires every `ON DELETE CASCADE`
   beneath it for real. To replace a referenced parent, copy each dependent into
-  a scratch table, replace the parent, delete and re-insert the dependents from
-  their copies, and drop the copies — all with enforcement on. WorkspaceDO
-  migration 31 is the worked example, and it never restates a dependent's
-  schema, which is the other way a rebuild loses something.
+  a scratch table, **empty every dependent**, replace the parent, re-insert the
+  dependents from their copies, and drop the copies — all with enforcement on.
+  Emptying them first is not tidiness: a dependent whose foreign key declares no
+  `ON DELETE` action is not cascaded by the parent's `DROP TABLE`, it **aborts
+  it**, so a rebuild written in the other order fails on the one class of
+  dependent that does not announce itself in the parent's own DDL. WorkspaceDO
+  migration 31 is the worked example for holding rows without restating a
+  dependent's schema — which is the other way a rebuild loses something — and
+  migration 55 is the one that had to add the delete pass.
 
 The migration runner and fleet visibility are documented in
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md).
@@ -336,8 +341,6 @@ after its return type has been erased to `unknown` or `any`; dynamically indexed
 methods and `.call()`/`.apply()` inside these callbacks therefore remain a
 mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
-
-## Changelog
 
 ### 2026-09-09 — Preserve cursor range seeks
 

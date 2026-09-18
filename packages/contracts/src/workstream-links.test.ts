@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { parseDesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,7 +14,7 @@ const WORKSTREAM_ID = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000009";
 const WEB_BASE_URL = "https://rallywith.ai";
 const LEGACY_WEB_BASE_URL = "https://with-avalon.com";
-const TARGET = { region: "eu" as const, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
+const TARGET = { region: "enterprise" as const, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
 
 describe("canonical work-stream links", () => {
   it("preserves the private child through HTTPS and desktop handoff", () => {
@@ -25,14 +26,14 @@ describe("canonical work-stream links", () => {
 
   it("mints one workspace-addressed canonical and desktop shape", () => {
     expect(workstreamCanonicalUrl(WEB_BASE_URL, TARGET))
-      .toBe(`${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
+      .toBe(`${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
     expect(workstreamDeepLink(TARGET))
-      .toBe(`rallywithai://workspace/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
+      .toBe(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
   });
 
   it("mints an HTTPS link that carries the id in the path", () => {
     expect(workstreamCanonicalUrl(WEB_BASE_URL, TARGET))
-      .toBe(`${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
+      .toBe(`${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
   });
 
   it("keeps the id out of a fragment so a server reading the shared URL can see it", () => {
@@ -45,12 +46,12 @@ describe("canonical work-stream links", () => {
 
   it("mints against a local web base without hardcoding production", () => {
     expect(workstreamCanonicalUrl("http://127.0.0.1:5174", TARGET))
-      .toBe(`http://127.0.0.1:5174/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
+      .toBe(`http://127.0.0.1:5174/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
   });
 
   it("resolves to the deep link the desktop client registers", () => {
     expect(workstreamDeepLink(TARGET))
-      .toBe(`rallywithai://workspace/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
+      .toBe(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
   });
 
   it("never mints the superseded scheme", () => {
@@ -72,11 +73,11 @@ describe("canonical work-stream links", () => {
 describe("reading a shared work-stream link", () => {
   it("reads a workspace-addressed canonical link", () => {
     expect(parseWorkstreamLink(
-      `${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
+      `${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
       { webBaseUrl: WEB_BASE_URL },
     )).toBe(WORKSTREAM_ID);
     expect(parseWorkstreamLinkTarget(
-      `${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
+      `${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
       { webBaseUrl: WEB_BASE_URL },
     )).toEqual(TARGET);
   });
@@ -168,9 +169,9 @@ describe("reading a shared work-stream link", () => {
       `${WEB_BASE_URL}/invite`,
       `avalon://automations/new`,
       `avalon://workstreams/${WORKSTREAM_ID}?token=leak`,
-      `rallywithai://workstreams/${WORKSTREAM_ID}?region=eu`,
-      `rallywithai://workstreams/${WORKSTREAM_ID}?region=eu&workspace=${WORKSPACE_ID}&extra=value`,
-      `rallywithai://workspace/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}?extra=value`,
+      `rallywithai://workstreams/${WORKSTREAM_ID}?region=enterprise`,
+      `rallywithai://workstreams/${WORKSTREAM_ID}?region=enterprise&workspace=${WORKSPACE_ID}&extra=value`,
+      `rallywithai://workspace/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}?extra=value`,
       "not a url",
     ]) {
       expect(parseWorkstreamLink(candidate, { webBaseUrl: WEB_BASE_URL })).toBeNull();

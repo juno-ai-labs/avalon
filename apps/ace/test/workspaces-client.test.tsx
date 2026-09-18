@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 // @vitest-environment jsdom
 
 import { act, useState } from 'react';
@@ -12,7 +13,7 @@ let root: Root;
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000f1';
 const OTHER_ID = '00000000-0000-7000-8000-0000000000f2';
-const ROW = { id: WORKSPACE_ID, name: 'Alto Capital-demo', slug: 'alto-capital-demo', region: 'eu' as const };
+const ROW = { id: WORKSPACE_ID, name: 'Alto Capital-demo', slug: 'alto-capital-demo', region: 'enterprise' as const };
 const OTHER_ROW = { id: OTHER_ID, name: 'Birch Partners', slug: 'birch', region: 'global' as const };
 
 /** The app holds the retired marks; the tab reports into it. */
@@ -80,10 +81,10 @@ describe('the workspaces tab', () => {
     await act(async () => { await Promise.resolve(); });
     const call = fetchMock.mock.calls.find((candidate) => String(candidate[0]).endsWith('/retire'));
     expect(String(call?.[0])).toBe(`/api/workspaces/${WORKSPACE_ID}/retire`);
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ region: 'eu', confirmWorkspaceId: WORKSPACE_ID });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ region: 'enterprise', confirmWorkspaceId: WORKSPACE_ID });
     // The aftermath names what closed, the form is gone, and the row is marked.
     expect(container.textContent).toContain('Retired');
-    expect(container.textContent).toContain('All 3 work streams and automations in the EU workspace are closed; this pass closed 3 of them, with 4 conversations under them. 1 queued effect will never publish.');
+    expect(container.textContent).toContain('All 3 work streams and automations in the enterprise workspace are closed; this pass closed 3 of them, with 4 conversations under them. 1 queued effect will never publish.');
     expect(container.querySelector('.retire-receipt')?.textContent).toContain(WORKSPACE_ID);
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent?.includes('Retire workspace'))).toBe(false);
     expect(container.querySelector('.workspaces > button.retired')).not.toBeNull();
@@ -127,22 +128,22 @@ describe('the workspaces tab', () => {
   });
 
   it('shows a failed search as a failure, never as no matches', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ error: 'directory_unavailable', message: 'The EU directory did not answer' }, { status: 502 }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ error: 'directory_unavailable', message: 'The enterprise directory did not answer' }, { status: 502 }));
     await act(async () => { root.render(<Harness />); });
     await search('Alto');
-    expect(container.textContent).toContain('The EU directory did not answer');
+    expect(container.textContent).toContain('The enterprise directory did not answer');
     expect(container.textContent).toContain('Directory search failed');
     expect(container.textContent).not.toContain('No workspaces match');
     expect(container.textContent).not.toContain('Both regions searched');
   });
 
   it('says which region was not searched when only one directory answered', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ results: [OTHER_ROW], unavailableRegions: ['eu'] }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ results: [OTHER_ROW], unavailableRegions: ['enterprise'] }));
     await act(async () => { root.render(<Harness />); });
     await search('bi');
     expect(container.textContent).toContain('Birch Partners');
-    expect(container.textContent).toContain('The EU directory did not answer, so a workspace there would not be listed.');
-    expect(container.textContent).toContain('EU directory did not answer');
+    expect(container.textContent).toContain('The enterprise directory did not answer, so a workspace there would not be listed.');
+    expect(container.textContent).toContain('enterprise directory did not answer');
     expect(container.textContent).not.toContain('Both regions searched');
   });
 });

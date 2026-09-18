@@ -3,7 +3,7 @@ import { appearanceModeDescriptions } from '../../common/themes';
 import { applicationIconChoices } from '../../common/application-icons';
 import { DAY_PRESETS, WEEKDAYS, githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from './choices';
 
-export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login';
+export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login' | 'releaseChannel';
 export interface SettingDefinition {
   readonly id: string;
   readonly section: DesktopSettingsSection;
@@ -35,6 +35,8 @@ export const settings = {
   webhookEvents: defineSetting({ id: 'webhookEvents', section: 'connections', label: "Allowed event types", kind: 'custom', description: "Separate names with commas or spaces. Leave empty to accept any valid event type.", entryPoint: 'provider:generic-webhook' }),
   webhookEndpoint: defineSetting({ id: 'webhookEndpoint', section: 'connections', label: "Endpoint", kind: 'information', description: "Copy the webhook endpoint after creation.", entryPoint: 'provider:generic-webhook' }),
   webhookSecret: defineSetting({ id: 'webhookSecret', section: 'connections', label: "Signing secret", kind: 'information', description: "Copy the webhook signing secret after creation. Secret values are never indexed.", entryPoint: 'provider:generic-webhook' }),
+  ashbyKey: defineSetting({ id: 'ashbyKey', section: 'connections', label: 'Ashby workspace API key', kind: 'custom', description: 'Authorize shared recruiting webhook setup and recovery.', availability: 'admin', entryPoint: 'provider:ashby' }),
+  firefliesKey: defineSetting({ id: 'firefliesKey', section: 'connections', label: "Fireflies API key", kind: 'custom', description: "Connect the team's Fireflies transcripts and summaries.", availability: 'admin', entryPoint: 'provider:fireflies' }),
   granolaKey: defineSetting({ id: 'granolaKey', section: 'connections', label: "Workspace API key", kind: 'custom', description: "Connect Granola workspace notes and transcripts.", availability: 'admin', entryPoint: 'provider:granola' }),
   profile: defineSetting({ id: 'profile', section: 'account', label: "Profile", kind: 'information', description: "Your Rally identity and access in this workspace.", options: ['Name', 'Email', 'Role'] }),
   profileName: defineSetting({ id: 'profileName', section: 'account', label: 'Name', kind: 'custom', description: 'Your display name in Rally.', aliases: ['account name', 'display name'] }),
@@ -42,7 +44,6 @@ export const settings = {
   profileColor: defineSetting({ id: 'profileColor', section: 'account', label: 'Color', kind: 'custom', description: 'Your avatar and personal accent color.', aliases: ['colour', 'avatar color'] }),
   personalTimezone: defineSetting({ id: 'personalTimezone', section: 'account', label: "Default timezone", kind: 'select', description: "Used for your personal automations when no timezone is specified.", aliases: ['time zone'] }),
   signOut: defineSetting({ id: 'signOut', section: 'account', label: "Sign out of Rally", kind: 'action', description: "Remove the local session from this Mac." }),
-  workspaceRegion: defineSetting({ id: 'workspaceRegion', section: 'workspace', label: "Data region", kind: 'information', description: "All workspace data, sessions, and requests remain pinned to this regional service.", aliases: ["data residency"] }),
   workspaceIdentity: defineSetting({ id: 'workspaceIdentity', section: 'workspace', label: "Workspace", kind: 'information', description: "The shared Rally workspace active in this desktop app.", aliases: ["organization"] }),
   workspaceTimezone: defineSetting({ id: 'workspaceTimezone', section: 'workspace', label: "Default timezone", kind: 'select', description: "Used when a workspace automation does not specify a timezone.", aliases: ['time zone'] }),
   terminal: defineSetting({ id: 'terminal', section: 'internet-access', label: "Terminal network access", kind: 'custom', description: "Choose where code running in Daytona may connect. Rally-managed platform access is applied automatically.", options: ['Review network change', 'Confirm network change', 'Download workspace domains'] }),
@@ -61,10 +62,12 @@ export const settings = {
   mcpPolicy: defineSetting({ id: 'mcpPolicy', section: 'custom-mcp', label: "Tools Rally may use", kind: 'select', description: "Choose which tools the server may expose.", options: ['All tools', 'Read-only tools'] }),
   mcpCatalog: defineSetting({ id: 'mcpCatalog', section: 'custom-mcp', label: "Tools", kind: 'collection', description: "Inspect tool names and descriptions." }),
   lockdown: defineSetting({ id: 'lockdown', section: 'application', label: "Lockdown mode", kind: 'toggle', description: "Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.", aliases: ["security","keychain","privacy"] }),
-  analytics: defineSetting({ id: 'analytics', section: 'application', label: "Product analytics", kind: 'toggle', description: "Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Global telemetry can include your verified name and email so Rally can contact you; EU telemetry stays in Rally’s EU platform. Essential content-free reliability signals continue when this is off.", aliases: ["privacy","diagnostics"] }),
+  analytics: defineSetting({ id: 'analytics', section: 'application', label: "Product analytics", kind: 'toggle', description: "Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Telemetry can include your verified name and email so Rally can contact you. Essential content-free reliability signals continue when this is off.", aliases: ["privacy","diagnostics"] }),
   appearance: defineSetting({ id: 'appearance', section: 'application', label: "Appearance", kind: 'select', description: "Follow this Mac or keep Rally light or dark.", options: appearanceModeDescriptions.map((option) => option.label), aliases: ['theme'] }),
+  pushNotifications: defineSetting({ id: 'pushNotifications', section: 'notifications', label: "Notify me on this Mac about mentions and additions", description: "Show notifications on this Mac, even when Rally is closed.", kind: 'toggle' }),
   menuBar: defineSetting({ id: 'menuBar', section: 'application', label: "Show Rally in the menu bar", kind: 'toggle', description: "Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent work streams.", availability: 'menuBar', aliases: ["status item","meetings"] }),
   appIcon: defineSetting({ id: 'appIcon', section: 'application', label: "App icon", kind: 'custom', description: "Choose how Rally appears in the Dock, Finder, Launchpad, and Spotlight.", options: applicationIconChoices.map((option) => option.label) }),
+  releaseChannel: defineSetting({ id: 'releaseChannel', section: 'application', label: "Update channel", kind: 'select', description: "Stable receives no more than one desktop release every 24 hours. Faster receives every desktop release.", options: ['Stable', 'Faster'], availability: 'releaseChannel', aliases: ['release pace', 'updates'] }),
   login: defineSetting({ id: 'login', section: 'application', label: "Open Rally at login", kind: 'toggle', description: "Start Rally when you log in. With Rally in the menu bar it starts there quietly, with no window; without it, a window opens as usual.", availability: 'login', aliases: ["startup"] }),
   debug: defineSetting({ id: 'debug', section: 'application', label: "Debug enabled", kind: 'toggle', description: "Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.", availability: 'developer', aliases: ["developer","diagnostics"] }),
   about: defineSetting({ id: 'about', section: 'application', label: "About", kind: 'information', description: "Which release of Rally this Mac is running." }),
@@ -82,6 +85,7 @@ export interface SettingsSearchContext {
   readonly developer: boolean;
   readonly menuBar: boolean;
   readonly login: boolean;
+  readonly releaseChannel: boolean;
 }
 export function isSettingAvailable(setting: SettingDefinition, context: SettingsSearchContext): boolean {
   return context.sections.has(setting.section)

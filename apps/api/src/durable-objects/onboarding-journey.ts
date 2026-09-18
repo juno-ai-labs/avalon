@@ -1,4 +1,4 @@
-import { OnboardingJourneySchema, UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
+import { OnboardingJourneySchema, StoredOnboardingConnectorSelectionsSchema, UpdateOnboardingJourneySchema, type OnboardingJourney, type UpdateOnboardingJourney } from '@rally/contracts';
 import { z } from 'zod';
 
 export const ONBOARDING_JOURNEY_SQL = `CREATE TABLE onboarding_journeys (
@@ -21,7 +21,7 @@ export class OnboardingJourneyStore {
     const row = this.sql.exec<{ path: string; stage: string; revision: number; connector_ids: string }>(
       'SELECT * FROM onboarding_journeys WHERE user_id = ?', userId).one();
     return OnboardingJourneySchema.parse({ path: row.path, stage: row.stage, revision: row.revision,
-      connectorIds: JSON.parse(row.connector_ids) });
+      connectorIds: StoredOnboardingConnectorSelectionsSchema.parse(JSON.parse(row.connector_ids)) });
   }
 
   update(userId: string, path: 'creator' | 'member', raw: UpdateOnboardingJourney): OnboardingJourney | null {

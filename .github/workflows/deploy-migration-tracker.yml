@@ -34,6 +34,8 @@ on:
     branches:
       - main
     paths:
+      - "config/regions.json"
+      - "scripts/regions.mjs"
       - "apps/migration-tracker/**"
       # The report contract is shared with the API Workers. A change to it that
       # only reached one side would have the producer and the consumer

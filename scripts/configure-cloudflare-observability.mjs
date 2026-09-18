@@ -13,12 +13,6 @@ export const OBSERVABILITY_CONFIGURATIONS = Object.freeze([
     bucket: "avalon-global-observability",
     script: "avalon-api-global",
   },
-  {
-    region: "eu",
-    jurisdiction: "eu",
-    bucket: "avalon-eu-observability",
-    script: "avalon-api-eu",
-  },
 ]);
 
 export const LOGPUSH_FIELD_NAMES = Object.freeze([

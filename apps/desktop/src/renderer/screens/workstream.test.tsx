@@ -1,3 +1,4 @@
+import "../../../../../tests/isolated-region";
 import { createRef } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -28,6 +29,7 @@ import {
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
 } from './workstream';
+import { conversationActivityRow, conversationShowsStoppingRow } from './conversation-surface';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -107,6 +109,7 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings,
     onApplicationSettingsChanged,
   }),
+  desktopServicesAvailable: () => false,
 }));
 
 const headerWorkstream: WorkstreamDetail = {
@@ -142,7 +145,7 @@ describe('running work-stream message delivery', () => {
     expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
   });
 
-  it('queues a message for the in-flight loop without a delivery dropdown', async () => {
+  it('delivers a message at the running loop safe boundary without a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
       <MemoryRouter>
@@ -167,14 +170,14 @@ describe('running work-stream message delivery', () => {
 
     expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
-    fireEvent.change(composer, { target: { value: 'Do this after the current loop stops' } });
+    fireEvent.change(composer, { target: { value: 'Add this context to the current conversation' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith(
-      'Do this after the current loop stops',
+      'Add this context to the current conversation',
       [],
       undefined,
-      'queue',
+      'steer',
     ));
   });
 });
@@ -340,7 +343,7 @@ describe('WorkstreamHeader origin affordances', () => {
       appVersion: 'test',
       isPackaged: true,
       platform: 'darwin',
-      api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+      api: { global: 'https://api.rallywith.ai', enterprise: 'https://enterprise.api.rallywith.ai' },
       webBaseUrl: 'https://rallywith.ai',
       devAuthEnabled: false,
     });
@@ -951,6 +954,47 @@ describe('orderedTranscriptOwnsRunTiming', () => {
   });
 });
 
+describe('conversationShowsStoppingRow', () => {
+  it('acknowledges a stop only while the run it would be waiting on is live', () => {
+    expect(conversationShowsStoppingRow('running', true)).toBe(true);
+    expect(conversationShowsStoppingRow('running', false)).toBe(false);
+    expect(conversationShowsStoppingRow('running', undefined)).toBe(false);
+    // The loop clears `stop_requested_at` as it goes idle, but a settled run
+    // can still be read back before the next snapshot lands. A stopping row
+    // over a run that has already stopped promises a wait that is over.
+    expect(conversationShowsStoppingRow('stopped', true)).toBe(false);
+    expect(conversationShowsStoppingRow('completed', true)).toBe(false);
+  });
+});
+
+describe('conversationActivityRow', () => {
+  const running = {
+    status: 'running' as const,
+    compactingThisRun: false,
+    orderedOwnsRunTiming: false,
+    runTiming: { active: true, durationMs: 0, startedAt: Date.parse('2026-08-05T12:00:00.000Z') },
+  };
+
+  it('prefers compaction over the elapsed total, and only for a live run', () => {
+    expect(conversationActivityRow({ ...running, compactingThisRun: true }))
+      .toEqual({ kind: 'compacting' });
+    // The answer carries the props it was decided from, so the call site has
+    // nothing left to assert back.
+    expect(conversationActivityRow(running)).toEqual({ kind: 'timing', timing: running.runTiming });
+    expect(conversationActivityRow({
+      ...running,
+      status: 'completed',
+      compactingThisRun: true,
+      runTiming: { active: false, durationMs: 83_000 },
+    })).toEqual({ kind: 'timing', timing: { active: false, durationMs: 83_000 } });
+  });
+
+  it('leaves the elapsed total to the feed once the ordered transcript draws it', () => {
+    expect(conversationActivityRow({ ...running, orderedOwnsRunTiming: true })).toBeNull();
+    expect(conversationActivityRow({ ...running, runTiming: null })).toBeNull();
+  });
+});
+
 describe('manualElicitationResponse', () => {
   it('turns a composer entry into a custom single-select response', () => {
     expect(manualElicitationResponse(openElicitation, '  Take a closer look  ')).toEqual({
@@ -1017,25 +1061,29 @@ describe('JumpToLatestButton', () => {
 });
 
 describe('RunFailureNotice', () => {
-  it('shows a typed member-safe error and exposes retry and request-id actions', () => {
-    const onCopyRequestId = vi.fn();
+  it('shows a typed member-safe error, the request id beside its copy control, and retry', async () => {
+    copyText.mockReset();
+    copyText.mockResolvedValue(undefined);
     const onRetry = vi.fn();
     render(
-      <RunFailureNotice
-        code="context_limit_exceeded"
-        message="The run exceeded the model context window."
-        onCopyRequestId={onCopyRequestId}
-        onRetry={onRetry}
-        requestId="run-request-123"
-        retrying={false}
-      />,
+      <Tooltip.Provider>
+        <RunFailureNotice
+          code="context_limit_exceeded"
+          message="The run exceeded the model context window."
+          onRetry={onRetry}
+          requestId="run-request-123"
+          retrying={false}
+        />
+      </Tooltip.Provider>,
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent('The run exceeded the model context window.');
     expect(screen.getByRole('alert')).toHaveTextContent('context_limit_exceeded');
+    // The id is on screen, so the icon beside it is about something.
+    expect(screen.getByRole('alert')).toHaveTextContent('run-request-123');
     fireEvent.click(screen.getByRole('button', { name: 'Copy request ID' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('run-request-123'));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(onCopyRequestId).toHaveBeenCalledOnce();
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
@@ -1044,7 +1092,6 @@ describe('RunFailureNotice', () => {
       <RunFailureNotice
         code="provider_timeout"
         message="The provider timed out."
-        onCopyRequestId={vi.fn()}
         onRetry={vi.fn()}
         retrying
       />,
@@ -1055,14 +1102,13 @@ describe('RunFailureNotice', () => {
 });
 
 describe('RunStoppedNotice', () => {
-  it('makes a terminal member stop explicit and offers a fresh retry', () => {
-    const onRetry = vi.fn();
-    render(<RunStoppedNotice onRetry={onRetry} retrying={false} />);
+  it('makes a terminal member stop explicit without offering a retry', () => {
+    const { container } = render(<RunStoppedNotice />);
 
     expect(screen.getByRole('status', { name: 'Run stopped' }))
-      .toHaveTextContent('Its partial tool activity is no longer running.');
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(onRetry).toHaveBeenCalledOnce();
+      .toHaveTextContent('This run was stopped by request.');
+    expect(container.querySelector('.run-stopped-icon svg')).toHaveAttribute('fill', 'currentColor');
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });
 

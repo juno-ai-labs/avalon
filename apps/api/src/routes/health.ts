@@ -1,3 +1,6 @@
+import { isConfiguredRegion } from "@rally/contracts/regions";
+import { configuredRegions } from "@rally/contracts/regions";
+import { regionalBindings } from "../lib/regional-bindings";
 import { Hono } from "hono";
 import { z } from "zod";
 import { assertEnvContract, EnvContractError, type HonoAppEnv } from "../env";
@@ -101,31 +104,26 @@ healthRoutes.get("/", async (c) => {
     ok: typeof c.env.ACTIVITY_QUEUE?.send === "function",
     message: typeof c.env.ACTIVITY_QUEUE?.send === "function" ? "binding available" : "binding unavailable",
   };
-  const inferenceLakehouseEnabled = c.env.AVALON_REGION === "global";
   const inferenceLakehouseBindingsAvailable = typeof c.env.INFERENCE_LAKEHOUSE_QUEUE?.send === "function"
     && typeof c.env.INFERENCE_LAKEHOUSE?.send === "function";
-  checks.inferenceLakehouse = inferenceLakehouseEnabled
-    ? {
+  checks.inferenceLakehouse = {
         ok: inferenceLakehouseBindingsAvailable,
         message: inferenceLakehouseBindingsAvailable
           ? "Global Queue and Pipeline bindings available"
           : c.env.APP_ENV === "production"
             ? "Global Queue or Pipeline binding unavailable"
             : "Pipeline binding is materialized only for hosted deployments",
-      }
-    : { ok: true, message: "EU inference analytics export intentionally disabled" };
+      };
   const analyticsLakehouseBindingsAvailable = typeof c.env.ANALYTICS_LAKEHOUSE_QUEUE?.send === "function"
     && typeof c.env.ANALYTICS_LAKEHOUSE?.send === "function";
-  checks.analyticsLakehouse = c.env.AVALON_REGION === "global"
-    ? {
+  checks.analyticsLakehouse = {
         ok: analyticsLakehouseBindingsAvailable,
         message: analyticsLakehouseBindingsAvailable
           ? "Global analytics Queue and Pipeline bindings available"
           : c.env.APP_ENV === "production"
             ? "Global analytics Queue or Pipeline binding unavailable"
             : "Pipeline binding is materialized only for hosted deployments",
-      }
-    : { ok: true, message: "EU analytics lakehouse export intentionally disabled" };
+      };
   checks.workflows = {
     ok: typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
       && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
@@ -149,15 +147,19 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
   };
-  // Identity sign-in is a Global-only surface, so EU reporting "not configured"
+  checks.typeSafe = {
+    ok: Boolean(c.env.TYPESAFE_API_KEY),
+    message: c.env.TYPESAFE_API_KEY ? "configured" : "not configured",
+  };
+  // Identity sign-in is a Global-only surface, so regional reporting "not configured"
   // forever was a permanent false negative — noise that a real fault would have
   // had to be spotted inside.
   const googleLoginConfigured = Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET);
-  // Exempts EU by name rather than "not Global": an unreadable region is the
+  // Exempts regional by name rather than "not Global": an unreadable region is the
   // case where this probe most needs to complain, and the env contract holds
   // one to every rule. `/health` is reachable when the region is invalid
   // precisely so it can say so, and it must not answer "not required" then.
-  if (c.env.AVALON_REGION !== "eu") {
+  if (!isConfiguredRegion(c.env.AVALON_REGION) || c.env.AVALON_REGION === "global") {
     // Global, and any region too malformed to read — the state this probe most
     // needs to complain in, since the entrypoint is failing on this very key
     // while `/health` stays exempt so it can say so.
@@ -167,7 +169,7 @@ healthRoutes.get("/", async (c) => {
     };
   } else if (googleLoginConfigured) {
     // Not a healthy state to confirm: the runbook installs this pair on Global
-    // alone, so an EU Worker holding it is a platform login secret sitting
+    // alone, so a regional Worker holding it is a platform login secret sitting
     // outside its blast radius — something to go remove, not to reassure about.
     checks.googleLoginOAuth = { ok: false, message: "configured outside Global; remove it from this region" };
   } else {
@@ -183,6 +185,7 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),
     message: c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL ? "configured" : "not configured",
   };
+  checks.pushDelivery = { ok: Boolean(c.env.APNS_AUTH_KEY && c.env.APNS_KEY_ID), message: c.env.APNS_AUTH_KEY && c.env.APNS_KEY_ID ? "configured" : "not configured" };
   checks.opsNotifications = opsNotificationsConfigured(c.env)
     ? { ok: true, message: "configured" }
     : c.env.OPS_SLACK_BOT_TOKEN?.trim() || c.env.OPS_SLACK_CHANNEL_ID?.trim()
@@ -207,7 +210,7 @@ healthRoutes.get("/", async (c) => {
   const anyLinearConfigured = linearValues.some(Boolean);
   const linearIdentityConfigured = linearValues.every(Boolean);
   const linearRoutingConfigured = c.env.AVALON_REGION === "global"
-    ? typeof c.env.EU_LINEAR_BRIDGE?.ingestLinear === "function"
+    ? configuredRegions.filter((region) => region !== c.env.AVALON_REGION).every((region) => typeof regionalBindings(c.env, region).linear?.ingestLinear === "function")
     : typeof c.env.GLOBAL_LINEAR_ROUTER?.registerLinearRoute === "function"
       && typeof c.env.GLOBAL_LINEAR_ROUTER?.setLinearRouteStatus === "function";
   checks.linear = {
@@ -238,7 +241,7 @@ healthRoutes.get("/", async (c) => {
   const inboundConfigured = c.env.AVALON_REGION === "global"
     ? receivingKeyConfigured
       && Boolean(c.env.RESEND_WEBHOOK_SIGNING_SECRET ?? c.env.RESEND_WEBHOOK_SECRET)
-      && typeof c.env.EU_INBOUND_EMAIL_BRIDGE?.ingestResendEmail === "function"
+      && configuredRegions.filter((region) => region !== c.env.AVALON_REGION).every((region) => typeof regionalBindings(c.env, region).inboundEmail?.ingestResendEmail === "function")
     : receivingKeyConfigured;
   checks.inboundEmail = {
     ok: inboundConfigured,

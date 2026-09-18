@@ -50,10 +50,7 @@ evidence disproves its premise.
 | Cloudflare Worker and Durable Object analytics | Request and invocation volume, handler type, runtime outcome, CPU/wall time, class or entrypoint, and version-level changes | Which application phase ran, whether a user saw a failure, or whether an outcome labelled `clientDisconnected` involved a WebSocket |
 | Cloudflare Workers Logs | One invocation's platform record, uncaught errors, and Rally's structured, content-free diagnostic events | Long-term completeness after retention, unsampled history, or content deliberately excluded from logs |
 | Cloudflare Workers Traces | Ordering and latency across handlers, bindings, Durable Objects, and Rally custom spans | A complete cross-system trace where the runtime does not propagate identity; safe-to-export content without reviewing automatic span attributes |
-| PostHog product telemetry | User and product semantics, release cohorts, journeys, client-observed outcomes, and registered exception events | Product authority, complete EU behaviour, every occurrence when preference or sampling suppresses capture, or Cloudflare runtime outcomes |
 | PostHog OTLP logs and traces | The Global Worker's exported Cloudflare logs and traces, queried beside other operational evidence | Governed product-event semantics; the privacy guarantees or routing rules of Rally's typed telemetry pipeline |
-| Analytics events lakehouse | Lossless typed projection of accepted **Global** product telemetry with stable event IDs and promoted correlation fields | EU events, arbitrary application logs, raw prompts, or proof that the observed product mutation succeeded |
-| Inference lakehouse | Exact Global model request/attempt pairs, provider routing, terminal classification, and—when justified—the archived request and response | EU inference, non-model product state, or a safe default source for broad searches |
 | Regional D1 and owning Durable Object state | Current and historical facts owned by that authority, outbox state, receipts, and durable scheduling state | A cross-authority timeline or events that were never persisted there |
 | GitHub Actions and Cloudflare deployment state | Which commit passed which checks, what deployed, and when the active version changed | Whether propagation was complete at the start of an arbitrary metric bucket unless timestamps are compared |
 
@@ -96,8 +93,6 @@ For before/after comparisons, use identically sized completed windows when
 possible and report both counts and rates. Changes in traffic, scheduled-work
 volume, or client release adoption can make a raw-count improvement look larger
 or smaller than it is.
-
-## Where and how to look
 
 ### Cloudflare invocation analytics
 
@@ -185,12 +180,6 @@ not own that action, and delivery failure never changes product behaviour. Join
 an event to a server request, operation, trace, or authoritative record when the
 question requires proof that the action committed.
 
-PostHog is Global-only for this pipeline. An absent EU event is expected, not
-evidence that the EU client did nothing. Error tracking also sees only the
-exceptions and native reports admitted by its separate capture path; a handled
-failure represented as an ordinary typed event will not appear merely because
-an Error Tracking view was queried.
-
 ### Analytics events lakehouse
 
 Use the analytics lakehouse when a Global typed event must be checked outside
@@ -205,10 +194,6 @@ inspect the regional acceptance/outbox state and Queue/DLQ before concluding
 capture failed. `delivered` means the Worker handed the row to Pipeline, not
 that the latest Parquet roll is already queryable.
 
-This lakehouse is Global-only and analytical, never product authority. For EU,
-use the restricted regional telemetry surface; do not query Global as a
-fallback.
-
 ### Inference lakehouse
 
 Use the inference lakehouse only when the question requires what Rally sent to
@@ -217,11 +202,6 @@ work stream, substream, request, and bounded time range; retrieve raw request or
 response JSON only after the typed rows identify the exact inference pair. The
 full procedure is in
 [`Inspecting a run's raw inference`](runbook.md#inspecting-a-runs-raw-inference).
-
-The projection and exact archive are Global-only. For an EU workspace, stop:
-absence is the designed residency boundary. Do not search D1, logs, or Global
-storage for substitute raw content. At-least-once delivery also applies here,
-so `event_id`, not physical row count, defines a logical event.
 
 ### Authoritative state and delivery machinery
 
@@ -295,20 +275,27 @@ An empty result is not automatically evidence that nothing failed. Check for:
 
 - log or trace sampling, truncation, retention expiry, disabled invocation
   logs, or an account-level volume event that changed effective sampling;
+
 - a handled application failure that returned `ok` to the runtime and recorded
   a warning, typed outcome, state transition, or audit row instead of throwing;
+
 - client product telemetry suppressed by preference, sampling, launch state,
   offline delivery, or an unsupported region;
+
 - a disconnect or runtime cancellation before the first application log or
   phase event could be emitted;
+
 - a just-deployed version that had not become active for the whole query window;
+
 - PostHog delivery lag or failure, or querying product telemetry when the event
   arrived through the separate OTLP path;
+
 - Pipeline roll delay, outbox backlog, Queue retry, DLQ delivery, or a terminal
   integrity rejection before a lakehouse row became queryable;
-- EU data intentionally absent from Global PostHog and both Global lakehouses;
+
 - a successful low-level call followed by a later failure at the product,
   client-rendering, replay/resync, or authorization boundary;
+
 - an aggregate that hides one hot Durable Object, release cohort, provider, or
   minority status behind a healthy overall rate.
 
@@ -364,14 +351,12 @@ hypothesis.
    intermediary idle handling, server eviction, and application close policy
    remain different hypotheses.
 
-### “The model failed” or “the model did the wrong thing”
-
 1. Use structured logs and authoritative run state to determine the run and
    terminal classification.
-2. Resolve the workspace region. Stop if it is EU and the question requires raw
-   inference.
+
 3. For Global, query typed inference rows for the exact work stream, substream,
    request, and time range.
+
 4. Retrieve the raw pair only if the typed evidence cannot answer the question;
    keep it in an ignored scratch directory and out of logs and reports.
 
@@ -400,17 +385,19 @@ their current rules when this summary and an owning document differ.
 - Begin with aggregate and promoted content-free fields. Retrieve event
   properties, trace attributes, or raw model records only when the narrower
   evidence cannot answer the question.
+
 - Keep query responses in an ignored temporary directory. Do not print raw
   inference, trace binding values, identifiers, prompts, messages, connector
   content, or crash material into terminal transcripts, tickets, commits, PRs,
   or agent responses.
-- Resolve the workspace's region before querying. Global is never a fallback
-  for an intentionally absent EU analytical surface.
+
 - Use responder credentials for read paths, not deployment credentials. Keep
   tokens out of Worker/client variables and command output.
+
 - Prefer platform-owned correlation identifiers over copying product names or
   content into new logs. New diagnostics should use fixed enums, booleans,
   counts, and durations where those answer the question.
+
 - Remember that Cloudflare automatic traces sit below Rally's redaction layer.
   Review destination and regional attachment before assuming exported spans are
   content-free.

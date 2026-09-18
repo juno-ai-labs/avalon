@@ -1,3 +1,4 @@
+import "../../../../tests/isolated-region";
 import { describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
 import { createServer } from 'node:http';
@@ -70,7 +71,7 @@ class FakeSocket implements RealtimeSocketClient {
 }
 
 describe('realtimeSocketTargetAllowed', () => {
-  const apiBaseUrls = ['https://api.rallywith.ai', 'https://eu.api.rallywith.ai'];
+  const apiBaseUrls = ['https://api.rallywith.ai', 'https://enterprise.api.rallywith.ai'];
 
   it('allows only the declared work-stream socket shape on configured regional origins', () => {
     expect(realtimeSocketTargetAllowed(openInput(), apiBaseUrls)).toBe(true);

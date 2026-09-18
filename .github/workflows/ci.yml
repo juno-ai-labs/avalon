@@ -29,12 +29,11 @@ jobs:
             command: >-
               pnpm typecheck &&
               pnpm --filter @rally/api build &&
-              pnpm --filter @rally/api build:eu &&
               pnpm --filter @rally/api build:telemetry &&
               pnpm --filter @rally/api check:telemetry-startup-boundary &&
+              pnpm --filter @rally/api build:ashby &&
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/api build:artifacts &&
-              pnpm --filter @rally/api build:artifacts:eu &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
@@ -47,9 +46,13 @@ jobs:
           - name: api-tests-3-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=3/3
           - name: api-tests-workers-1-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/2
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/4
           - name: api-tests-workers-2-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/2
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/4
+          - name: api-tests-workers-3-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=3/4
+          - name: api-tests-workers-4-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=4/4
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests

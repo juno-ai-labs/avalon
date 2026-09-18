@@ -1,3 +1,4 @@
+import { configuredRegions } from "./regions.mjs";
 /**
  * Materialize pinned Global Pipeline stream bindings without a control-plane
  * read, or explicitly reconcile both complete Global lakehouses.
@@ -25,8 +26,8 @@ const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
 const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
 const SAFE_STREAM_ID = /^[a-f0-9]{32}$/u;
-const WORKER_REGIONS = ['eu', 'global'];
-const LAKEHOUSE_REGIONS = ['global'];
+const WORKER_REGIONS = configuredRegions;
+const LAKEHOUSE_REGIONS = configuredRegions;
 const LAKEHOUSE_MODES = new Set(['--check', '--materialize-bindings', '--reconcile']);
 
 // This pre-install provisioner deliberately gets ten total attempts because the

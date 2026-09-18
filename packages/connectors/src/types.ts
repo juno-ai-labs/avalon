@@ -1,8 +1,11 @@
+import type { ConnectorInstallationManagement } from "./installation";
+import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ConnectorActivityTriggerDescriptorSchema,
   ConnectorOriginResourceSchema,
 } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type {
   ConnectorActivityFilterField,
   ConnectorActivityTriggerDescriptor,
@@ -206,6 +209,7 @@ export interface ConnectorToolContext {
 }
 
 export interface ConnectorToolResult {
+  pagination?: ToolPaginationResult;
   output: unknown;
   summary: string;
   providerOperationId?: string;
@@ -469,6 +473,41 @@ export interface ConnectorWebhookActivitySource {
     event: ConnectorVerifiedActivityWebhook,
     payloadRef: string | null,
   ): Omit<NormalizedActivity, "id"> | null;
+  /**
+   * Activities a verified delivery implies but cannot decide on its own.
+   *
+   * Runs after `normalize` accepted the delivery and before any activity row
+   * exists, with an authorized connection, because the decision needs a
+   * provider read: Granola reports a note shared into the workspace as
+   * `note.access_granted` whether or not its summary exists yet, and only
+   * the note says which. Answers with whole activities to store beside the
+   * one the delivery named, or none when the delivery meant exactly what it
+   * said, and always with the outcome by name. Every webhook ingress that
+   * persists through the workspace object calls it, so an adapter's answer
+   * is honoured wherever its deliveries arrive. Absent for every connector
+   * whose deliveries always mean what they say.
+   */
+  derive?(
+    connection: AuthorizedConnectorConnection,
+    activity: Omit<NormalizedActivity, "id">,
+    event: ConnectorVerifiedActivityWebhook,
+    signal: AbortSignal,
+  ): Promise<ConnectorDerivedActivities>;
+}
+
+/** What `derive` decided, for the wrapper's log and the host's. */
+export interface ConnectorDerivedActivities {
+  /** Whole activities to store beside the one the delivery named. */
+  activities: Array<Omit<NormalizedActivity, "id">>;
+  /**
+   * Why, in one short code: what the provider read found, or why there was
+   * none. Every outcome that stored nothing is a different word from every
+   * other, so an unreadable note and a summary not yet written can be told
+   * apart afterwards.
+   */
+  outcome: string;
+  /** The provider failure behind an outcome the adapter could not verify, when there was one. */
+  failure?: { code: string; status?: number };
 }
 
 export interface ConnectorActivityStreamError {
@@ -486,7 +525,13 @@ function recordValue(value: unknown): Record<string, unknown> {
 function streamFailure(error: unknown, streamId: string): ConnectorActivityStreamError {
   return {
     streamId,
-    code: error instanceof ConnectorError ? error.code : "poll_failed",
+    // A provider answering a poll with a body the stream's schema does not
+    // model is a schema rejection, and its failing path is the diagnosis; it
+    // used to be `poll_failed`, which is what a network fault also says. The
+    // label is the one `connectorObservationErrorCode` uses for the same
+    // failure when it is thrown rather than returned: the boundary, not the
+    // side that was wrong.
+    code: error instanceof ConnectorError ? error.code : zodDiagnosticCode(error, "schema") ?? "poll_failed",
     message: (error instanceof Error ? error.message : "Connector activity stream failed").slice(0, 500),
   };
 }
@@ -718,6 +763,7 @@ export function defineConnectorAgentPlugin(
 }
 
 export interface ConnectorAdapter {
+  installationManagement?: ConnectorInstallationManagement;
   manifest: ConnectorManifestInput;
   agentPlugin: ConnectorAgentPluginDescriptor;
   /** Live provider-authored tools, resolved only when this plugin activates. */
@@ -727,6 +773,19 @@ export interface ConnectorAdapter {
    * Omitted capabilities inherit `manifest.supportedScopes`.
    */
   capabilityConnectionScopes?: Readonly<Record<string, readonly Scope[]>>;
+  /**
+   * The connection scopes this connector's *activity* can arrive in, where
+   * that is narrower than the connector itself.
+   *
+   * Separate from `capabilityConnectionScopes` because events are not a
+   * capability: a provider that lends its tools to a personal token can still
+   * deliver its events only to an administrator's install, which is exactly
+   * Granola's, Fireflies' and Ashby's shape. Their `normalize` refuses a
+   * personal connection outright, so a trigger advertised on one is an event
+   * that can never be received. Omitted means the connector's own
+   * `manifest.supportedScopes`.
+   */
+  activityConnectionScopes?: readonly Scope[];
   nativeAgent?: ConnectorNativeAgentAdapter;
   messagingAgent?: ConnectorMessagingAgentAdapter;
   beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
@@ -787,6 +846,21 @@ export interface ConnectorAdapter {
   ): Promise<{
     ok: boolean;
     message: string;
+    /**
+     * Why the check failed, or why an `ok` result carries a `warning`, in the
+     * adapter's own fixed vocabulary, for the log.
+     *
+     * `message` cannot serve: an adapter is free to return a caught provider
+     * error's text there — X returns the body's own `message` field — and that
+     * text is shown to a person, not written to an indexed field. Logging it
+     * would put provider prose, and whatever a provider chose to include in it,
+     * into structured observability.
+     *
+     * So this is a separate, deliberately small thing: a literal the adapter
+     * writes, naming a condition it already distinguishes. Omit it and the log
+     * says only that the check failed, which is where every adapter started.
+     */
+    reasonCode?: string;
     reconnectRequired?: boolean;
     /**
      * A condition worth acting on that does not make the connection unusable —
@@ -807,6 +881,38 @@ export function zodToolInputValidationError(
   if (!schema) return null;
   const result = schema.safeParse(input);
   return result.success ? null : result.error;
+}
+
+/** What the two helpers below read: an adapter, or a narrower view of one. */
+export interface ConnectorActivityScopeSource {
+  manifest: { supportedScopes: readonly Scope[] };
+  activityConnectionScopes?: readonly Scope[] | undefined;
+}
+
+/**
+ * The connection scopes this connector's events can arrive in.
+ *
+ * The one place the default is applied, so a caller that wants to *name* the
+ * scope a connection is missing and one that only asks whether it has it
+ * cannot answer differently.
+ */
+export function connectorActivityScopes(
+  adapter: ConnectorActivityScopeSource,
+): readonly Scope[] {
+  return adapter.activityConnectionScopes ?? adapter.manifest.supportedScopes;
+}
+
+/**
+ * Whether a connection in this scope can receive this connector's events.
+ *
+ * The one place the question is answered, so the drafting catalog, the accept
+ * path and any later event surface cannot disagree about it.
+ */
+export function connectorActivitySupportsScope(
+  adapter: ConnectorActivityScopeSource,
+  scope: Scope,
+): boolean {
+  return connectorActivityScopes(adapter).includes(scope);
 }
 
 export function connectorCapabilitySupportsScope(

@@ -94,7 +94,9 @@ describe("tool schema parameter descriptions", () => {
  * the rest were brought to.
  */
 const RECORDED_DEBT: Record<string, number> = {
+  connector: 0,
   elicitation: 0,
+  fireflies: 0,
   github: 0,
   google: 0,
   granola: 0,

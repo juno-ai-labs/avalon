@@ -12,6 +12,7 @@ import {
 } from "@rally/connectors";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { encryptString } from "../src/lib/crypto";
 import {
   seedWorkstreamObjectRoot,
@@ -27,6 +28,7 @@ import type {
   PluginAuthorizationInput,
 } from "../src/services/integrations";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import { ObjectPortError } from "../src/runtime/object-port";
 
 /**
  * A connection reaches a provider only through `withAuthorizedConnection`,
@@ -462,7 +464,7 @@ describe("adapter conformance: a revoked grant reaches the row", () => {
 
   it("covers every adapter that can refresh a credential", () => {
     expect(adapters.map(({ type }) => type).sort())
-      .toEqual(["github", "google", "granola", "linear", "notion", "slack"]);
+      .toEqual(["fireflies", "github", "google", "granola", "linear", "notion", "slack"]);
   });
 
   for (const { type, adapter } of adapters) {
@@ -539,6 +541,50 @@ async function doorStatementsForFailedRefresh(
   return statements;
 }
 
+/**
+ * The conformance suites above discover adapters through `refreshCredentials`,
+ * which an admin-API-key connection does not have: nothing about a pasted key
+ * can be renewed. That is the whole reason this case needs its own test — a
+ * revoked Fireflies key has no exchange to fail, only a provider that starts
+ * answering `auth_failed`, and the row still has to stop reporting healthy or
+ * every run silently drops the plugin with nobody told why.
+ */
+describe("a workspace API key the provider has stopped accepting", () => {
+  it("marks a Fireflies workspace connection needs_reconnect on the next use", async () => {
+    const adapter = createConnectorRegistry({
+      fireflies: {
+        redirectUri: "https://api.example.com/connections/fireflies/callback",
+        // Fireflies reports a rejected key inside an HTTP 200 GraphQL body.
+        // HTTP 500 with the errors array, which is what Fireflies actually sends.
+        fetch: (async () => Response.json({ errors: [{ code: "auth_failed" }] }, { status: 500 })) as typeof fetch,
+      },
+    }).get("fireflies");
+    const statements: string[] = [];
+    const connection = connectionContext({ apiKey: "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk" }, "workspace", ["fireflies.workspace.read"]);
+    const database = createTestD1Database({
+      prepare(sql: string) {
+        statements.push(sql.replace(/\s+/gu, " ").trim());
+        return {
+          bind() { return this; },
+          async first() { return null; },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    });
+
+    await expect(withAuthorizedConnection(
+      { DB: database, CONNECTOR_CREDENTIALS_KEY: "coordinator-key", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      { connection, adapter, signal: AbortSignal.timeout(5_000) },
+      (authorized) => adapter.executeTool("search_meetings", { keyword: "renewal" }, {
+        connection: authorized,
+        principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
+        signal: AbortSignal.timeout(5_000),
+      }),
+    )).rejects.toMatchObject({ code: "unauthorized" });
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+});
+
 describe("repairing a connection under test", () => {
   const identity = { connectionId: "connection", connectorType: "granola" };
   const connection = authorizedConnection(connectionContext({}, "workspace"));
@@ -556,6 +602,14 @@ describe("repairing a connection under test", () => {
       .resolves.toBeNull();
     await expect(__connectionServiceTesting.attemptConnectorRepair(env, {}, connection, identity))
       .resolves.toBeNull();
+  });
+
+  it("reports why a repair could not be made", async () => {
+    // The managed lifecycle's repair returns its reason rather than throwing;
+    // dropping it left Test showing only the health check's sentence.
+    const adapter = { repair: async () => ({ repaired: false, message: "Webhook repair needs attention; inspect installation details" }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBe("Webhook repair needs attention; inspect installation details");
   });
 
   it("reports a failed repair without failing the test", async () => {
@@ -594,13 +648,56 @@ describe("provider writes", () => {
     // Reported, not repaired, and not failed: reads still work, so the
     // connection stays loadable while the condition is visible.
     await expect(adapter.healthCheck(connection, AbortSignal.timeout(5_000)))
-      .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled") });
+      .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled"), reasonCode: "webhook_endpoint_disabled" });
     expect(methods.some((call) => call.startsWith("PATCH"))).toBe(false);
 
-    methods.length = 0;
-    await expect(adapter.repair!(connection, AbortSignal.timeout(5_000)))
-      .resolves.toMatchObject({ repaired: true });
-    expect(methods.some((call) => call.startsWith("PATCH"))).toBe(true);
+    // Provider writes are covered by the generation-fenced installation runner.
+    expect(adapter.repair).toBeUndefined();
+    expect(adapter.revoke).toBeUndefined();
+  });
+
+  it("reports a webhook endpoint that was never registered as degraded, not unhealthy", async () => {
+    // The key has just read notes, so every read tool works. Failing here
+    // reached the host as an authorization it could not verify, and a Sidekick
+    // was told to retry after the authorization service recovered — for a
+    // webhook that had never been registered.
+    const calls: string[] = [];
+    const registry = createConnectorRegistry({
+      granola: {
+        redirectUri: "https://api.example.com/connections/granola/callback",
+        fetch: (async (input: RequestInfo | URL) => {
+          calls.push(new URL(String(input)).pathname);
+          return Response.json({ notes: [] });
+        }) as typeof fetch,
+      },
+    });
+    const connection = authorizedConnection(connectionContext({ apiKey: "grn_workspace-key" }, "workspace"));
+    await expect(registry.get("granola").healthCheck(connection, AbortSignal.timeout(5_000))).resolves.toMatchObject({
+      ok: true,
+      message: expect.stringContaining("no webhook endpoint is registered"),
+      warning: expect.stringContaining("no webhook endpoint is registered"),
+      reasonCode: "webhook_endpoint_identity_missing",
+    });
+    expect(calls).toEqual(["/v1/notes"]);
+  });
+
+  it("reports a webhook endpoint Granola no longer lists as degraded, not unhealthy", async () => {
+    const registry = createConnectorRegistry({
+      granola: {
+        redirectUri: "https://api.example.com/connections/granola/callback",
+        fetch: (async () => Response.json({ notes: [], webhook_endpoints: [] })) as typeof fetch,
+      },
+    });
+    const connection = authorizedConnection(connectionContext(
+      { apiKey: "grn_workspace-key", webhookEndpointId: "whe_00000000000000" },
+      "workspace",
+    ));
+    await expect(registry.get("granola").healthCheck(connection, AbortSignal.timeout(5_000))).resolves.toMatchObject({
+      ok: true,
+      message: expect.stringContaining("no longer exists"),
+      warning: expect.stringContaining("no longer exists"),
+      reasonCode: "webhook_endpoint_absent",
+    });
   });
 });
 
@@ -787,7 +884,7 @@ describe("adapter conformance: recovery from a rejected credential", () => {
 
   it("covers every adapter that can refresh a credential", () => {
     expect(adapters.map(({ type }) => type).sort())
-      .toEqual(["github", "google", "granola", "linear", "notion", "slack"]);
+      .toEqual(["fireflies", "github", "google", "granola", "linear", "notion", "slack"]);
   });
 
   for (const { type, adapter } of adapters) {
@@ -808,6 +905,7 @@ describe("adapter conformance: recovery from a rejected credential", () => {
       const connection = connectionContext(
         { ...fixture.credentials, expiresAt: "2099-01-01T00:00:00.000Z" },
         fixture.scope,
+        fixture.grantedScopes,
       );
 
       const health = await adapter.healthCheck(
@@ -876,11 +974,36 @@ const CREDENTIAL_FIXTURES: Record<string, {
    * has no bearer to have rejected.
    */
   presentsExpiringCredential: boolean;
+  /**
+   * Capabilities the connection holds, where the adapter's health check runs a
+   * capability-gated path. Fireflies' personal check is live tool discovery,
+   * which the pass-through refuses outright to an ungranted connection — so
+   * without this it presents no credential at all and the row above would have
+   * to claim, untruthfully, that it never does.
+   */
+  grantedScopes?: readonly string[];
 }> = {
   google: {
     presentsExpiringCredential: true,
     scope: "workspace",
     credentials: { accessToken: STALE_TOKEN, refreshToken: "refresh-token" },
+  },
+  fireflies: {
+    presentsExpiringCredential: true,
+    grantedScopes: ["fireflies.personal.read"],
+    // Only the personal scope refreshes. The workspace scope is an admin API
+    // key that never expires and has no exchange to conform to — what happens
+    // when the provider rejects *it* is covered separately, below.
+    scope: "personal",
+    credentials: {
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      tokenEndpoint: "https://auth.fireflies.test/token",
+      clientId: "fireflies-client",
+      tokenEndpointAuthMethod: "none",
+      resource: "https://mcp.fireflies.test/mcp",
+      tokenScope: "profile email",
+    },
   },
   granola: {
     presentsExpiringCredential: true,
@@ -1008,6 +1131,11 @@ const revokedGrantFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 function conformanceRegistry(fetchOverride?: typeof fetch) {
   const fetcher = fetchOverride ?? conformanceFetch.fetcher;
   return createConnectorRegistry({
+    fireflies: {
+      redirectUri: "https://api.example.com/connections/fireflies/callback",
+      mcpUrl: "https://mcp.fireflies.test/mcp",
+      fetch: fetcher,
+    },
     granola: {
       redirectUri: "https://api.example.com/connections/granola/callback",
       mcpUrl: "https://mcp.granola.test/mcp",
@@ -1053,13 +1181,14 @@ function conformanceRegistry(fetchOverride?: typeof fetch) {
 function connectionContext(
   credentials: Record<string, unknown>,
   scope: "personal" | "workspace" = "workspace",
+  grantedScopes: readonly string[] = [],
 ): ConnectorConnectionContext {
   return {
     id: "00000000-0000-7000-8000-00000000c0de",
     workspaceId: "00000000-0000-7000-8000-00000000ffff",
     scope,
     ownerUserId: scope === "personal" ? "00000000-0000-7000-8000-00000000a11e" : null,
-    grantedScopes: [],
+    grantedScopes: [...grantedScopes],
     credentials: { ...credentials },
     cursor: {},
     config: {},
@@ -1175,3 +1304,48 @@ function recordingLeasedDatabase(
     },
   });
 }
+
+describe("the row behind an indeterminate reauthorization", () => {
+  it("names the field a schema rejection rejected, the way it names a connector's own code", () => {
+    // The verdict this becomes is `indeterminate`, which tells the model to
+    // retry once the authorization service is available. The row is where a
+    // deterministic cause is told apart from a service that was down, and for
+    // a schema rejection it carried the issue list as prose and no code.
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejection = z.strictObject({ account: z.strictObject({ id: z.string() }) })
+      .safeParse({ account: { id: 7 } });
+    if (rejection.success) throw new Error("expected a rejection");
+
+    __integrationTesting.logPluginAuthorizationFailure(
+      { LOG_LEVEL: "warn", AVALON_REGION: "global", APP_VERSION: "test", BUILD_SHA: null } as never,
+      { harnessRunId: "run", workspaceId: "workspace", parentId: "parent" } as never,
+      { pluginId: "plugin_granola", connectionId: "connection", workspaceId: "workspace", connectorType: "granola" } as never,
+      rejection.error,
+    );
+
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_plugin_reauthorization_failed",
+      plugin_id: "plugin_granola",
+      code: "reauthorization_failed:account.id:invalid_type",
+    }));
+    warning.mockRestore();
+  });
+
+  it("names the authority that refused an identity read, which the port's sentence never does", () => {
+    // The identity and run-state ports answer a refusal with one fixed
+    // sentence and the authority's reason on `.code`; the row carried the
+    // sentence and became `indeterminate` — retry later — for a version skew.
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    __integrationTesting.logPluginAuthorizationFailure(
+      { LOG_LEVEL: "warn", AVALON_REGION: "global", APP_VERSION: "test", BUILD_SHA: null } as never,
+      { harnessRunId: "run", workspaceId: "workspace", parentId: "parent" } as never,
+      { pluginId: "plugin_granola", connectionId: "connection", workspaceId: "workspace", connectorType: "granola" } as never,
+      new ObjectPortError("workstream_identity_refused", "Rally's work-stream identity authority rejected an internal request."),
+    );
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_plugin_reauthorization_failed",
+      code: "workstream_identity_refused",
+    }));
+    warning.mockRestore();
+  });
+});

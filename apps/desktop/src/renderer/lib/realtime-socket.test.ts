@@ -31,12 +31,25 @@ describe('desktop realtime socket adapter', () => {
     };
     const socket = createBrokeredRealtimeSocket(bridge, input);
     const onOpen = vi.fn();
+    const onHandshakePhase = vi.fn();
     const onMessage = vi.fn();
     const onClose = vi.fn();
     socket.addEventListener('open', onOpen);
+    socket.addEventListener('handshakephase', onHandshakePhase);
     socket.addEventListener('message', onMessage);
     socket.addEventListener('close', onClose);
     expect(openRealtimeSocket).toHaveBeenCalledWith(input);
+
+    emit!({
+      type: 'handshake_phase', socketId: input.socketId, phase: 'tls',
+      durationMs: 24.6, routeIndex: 0, proxied: false,
+    });
+    expect(onHandshakePhase.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      phase: 'tls',
+      durationMs: 24.6,
+      routeIndex: 0,
+      proxied: false,
+    }));
 
     emit!({ type: 'open', socketId: input.socketId, protocol: 'rally.ticket.v1', extensions: '' });
     expect(socket.readyState).toBe(REALTIME_SOCKET_OPEN);

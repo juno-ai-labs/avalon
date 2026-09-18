@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import {
   ProjectDefaultResourceQueueMessageSchema,
   type ProjectDefaultResourceQueueMessage,
@@ -23,7 +24,7 @@ export interface ProjectDefaultPublicationInput {
   storage: ProjectDefaultPublicationStorage;
   queue: ProjectDefaultPublicationQueue;
   workspaceId: string;
-  region: "global" | "eu";
+  region: Region;
   now: number;
   retryAt: (attempt: number) => number;
 }

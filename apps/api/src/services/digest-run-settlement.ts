@@ -86,7 +86,7 @@ async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result:
       deliveryId: delivery.id,
     }),
   );
-  await emitProductUsageTelemetry(env, {
+  emitProductUsageTelemetry(env, {
     workspaceId: asWorkspaceId(delivery.workspace_id),
     userId: asUserId(delivery.user_id),
     name: "digest_delivery_terminal",
@@ -108,7 +108,7 @@ async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result:
     },
     operationId: delivery.id,
     eventId: resourceTelemetryEventId(delivery.id, 10),
-  }).catch(() => undefined);
+  });
 }
 
 /** Settle exactly once; only the attempt that wins the transition owns its side effects. */

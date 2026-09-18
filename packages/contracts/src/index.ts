@@ -1,35 +1,14 @@
-import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
-export * from "./workstream-appearance";
-import { PersonalPresentationSchema } from './onboarding';
-export * from './onboarding';
 import { z } from "zod";
-import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
+import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema } from "./automation-agent";
-import {
-  TranscriptActivitySchema,
-  PendingTranscriptInputSchema,
-  TranscriptRangeResultSchema,
-  TranscriptTurnIdSchema,
-  TranscriptTurnSchema,
-  WorkstreamTranscriptRangeRequestSchema,
-  WorkstreamTranscriptSnapshotSchema,
-} from "./workstream-transcript";
-export * from "./workstream-transcript";
+import { ConnectorInstallationSchema } from "./connector-installation";
+export * from "./agent-communication";
+import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
-import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
-export * from "./workspace-retirement";
 import { DemoSeedSchema } from "./demo-seed";
-export * from "./demo-seed";
-export * from "./demo-operations";
-import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
-import {
-  ResourceDirectionSchema,
-  WireResourceRelationshipTypeSchema,
-} from "./resource-relationships";
-import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
 import {
   ActivitySourceBindingKeySchema,
   HarnessRunIdSchema,
@@ -40,98 +19,94 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
+import { PersonalPresentationSchema } from './onboarding';
+import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
+import {
+  ResourceDirectionSchema,
+  WireResourceRelationshipTypeSchema,
+} from "./resource-relationships";
+import { HttpsUrlSchema, HttpUrlSchema, httpUrlSchema } from "./url-schemas";
+import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
+import {
+  TranscriptActivitySchema,
+  PendingTranscriptInputSchema,
+  TranscriptRangeResultSchema,
+  TranscriptTurnIdSchema,
+  TranscriptTurnSchema,
+  WorkstreamTranscriptRangeRequestSchema,
+  WorkstreamTranscriptSnapshotSchema,
+} from "./workstream-transcript";
+export * from "./automation-agent";
+export * from "./automation-evaluators";
+export * from "./connector-connection-card";
+export * from "./conversation-effects";
+export * from "./conversation-parent";
+export * from "./demo-operations";
+export * from "./demo-seed";
+export * from "./identifiers";
+export * from './onboarding';
+export * from "./workspace-retirement";
+export * from "./workstream-appearance";
+export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
-export * from "./automation-evaluators";
-export * from "./automation-agent";
-export * from "./conversation-parent";
-export * from "./conversation-effects";
 import { ConversationParentKindSchema } from "./conversation-parent";
-export * from "./identifiers";
+import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
 export * from "./attachment-contracts";
-export * from "./resource-relationships";
 export * from "./projects";
+export * from "./resource-relationships";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
+export { parseDesktopDeepLinkIntent,type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
+export { ConfiguredRegionSchema,RegionSchema,configuredRegions,isConfiguredRegion,regionConfiguration } from "./regions";
 export {
-  TELEMETRY_BATCH_MAX_BYTES,
-  TELEMETRY_CATEGORIES,
-  TELEMETRY_APPLICATION_ICON_IDS,
-  TELEMETRY_EVENTS,
-  TELEMETRY_IDENTITY_SCOPES,
-  TELEMETRY_SOURCES,
-  AnonymousTelemetryBatchSchema,
-  CrashIngestResponseSchema,
-  LinkAnonymousTelemetryResponseSchema,
-  TelemetryAcceptanceBatchResponseSchema,
-  TelemetryAcceptanceResultSchema,
-  TelemetryBootstrapRequestSchema,
-  TelemetryBootstrapResponseSchema,
-  TelemetryRouteResponseSchema,
-  ProductAnalyticsPreferenceSchema,
-  UpdateProductAnalyticsPreferenceSchema,
-  TelemetryBatchSchema,
-  TelemetryBreadcrumbSchema,
-  TelemetryBreadcrumbSidecarSchema,
-  TelemetryEnvelopeSchema,
-  TELEMETRY_ENVELOPE_SCHEMA,
-  telemetryEventNames,
-  TELEMETRY_CONNECTOR_TYPES,
-  TELEMETRY_MENU_BAR_ACTIONS,
-  type TelemetryMenuBarAction,
-  type TelemetryBatch,
-  type TelemetryApplicationIconId,
-  type TelemetryBreadcrumb,
-  type TelemetryBreadcrumbSidecar,
-  type AnonymousTelemetryBatch,
-  type CrashIngestResponse,
-  type LinkAnonymousTelemetryResponse,
-  type TelemetryAcceptanceBatchResponse,
-  type TelemetryAcceptanceResult,
-  type TelemetryBootstrapRequest,
-  type TelemetryBootstrapResponse,
-  type TelemetryRouteResponse,
-  type ProductAnalyticsPreference,
-  type TelemetryCategory,
-  type TelemetryEnvelope,
-  type TelemetryEventName,
-  type TelemetryEventProperties,
-  type TelemetryIdentityScope,
-  type TelemetrySource,
+AnonymousTelemetryBatchSchema,
+isRetiredMeetingTelemetry,
+CrashIngestResponseSchema,
+LinkAnonymousTelemetryResponseSchema,ProductAnalyticsPreferenceSchema,TELEMETRY_APPLICATION_ICON_IDS,TELEMETRY_BATCH_MAX_BYTES,
+TELEMETRY_CATEGORIES,TELEMETRY_CONNECTOR_TYPES,TELEMETRY_ENVELOPE_SCHEMA,TELEMETRY_EVENTS,
+TELEMETRY_IDENTITY_SCOPES,TELEMETRY_MENU_BAR_ACTIONS,TELEMETRY_SOURCES,TelemetryAcceptanceBatchResponseSchema,
+TelemetryAcceptanceResultSchema,TelemetryBatchSchema,TelemetryBootstrapRequestSchema,
+TelemetryBootstrapResponseSchema,TelemetryBreadcrumbSchema,
+TelemetryBreadcrumbSidecarSchema,
+TelemetryEnvelopeSchema,TelemetryRouteResponseSchema,UpdateProductAnalyticsPreferenceSchema,telemetryEventNames,type AnonymousTelemetryBatch,
+type CrashIngestResponse,
+type LinkAnonymousTelemetryResponse,type ProductAnalyticsPreference,type TelemetryAcceptanceBatchResponse,
+type TelemetryAcceptanceResult,type TelemetryApplicationIconId,type TelemetryBatch,type TelemetryBootstrapRequest,
+type TelemetryBootstrapResponse,type TelemetryBreadcrumb,
+type TelemetryBreadcrumbSidecar,type TelemetryCategory,
+type TelemetryEnvelope,
+type TelemetryEventName,
+type TelemetryEventProperties,
+type TelemetryIdentityScope,type TelemetryMenuBarAction,type TelemetryRouteResponse,type TelemetrySource
 } from "./telemetry";
 export {
-  LEGACY_WORKSTREAM_LINK_PATH_PREFIX,
-  LEGACY_WORKSTREAM_LINK_ORIGINS,
-  WORKSTREAM_LINK_PATH_PREFIX,
-  isWorkstreamId,
-  parseWorkstreamLink,
-  parseWorkstreamLinkTarget,
-  parseWorkstreamLinkPath,
-  parseWorkstreamLinkPathTarget,
-  workstreamCanonicalUrl,
-  workstreamDeepLink,
-  workstreamDeepLinkFromParsedTarget,
-  type ParsedWorkstreamLinkTarget,
-  type WorkstreamLinkTarget,
-} from "./workstream-links";
-export {
-  addWorkspaceTarget,
-  assertWorkspaceTarget,
-  isWorkspaceTarget,
-  parseWorkspaceAddressedDeepLink,
-  parseWorkspaceTarget,
-  parseWorkspaceTargetParameters,
-  workspaceTargetsEqual,
-  type WorkspaceAddressedDeepLink,
-  type WorkspaceTarget,
-  type WorkspaceTargetRegion,
+addWorkspaceTarget,
+assertWorkspaceTarget,
+isWorkspaceTarget,
+parseWorkspaceAddressedDeepLink,
+parseWorkspaceTarget,
+parseWorkspaceTargetParameters,
+workspaceTargetsEqual,
+type WorkspaceAddressedDeepLink,
+type WorkspaceTarget,
+type WorkspaceTargetRegion
 } from "./workspace-target";
-export { parseDesktopDeepLinkIntent, type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
+export {
+LEGACY_WORKSTREAM_LINK_ORIGINS,LEGACY_WORKSTREAM_LINK_PATH_PREFIX,WORKSTREAM_LINK_PATH_PREFIX,
+isWorkstreamId,
+parseWorkstreamLink,parseWorkstreamLinkPath,
+parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,workstreamCanonicalUrl,
+workstreamDeepLink,
+workstreamDeepLinkFromParsedTarget,
+type ParsedWorkstreamLinkTarget,
+type WorkstreamLinkTarget
+} from "./workstream-links";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
-export const RegionSchema = z.enum(["global", "eu"]);
 
 /**
  * Branded identifiers.
@@ -260,8 +235,6 @@ export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
 export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
-  "meeting_notes",
-  "addressing_classifier",
   "workstream_naming",
   "work_opportunity_admission",
   "work_opportunity_ranking",
@@ -273,8 +246,6 @@ export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
-  meeting_notes: "agent-model-meeting-notes",
-  addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
@@ -363,9 +334,9 @@ export const WorkspaceOnboardingStateSchema = z.object({
 }));
 export const CreateWorkspaceRequestSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  region: RegionSchema
+  region: ConfiguredRegionSchema
 });
-export const OnboardingRegionRequestSchema = z.object({ region: RegionSchema });
+export const OnboardingRegionRequestSchema = z.object({ region: ConfiguredRegionSchema });
 export const ActivateWorkspaceRequestSchema = OnboardingRegionRequestSchema.extend({
   workspaceId: IdSchema
 });
@@ -392,24 +363,9 @@ export const WorkspaceAttentionSchema = z.object({
   waitingForYou: z.number().int().nonnegative(),
   waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
   hasUnreadActivity: z.boolean(),
+  /** Unread or participant `needs_input` work streams; each stream counts once. */
+  unreadAndNeedsInputCount: z.number().int().nonnegative().default(0),
 });
-
-/**
- * How often Control Tower rewrites its briefing while a meeting records, in
- * seconds. One definition for the three places that need it: the flag resolver
- * that clamps what Flagship serves, the response schema below, and the desktop
- * timer that falls back to it.
- *
- * The bounds are what makes a served cadence safe to act on. Every refresh is
- * an inference, so a mistyped flag at the low end is a bill and a rate limit;
- * at the high end it is a briefing so stale the feature stops being live. The
- * default reproduces the behavior of a client that never asked.
- */
-export const CONTROL_TOWER_REFRESH_SECONDS = {
-  default: 60,
-  minimum: 15,
-  maximum: 600
-} as const;
 
 /**
  * Every server-decided feature flag a client is allowed to see, resolved for
@@ -423,8 +379,6 @@ export const CONTROL_TOWER_REFRESH_SECONDS = {
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
   developerSettings: z.boolean().default(false),
-  /** Whether meeting-recording actions are shown in Electron for this person. */
-  meetingRecordingEnabled: z.boolean().default(false),
   /** Whether Suggested Work surfaces are shown in Electron for this person. */
   suggestedWorkEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
@@ -450,25 +404,15 @@ export const ClientFeatureFlagsSchema = z.object({
    * combined with this one in application code.
    */
   digestsEnabled: z.boolean().default(true),
-  /**
-   * Control Tower's refresh cadence in seconds. `catch` rather than a bare
-   * bound: a value outside the range is a provisioning mistake, and degrading
-   * it to the default keeps one bad flag from failing the whole response and
-   * taking every other flag down with it.
-   */
-  controlTowerRefreshSeconds: z.number().int()
-    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
-    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
-    .catch(CONTROL_TOWER_REFRESH_SECONDS.default)
-    .default(CONTROL_TOWER_REFRESH_SECONDS.default)
+  pushNotificationsEnabled: z.boolean().default(false),
 });
 
 /** Product flags Ace is allowed to manage and publish to connected clients. */
 export const ProductFeatureFlagKeySchema = z.enum([
-  "meeting-recording-enabled",
   "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "digests-enabled",
+  "push-notifications-enabled",
   "live-artifacts-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
@@ -512,7 +456,7 @@ export function workstreamParticipantPreview(userIds: readonly string[]): {
   };
 }
 
-export { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from "./message-limits";
+export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limits";
 
 /**
  * The most text a work stream's description may carry.
@@ -772,93 +716,6 @@ export const ResourceRevisionSchema = z.object({
   sizeBytes: z.number().int().nonnegative(),
 });
 
-export const NoteRecordingStatusSchema = z.enum(["idle", "recording", "complete"]);
-
-export const NoteTranscriptSegmentSchema = z.object({
-  id: IdSchema,
-  noteId: IdSchema,
-  sequenceNumber: z.number().int().positive(),
-  startOffsetMs: z.number().int().nonnegative(),
-  endOffsetMs: z.number().int().nonnegative(),
-  capturedAt: TimestampSchema,
-  speakerLabel: z.string().trim().min(1).max(120).nullable(),
-  text: z.string().trim().min(1).max(80_000),
-  createdAt: TimestampSchema,
-}).refine((segment) => segment.endOffsetMs >= segment.startOffsetMs, {
-  message: "Segment end time must not precede its start time",
-  path: ["endOffsetMs"],
-});
-
-export const NoteSummarySchema = z.object({
-  id: IdSchema,
-  workspaceId: IdSchema,
-  resourceId: IdSchema,
-  ownerUserId: IdSchema,
-  scope: ScopeSchema,
-  title: z.string().trim().min(1).max(180),
-  recordingStatus: NoteRecordingStatusSchema,
-  recordedMs: z.number().int().nonnegative(),
-  startedAt: TimestampSchema.nullable(),
-  endedAt: TimestampSchema.nullable(),
-  generatedAt: TimestampSchema.nullable(),
-  lastActivityAt: TimestampSchema,
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-  archivedAt: TimestampSchema.nullable(),
-});
-
-export const NoteDetailSchema = NoteSummarySchema.extend({
-  manualNotes: z.string().max(200_000),
-  liveNotes: z.string().max(50_000),
-  notesThroughSequence: z.number().int().nonnegative(),
-  segments: z.array(NoteTranscriptSegmentSchema),
-});
-
-export const CreateNoteRequestSchema = z.strictObject({
-  id: IdSchema,
-  title: z.string().trim().min(1).max(180),
-  scope: ScopeSchema.default("personal"),
-});
-
-export const UpdateNoteRequestSchema = z.strictObject({
-  title: z.string().trim().min(1).max(180).optional(),
-  manualNotes: z.string().max(200_000).optional(),
-  scope: ScopeSchema.optional(),
-  recordingStatus: NoteRecordingStatusSchema.optional(),
-  recordedMs: z.number().int().nonnegative().optional(),
-  startedAt: TimestampSchema.nullable().optional(),
-  endedAt: TimestampSchema.nullable().optional(),
-}).refine((value) => Object.keys(value).length > 0, "At least one note field is required");
-
-export const AppendNoteTranscriptSegmentRequestSchema = z.strictObject({
-  clientSegmentId: IdSchema,
-  startOffsetMs: z.number().int().nonnegative(),
-  endOffsetMs: z.number().int().nonnegative(),
-  capturedAt: TimestampSchema,
-  speakerLabel: z.string().trim().min(1).max(120).nullable().default(null),
-  text: z.string().trim().min(1).max(80_000),
-}).refine((segment) => segment.endOffsetMs >= segment.startOffsetMs, {
-  message: "Segment end time must not precede its start time",
-  path: ["endOffsetMs"],
-});
-
-export const GenerateNoteNotesRequestSchema = z.strictObject({
-  mode: z.enum(["live", "final"]).default("live"),
-  transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
-  /**
-   * The refresh cadence the client is actually keeping, in seconds, so the live
-   * briefing can be written for it. The client asks for the served cadence once
-   * per meeting and holds it; the server would otherwise re-resolve the flag on
-   * every pass and describe a schedule nobody is on for the rest of any meeting
-   * the flag moved under. Omitted by a client that does not know it, which
-   * leaves the server resolving the flag as before.
-   */
-  refreshSeconds: z.number().int()
-    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
-    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
-    .optional(),
-});
-
 // Every run is always delivered to its Avalon work stream. These are the
 // additional destinations a personal automation freezes when it is saved.
 export const AutomationDeliveryTargetTypeSchema = z.enum(["slack_agent_dm", "email"]);
@@ -871,7 +728,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["custom_mcp", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["ashby", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -893,6 +750,31 @@ export const ConnectionSchema = z.object({
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+
+export const ConnectorInstallationReadResponseSchema = z.object({ installation: ConnectorInstallationSchema.nullable() });
+export const ConnectorInstallationMutationResponseSchema = z.object({ installation: ConnectorInstallationSchema });
+/**
+ * What an administrator has to carry to a provider that offers no registration
+ * API, returned exactly once by the setup call that generated it.
+ *
+ * The signing secret is the deliberate exception to "a secret never reaches the
+ * desktop": a manual registration cannot be completed without the plaintext,
+ * and Rally is the side that generates it. It is absent from `GET /connections`,
+ * from the installation document, from display names, and from audit data, and a
+ * replayed setup returns `null` rather than re-revealing it — a lost secret is
+ * replaced by reconnecting, not by asking again.
+ */
+export const ConnectorManualRegistrationSchema = z.strictObject({
+  destination: HttpsUrlSchema,
+  signingSecret: z.string().min(1).max(512),
+});
+export type ConnectorManualRegistration = z.infer<typeof ConnectorManualRegistrationSchema>;
+export const ConnectorInstallationSetupResponseSchema = z.object({
+  installation: ConnectorInstallationSchema,
+  connection: ConnectionSchema,
+  manualRegistration: ConnectorManualRegistrationSchema.nullable().default(null),
+});
+export const ConnectionTestResponseSchema = z.object({ ok: z.boolean(), message: z.string(), reconnectRequired: z.boolean().optional() });
 
 export const GitHubRepositoryRemoteAccessSchema = z.enum(["read_only", "full_access"]);
 export const GitHubRepositoryAccessModeSchema = z.enum(["all_repositories", "selected_repositories"]);
@@ -1142,7 +1024,7 @@ export const WorkstreamContextSchema = z.object({
    * it out fails the whole response. `.default([])` is what puts it on the wire.
    *
    * New client, old server: a Worker that predates this release still returns
-   * real rows here, and EU deploys before Global, so one region runs the old
+   * real rows here, and regional deploys before Global, so one region runs the old
    * Worker for part of every rollout and indefinitely if the other half fails.
    * The element type is therefore permissive rather than `never`: rejecting a
    * populated array would fail the whole response for the same reason, one
@@ -1660,7 +1542,7 @@ export const UpdateDigestScheduleRequestSchema = z.object({
   "An enabled digest needs at least one day, one time, and one destination",
 );
 
-export const CreateWorkstreamRequestSchema = z.object({
+export const WorkstreamCreationFieldsSchema = z.object({
   /** Optional organizer chosen by the caller; the API reauthorizes it. */
   projectId: ProjectIdSchema.optional(),
   title: z.string().min(1).max(180).optional(),
@@ -1691,7 +1573,10 @@ export const CreateWorkstreamRequestSchema = z.object({
    * path does.
    */
   modelOverride: AgentModelOverrideSchema.optional(),
-}).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
+});
+
+/** Interactive creation starts a run; prepared history uses the same creation fields. */
+export const CreateWorkstreamRequestSchema = WorkstreamCreationFieldsSchema.refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "An opening message must include text or an attachment",
 });
 
@@ -1889,7 +1774,7 @@ export const CustomMcpAuthModeSchema = z.enum(CustomMcpAuthModes);
  *
  * `read_only_tools` keeps only what the server itself annotates `readOnlyHint`.
  * It narrows what Rally offers and relaxes nothing: an admitted tool still
- * carries write confirmation and a record-before-execute receipt, because an
+ * uses conservative write execution and a record-before-execute receipt, because an
  * MCP annotation is a hint from the server rather than a promise to Rally.
  */
 export const CustomMcpToolPolicies = ["all_tools", "read_only_tools"] as const;
@@ -2274,7 +2159,7 @@ export const WorkspaceSidebarSchema = z.strictObject({
   }),
   notes: z.strictObject({
     waterline: z.number().int().nonnegative(),
-    items: z.array(NoteSummarySchema).max(250),
+    items: z.array(z.unknown()).max(250).transform(() => [] as never[]),
     /**
      * The next page, or `null` when this one is the whole list. Optional only
      * for the rolling deployment: a client that gets no cursor from an older
@@ -2392,7 +2277,7 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
     occurredAt: TimestampSchema,
     list: z.literal("notes"),
     waterline: z.number().int().positive(),
-    items: z.array(NoteSummarySchema).max(250),
+    items: z.array(z.unknown()).max(250).transform(() => [] as never[]),
     /**
      * The newest page only ever carries the newest page, so a reader who has
      * scrolled further needs to know whether this push is the whole list — in
@@ -2457,6 +2342,8 @@ export const WorkstreamControlMetadataSchema = z.strictObject({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   exactState: z.string().min(1).max(80),
   harnessStatus: HarnessStatusSchema,
+  /** Omission means this snapshot does not know the current background count. */
+  backgroundAgentCount: z.number().int().nonnegative().optional(),
   latestAttentionSequenceNumber: z.number().int().nonnegative(),
   unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
   lastActivityAt: TimestampSchema,
@@ -2659,6 +2546,17 @@ export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
 export const WORKSPACE_SOCKET_INVALID_MESSAGE_CODE = 4400;
 export const WORKSPACE_SOCKET_SESSION_INACTIVE_CODE = 4401;
 
+/** Transient status for one provider attempt within an active conversation run. */
+export const InferenceDelayStateSchema = z.object({
+  harnessRunId: IdSchema,
+  parentAttemptId: IdSchema.optional(),
+  executionId: IdSchema,
+  attemptId: IdSchema,
+  inferenceRequestId: IdSchema,
+  turnId: z.string().min(1),
+});
+export type InferenceDelayState = z.infer<typeof InferenceDelayStateSchema>;
+
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
@@ -2674,6 +2572,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     initialContextChunkCount: z.number().int().nonnegative().optional(),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
+    activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("initial_context_snapshot_chunk"),
@@ -2757,6 +2656,11 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), streamId: IdSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
   ServerEventBaseSchema.extend({
+    type: z.literal("inference_delay_changed"),
+    ...InferenceDelayStateSchema.shape,
+    active: z.boolean(),
+  }),
+  ServerEventBaseSchema.extend({
     type: z.literal("compaction_started"),
     compaction: AgentCompactionStateSchema,
   }),
@@ -2789,6 +2693,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     /** Preserves the explicit compaction indicator across replay-window loss. */
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
+    activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
   }),
   ServerEventBaseSchema.extend({
     type: z.literal("error"),
@@ -2807,29 +2712,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     requestId: IdSchema.nullable().default(null),
   })
 ]);
-
-export const GenerateMeetingNotesRequestSchema = z.strictObject({
-  mode: z.enum(["live", "final"]).default("live"),
-  meetingTitle: z.string().trim().min(1).max(180).default("Meeting notes"),
-  transcript: z.string().trim().min(1).max(400_000),
-  recentTranscript: z.string().max(100_000).default(""),
-  previousNotes: z.string().max(50_000).default(""),
-  userNotes: z.string().max(200_000).default(""),
-  startedAt: TimestampSchema.nullable().default(null),
-  endedAt: TimestampSchema.nullable().default(null),
-  transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
-  /** The cadence the client is keeping; null means resolve the flag instead. */
-  refreshSeconds: z.number().int()
-    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
-    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
-    .nullable()
-    .default(null),
-});
-
-export const MeetingNotesResponseSchema = z.object({
-  notes: z.string().trim().min(1).max(50_000),
-  generatedAt: TimestampSchema
-});
 
 /**
  * Set on a normalized activity's metadata when the polling stream that produced
@@ -2890,6 +2772,16 @@ export const NormalizedActivitySchema = z.object({
   dedupeKey: z.string().min(1),
   rawContentHash: z.string().nullable(),
   metadata: z.record(z.string(), z.unknown()),
+  /**
+   * The occurrence this activity reports, when more than one delivery can
+   * report it: a Granola note arrives as `note.access_granted` when it is
+   * shared and as `note.generated` when its summary is written. An automation
+   * admits the event under this key, once, instead of under the event id.
+   * Adapter code sets it, namespaced by provider; it never comes from a
+   * provider payload, and the workspace store drops a same-named key found in
+   * `metadata` so no caller can stand one in.
+   */
+  occurrenceKey: z.string().min(1).optional(),
   externalPeople: z.array(z.strictObject({
     provider: z.string().min(1).max(80),
     providerTenantId: z.string().min(1).max(200).nullable(),
@@ -3011,6 +2903,10 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * its definition from the automation by revision when it starts.
    */
   automationRun: AutomationRunReferenceV1Schema.optional(),
+  /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
+  agentExchange: AgentExchangeSchema.optional(),
+  /** Host-derived conversation kind; not a model-selectable execution option. */
+  backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The
@@ -3030,6 +2926,10 @@ export const WorkstreamWorkflowInputSchema = z.object({
   telemetryOperationId: IdSchema.optional(),
   /** Regional user record that owns the correlated run; never accepted from the client body. */
   telemetrySubjectUserId: IdSchema.optional(),
+  /** Worker receipt boundary used to measure admission-to-provider dispatch. */
+  telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
+  /** Stable journey name for latency SLO aggregation. */
+  telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   /**
@@ -3116,6 +3016,8 @@ export const WorkstreamNameResultSchema = z.object({
 
 export const ToolDefinitionSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  /** Authored pagination only. Never accepted from remote MCP declarations. */
+  pagination: z.object({ cursorParameter: z.string().min(1), sourceOnly: z.boolean().optional() }).optional(),
   /**
    * Exact provider-owned operation identity behind a normalized dynamic tool
    * name. Hosts use this only at execution; it is never model-visible.
@@ -3126,6 +3028,8 @@ export const ToolDefinitionSchema = z.object({
   capability: z.string().min(1),
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
+  /** Advisory only: consider background execution; does not change dispatch or authority. */
+  longRunning: z.boolean().optional(),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
   timeoutMs: z.number().int().positive().max(1_050_000).optional()
 });
@@ -3522,13 +3426,6 @@ export type WorkstreamResource = z.infer<typeof WorkstreamResourceSchema>;
 export type ResourceVersionAuthor = z.infer<typeof ResourceVersionAuthorSchema>;
 export type ResourceVersionCause = z.infer<typeof ResourceVersionCauseSchema>;
 export type ResourceRevision = z.infer<typeof ResourceRevisionSchema>;
-export type NoteRecordingStatus = z.infer<typeof NoteRecordingStatusSchema>;
-export type NoteTranscriptSegment = z.infer<typeof NoteTranscriptSegmentSchema>;
-export type NoteSummary = z.infer<typeof NoteSummarySchema>;
-export type NoteDetail = z.infer<typeof NoteDetailSchema>;
-export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
-export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
-export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
 export type CustomMcpAuthMode = z.infer<typeof CustomMcpAuthModeSchema>;
 export type CustomMcpToolPolicy = z.infer<typeof CustomMcpToolPolicySchema>;
@@ -3576,8 +3473,6 @@ export type WorkstreamMessageDeliveryState = z.infer<typeof WorkstreamMessageDel
 export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessageAdmissionReceiptSchema>;
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
-export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;
-export type MeetingNotesResponse = z.infer<typeof MeetingNotesResponseSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
 export type ConnectorOriginResource = z.infer<typeof ConnectorOriginResourceSchema>;
 export type ConnectorOriginResourceInput = z.input<typeof ConnectorOriginResourceSchema>;
@@ -3633,7 +3528,15 @@ export const TerminalSelectedRepositorySchema = z.strictObject({
   baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
   headRef: z.string().min(1).max(240),
 });
+export const TerminalProviderObservationSchema = z.strictObject({
+  state: z.string().nullable(),
+  observedAt: TimestampSchema.nullable(),
+  nextObserveAt: TimestampSchema,
+  recoverable: z.boolean().nullable(),
+  errorCode: z.string().nullable(),
+});
 export const TerminalWorkstreamStateSchema = z.strictObject({
+  providerObservation: TerminalProviderObservationSchema.nullable().optional(),
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   state: TerminalSandboxStateSchema,
   lastActivityAt: TimestampSchema.nullable(),
@@ -3755,7 +3658,10 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
       return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
     }
     case "suggestedCall": {
-      const parsed = SuggestedAttachmentToolCallSchema.safeParse(value);
+      // Accepts the wire names retired when the plugins dropped their prefixes:
+      // this runs against stored `errorJson` on every reprojection, and an
+      // invalid field here discards the entire detail rather than just itself.
+      const parsed = parseStoredSuggestedAttachmentToolCall(value);
       return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
     }
   }
@@ -3817,6 +3723,7 @@ export type SidekickSkillSource = z.infer<typeof SidekickSkillSourceSchema>;
 export const SidekickSkillSnapshotSchema = z.object({
   sources: z.array(SidekickSkillSourceSchema),
   activeRefs: z.array(z.string()),
+  recommendedRefs: z.array(z.string()).optional(),
 });
 export type SidekickSkillSnapshot = z.infer<typeof SidekickSkillSnapshotSchema>;
 
@@ -3826,7 +3733,13 @@ export const SidekickAttachmentSchema = z.object({
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
 export const SidekickAttachmentsSchema = z.object({ items: z.array(SidekickAttachmentSchema) });
 
-export { safeParseSocketEvent, isUnknownSocketEvent } from "./socket-events";
+export { isUnknownSocketEvent,safeParseSocketEvent } from "./socket-events";
 
 export const ClientSocketEventTypeSchema = z.union(ClientSocketEventSchema.options.map((event) => event.shape.type));
 export const WorkspaceSocketClientEventTypeSchema = z.union(WorkspaceSocketClientEventSchema.options.map((event) => event.shape.type));
+
+export { ConnectorInstallationProviderSchema,ConnectorInstallationProviders,ConnectorInstallationSchema,ConnectorRegistrationSchema,type ConnectorInstallation,type InstallationRegistration } from "./connector-installation";
+
+export { AshbyEventLabels,AshbyEventTypes } from "./ashby-events";
+
+export * from "./substream-content";

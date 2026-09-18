@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { describe, expect, it, vi } from 'vitest';
 import { consumeFlagChanges } from '../src/queues';
 import { createTestBatch, createTestD1Database, createTestEnv, createTestQueue } from './helpers/cloudflare-test';
@@ -21,23 +22,23 @@ function database(ids: string[], binds: Array<[string, number]> = []): D1Databas
 describe('Ace product-flag fanout', () => {
   it('sends one key-only message per workspace to each regional queue', async () => {
     const globalSend = vi.fn(async () => undefined);
-    const euSend = vi.fn(async () => undefined);
+    const enterpriseSend = vi.fn(async () => undefined);
     const ack = vi.fn();
     const env = createTestEnv({
       GLOBAL_DB: database(['11111111-1111-4111-8111-111111111111']),
-      EU_DB: database(['22222222-2222-4222-8222-222222222222']),
+      ENTERPRISE_DB: database(['22222222-2222-4222-8222-222222222222']),
       GLOBAL_PRODUCT_FLAG_QUEUE: createTestQueue({ sendBatch: globalSend }),
-      EU_PRODUCT_FLAG_QUEUE: createTestQueue({ sendBatch: euSend }),
+      ENTERPRISE_PRODUCT_FLAG_QUEUE: createTestQueue({ sendBatch: enterpriseSend }),
     });
     await consumeFlagChanges(createTestBatch({
       queue: 'avalon-product-feature-flag-changes',
-      messages: [{ body: { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' }, ack, retry: vi.fn() }],
+      messages: [{ body: { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' }, ack, retry: vi.fn() }],
     }), env);
 
     expect(globalSend).toHaveBeenCalledWith([{ body: {
-      kind: 'product_feature_flag_changed', flagKey: 'meeting-recording-enabled', workspaceId: '11111111-1111-4111-8111-111111111111',
+      kind: 'product_feature_flag_changed', flagKey: 'multiple-workspaces-enabled', workspaceId: '11111111-1111-4111-8111-111111111111',
     } }]);
-    expect(euSend).toHaveBeenCalledOnce();
+    expect(enterpriseSend).toHaveBeenCalledOnce();
     expect(ack).toHaveBeenCalledOnce();
   });
 
@@ -50,17 +51,17 @@ describe('Ace product-flag fanout', () => {
     const globalSend = async (batch: Iterable<MessageSendRequest>): Promise<void> => {
       globalBatches.push([...batch]);
     };
-    const euSend = vi.fn(async () => undefined);
+    const enterpriseSend = vi.fn(async () => undefined);
     const messages = [
-      { body: { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' }, ack: vi.fn(), retry: vi.fn() },
-      { body: { kind: 'flagship_product_flag_changed', flagKey: 'meeting-recording-enabled' }, ack: vi.fn(), retry: vi.fn() },
+      { body: { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' }, ack: vi.fn(), retry: vi.fn() },
+      { body: { kind: 'flagship_product_flag_changed', flagKey: 'multiple-workspaces-enabled' }, ack: vi.fn(), retry: vi.fn() },
       { body: { kind: 'flagship_product_flag_changed', flagKey: 'suggested-work-enabled' }, ack: vi.fn(), retry: vi.fn() },
     ];
     const env = createTestEnv({
       GLOBAL_DB: globalDb,
-      EU_DB: database([]),
+      ENTERPRISE_DB: database([]),
       GLOBAL_PRODUCT_FLAG_QUEUE: createTestQueue({ sendBatch: globalSend }),
-      EU_PRODUCT_FLAG_QUEUE: createTestQueue({ sendBatch: euSend }),
+      ENTERPRISE_PRODUCT_FLAG_QUEUE: createTestQueue({ sendBatch: enterpriseSend }),
     });
 
     await consumeFlagChanges(createTestBatch({
@@ -80,6 +81,6 @@ describe('Ace product-flag fanout', () => {
     expect(new Set(bodies.map((body) => `${body.workspaceId}:${body.flagKey}`)).size).toBe(410);
     expect(globalBatches.every((batch) => batch.length <= 100)).toBe(true);
     for (const message of messages) expect(message.ack).toHaveBeenCalledOnce();
-    expect(euSend).not.toHaveBeenCalled();
+    expect(enterpriseSend).not.toHaveBeenCalled();
   });
 });

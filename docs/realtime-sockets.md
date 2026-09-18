@@ -87,11 +87,13 @@ admission is split in two.
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
-   same pair from Node's `ws` client and supplies the fixed application Origin.
-   Both become `Sec-WebSocket-Protocol`, the handshake header available for
-   browser-compatible ticket presentation. A ticket is a compact JWS —
-   base64url joined by dots — which is a legal subprotocol token, so it needs no
-   encoding.
+   same pair from Node's `ws` client and supplies the fixed application Origin
+   (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
+   upgrade, so the native client sets that same allowlisted value on the
+   handshake request. Both become `Sec-WebSocket-Protocol`, the handshake header
+   available for browser-compatible ticket presentation. A ticket is a compact
+   JWS — base64url joined by dots — which is a legal subprotocol token, so it
+   needs no encoding.
 3. **Verify.** The Worker checks the `Upgrade` header and the exact `Origin`,
    reads the ticket off the offer, verifies the signature and the claims, and
    rejects a region or work-stream mismatch.
@@ -665,7 +667,11 @@ Directory pages are read-only and are not reconnect-resend commands. If
 Electron receives the browser `offline` signal while a page is in flight, it
 clears that request's 120-second timer and rejects immediately with
 `workspace_directory_offline`. Room message commands remain pending because
-their client message IDs make reconnect resend idempotent.
+their client message IDs make reconnect resend idempotent. Each pending command
+also remembers the socket instance that most recently accepted it: submitting a
+second command on a healthy connection sends only the new command, while a new
+socket instance after reconnect replays every command still awaiting its private
+receipt.
 
 ## Testing
 
@@ -714,7 +720,30 @@ what that leaves exposed.
 
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
-## Changelog
+### 2026-09-17 — Ordinary pending-command replay follows socket generations
+
+**What changed:** Each unresolved desktop command records the socket object it
+was sent on. A later command on that same healthy connection skips older pending
+entries; opening a replacement socket still sends every unresolved command with
+its original operation ID.
+
+**Why:** The pending map is both the private-receipt wait set and the reconnect
+replay set. Treating every ordinary send as if it were a reconnect resent all
+older unacknowledged commands, adding duplicate server admission and receipt
+work to the healthy path.
+
+**Considered and rejected:** Removing replay state after `send()` would make an
+ambiguous disconnect lose read-your-write certainty. A second queue was also
+unnecessary: socket identity is the exact generation fence the existing map
+needed.
+
+**Consequences:** Healthy sockets send one frame per ordinary submitted command.
+A lost receipt causes safe replay on reconnect; application-foreground recovery
+may also explicitly replay an unresolved operation on the same socket after a
+suspended renderer resumes. Both paths preserve the original operation ID, so
+server-side operation IDs and mutation idempotency remain required.
+
+Shipped in [#815](https://github.com/juno-ai-labs/avalon/pull/815).
 
 ### 2026-09-08 — Make socket evolution independent of URL capabilities
 

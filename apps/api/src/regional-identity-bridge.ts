@@ -16,7 +16,7 @@ import type { Session } from "@rally/contracts";
 /**
  * Account-internal RPC entrypoint used by the Global identity control plane.
  * It is deliberately a named WorkerEntrypoint rather than an HTTP route, so
- * none of these trusted-identity operations are reachable on the EU hostname.
+ * none of these trusted-identity operations are reachable on the regional hostname.
  *
  * The schemas were already written — they are what the input types are inferred
  * from — but were applied deeper in the service, so an argument that never

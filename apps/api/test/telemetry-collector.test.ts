@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { TelemetryCollector } from "../src/telemetry/collector";
@@ -72,22 +73,21 @@ describe("regional telemetry collector", () => {
       subject_user_id: null,
       analytics_lakehouse_state: "pending",
     });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM telemetry_eu_events").get()).toEqual({ count: 0 });
     database.close();
   });
 
-  it("writes EU product events only to the exact regional internal sink", async () => {
+  it("uses the same delivery policy for an isolated deployment", async () => {
     const database = migratedSqliteDatabase();
-    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "eu" });
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "enterprise" });
     const collector = new TelemetryCollector(env);
     const event = productEvent({
-      properties: { selectedRegion: "eu", entrypoint: "first_run" },
+      properties: { selectedRegion: "enterprise", entrypoint: "first_run" },
     });
 
     await expect(collector.accept(event, {
-      route: "eu",
+      route: "enterprise",
       routingBasis: "ip_geolocation",
-      analyticsSubjectId: "eu-anonymous-epoch-1",
+      analyticsSubjectId: "enterprise-anonymous-epoch-1",
       subjectUserId: null,
       workspaceAnalyticsId: null,
     })).resolves.toEqual({ result: "accepted", eventId });
@@ -97,57 +97,11 @@ describe("regional telemetry collector", () => {
        FROM telemetry_accepted_events WHERE event_id = ?`,
     ).get(eventId);
     expect(accepted).toEqual({
-      route: "eu",
-      delivery_state: "terminal",
-      terminal_code: "eu_internal",
+      route: "enterprise",
+      delivery_state: "pending",
+      terminal_code: null,
       delete_at: "2026-11-10T20:00:05.000Z",
-      analytics_lakehouse_state: null,
-    });
-    const eu = database.prepare(`
-      SELECT event_name, analytics_subject_id, workspace_analytics_id,
-             environment, release, build_id, platform, architecture, channel, launch_id,
-             properties_json, delete_at
-      FROM telemetry_eu_events WHERE event_id = ?
-    `).get(eventId);
-    expect(eu).toEqual({
-      event_name: "onboarding_region_selected",
-      analytics_subject_id: "eu-anonymous-epoch-1",
-      workspace_analytics_id: null,
-      environment: "production",
-      release: "0.24.0",
-      build_id: "build-0123456789",
-      platform: "darwin",
-      architecture: "arm64",
-      channel: "stable",
-      launch_id: "018f22f2-4c22-7abc-8def-0123456789a1",
-      properties_json: '{"entrypoint":"first_run","selectedRegion":"eu"}',
-      delete_at: "2027-09-12T20:00:05.000Z",
-    });
-    database.close();
-  });
-
-  it("anchors the EU semantic-event deadline to the normalized occurrence, not delayed acceptance", async () => {
-    const database = migratedSqliteDatabase();
-    const collector = new TelemetryCollector(createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "eu" }));
-    const delayed = productEvent({
-      originalTimestamp: "2026-08-01T00:00:00.000Z",
-      sentAt: "2026-08-12T20:00:04.000Z",
-      properties: { selectedRegion: "eu", entrypoint: "first_run" },
-    });
-
-    await collector.accept(delayed, {
-      route: "eu",
-      routingBasis: "ip_geolocation",
-      analyticsSubjectId: "eu-anonymous-epoch-1",
-      subjectUserId: null,
-      workspaceAnalyticsId: null,
-    });
-
-    expect(database.prepare(`
-      SELECT normalized_timestamp, delete_at FROM telemetry_eu_events WHERE event_id = ?
-    `).get(eventId)).toEqual({
-      normalized_timestamp: "2026-08-01T00:00:01.000Z",
-      delete_at: "2027-09-01T00:00:01.000Z",
+      analytics_lakehouse_state: "pending",
     });
     database.close();
   });
@@ -169,7 +123,7 @@ describe("regional telemetry collector", () => {
     await expect(collector.accept(productEvent(), context)).resolves.toEqual({ result: "accepted", eventId });
     await expect(collector.accept(productEvent(), context)).resolves.toEqual({ result: "duplicate", eventId });
     await expect(collector.accept(productEvent({
-      properties: { selectedRegion: "eu", entrypoint: "first_run" },
+      properties: { selectedRegion: "enterprise", entrypoint: "first_run" },
     }), context)).resolves.toEqual({ result: "conflict", eventId });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM telemetry_accepted_events WHERE event_id = ?",
@@ -210,7 +164,7 @@ describe("regional telemetry collector", () => {
 
   it("rejects a forged route before any regional write", async () => {
     const database = migratedSqliteDatabase();
-    const collector = new TelemetryCollector(createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "eu" }));
+    const collector = new TelemetryCollector(createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "enterprise" }));
     await expect(collector.accept(productEvent(), {
       route: "global",
       routingBasis: "explicit_binding",
@@ -221,4 +175,19 @@ describe("regional telemetry collector", () => {
     expect(database.prepare("SELECT COUNT(*) AS count FROM telemetry_accepted_events").get()).toEqual({ count: 0 });
     database.close();
   });
+});
+
+it('suppresses delayed built-in meeting telemetry before storing or scheduling it', async () => {
+  const database = migratedSqliteDatabase();
+  const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global' });
+  const collector = new TelemetryCollector(env);
+  const event = {
+    ...productEvent(), name: 'note_opened', identityScope: 'workspace-user',
+    properties: { noteId: '00000000-0000-7000-8000-000000000101', visibility: 'private', recordingState: 'complete', navigation: 'opened' },
+  } as TelemetryEnvelope;
+  const context = { route: 'global' as const, routingBasis: 'explicit_binding' as const,
+    analyticsSubjectId: 'subject', subjectUserId: null, workspaceAnalyticsId: 'workspace' };
+  await expect(collector.accept(event, context)).resolves.toEqual({ result: 'suppressed', eventId });
+  expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_accepted_events').get()).toEqual({ count: 0 });
+  expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_delivery_receipts').get()).toEqual({ count: 0 });
 });

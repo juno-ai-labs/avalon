@@ -36,10 +36,13 @@ export type DaytonaTerminalProvider = TerminalSandboxProvider & {
 interface DaytonaSandboxLike {
   id: string;
   name: string;
+  labels?: Record<string, string>;
   state?: string;
+  recoverable?: boolean;
   domainAllowList?: string;
   refreshData?: () => Promise<void>;
   start?: (timeout?: number) => Promise<void>;
+  recover?: (timeout?: number) => Promise<void>;
   stop?: (timeout?: number, force?: boolean) => Promise<void>;
   archive?: () => Promise<void>;
   delete?: (timeout?: number, wait?: boolean) => Promise<void>;
@@ -120,24 +123,42 @@ class TerminalSandboxInitializationError extends Error {
   }
 }
 
+/** Lifecycle state and recoverability are separate provider facts. */
 function sandboxState(value: string | undefined): TerminalSandboxState {
   switch (value) {
     case "started":
     case "running":
       return "running";
     case "stopped":
+    case "paused":
       return "stopped";
     case "archived":
       return "archived";
     case "destroyed":
     case "deleted":
       return "expired";
+    // Every state in transit, in either direction. Each one settles into a
+    // state Rally can act on, and none of them is a workspace that is gone.
     case "creating":
     case "starting":
     case "restoring":
+    case "resuming":
+    case "pending_build":
+    case "building_snapshot":
+    case "pulling_snapshot":
+    case "stopping":
+    case "archiving":
+    case "pausing":
+    case "destroying":
+    case "resizing":
+    case "snapshotting":
+    case "forking":
       return "starting";
-    default:
+    case "error":
+    case "build_failed":
       return "failed";
+    default:
+      return "unknown";
   }
 }
 
@@ -157,6 +178,8 @@ function snapshot(sandbox: DaytonaSandboxLike): TerminalSandboxSnapshot {
     id: sandbox.id,
     name: sandbox.name,
     state: sandboxState(sandbox.state),
+    recoverable: sandbox.recoverable,
+    labels: sandbox.labels,
     domainAllowList: domainList(sandbox.domainAllowList),
   };
 }
@@ -503,6 +526,11 @@ export function createDaytonaTerminalProvider(
         });
         throw error;
       }
+    },
+    async recoverSandbox(idOrName) {
+      const sandbox = await load(idOrName);
+      if (!sandbox.recover) throw new Error("Daytona sandbox does not support recovery");
+      await measureRequest("sandbox.recover", () => sandbox.recover!(60));
     },
     async stopSandbox(idOrName) {
       const sandbox = await load(idOrName);

@@ -1,3 +1,4 @@
+import { RegionSchema } from "@rally/contracts/regions";
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { z } from 'zod';
 import { IdSchema, WorkspaceIdSchema } from '@rally/contracts';
@@ -8,7 +9,7 @@ import { searchDocumentId } from '../services/text-search';
 import type { SearchDocumentBatch, SearchDocument } from '../services/search-document';
 
 export const ResourceSearchProjectionSchema = z.strictObject({
-  type: z.literal('resource_search_projection_v1'), region: z.enum(['global', 'eu']),
+  type: z.literal('resource_search_projection_v1'), region: RegionSchema,
   workspaceId: WorkspaceIdSchema, resourceId: IdSchema,
 });
 export const ResourceSearchRevisionRequestSchema = ResourceSearchProjectionSchema.pick({ workspaceId: true, resourceId: true });

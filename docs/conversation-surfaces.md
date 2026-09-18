@@ -33,12 +33,32 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
   **Jump to latest** and transient `ActivityPresence`, sharing retained motion.
+- `apps/desktop/src/renderer/components/agent-work-timing.tsx` owns every row in
+  that 20px-mark column: `AgentWorkTiming`, which counts, and the two that name
+  a state instead — `AgentCompactionIndicator` and `RunStoppingIndicator`, both
+  one call to the `ActivityStatusRow` primitive. A third state goes there, not
+  into a third copy of the row's `role`, live-region attributes and orb props.
+  `conversationActivityRow` in `screens/conversation-surface.tsx` is the single
+  decision about which of them the feed's activity slot shows;
+  `conversationShowsStoppingRow` beside it is the separate question of whether
+  the composer dock acknowledges a pending stop, and the two are separate
+  because only one of them lives inside the scroller.
 - `apps/desktop/src/renderer/components/message-feed.tsx` renders the ordered
   list itself — every row, the unread divider, the oversized-message
   placeholder, and row disclosure — and `workstream-blocks.tsx` renders
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+- `apps/desktop/src/renderer/components/message-text-menu.tsx` is the Radix
+  right-click menu on a feed `MarkdownBody` — assistant and human prose, not
+  glances, stills, the inspector, or the lightbox. Copy writes the rendered
+  HTML and plain text of the selection, or of the whole body if there is none,
+  keeping citation labels and dropping only chrome marked
+  `data-clipboard-exclude`. Copy as markdown writes the stored source. Speak
+  is the same toggle as the action row, hidden while the turn is still
+  streaming; a human body names it *Speak*, not *Speak response*. Look Up and
+  Share are macOS-only, behind trusted IPC. Share sends the selected or
+  whole-message rendered plain text, never the stored markdown.
 - `apps/desktop/src/renderer/components/primitives.tsx` owns `Tip` and
   `TipGroup`: a hover explanation, and the group a row of controls shares one
   delay and one provider through. A new tooltip comes from there rather than
@@ -52,6 +72,13 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
+- `apps/desktop/src/renderer/lib/markdown-lists.ts` owns list editing in a
+  draft: what Enter, Tab, Shift+Tab and the two list toggles do to a bulleted or
+  numbered list, as pure functions over `(text, selectionStart, selectionEnd)`.
+  `composer-input.tsx` binds the keys and applies the returned edit through the
+  field's own `execCommand`, so the change stays on its undo stack. A second text surface that wants the same
+  keys takes these rather than growing its own; the file's own header states the
+  rules and why each is what it is.
 - `apps/desktop/src/renderer/screens/conversation-surface.tsx` is the one feed
   composition: `ConversationSurface({parentKind, parentId, substreamId,
   renderHeader})` owns the transcript, composer, attachments, and the socket
@@ -60,10 +87,31 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
   parent that is. `screens/workstream.tsx` renders it for a work stream;
   `screens/automation.tsx` renders `components/automation-header.tsx` in a sibling profile pane
   through `SidekickDetailLayout`, with a short conversation heading over the feed with `parentKind: "automation"` and `substreamId:
-  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
+  "0"`. `AddParticipantDialog` stays open after an add or a remove of someone
+  else so more than one membership can be changed in one sitting; it closes on
+  click-outside, Escape, the header close control, or when the current person
+  removes themselves. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
+
+The connector-connection tool is deliberately an opt-in exception to tool-row
+collapse. `ConversationSurface` enables it for the main message feed, where its
+validated input renders the interactive connector card. `MessageFeed` and
+`MessageBlock` default the feature off, so another transcript host cannot gain
+OAuth controls merely by reusing the renderer. The card follows the installed
+Grok Bot connector-card geometry (column card, 16px radius, 12px padding, 40px
+provider mark, 12px header gap) while resolving color and typography through
+Rally tokens. The connection and pending states come from Rally's live queries
+and app-session OAuth receipt, never from the transcript payload. The card's
+identity does come from the completed tool fact: the server retains the
+validated id and scope as participant-safe output, and the renderer accepts
+that terminal output (plus the exact legacy core-tool summary) so a card that
+has been shown stays in the feed across reload, recovery, and virtualization.
+An uninterrupted run of repeated presentations for the same connector and
+scope collapses to its newest durable row; an intervening conversation row or
+history seam starts a separate occasion. Persistence therefore never produces
+a double-stacked control.
 
 ## Contract
 
@@ -134,6 +182,57 @@ but cannot submit another stop request. The capsule's rounded overflow clips
 the moving button; tooltips portal outside it. `IconButton` tooltips do not duplicate
 the button's accessible name as a second screen-reader description.
 
+A pending stop is also said in words, because the button cannot say it. Stop is
+observed at the loop's next safe step boundary — the response in flight and
+every tool it already asked for settle first, and
+[`workstream-durable-object.md`](workstream-durable-object.md) owns that
+contract — so the gap between the click and the run ending is a real wait, over
+ten seconds in the production report this came from. While a live run carries
+`stopRequested`, the dock draws a stopping row as the first cell of the composer
+stack, taking the field's width and the stack's own gap.
+`conversationShowsStoppingRow` is that condition, gated on a running status
+rather than on the flag alone: the loop clears `stop_requested_at` as it goes
+idle, and a settled run read back before the next snapshot would otherwise
+promise a wait that is over. One exported sentence, `STOPPING_LABEL`, is shared
+with the Stop button's tooltip. The row carries no elapsed number, since the
+only number worth printing is how much longer and nothing on this side knows it.
+
+**The dock, not the transcript's activity slot, and that is the point.** The
+slot sits inside `.transcript-scroll`, which hands the viewport to the reader
+the moment they scroll up and never takes it back — pressing Stop does not
+restore following, correctly, since only the reader's own scrolling may move the
+viewport. A row appended to the feed therefore lands below the fold for exactly
+the person most likely to be reading history while a run is going, leaving them
+the button spinner and nothing else. Measured at the top of a padded transcript,
+the feed row sat 1,720px past a 900px viewport. The dock is outside the
+scroller, so the acknowledgement holds at any scroll position, and it sits
+beside the control it answers rather than among the rows that describe the run.
+
+Whatever the feed is already showing keeps showing, and both are now on screen
+together rather than one replacing the other. Usually that is a row still
+counting — the ordered transcript's own, or the slot's elapsed total — though a
+run whose rows the transcript has not anchored yet and whose timing is null
+leaves the feed silent, so the dock's line can be the only thing on screen. The
+response really is still settling either way, so silencing a count would move
+the overstatement one row down rather than remove it; the dock's line is what
+makes the continued counting legible instead of alarming.
+`conversationActivityRow` therefore decides only between the two feed rows,
+compaction over the elapsed total, and knows nothing about stopping.
+
+**The sentence names the work, not the response.** A step is one accepted model
+response plus settlement of every tool call it already emitted, so a tool the
+response asked for runs after the response is done — 3.0 seconds of it in the
+production run above, with its own activity row appearing in the feed while the
+dock's line was up. Copy that named the response promised a boundary that
+arrives while the agent is visibly still working, which is the original defect
+one level down.
+
+Once a member-requested stop settles, the feed renders it as an intentional
+terminal state with a filled stop-square and no recovery action. The stopped
+prompt remains transcript history; continuing means composing a fresh turn,
+not replaying the stopped request. Failed runs remain a separate state and keep
+their Retry action.
+
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
 (640px, in `app.css`); `--composer-width` is three quarters of that, and the
@@ -198,7 +297,11 @@ control or a bleed derived from something else, and says which in a comment.
 Sharing stops at product semantics. Work streams retain participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
 those: it attaches to the work-stream composer, not to the shared
-`ComposerInput`. An automation's page keeps its lifecycle controls (apply,
+`ComposerInput`. An answer to a question is not one of its rows. It is admitted
+as a pending input like any message, but it is projected as the answered
+question — the same UI identity the canonical turn will carry — so the card
+closes the moment the room accepts it, and it neither draws a queue row nor
+takes part in a reorder. An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
@@ -212,7 +315,11 @@ sidebar's work-stream row — borderless, one 36px leading slot, the same title
 and the same idle/hover/current fills — and only the mark in that slot says
 which conversation it is: the work stream's own icon tinted with its appearance
 colour for the main conversation, a Tabler `corner-down-right` arrow for a
-substream, and a Tabler `plus` for **New substream**. That arrow is the same
+substream, and a Tabler `plus` for **New substream**. A substream being created has a row
+of its own in that list, drawn with the arrow and carrying a title skeleton
+until the child exists; it is the one conversation row that is not a button,
+because the reader is already on the surface it stands for. See
+[`substream-creation.md`](substream-creation.md#the-launch-surface). That arrow is the same
 shape the feed's control draws as a text `↳`, and the two deliberately no
 longer mean the same thing: in this rail the arrow says a row *is* a substream,
 while on a settled turn it says *start* one. Compact shows the first character of a substream's
@@ -282,6 +389,23 @@ a gradient painted over the line, because each of those rows has an idle, a
 hover and a current fill and an overlay matched to one shows as a bar in the
 other two.
 
+The same 24px mask sits on the rails' own scrollers: `.sidebar-scroll` and
+`.workstream-context-scroll` on the block axis, `.sidebar-automation-strip` on
+the inline axis. A list that overflows fades the edge items are disappearing
+into, and only that edge — the far edge at rest, both once the scroller has
+moved, the near edge when it can go no further. A list that fits has no
+timeline and therefore no mask, so the first and last items stay at full ink.
+The near and far lengths are registered custom properties driven by two ranged
+scroll animations rather than one interpolating gradient, because blending a
+three-stop far-fade into a three-stop near-fade does not produce both fades in
+the middle. Those two animations are clocks, so the global reduced-motion kill
+switch would pin them at their 100% keyframes; their durations stay `auto`
+under that preference, restored next to the kill switch, because a fade that
+says "there is more this way" is not motion. The mask does not spare a focus
+ring, so the same 24px is `scroll-padding` on each scroller: Tab and the rail's
+own `scrollIntoView({ block: 'nearest' })` would otherwise park a row flush
+with the faded edge.
+
 The fade appears only where something is actually clipped, and nothing measures
 anything to decide that. The mask rides a scroll-driven animation whose timeline
 is the line's own inline scroller: a line whose text fits is not scrollable, its
@@ -292,7 +416,9 @@ Renaming a row, dragging either rail, or collapsing one re-decides on its own.
 The keyframe holds one value at both ends because nothing is meant to move; the
 timeline is being asked a question about overflow, not used as a clock, and the
 fill mode is what keeps the mask applied for the reader whose reduced-motion
-preference forces every animation to 0.001ms.
+preference forces every animation to 0.001ms. The scroll-edge cover uses the
+same fill; its start and end lengths cannot, and are the exception the kill
+switch carves out.
 
 Both longhands sit below the `animation` shorthand, which resets both of them,
 and `app.css.node.test.ts` asserts their *positions* rather than their presence.
@@ -385,7 +511,17 @@ family. A new automation is created by `POST /automations` before its
 conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
-Delivered attachments follow the message body and precede its action row. Every
+Delivered attachments follow the message body and precede its action row. A
+person's turn still in flight (`deliveryState: 'sending'`) is that same row at
+0.82 opacity with a light sweeping across each surface it draws — the bubble,
+and each attachment image cell, media tile and file card — painted by
+`app.css` under `.human-message.is-sending` as an overlay that inherits the
+surface's corner, in a twentieth of the surface's own ink so it shows on a dark
+or profile-coloured bubble as well as on a light card. The sweep is keyed on a
+selector list naming those four surfaces, once in the animated rule and once in
+its reduced-motion twin, and `app.css.node.test.ts` pins both: a new attachment
+surface has to be added to both lists, or a send made of that attachment alone
+goes out with no in-flight cue. Every
 turn's identity line is `MessageByline`, one component for the assistant's turn,
 a colleague's, the reader's own and a settled elicitation answer, so the name and
 the time carry one size and one pair of greys whoever is speaking; what tells
@@ -408,8 +544,13 @@ one.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections. **New
-substream** closes that row, and every settled human turn — the reader's own and
+markdown even when the shared renderer has collapsed its sections. The same
+Speak / Stop speaking toggle is on the message-text context menu of a
+*settled* assistant turn, riding the same one-voice provider so a menu Speak
+and a row Speak cannot overlap. A human body's menu also offers Speak, named
+*Speak* rather than *Speak response*, because those words are not a Rally
+response.
+**New substream** closes that row, and every settled human turn — the reader's own and
 a colleague's alike — carries the same control alone in a row beneath its bubble,
 inset by the bubble's corner so it ends on the same vertical as the identity line
 above it. A settled turn carrying
@@ -509,11 +650,432 @@ ends the attempt without sending, and the draft and the error stay on screen.
 
 Shared components have fixture-level component tests for settled, streaming,
 failed, elicitation, attachment, tool, follow, and paging states. Each screen
-adapter separately proves its controls and identity transition. Any visible
+adapter separately proves its controls and identity transition.
+`workstream.test.tsx` holds both the dock's stopping condition — a live run
+only, so neither a settled run's stale `stopRequested` nor an absent one
+acknowledges a wait that is over — and the feed slot's own order, compaction
+over the elapsed total, and neither once the ordered transcript draws the run's
+rows. Those are decisions in isolation, and a decision agreeing with itself is
+not the behaviour: `workstream-open.test.tsx` renders the whole screen over a
+running, stop-requested detail and asserts the row is in `.composer-dock` and
+not in `.transcript-scroll`. Assert the box, not only the sentence — the text
+alone passes just as well in the scroller that hides it from a reader who has
+scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
+## Slow model notice
+
+The shared work-stream and Sidekick conversation surface shows an inline status
+beside active response activity while the socket reports a delayed inference
+belonging to the displayed running harness run: “The model is currently slowed
+down. Responses might take longer.” It uses the semantic warning colour and
+`role="status"`. It is not a transcript message and has no retained exit
+animation. First output, inference settlement, terminal run status, or a
+conversation change clears it immediately. Tool work and inter-chunk pauses
+do not create a warning. Multiple delayed calls share one notice until the last
+relevant delay clears. The workspace-scoped resume registry retains the delay set
+alongside its socket sequence, so revisiting a conversation can resume after the
+activation event without losing the warning; later clears replace that retained set.
+
 ## Changelog
+
+### 2026-09-16 — Message text has a Radix right-click menu, including Speak
+
+**What changed:** Right-clicking assistant or human message prose in the feed
+opens the same Radix menu the sidebars use. The items are Copy (rendered
+HTML and plain text of the selection, or the whole body), Copy as markdown
+(the stored source the action-row Copy already writes), Speak / Stop speaking
+through the existing speech provider on a settled turn, then on macOS Look Up
+and Share. Writing Tools and Services are not offered. Glance, still,
+inspector, and lightbox bodies are unchanged. Whole-body Copy keeps citation
+chip labels and drops only chrome marked `data-clipboard-exclude`. Share
+sends rendered plain text. A streaming assistant body has no Speak item. A
+human body's Speak answers to *Speak*, not *Speak response*. macOS Share
+pops `ShareMenu` directly.
+
+**Why:** Electron does not ship a page context menu, so selecting a sentence
+and right-clicking it did nothing. The native Chromium menu would have brought
+Writing Tools and Services we do not want, and OS Speech instead of Rally's
+voice. The action row's Copy is markdown source, which is the wrong paste
+into a rich editor. Stripping every `button` from the clone deleted the
+model's own citation words; `innerText` on a detached clone has no line
+breaks; falling back to stored markdown for Share put `**bold**` in Messages;
+Speak during a stream would voice a truncated snapshot; *Speak response* on
+a person's own turn is the action-row sentence for the assistant.
+
+**Considered and rejected:** A native Electron `Menu.popup` built from
+`webContents` `context-menu` params. Once Writing Tools and Services were
+dropped, the remaining items belong in the Radix menu every other Rally
+right-click already uses. Also rejected: calling Electron `startSpeaking` /
+OS Speech; Speak has to be the same toggle and the same one-voice mutex as
+the action row, or two clips play over each other. Also rejected: wrapping
+share in a `Menu` whose only item is `role: 'shareMenu'`, which opens a
+second-level Share before the sheet.
+
+**Consequences:** Formatted Copy writes `ClipboardItem` from the renderer so
+it can carry HTML and is not bound by `system:copy-text`'s 4,000-character
+cap, which exists for short identifiers. Look Up restores the snapshot
+selection before `showDefinitionForSelection`; Share passes the selected or
+whole-message plain text to `ShareMenu`. Off macOS, and in the browser
+fallback, those two items are absent. Code-block copy controls and heading
+chevrons have to carry `data-clipboard-exclude` or they paste as chrome.
+
+### 2026-09-16 — A rail fades the items it clips, and only the edge that is clipping them
+
+**What changed:** The work-stream list, the work-stream sidebar, and the Sidekick
+strip now fade items at a scroll edge the same 24px way a clipped row title
+fades, and only while that edge is actually clipping something. A scroller
+whose content fits stays sharp; a scroller at rest fades only its far edge; a
+scroller in the middle fades both; a scroller that can go no further fades only
+the near edge.
+
+**Why:** The line fade made a hard cut on a row title look like a rendering
+fault, and the same cut was still sitting on the rails' own scrollports —
+work streams disappearing under the command bar, Sidekick tiles sliced at the
+sidebar's trailing edge. An unconditional mask would have faded the first and
+last items of a short list for no reason, which is the case the line fade
+already refuses.
+
+**Considered and rejected:** One animation interpolating a three-stop far-fade
+into a three-stop near-fade. The shared stop travels through the scroller and
+the list looks washed out in the middle; registered lengths that grow and
+shrink over the first and last 24px of travel keep the middle items at full
+ink. Also rejected: measuring overflow in the component. The inactive-timeline
+condition is the same question the line fade already asks, and a
+`ResizeObserver` on these lists would sit next to their existing motion
+choreography.
+
+**Consequences:** The cover animation is the overflow question and must keep
+one mask at both keyframes. The start and end animations are clocks, so their
+`animation-duration: auto` has to win against the global reduced-motion kill
+switch — that restore is load-bearing, and deleting it pins every overflowing
+list to a leading fade and no trailing one. `animation-range` joins
+`animation-duration` and `animation-timeline` below the shorthand; a reorder
+that looks like tidying reintroduces an unconditional fade. Do not paint a
+gradient over the scroller: these rows carry three fills, and an overlay
+matched to one is a bar in the other two. `scroll-padding` of the same 24px
+keeps a focused row out of the mask band; without it, Tab and
+`scrollIntoView({ block: 'nearest' })` fade the indicator they just scrolled
+into view.
+
+Shipped in #803.
+
+### 2026-09-15 — The participant dialog stays open across roster changes
+
+**What changed:** Adding a person no longer closes `AddParticipantDialog`. The
+dialog stays up after each add or remove so another membership can be changed
+without reopening. It still closes on click-outside, Escape, the header close
+control, and when the current person removes themselves — including from a
+workspace-scoped Main, where they remain a viewer. Leave-room navigation still
+only happens for a substream or a personal Main. A click on a portaled
+`.menu-content` — the Remove control — is not treated as outside the dialog.
+
+**Why:** The dialog is the roster, not a single-shot add. Closing it on the
+first successful add made adding two people two trips through the facepile, and
+a Remove click on the portaled menu dismissed it the same way a click on the
+overlay does. That accidental dismissal was also the only thing closing the
+dialog after a workspace-scoped self-removal, so the menu exception had to be
+paired with an explicit close on every self-removal.
+
+**Considered and rejected:** A Done footer like the new-work-stream picker.
+Click-outside is already the dismissal, and a second confirmation would make
+the live add/remove path look like a draft. Closing only on add and not on
+remove would still interrupt the same sitting.
+
+### 2026-09-14 — Show slow inference as temporary response status
+
+A model may need longer than the old first-token deadline. The user requested
+an inline explanation after 30 seconds, present only during that wait. The
+surface consumes attempt-scoped server status rather than timing the whole run,
+so tool work cannot look like model slowness and a completed warning does not
+linger through an exit animation. Delay state travels with retained resume cursors
+because replay cannot reconstruct an activation older than the retained sequence.
+
+### 2026-09-14 — An admitted answer closes its question before the loop promotes it
+
+**What changed:** `pendingTranscriptInputOverlay` projects a pending input whose
+`messageType` is `elicitation` as the answered question rather than as text: it
+takes the question's UI identity (`elicitationMessageId`), carries the parsed
+elicitation, and has no delivery state, so `isComposerQueueOverlay` and
+`pendingOverlayInputId` both leave it out of the composer queue.
+`composeTranscript` then folds it into the canonical question row it answers,
+so the two are one row at the question's position.
+
+**Why:** the card is drawn from the canonical elicitation turn, and that turn
+carries the status frozen at `open` — only the answer's own turn ever replaces
+it. Until the loop promotes the answer there is no such turn, so the optimistic
+"answered" the screen writes on submit survived exactly until the next snapshot
+and then the question came back, over the answer the person had just given. The
+answer meanwhile sat on the composer as a row with no text, rendered as
+"Queued message", because an elicitation response has an empty text block.
+Neither was a rare window: the loop only promotes the answer when it next runs.
+
+**Considered and rejected:** holding the optimistic answered state across
+snapshots on the client. That is a second source of truth for a question's
+status, kept alive by the screen, and it would have to be torn down correctly on
+a failure, a reconnect, and a second answer from another participant — while the
+room already sends everything needed to say so honestly. Filtering empty pending
+inputs out of the queue: that hides the symptom and leaves the question asking.
+
+**Consequences:** the feed is *composed*, not upserted, and the two paths
+reconcile differently. `composeTranscript` drops an overlay only when its
+identity already has a canonical row, and an answer is keyed by its own client
+message while the question is keyed by the question — so review caught both
+being emitted under one message id, the question drawn twice and a duplicate
+React key. `composeTranscript` now folds the answer's status into the canonical
+question row and takes the overlay out, which is the same "one row, at the
+question's position" rule `orderedTranscriptMessages` already applies to the
+canonical pair. A test that reaches this through `upsertTranscriptMessage`
+proves nothing: that helper belongs to the socket path, not to the feed.
+`queueSequence` is now the marker of composer-queue membership: an overlay
+without one is not a row and cannot be reordered. The loop promoting the answer
+out of turn is the other half of this, and lives in the 2026-09-14 entry in
+[`workstream-durable-object.md`](workstream-durable-object.md).
+
+### 2026-09-13 — The in-flight sweep is painted on each surface of a turn, not on its wrapper
+
+**What changed:** The shimmer that marks a person's turn as still in flight
+paints on each surface the turn draws — the message bubble, and every
+attachment image cell, media tile and file card — instead of on the
+`.human-message-content` wrapper around them. The overlay is inset to its
+surface and inherits the surface's corner radius, and it travels by animating
+`background-position` over a gradient tile four times the surface's width, the
+construction the tool-activity label's shimmer already uses, rather than by
+translating a full-width pseudo-element under the wrapper's `overflow: hidden`.
+The band is upright where it was tilted 15°: a tilt spreads the band sideways
+by the surface's height, which for the bubble is unbounded against its width,
+so no tile width kept a tilted band clear of a tall, narrow bubble at the ends
+of its travel, and a tinted corner stayed parked there through each pause. The
+travel is the transform sweep's 2.5 widths, so the band crosses at the speed
+and for the share of the cycle it did before. And the band is a twentieth of
+the surface's own ink rather than the shimmer token: the token is a dark tint
+for light surfaces (white in the dark theme), and a person's bubble is dark or
+profile-coloured in both themes, so on it the token was invisible once the
+wrapper's light strip stopped carrying the sweep. The body above describes the
+result; this supersedes the wrapper scoping the 2026-09-02 entry below records.
+
+**Why:** The wrapper is a rectangle. It takes in the hover-action slot laid out
+under the bubble and the corners the bubble's radius cuts away, so the sweep
+read as a grey block behind the pill rather than a light passing over it. It
+had been put on the wrapper deliberately, so that a send made of attachments
+and no text still carried a cue; keying the sweep on each surface keeps that
+cue without the box.
+
+**Considered and rejected:** Keeping the transform sweep and clipping it with
+`overflow: hidden` or `clip-path` on each surface. That makes every surface a
+clipping box for the length of the send — a file card's controls and any
+focus ring inside it would be cut — where the tiled-background overlay clips
+only itself.
+
+**Consequences:** A new attachment surface rendered inside a person's turn has
+to be added to the selector list at `.human-message.is-sending` in `app.css`,
+or a send made of that kind of attachment alone goes out with no in-flight
+cue. The band's stop percentages, the 400% tile and the upright band hold
+together: the band has to sit clear of the surface at both ends of its travel,
+a tilt gives that clearance a height term nothing can bound, and the comment
+above the rule carries the arithmetic.
+
+Shipped in [#739](https://github.com/juno-ai-labs/avalon/pull/739).
+
+### 2026-09-12 — The composer writes lists, and stops hiding text behind the plus
+
+**What changed:** Two things about a multi-line draft, delivered together
+because they are the same draft.
+
+`lib/markdown-lists.ts` is new and owns list editing as three pure functions
+over a draft and its selection: `continueListAtCaret` (the newline key),
+`shiftListAtCaret` (Tab and Shift+Tab), and `toggleListAtSelection` (⌘/Ctrl+⇧8
+and ⌘/Ctrl+⇧7). So a `- ` or
+`1. ` carries itself to the next line, a numbered list counts, Tab nests onto
+the column the item above puts its own content in, Enter on an empty item walks
+back out a level and then leaves the list, and a task item's continuation gets
+an *unchecked* box. Every operation ends by renumbering every ordered run in the
+draft, so inserting into the middle of 1–4 gives 1–5 rather than 1, 2, 3, 3, 4.
+`composer-input.tsx` binds the keys after the host's own handler and after
+sending, so Enter still sends and only the keystroke that was going to insert a
+newline reaches a list.
+
+The capsule composer's controls now take a grid row of their own whenever the
+field spans the full width — wrapped text, or an attachment row above it —
+instead of sharing row 2 with the text. The 39px of bottom padding that used to
+hold them apart is gone, back to 4px.
+
+**Why:** A Rally message is Markdown and always has been, so a list was already
+something a person could send; what was missing was every editing behaviour
+people arrive from Slack, Claude Code and every note app expecting, which made
+writing one a chore of retyping dashes and renumbering by hand.
+
+The plus overlapped the draft's own text, which is what prompted the layout
+half. The 2026-09-10 entry below ("Multiline composer text spans above its
+controls") put the wrapped field in the controls' row and reserved a
+control's height of bottom padding to keep them apart. Padding inside a
+scroller scrolls: it holds on the *last* line of the draft and nowhere else, so
+the moment a draft outgrew the field every line under the caret ran beneath the
+plus button — which is exactly the state somebody writing a long list is in.
+A row the controls own cannot be scrolled into, and it needs no number to be
+chosen.
+
+**A list is started by typing one, and only by typing one.** The plus menu
+briefly carried **Bulleted list** and **Numbered list** items, on the reasoning
+that a behaviour nobody can see is a behaviour nobody uses. They are not there:
+a `- ` or a `1. ` *is* the affordance, the menu command was a second way to say
+the same thing that could drift from what the keys do, and the composer's
+bottom-left row is the one piece of chrome this change was also making less
+crowded. `toggleListAtSelection` stays for the two shortcuts, which are what
+turns lines somebody has *already written* into a list — the one thing typing a
+marker cannot do.
+
+**Tab belongs to the list, and does not move focus.** Inside a list Tab indents
+and Shift+Tab unindents, to a depth of five; outside one Tab is untouched and
+still moves to the next control, so an ordinary message and an empty composer
+keep the exit they always had. The composer decides that on
+`selectionTouchesListItem` — whether the caret is in a list — rather than on
+whether the draft moved, and the distinction is the whole point: an earlier
+round keyed it on the draft moving, so Tab indented four times and then, with
+nothing on screen having changed, threw the caret out of the field on the fifth.
+That was reported from a real draft, twice. Five levels is the team's number and
+not the format's; `MAX_LIST_DEPTH` is the one line to edit.
+
+The rest of the operations still return `null` to mean "nothing happened, let
+the keystroke be" — that contract is the thing to preserve when adding a fourth.
+Tab is the documented exception to it.
+
+Edits are applied with `document.execCommand`, not by handing the parent a new
+string. That is what keeps them on the textarea's undo stack — ⌘Z after Enter
+lifts one marker rather than clearing the draft — and it means each one arrives
+at `onValueChange`, the draft cache and the mention rebase as one ordinary
+input event. The composer falls back to replacing the draft where the command is
+unavailable, which is how the jsdom tests exercise it.
+
+Ordered runs are renumbered wholesale rather than each operation patching up
+what it disturbed: continuing, nesting and unnesting all shift numbering below
+the caret, and three separate corrections would be three chances to disagree. A
+run with nothing above it to be nested under keeps its first ordinal, so a list
+deliberately started at `5.` stays started at 5; a nested run always restarts at
+1, because a sublist starting at 11 only ever means somebody nested the eleventh
+item above it.
+
+The stacking context the old layout needed — `position: relative; z-index: 1` on
+both control groups, so the spanning textarea could not intercept their clicks —
+is gone with the overlap that required it. `app.css.node.test.ts` guards the two
+grid declarations that replaced it instead. Checked in a real window in both
+appearances: typing, nesting, unnesting, the menu, the shortcut, undo, and a
+draft scrolled with its middle lines beside the controls.
+
+### 2026-09-11 — Connector recovery is a first-class conversation-feed card
+
+**What changed:** The live conversation surface opts into rendering validated
+`core_show_connector_connection` tool calls as provider cards with connect,
+reconnect, pending, and connected states. These rows are person-facing and
+therefore remain outside plugin grouping and settled-work accordions.
+
+**Why:** Collapsing the call into “Rally worked” hid the one action that could
+unblock the task. Rendering it as an ordinary tool disclosure exposed a wire
+name and JSON instead of the connector the person recognizes.
+
+**Alternative rejected:** Teaching every `MessageBlock` host to render the
+card automatically. OAuth is a product control of the live feed; a shared
+renderer silently acquiring it would put connection controls into future
+read-only or preview surfaces.
+
+**Consequences:** A new transcript host remains neutral until it opts in. The
+card's height is measured by the existing feed virtualizer, and completion of
+the external OAuth flow refreshes the same global connection query used by
+Settings and connector mentions. The completed tool fact carries forward the
+validated card identity, so reload, paging, recovery, or virtualization cannot
+downgrade an already-shown card into a generic tool disclosure. The first
+Connected observation is held above virtualized rows for the feed's lifetime.
+Adjacent repeats of the same connector and scope keep the first row's stable
+anchor instead of stacking.
+
+### 2026-09-11 — A pending stop says so in words, where the reader is watching
+
+**What changed:** While a running conversation carries `stopRequested`, the one
+activity slot above the composer shows a stopping row — an orb and "Stopping
+after the current response…" — ahead of the compaction indicator and the elapsed
+total. `conversationActivityRow` owns that precedence as a single exported
+decision, and one exported sentence now serves both the row and the Stop
+button's tooltip.
+
+**Why:** Stop was reported as not working. It was working. In the production run
+behind the report, the request was written 1.8s into an assistant turn; that turn
+finished 7.0s later, the tool it had already asked for ran for a further 3.0s,
+and the loop committed the stop 11.2s after the click — exactly the post-step
+safe boundary the durable loop documents. For all 11.2 seconds the only
+acknowledgement was a 12px spinner inside a 28px circle and a tooltip that has to
+be hovered, while the row above it went on counting "Rally is working". A
+correct mechanism with no legible acknowledgement is indistinguishable from a
+dead button, and the cost of that is a second and third click on a control that
+deliberately refuses them.
+
+**Considered and rejected:** Giving the composer's Stop control a visible
+"Stopping…" label. That is the text Stop removed the same day by *Stop slides
+through the composer corner*, below, for widening and raising the trailing
+control row, and re-adding it would relitigate a decision one day old. Also
+rejected: making Stop feel instant by
+skipping the tool batch the model already asked for, or aborting the provider
+stream outright. Both are real options and neither is a desktop change — the
+first would leave the durable Bind head ending in an assistant message with
+unanswered `tool_calls`, and the second reverses a stated invariant in two module
+documents. Legibility was the part that was unambiguously wrong.
+
+The row was first built into the transcript's activity slot, ranked above the
+compaction indicator and the elapsed total, and that was wrong for a reason
+worth recording: the slot is inside the scroller. Review caught it. A reader who
+has scrolled up to check earlier messages and then presses the always-visible
+Stop is precisely the person this change exists for, and they would have been
+handed the row 1,720px below a 900px fold — the button spinner and nothing else,
+the exact ambiguity being fixed. Having Stop scroll them back down was the other
+repair available and is worse: `useTranscriptFollow` exists to enforce that only
+the reader's own scrolling moves the viewport, and yanking someone out of the
+history they deliberately opened would trade one defect for a ruder one. Moving
+the row to the dock keeps both rules.
+
+Wording: the label names the *work*, not the response. Two independent review
+passes caught that "after the current response…" promised a boundary the step
+does not have, and this PR's own trace is the proof — a tool the response had
+already asked for ran for 3.0s after it finished.
+
+**Consequences:** Feedback that answers a composer control belongs in the dock,
+not in the feed: anything rendered inside `.transcript-scroll` inherits the
+reader's scroll position and can be invisible at the moment it matters most, and
+the feed's rows are for describing the run rather than for confirming a click.
+The stopping row deliberately shows no duration: any future countdown there
+would be a promise about the model's remaining output that nothing in the client
+can keep. A real-window check of a scrolling surface has to include a scrolled
+position — this defect is invisible from the bottom of the transcript, which is
+where the first check was made. If Stop ever does become immediate, this row
+becomes dead weight rather than wrong — delete it with the change that makes the
+wait disappear.
+
+Shipped in #721.
+
+### 2026-09-11 — An intentional stop does not offer to replay the turn
+
+**What changed:** The terminal stopped notice uses a filled stop-square and no
+longer offers Retry. The stopped prompt stays in transcript history, and a
+person who wants to continue submits a fresh turn from the composer; failed
+runs retain their separate Retry action.
+
+**Why:** Pairing an intentional member stop with an X and a primary Retry button
+made the outcome read like a failure awaiting recovery. The August 20 harness
+entry correctly required stopped to remain visible and distinct from failed,
+but its fresh-retry affordance did not preserve that distinction in the
+finished interface. The removed follow-up also claimed partial tool activity
+was no longer running even though Stop is observed at the post-step boundary
+and the active step settles first.
+
+**Considered and rejected:** Keeping Retry as a quieter link. Any replay action
+still suggests that stopping was an interruption to recover from rather than a
+terminal choice; a new message makes the next intent explicit instead.
+
+**Consequences:** A stopped request is not restored into the composer or
+replayed automatically. Future stopped-state treatments must remain visibly
+distinct from failure and must not add a recovery action; retries belong only
+to failed runs.
+
+Shipped in #717.
 
 ### 2026-09-11 — Stop slides through the composer corner
 
@@ -2661,6 +3223,11 @@ attachments alone, and the bubble is drawn only for a turn with text. Under
 across it, because the global reduced-motion block would otherwise run it once
 at 0.001ms and leave it clipped outside the wrapper — an in-flight turn with no
 cue at all, and less marked than a queued one.
+
+*Superseded on 2026-09-13.* The sweep no longer hangs off the wrapper, and the
+sending state writes no `overflow` on anything: it is painted on each surface
+the turn draws, and clips itself to that surface's corner. The 2026-09-13 entry
+above has the mechanism and why the wrapper was left.
 
 ### 2026-09-01 — An automation's result is a message in the room, named Automation
 

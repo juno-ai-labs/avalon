@@ -32,8 +32,6 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Installation administration. |
 | `config/provider-apps/slack.json` | The manifest. |
 
-## How it works
-
 ### Product boundary
 
 Rally uses one public Slack Marketplace app for two related but separate connections:
@@ -74,7 +72,7 @@ Raw Slack APIs are the workspace Agent and workspace-tool plane:
 - bounded conversation, thread, message-context, file, user, and member reads
 - bot-authored message, reaction, and conversation writes
 
-Slack's hosted MCP server is the user tool plane. Rally initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered surface, invokes the exact live name through `tools/call`, and closes the session when Slack assigns one. The server's current names, descriptions, and JSON Schemas are passed through at plugin activation rather than copied into the connector. Provider annotations remain untrusted hints: every live tool keeps Rally's confirmed-write and record-before-execute policy. Rally's `slack.personal.mcp` grant and personal owner check constrain the surface without pretending to own its catalog. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target. The reusable mechanism is in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
+Slack's hosted MCP server is the user tool plane. Rally initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered surface, invokes the exact live name through `tools/call`, and closes the session when Slack assigns one. The server's current names, descriptions, and JSON Schemas are passed through at plugin activation rather than copied into the connector. Provider annotations remain untrusted hints: every live tool keeps Rally's conservative-write and record-before-execute policy. Rally's `slack.personal.mcp` grant and personal owner check constrain the surface without pretending to own its catalog. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target. The reusable mechanism is in [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
 Personal authorization requests one `slack.personal.mcp` Rally capability whose
 provider scope set covers Slack's hosted user-tool plane. Existing personal rows
@@ -425,8 +423,6 @@ inside the connect modal, which exists only for as long as that modal is open.
 
 Modal submissions are validated server-side. Modals never request Rally or provider passwords.
 
-### User stories
-
 #### Delegate from Slack
 
 As a linked member, I can DM Rally, mention it, invoke a shortcut on a message, or run `/rally`, and receive progress and the durable result in the same Agent thread.
@@ -437,7 +433,7 @@ From a user-initiated Slack DM or app mention, I can ask Rally to search public-
 
 #### Act in Slack
 
-With the workspace installation, I can ask Rally to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing confirmation and external-write receipt policies still apply.
+With the workspace installation, I can ask Rally to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing authorization and external-write receipt policies still apply.
 
 #### Connect several Slack workspaces
 
@@ -581,7 +577,7 @@ not own:
 | The shared actor-identity resolution behind attribution | [`connectors.md`](connectors.md#actor-identity-and-work-stream-attribution) |
 | The unfurl card, its audience rules, and the refresh sweep | [`workstream-links.md`](workstream-links.md) |
 | Frozen automation delivery targets | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
-| The Global/EU boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
+| The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The run a Slack prompt starts | [`agent-harness.md`](agent-harness.md) |
 
 ## Failure modes and limits
@@ -610,7 +606,9 @@ not own:
   with no usable identity used to log one indistinguishable
   `connector_code: "provider_error"`. `slackOAuthCallbackStage` fills that
   field; read `stage` with `provider_error`, `provider_status`,
-  `response_invalid`, and `timed_out` on `connector_oauth_callback_failed`.
+  `response_invalid`, `response_issues` — the failing paths of a body that did
+  not parse, never its values — and `timed_out` on
+  `connector_oauth_callback_failed`.
 - **Retries with the same `event_id` and body are acknowledged once; reuse of an
   event ID with different content is a conflict.**
 - **A denied prompt is retained regionally for at most 24 hours** so the same
@@ -765,7 +763,7 @@ For a Global-only local acceptance pass:
    Always pass the same three `SLACK_MANIFEST_*` overrides when syncing that
    development app.
 7. In the Rally desktop, sign in as a workspace owner/admin and open **Settings
-   → Connections → Rally Agent for Slack → Connect workspace**. Complete this OAuth flow even
+   → Connections → Rally Agent for Slack → Connect for workspace**. Complete this OAuth flow even
    if Slack already shows the app in the test workspace; it creates Rally's
    encrypted connection and team route. Do not substitute `slack app install`.
 8. Open the app's Home tab in Slack, choose **Connect Rally**, and let the local
@@ -780,23 +778,15 @@ the same Mac. Slack requires public HTTPS OAuth redirects, so a localhost-only
 API is insufficient. A temporary tunnel URL also requires regenerating and
 resaving the test manifest after every URL change.
 
-For EU routing or repeatable team testing, prefer a dedicated hosted staging
-deployment with stable Global ingress, Global API, EU API, and web origins.
-Render the staging manifest with both `SLACK_MANIFEST_API_GLOBAL_BASE_URL` and
-`SLACK_MANIFEST_API_EU_BASE_URL`, apply migration `0039` in both regional D1
-databases, and configure the same four Slack secrets in both Workers.
-
 Run the acceptance matrix in `docs/e2e.md`, beginning with App Home/linking,
 Agent DM and thread continuation, mention, both shortcuts, `/rally`, signature
 replay, workspace search/read/write tools, personal MCP authorization, multi-workspace routing, and the Gmail
 briefing's three/one/zero-result cases.
 
-## Operations
-
 ### Deployment and Marketplace gates
 
-1. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in both regional Workers. Keep the public app identity identical.
-2. Deploy migrations through `0046` and both Workers, including the Global/EU Slack service bindings and `slack.rallywith.ai` custom domain.
+1. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in configured regional Workers. Keep the public app identity identical.
+2. Deploy migrations through `0046` and both Workers, including the configured deployment Slack service bindings and `slack.rallywith.ai` custom domain.
 3. Run `slack manifest validate`; then create/update the Marketplace app from `config/provider-apps/slack.json`.
 4. Reconnect existing Slack workspace installations so Slack grants the expanded bot scopes, then exercise the acceptance cases in `docs/e2e.md`.
 5. Confirm paid-plan eligibility for Agent/automation features and document the `team.billing:read` use in review materials.
@@ -805,8 +795,6 @@ briefing's three/one/zero-result cases.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
-
-## Changelog
 
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 
@@ -1180,7 +1168,7 @@ no action id, so nothing in the ingress compares against them. The bot rename is
 safe for the same structural reason mentions are matched by `<@bot_user_id>`
 rather than by name, so `@Rally` resolves to the same identity Slack already has.
 
-**Provider cut-over:** after the matching Worker build has reached both regions,
+**Provider cut-over:** after the matching Worker build has reached configured deployments,
 render the production JSON with `node scripts/slack-manifest-hook.mjs`, confirm it
 still contains `"pkce_enabled": true`, and apply it through Slack's App Manifest
 editor. CLI 4.6.0 currently strips that immutable field from validation and sync

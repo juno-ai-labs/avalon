@@ -14,11 +14,9 @@ const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
 // surfaces and is restricted to Flagship Write plus Queues Edit.
 const aceRuntimeToken = process.env.ACE_FLAGSHIP_API_TOKEN?.trim();
 // The operator tokens Ace's operator pages present to the regional API
-// Workers, one per region. Rally credentials rather than
-// Cloudflare ones: each is what that region's TELEMETRY_OPERATORS_JSON maps to
-// the `demos` role, and neither is known to the other region.
+// Workers. These are Rally operator credentials; the existing Global token
+// remains in RALLY_OPERATOR_TOKEN.
 const rallyOperatorToken = process.env.ACE_RALLY_OPERATOR_TOKEN?.trim();
-const rallyEuOperatorToken = process.env.ACE_RALLY_EU_OPERATOR_TOKEN?.trim();
 const flagshipAppId = 'bec01d3a-d6b6-4d8c-b89a-37440ed63b8c';
 const aceDomain = 'ace.internal.rallywith.ai';
 const migrationDomain = 'migrations.internal.rallywith.ai';
@@ -28,7 +26,6 @@ if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID is required');
 if (!deploymentToken) throw new Error('CLOUDFLARE_API_TOKEN is required');
 if (!aceRuntimeToken) throw new Error('ACE_FLAGSHIP_API_TOKEN is required');
 if (!rallyOperatorToken) throw new Error('ACE_RALLY_OPERATOR_TOKEN is required');
-if (!rallyEuOperatorToken) throw new Error('ACE_RALLY_EU_OPERATOR_TOKEN is required');
 
 async function cloudflare(path, init = {}, authorization = deploymentToken) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`, {
@@ -136,6 +133,9 @@ function run(command, args, options = {}) {
 
 const audience = await ensureAccessApplication();
 await Promise.all([
+  retireFlag('meeting-recording-enabled'),
+  retireFlag('control-tower-refresh-seconds'),
+  retireFlag('agent-model-meeting-notes'),
   retireFlag('hypersight-enabled'),
   retireFlag('agent-model-block-dashboard'),
   retireFlag('automation-workspace-templates-enabled'),
@@ -143,19 +143,17 @@ await Promise.all([
   retireFlag('agent-model-automation-result-disposition'),
 ]);
 await Promise.all([
-  ensureFlag('meeting-recording-enabled', 'True shows meeting-recording actions in Electron; false hides them without changing API availability.'),
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
   ensureFlag('multiple-workspaces-enabled', 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.'),
   // Defaults ON, not off like every other managed flag: a digest already
   // sends by default for every existing person, so provisioning this flag
   // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
   ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', 'on'),
+  ensureFlag('push-notifications-enabled', 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', 'on'),
   ensureFlag('live-artifacts-enabled', 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.'),
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'x-ai/grok-4.3', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.', 'x-ai/grok-4.3', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-automation-compiler', 'Turns an automation setup conversation into the saved automation definition, schedule, scope, and delivery plan.', 'x-ai/grok-4.5', ['google/gemini-3.6-flash']),
-  ensureModelFlag('agent-model-meeting-notes', 'Produces the live and final meeting-note passes from captured transcript segments.', 'x-ai/grok-4.3', ['google/gemini-3.6-flash']),
-  ensureModelFlag('agent-model-addressing-classifier', 'Decides whether a message is for the agent, people, both, or uncertain before a work-stream run starts.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-workstream-naming', 'Creates the short work-stream title from the opening request while the creator waits.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-work-opportunity-admission', 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-work-opportunity-ranking', 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
@@ -177,10 +175,6 @@ try {
   });
   run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'RALLY_OPERATOR_TOKEN', '--config', generatedConfig], {
     input: `${rallyOperatorToken}\n`,
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
-  run('pnpm', ['exec', 'wrangler', 'secret', 'put', 'RALLY_EU_OPERATOR_TOKEN', '--config', generatedConfig], {
-    input: `${rallyEuOperatorToken}\n`,
     stdio: ['pipe', 'inherit', 'inherit'],
   });
 } finally {

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { asWorkspaceId } from "@rally/contracts";
 import { asWorkstreamId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
@@ -73,6 +74,7 @@ const EXPECTED_TABLES = [
   "assistant_turn_reservations",
   "attachment_tool_receipts",
   "authorization_projection_outbox",
+  "background_agent",
   "bind_activation_inputs",
   "bind_loop_heads",
   "bind_loop_state_messages",
@@ -87,6 +89,7 @@ const EXPECTED_TABLES = [
   "durable_outbox",
   "elicitation_requests",
   "inference_attempts",
+  "inference_delay_status",
   "member_attention",
   "object_retirement",
   "object_versions",
@@ -99,6 +102,7 @@ const EXPECTED_TABLES = [
   "pending_loop_input_mailbox",
   "pending_loop_inputs",
   "plugin_activation_hints",
+  "prepared_conversation_receipts",
   "private_child_lifecycle_authority",
   "private_child_membership_authority",
   "projection_keys",
@@ -107,6 +111,7 @@ const EXPECTED_TABLES = [
   "resident_context_blocks",
   "resident_context_compactions",
   "resource_inventory_revision",
+  "retired_meeting_attachment_ids",
   "run_lifecycle_events",
   "run_memory_contexts",
   "run_plugin_activations",
@@ -121,12 +126,14 @@ const EXPECTED_TABLES = [
   "substream_loops",
   "substreams",
   "terminal_imported_resources",
+  "terminal_provider_observation",
   "terminal_publication_grants",
   "terminal_repository",
   "terminal_tasks",
   "terminal_workspace",
   "tool_effect_checkpoints",
   "tool_effects",
+  "tool_pages",
   "transcript_activities",
   "transcript_activity_intervals",
   "transcript_compaction_checkpoints",
@@ -188,6 +195,37 @@ describe("the Workstream Durable Object relational schema", () => {
         [31, "fnv1a64:4f82f4cf6d6c21d7"],
         [32, "fnv1a64:d4f93bb5a60c035d"],
       ]);
+  });
+
+  it("preserves live attachment recovery ownership when prepared conversation receipts are added", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    database.exec("PRAGMA foreign_keys = ON");
+    try {
+      applyDurableObjectSqliteMigrations({ storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 59),
+        component: "substream_agent_do", workerVersionId: "before-prepared-content", now: 1_000 });
+      new SubstreamLoopStorage(storage).ensureLoop({ loopId: WORKSTREAM_ID, bindStateRevision: 0, now: 1_000 });
+      database.prepare(`INSERT INTO pending_loop_input_mailbox
+        (input_id, loop_id, input_sequence, admitted_after_transcript_sequence, client_message_id,
+         preparation_kind, envelope_json, state, terminal_code, created_at, updated_at)
+        VALUES (?, ?, 1, 0, 'existing-upload', 'human_message', '{}', 'preparing', NULL, 1000, 1000)`)
+        .run(MESSAGE_ID, WORKSTREAM_ID);
+      database.prepare(`INSERT INTO pending_attachment_reservation_recovery
+        (input_id, resource_id, workspace_id, workstream_id, release_authority, created_at)
+        VALUES (?, ?, ?, ?, 'preparation', 1000)`).run(MESSAGE_ID, RECIPIENT_ID, WORKSPACE_ID, WORKSTREAM_ID);
+      applyWorkstreamObjectSchema(storage, "with-prepared-content", 2_000);
+      expect(database.prepare(`SELECT input_id, resource_id, preparation_id, mailbox_input_id, release_authority
+        FROM pending_attachment_reservation_recovery`).all()).toEqual([{
+          input_id: MESSAGE_ID, resource_id: RECIPIENT_ID, preparation_id: null,
+          mailbox_input_id: MESSAGE_ID, release_authority: "preparation",
+        }]);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(() => database.prepare(`INSERT INTO pending_attachment_reservation_recovery
+        (input_id, resource_id, workspace_id, workstream_id, release_authority, created_at)
+        VALUES (?, ?, ?, ?, 'preparation', 1000)`).run(RUN_ID, RECIPIENT_ID, WORKSPACE_ID, WORKSTREAM_ID))
+        .toThrow(/FOREIGN KEY/);
+    } finally { database.close(); }
   });
 
   it("creates the complete workstream-down table contract idempotently", () => {
@@ -1053,10 +1091,10 @@ describe("the Workstream Durable Object relational schema", () => {
   it("checkpoints live output in bounded relational chunks and clears it at terminal state", async () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
-    const store = new WorkstreamObjectStore(storage, "worker-one", "eu");
+    const store = new WorkstreamObjectStore(storage, "worker-one", "enterprise");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "eu");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "enterprise");
       const at = "2026-08-16T12:00:00.000Z";
       activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({

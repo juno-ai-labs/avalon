@@ -32,26 +32,19 @@ narrow revisioned profile into each region; workspace content remains regional.
 
 ### Authority and data flow
 
-Google sign-in produces an identity-only session at the Global endpoint. Global
-discovery asks each regional Worker for memberships and pending invitations,
-then reconciles opaque `(platform_user_id, region, workspace_id)` routes. A
-workspace session is minted only by its owning region and authorizes only that
-workspace. The identity credential remains stored because an EU workspace
-session cannot call the Global onboarding coordinator.
-
 The desktop stores one version-2 auth set and one matching profile set. Each
 workspace credential carries its immutable region; the active-workspace binding
 and every ordered-recency entry are `(region, workspace_id)` pairs in
 device-local presentation state. The pair matters even when UUIDs happen to
 collide across regions: credential replacement, profile lookup, attention,
-departure, React keys, and the meeting guard all use the complete binding.
+departure and React keys all use the complete binding.
 Selecting a cached workspace rewrites only that active selection. A network
 activation may finish after another selection; its credential and profile are
 retained, but an intent generation prevents the late response from taking over
 the window.
 
 Regional user IDs are regional identifiers, not account identifiers: the same
-Google account may have different user UUIDs in Global and EU. The verified
+Google account may have different user UUIDs in configured deployments. The verified
 email in the Global identity session links discovery to the regional account.
 An older version-1 workspace-only envelope can be reconnected in place after one
 Google exchange, preserving its selected workspace rather than forcing setup.
@@ -96,27 +89,6 @@ days, or after a month away, and at no other time short of a sign-out or a
 revocation.
 
 ### The account menu's directory
-
-The menu lists the union of what this device has stored and what Global
-discovery answers, in device recency order. Discovery withholds two things the
-member belongs to: the demo template, always, and a demo workspace still being
-prepared, until it is published — and activation answers
-`demo_workspace_preparing` for the latter. Both are decided in the regional
-API from the demo operation rows
-([`demo-workspaces.md`](demo-workspaces.md#withholding-a-workspace-from-its-own-member)). Discovery is the account's
-complete membership and needs the identity credential; the stored set is one
-regional credential and cached profile per workspace this device has opened,
-readable with no network at all. `getOnboardingState` never rejects on
-discovery's account. It reports `identity` as `connected`, `reconnect_required`
-(no identity credential is stored), or `unavailable` (discovery failed for
-another reason), and lists the stored set either way, merged with the last
-discovery this run received so a blip does not shrink the list. The menu
-never marks a row on that state and offers no reconnect item of its own: a
-switch or a creation that needs the identity credential restores it itself
-(see [Switching](#switching)), and `reconnect_required` is read only by the
-no-workspace gate, which has nothing to switch to. The caption under the
-account's email names the active workspace's data region as US or EU — the
-two regions that exist; "Global" was the name of the US one.
 
 A background row's trailing indicator is one green dot, shown when the
 WorkspaceDO attention read reports any activity — work streams waiting on the
@@ -188,9 +160,11 @@ fails to list.
 
 The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
-credential may call `GET /workspace/attention`, which returns only an addressed
-count, its highest-priority reason, and an unread-activity boolean. Focus and
-account-menu opening refresh the projection. The fixed periodic cadence and any
+credential may call `GET /workspace/attention`, which returns an addressed
+count, its highest-priority reason, an unread-activity boolean, and
+`unreadAndNeedsInputCount` (unread or participant-needs-input streams; Apple
+push uses that number as `aps.badge`). Focus and account-menu opening refresh
+the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
@@ -221,8 +195,7 @@ automation route.
 
 An explicit handoff is allowed to change the foreground workspace because the
 person followed a destination. Background attention and reconciliation never do.
-For a handoff into another workspace, if the meeting guard refuses the change,
-the credential is missing, or regional membership has been revoked, activation
+For a handoff into another workspace, if the credential is missing, or regional membership has been revoked, activation
 fails closed: the current workspace and route remain unchanged and the deep-link
 failure window explains that the target could not be accessed. A handoff into
 the active workspace whose membership has ended is refused by the regional API
@@ -316,12 +289,8 @@ When on, rows follow device recency, show a region tag only across mixed regions
 and keep the menu open while a switch is pending. Offline selection is refused
 before the current workspace is disturbed.
 
-A meeting window registers live capture with Electron main before recording
-starts. Switching, creating, accepting, or leaving the active workspace is
-refused until that capture stops, and recording cannot start while any of those
-workspace transitions is pending. This bidirectional guard is main-owned because
-Settings, meeting, and the main window are separate renderers following one
-active workspace.
+Built-in meeting windows and their workspace-switching guard have been retired.
+Composer dictation remains tied to its composer lifecycle.
 
 ## Invariants
 
@@ -379,18 +348,6 @@ never acquire a product WebSocket.
 - Queue publication after membership transition is best effort, as documented in
   `access-revocation.md`; authorization fences still refuse every reconnect.
 
-## Testing
-
-Node tests cover plural schema, setup replay, departure races, stored-set
-migration, activation intent ordering, the active-workspace claim a link takes
-before activating, session cache scope, draft scoping, and component states. The
-attention aggregation and object admission fences run in the real workerd suite.
-Local environment synchronization gives Global the local EU API route, and
-`pnpm db:open-authority` opens and seeds both regional authorities so the same-ID
-regional fixture can prove an actual Global → EU → Global desktop switch.
-The complete manual Global/EU, offline, invitation, removal, sign-out, Lockdown,
-and flag-off matrix lives in `e2e.md`.
-
 ## Data model
 
 Global `platform_workspace_bindings` is keyed by `(platform_user_id, region,
@@ -411,15 +368,6 @@ map of regional workspace credentials. Its presentation file stores only the
 active regional binding and ordered recency. Composer draft keys include region
 and workspace ID so even same-ID regional fixtures cannot collide.
 
-## Regional impact
-
-Create and accept are coordinated through Global but committed in the selected
-region. The operation journal records the regional result so a retry cannot
-create a second workspace or consume an invitation twice. Discovery reconciles
-opaque regional routes by verified account email; it does not require regional
-user UUIDs to match. EU credentials call only EU product routes, while the
-retained Global identity credential remains the only discovery authority.
-
 ## Security and trust model
 
 Refresh material stays in Electron main and is never exposed through preload.
@@ -430,7 +378,9 @@ credential/profile/drafts before another workspace becomes active. Lockdown
 encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
-## Changelog
+### 2026-09-14 — Configurable deployment isolation
+
+Workspace creation uses Global without asking for a geographical choice. Stored credentials and profile caches drop removed deployments while retaining the Global account and other configured workspaces. This reuses existing session reconciliation; it does not migrate sessions or add enterprise provisioning.
 
 ### 2026-09-08 — Demo preparation creates a workspace without a session
 
@@ -486,8 +436,6 @@ The identity bridge now carries revisioned new-account eligibility and appearanc
 so a person sees the same avatar and color when activating either region. Global
 remains the writer; regional copies cannot overwrite a newer revision.
 
-### 2026-09-02 — A switch signs the account in itself, and the regions are US and EU
-
 **What changed:** A switch or a creation that finds no identity credential on
 this device opens the browser for a sign-in and runs again once the callback
 has landed, with "Finish signing in to Rally in your browser" under the row
@@ -511,7 +459,7 @@ into it — so a row chosen inside that window was refused with an error
 caption that then outlived the reconnect. Beyond the bug, a separate
 reconnect step was the wrong shape: choosing the workspace already said what
 the person wanted. And "Global" named a region whose data lives in the
-United States; the product has two regions, not a global one.
+United States; the product has configured deployments, not a global one.
 
 **Considered and rejected:** Refetching the directory after the exchange and
 keeping the guard, which leaves every switch at the mercy of a query the
@@ -815,25 +763,6 @@ Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-work
 
 ### 2026-08-31 — Regional binding is the desktop identity
 
-**What changed:** Desktop credential/profile sets, selection, recency,
-attention, errors, departure, and meeting capture now key workspaces by region
-and UUID together. Local environment sync routes Global onboarding to the local
-EU Worker, and the authority bootstrap now opens and seeds both regions.
-
-**Why:** Global and EU local fixtures deliberately share a workspace UUID. A
-real-window pass showed that UUID-only state replaced one credential with the
-other, marked both rows current, and made a successful EU activation impossible
-to exercise after its authority refused product traffic.
-
-**Considered and rejected:** Making fixture UUIDs globally unique would conceal
-the invariant the production design relies on. Leaving EU in `legacy_open`
-would preserve an old bootstrap convention at the cost of making cross-region
-desktop behavior unverifiable.
-
-**Consequences:** Any new desktop state keyed to a workspace must carry the
-region too. Local bootstrap takes the same authority transition in Global and
-EU and imports the product fixtures into both object namespaces.
-
 Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-31 — One account retains several region-bound workspaces
@@ -845,12 +774,6 @@ drafts, and meeting-capture switching guards shipped as one module.
 
 **Why:** Members need to create, accept, and move among independent Rally
 workspaces without signing out or weakening each workspace's regional boundary.
-
-**Considered and rejected:** Rebinding one session on every switch, opening a
-socket per background workspace, merging items into a global inbox, and deleting
-an empty workspace's data. The first cannot leave EU for Global discovery; the
-next two cross the product boundary; the last has no complete object/R2 deletion
-walk.
 
 **Consequences:** Global retains opaque routing and identity authority, regional
 Workers retain all workspace authority, and the desktop becomes the owner of one

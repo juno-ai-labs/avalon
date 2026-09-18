@@ -317,8 +317,6 @@ stating before the mechanism exists.
 - Don't invent a second, special reply shape for a canonical-state request; two
   shapes for one truth diverge.
 
-## Ordering and de-duplication
-
 ### Duplicates are normal, and arrival order proves nothing
 
 **Two sockets will tell you the same thing, and which one gets there first is a
@@ -824,6 +822,14 @@ sync topics — so closing it means applying pushed connection state on that
 screen instead of re-reading. Until then, this is the one place a timer-like
 read survives, and it is not a precedent.
 
+Main-feed connector recovery cards use that existing push path without waiting
+for the broader Settings cleanup. The conversation keeps `['connections']` as
+an active query; a `connector_connections` socket topic invalidates it after the
+OAuth callback commits, and an unresolved card follows the refreshed value
+until it first observes `connected`. It then latches **Connected** because an old
+card is a receipt of the successful recovery, not a standing connector-health
+surface. This is event-driven revalidation, not polling and not a second socket.
+
 ## Related documents
 
 - [`realtime-sockets.md`](realtime-sockets.md) — how a socket is admitted, which
@@ -842,7 +848,24 @@ read survives, and it is not a precedent.
 - [`workstream-creation.md`](workstream-creation.md) — the create path, and what
   the caller is made to wait for.
 
-## Changelog
+### 2026-09-11 — Connector recovery follows the existing workspace socket
+
+**What changed:** Conversation-feed connection cards now follow the active
+connections query as the workspace socket invalidates it, then keep the first
+connected state they observe above the virtualized rows for the feed's lifetime.
+
+**Why:** OAuth completes outside the Electron window. A card that waits for
+focus can remain stale, while a polling card duplicates the workspace change
+stream and keeps asking after the answer is settled.
+
+**Considered and rejected:** A card-specific socket or timer. WorkspaceDO
+already publishes `connector_connections` after the authoritative commit, and
+the conversation already holds the matching query, so either would create a
+second synchronization mechanism for the same state.
+
+**What a future change has to respect:** **Connected** is latched presentation on a
+historical recovery receipt, not live health. A later decision about a revoked
+grant comes from a fresh connection-state read or provider call.
 
 ### 2026-09-10 — Read acknowledgement is addressed by conversation and stays on REST
 

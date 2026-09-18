@@ -107,8 +107,6 @@ just the person who asked.
    and falls back at use time. Deferred pending a Slack capability that does not
    currently exist.
 
-## Product behavior
-
 ### The reaction lifecycle
 
 A prompt with a source message — an app mention, or a DM that starts or
@@ -280,10 +278,6 @@ None. `reactions:write` and `reactions:read` are already in the installed bot
 scope bundle (`config/provider-apps/slack.json`), so no reconnection is required
 for either half of this change.
 
-The new Durable Object class needs a binding and a migration tag in both
-`apps/api/wrangler.global.jsonc` and `apps/api/wrangler.eu.jsonc` before the
-change is deployed.
-
 ## Acceptance
 
 1. Mention Rally in a public channel. Within a second the message carries 👀,
@@ -303,8 +297,6 @@ change is deployed.
    to the default reaction and logs the rejected name; no run fails.
 
 These land in [`e2e.md`](../../e2e.md) as durable checks.
-
-## Decision log
 
 ### 2026-08-22 — Both reaction writers re-read and write conditionally
 

@@ -403,19 +403,21 @@ describe("work-stream attachment tools", () => {
 
     const ids: string[] = [];
     let result = await list.execute({ limit: 17 }, context());
-    const inventoryCursor = (result.output as { nextCursor: string }).nextCursor;
+    const inventoryCursor = result.pagination!.continuations[0]!.input.cursor;
     for (;;) {
       const output = result.output as { items: Array<{ resourceId: string }>; nextCursor: string | null; totalVisibleResources: number };
       expect(output.totalVisibleResources).toBe(63);
       ids.push(...output.items.map((item) => item.resourceId));
-      if (!output.nextCursor) break;
-      result = await list.execute({ cursor: output.nextCursor }, context());
+      const continuation = result.pagination!.continuations[0];
+      if (!continuation) break;
+      result = await list.execute(continuation.input, context());
     }
     expect(ids).toHaveLength(63);
     expect(new Set(ids).size).toBe(63);
 
     await expect(list.execute({ attachmentKind: "image" }, context())).resolves.toMatchObject({
-      output: { totalMatchingResources: 1, items: [{ resourceId: imageId, attachmentKind: "image", contentMode: "view" }], nextCursor: null },
+      output: { totalMatchingResources: 1, items: [{ resourceId: imageId, attachmentKind: "image", contentMode: "view" }] },
+      pagination: { continuations: [] },
     });
     for (const [attachmentKind, resourceId] of Object.entries(kindFixtures)) {
       await expect(list.execute({ attachmentKind }, context())).resolves.toMatchObject({
@@ -451,10 +453,21 @@ describe("work-stream attachment tools", () => {
       resourceId, charactersBefore: 7_000, charactersReturned: 12_000,
       range: { start: 7_000, end: 19_000 }, totalCharacters: 19_534, charactersAfter: 534,
     });
-    const firstOutput = first.output as { previousCursor: string; nextCursor: string };
+    const firstOutput = {
+      previousCursor: first.pagination!.continuations.find((page) => page.slot === "previousPageId")!.input.cursor,
+      nextCursor: first.pagination!.continuations.find((page) => page.slot === "nextPageId")!.input.cursor,
+    };
     await expect(read.execute({ cursor: firstOutput.previousCursor }, context())).resolves.toMatchObject({
       output: { range: { start: 0, end: 12_000 }, charactersBefore: 0 },
     });
+    const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2 * 60 * 60_000);
+    try {
+      await expect(read.execute({ cursor: firstOutput.nextCursor }, context())).resolves.toMatchObject({
+        output: { range: { start: 19_000, end: 19_534 }, charactersAfter: 0 },
+      });
+    } finally {
+      later.mockRestore();
+    }
     await expect(read.execute({ cursor: `${firstOutput.nextCursor}tampered` }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
 
     database.prepare("UPDATE resources SET model_content_sha256 = ? WHERE id = ?").run("c".repeat(64), resourceId);
@@ -499,15 +512,10 @@ describe("work-stream attachment tools", () => {
     expect(output.text.charCodeAt(output.text.length - 1)).not.toBeGreaterThanOrEqual(0xd800);
   });
 
-  it("searches one authorized derivative, returns bounded ranked passages, and hides private notes from workspace principals", async () => {
+  it("searches one authorized derivative, returns bounded ranked passages, and refuses deleted resources for workspace principals", async () => {
     const { database, objectStore, bucket, env } = fixture();
     const resourceId = insertReadyResource(database, objectStore, bucket, 2);
-    const privateResourceId = insertReadyResource(database, objectStore, bucket, 3, { title: "Private note" });
-    database.prepare("UPDATE resources SET provider = 'avalon_note', resource_type = 'note' WHERE id = ?").run(privateResourceId);
-    database.prepare(`INSERT INTO notes
-      (id, workspace_id, owner_user_id, resource_id, scope, title, last_activity_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'personal', 'Private note', '2026-08-12', '2026-08-12', '2026-08-12')
-    `).run("20000000-0000-4000-8000-000000000003", WORKSPACE_ID, USER_ID, privateResourceId);
+    const privateResourceId = "20000000-0000-4000-8000-000000000003";
 
     const userSearch = __integrationTesting.createAvalonTools(env, input()).find((tool) => tool.definition.name === "search_resource")!;
     await expect(userSearch.execute({ resourceId, query: "needle evidence" }, context())).resolves.toMatchObject({
@@ -556,7 +564,7 @@ describe("work-stream attachment tools", () => {
           resourceId: textId,
           status: "skipped",
           reasonCode: "resource_tool_mismatch",
-          suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } },
+          suggestedCall: { tool: "read_resource", arguments: { resourceId: textId } },
         },
         { resourceId: secondImageId, status: "included", visualPartIndex: 1 },
       ],
@@ -579,8 +587,42 @@ describe("work-stream attachment tools", () => {
 
     await expect(view.execute({ resourceIds: [textId] }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
-      details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId: textId } } },
+      details: { suggestedCall: { tool: "read_resource", arguments: { resourceId: textId } } },
     });
+  });
+
+  it("names the tool a run actually advertises in every remediation it hands the model", async () => {
+    // These remediations exist so a model can recover in one turn. They were
+    // built by interpolating a `workstream_` prefix the plugin no longer
+    // carries, which named tools no run offers — beside a `suggestedCall` in
+    // the same payload that named them correctly. A literal-string rename
+    // sweep cannot see an interpolated name, so this asserts on the text.
+    const { database, objectStore, bucket, env } = fixture();
+    const tools = __integrationTesting.createAvalonTools(env, input());
+    const advertised = new Set(tools.map((tool) => tool.definition.name));
+    expect(advertised).toContain("view_resource");
+    expect(advertised).toContain("read_resource");
+
+    const textId = insertReadyResource(database, objectStore, bucket, 91);
+    const imageId = insertReadyImage(database, objectStore, bucket, 92);
+    const view = tools.find((tool) => tool.definition.name === "view_resource")!;
+    const read = tools.find((tool) => tool.definition.name === "read_resource")!;
+
+    const mismatches = [
+      await view.execute({ resourceIds: [textId] }, context()).catch((error: unknown) => error),
+      await read.execute({ resourceId: imageId }, context()).catch((error: unknown) => error),
+    ];
+    for (const error of mismatches) {
+      const message = (error as { message: string }).message;
+      expect(message).not.toMatch(/\bworkstream_[a-z_]+/u);
+      // Whatever tool the prose names, the run has to be offering it.
+      for (const named of message.match(/\b(?:view_resource|read_resource|list_resources)\b/gu) ?? []) {
+        expect(advertised, `${named} is named in a remediation but not advertised`).toContain(named);
+      }
+    }
+    // The description that promises the suggestion names it the same way.
+    expect(view.definition.description).toContain("read_resource");
+    expect(view.definition.description).not.toContain("workstream_read_resource");
   });
 
   it("reauthorizes image receipts and re-executes when visual rehydration is unavailable", async () => {
@@ -600,7 +642,7 @@ describe("work-stream attachment tools", () => {
       id: invocationId,
       runId: HARNESS_RUN_ID,
       toolCallId: "view-call",
-      toolName: "workstream_view_resource",
+      toolName: "view_resource",
       status: "completed",
       inputJson: JSON.stringify({ resourceIds: [imageId], maxDimension: 2_048 }),
       outputRef,
@@ -669,7 +711,7 @@ describe("work-stream attachment tools", () => {
       resourceId,
       prompt: "Focus on the evidence",
       summary: expect.stringContaining("Focused: Focus on the evidence"),
-      citations: [{ label: "Needle evidence", range: { start: 0, end: 40 }, readCursor: expect.any(String) }],
+      citations: [{ label: "Needle evidence", range: { start: 0, end: 40 } }],
       coverage: { status: "complete", totalCharacters: 19_534, consideredCharacters: 19_534, limitations: [] },
     });
 
@@ -685,7 +727,7 @@ describe("work-stream attachment tools", () => {
     const imageId = insertReadyImage(database, objectStore, bucket, 8);
     await expect(summarize.execute({ resourceId: imageId }, context())).rejects.toMatchObject({
       code: "resource_tool_mismatch",
-      details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+      details: { suggestedCall: { tool: "view_resource", arguments: { resourceIds: [imageId] } } },
     });
   });
 
@@ -735,13 +777,13 @@ describe("work-stream attachment tools", () => {
       const args = tool === search ? { resourceId: imageId, query: "diagram" } : { resourceId: imageId };
       await expect(tool.execute(args, context())).rejects.toMatchObject({
         code: "resource_tool_mismatch",
-        details: { suggestedCall: { tool: "workstream_view_resource", arguments: { resourceIds: [imageId] } } },
+        details: { suggestedCall: { tool: "view_resource", arguments: { resourceIds: [imageId] } } },
       });
     }
     for (const resourceId of readable) {
       await expect(view.execute({ resourceIds: [resourceId] }, context())).rejects.toMatchObject({
         code: "resource_tool_mismatch",
-        details: { suggestedCall: { tool: "workstream_read_resource", arguments: { resourceId } } },
+        details: { suggestedCall: { tool: "read_resource", arguments: { resourceId } } },
       });
     }
     await expect(view.execute({ resourceIds: [unsupportedId] }, context())).resolves.toMatchObject({

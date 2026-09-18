@@ -28,18 +28,19 @@ once and passes on a rerun.
 | `packages/*/src/**/*.test.ts` | `pnpm --filter @rally/<pkg> test` | Node. Pure contract, harness, and connector logic. |
 | `packages/db/test/**/*.test.ts` | `pnpm --filter @rally/db test` | Node. The [local baseline](d1-baseline-migrations.md), the development seed, and the work-stream queries over a migrated database. There is no per-migration suite: every migration is at or below the baseline boundary and immutable, and the manifest digest fails if one is edited or inserted. A *new* migration is tested through the baseline equivalence check and by whatever service test covers the behaviour it enables. |
 | `apps/site/test/**/*.test.ts`, `apps/release-retention/test/**/*.test.ts` | `pnpm --filter @rally/site test`, `pnpm --filter @rally/release-retention test` | Node. The public site Worker and the release-retention Worker, each with its own R2 builder. |
-| `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
+| `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules, including `ios-project.test.mjs` for the native iOS packaging invariants. |
+| `apps/ios/RallyTests`, `apps/ios/RallyUITests` | Xcode → Product → Test on the Rally scheme | XCTest on the iOS 26 SDK. PKCE, deep links, transcript mapping, and sign-in chrome. **Not** covered by `pnpm test`; the sandbox has no iOS SDK. |
 | `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and workflow invariants — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
-| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Two real regional Workers under `wrangler dev`, with the local D1 database. |
+| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Configured regional Workers under `wrangler dev`, with the local D1 database. |
 | `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
-includes workerd. CI splits them: `api-tests-workers-1-of-n` and
-`api-tests-workers-2-of-n` each run the package-owned workers command with a
+includes workerd. CI splits them across `api-tests-workers-1-of-n` through
+`api-tests-workers-4-of-n`; each runs the package-owned workers command with a
 Vitest shard, and the container and release suites are their own matrix jobs.
-`deploy-api.yml` must use those same two workers shards rather than appending
+`deploy-api.yml` must use those same four workers shards rather than appending
 unsharded `test:workers` onto a Node lane: that dumps the whole suite into one
 Miniflare, which is more `reset()` interleave than PR CI ever sees, and it is
 how a green pull request has already failed deploy verify on the same SHA.
@@ -888,7 +889,7 @@ touch this area or a change worth making that has not been made.
   production Worker builds behind their configured HTTP routes and works with any
   Node test runner. `scripts/smoke-local.mjs` currently requires a human to have
   started `pnpm dev:api:local` first, which is why it is not in CI; a harness
-  could run both regional Workers in-process and make the smoke check a gate
+  could run the configured regional Workers in-process and make the smoke check a gate
   rather than a manual step.
 
 ## Staging a race against an object operation

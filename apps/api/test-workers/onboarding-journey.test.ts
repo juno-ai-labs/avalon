@@ -37,4 +37,24 @@ describe('durable onboarding journey', () => {
       expect(resumed.get(member, 'member')).toMatchObject({ stage: 'complete', revision: 1 });
     });
   });
+
+  it('keeps a journey readable when a stored connector leaves the catalog', async () => {
+    // A connector id that is retired or renamed is still sitting in rows written
+    // before it went. The read path parses that array, and `update` reads before
+    // it writes, so rejecting the row would lock the person out of seeing or
+    // advancing their own onboarding — not merely out of saving a selection.
+    const stub = env.MIGRATION_PROBE_DO!.getByName('onboarding-journey-retired-connector');
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: 'workspace_do', workerVersionId: 'onboarding-retired-test', now: 1 });
+      const store = new OnboardingJourneyStore(state.storage.sql);
+      store.get(creator, 'creator');
+      state.storage.sql.exec('UPDATE onboarding_journeys SET connector_ids = ? WHERE user_id = ?',
+        JSON.stringify(['workspace:retired-provider', 'you:google-mail-calendar']), creator);
+      expect(store.get(creator, 'creator').connectorIds).toEqual(['you:google-mail-calendar']);
+      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'profile' }))
+        .toMatchObject({ stage: 'profile', connectorIds: ['you:google-mail-calendar'] });
+    });
+  });
 });

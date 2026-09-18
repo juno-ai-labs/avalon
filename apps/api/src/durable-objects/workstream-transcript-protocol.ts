@@ -12,6 +12,7 @@ type LocalOnlyTranscriptOperation =
   | "captureSubstreamContext"
   | "installInitialContext"
   | "prepareParticipantMessage"
+  | "prepareConversation"
   // Authenticated product operations resolve immutable human provenance and
   // join the object transaction locally; no generic RPC may impersonate one.
   | "appendParticipantMessage"
@@ -25,6 +26,9 @@ type LocalOnlyTranscriptOperation =
   | "commitActivationInputs"
   | "settlePendingSteersAtStep"
   | "activatePendingInput"
+  // Reads the queue against the live Bind projection to say which input can
+  // start the next cycle; only the object holding the loop can act on it.
+  | "nextActivationInput"
   | "appendPreparedParticipantMessageAtSequence"
   | "pendingTranscriptInputs"
   | "pendingTranscriptInput"
@@ -40,13 +44,15 @@ type LocalOnlyTranscriptOperation =
   // are meaningless to any caller that does not hold the loop.
   | "bindMessagePositionsBySourceKind"
   | "omittedTurnEnvelope"
+  // Accepted assistant turns may enqueue regional effects in the same SQLite
+  // transaction. Function callbacks cannot cross the object-port boundary.
+  | "commitBindTransition"
   | "range";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 
 const DISPATCHED_OPERATIONS = [
   "initialContext",
-  "commitBindTransition",
   "commitBindCompaction",
   "compactionCheckpoint",
   "recordProviderBoundary",

@@ -132,8 +132,6 @@ memory rather than model context.
    carries exact entries so a large work stream cannot refill its context during
    compaction.
 
-## Product behavior
-
 ### Sending and displaying an attachment
 
 The composer continues uploading a file as a draft resource before a message is
@@ -324,8 +322,6 @@ work-stream resources, and the agent continues using typed, authorized tools
 without shell or arbitrary code execution. The change makes the existing
 resource and audit guarantees true at the model boundary; it does not add a new
 global surface or participation rule.
-
-## Decision log
 
 ### 2026-08-12 — Scope the raw compaction summary, not just its inventory
 

@@ -46,15 +46,51 @@ A substream persists its skill snapshots by execution id and records loaded refs
 Loading a Sidekick in a workstream's main substream also persists a deduplicated
 attachment. Future executions load eligible attachments using their latest
 accepted revision; retries retain the admitted bodies while rechecking access.
-Loads in other substreams stay execution-local. Removing an attachment affects
-future executions.
+Loads in child substreams persist in that child's attachment table too; main
+and sibling attachments stay independent. Removing an attachment affects future executions.
+
+Workstream-owned Sidekicks are inherently Recommended. Participants and agents
+can also attach non-archived workspace Sidekicks through the rail picker or the
+Sidekicks plugin's attach/detach tools. WorkstreamDO owns those explicit links.
+Workstream main and child agents receive only list/attach/detach from this
+plugin; drafting stays in the Sidekick's own authoring conversation.
+Management tools require a user execution principal. Workspace-principal runs
+still discover eligible skills but receive no person-authorized management tools.
+Hidden background children use a host-only execution path: their stored user
+principal, active runtime, local participation and parent participation must
+agree. They do not acquire human viewer access. Detachment addresses that
+child's loaded attachments directly, preserving Main and siblings; REST callers
+still pass the ordinary child viewer check. Attachment routes reject automation
+parents with a typed unsupported-parent response.
+Each new execution snapshots eligible recommendations and marks their catalog
+lines `[Recommended]`, encouraging use when relevant without activating bodies.
+Detaching an explicit recommendation also removes the current substream's local
+attachment; sibling attachments survive. Workstream ownership itself cannot be
+detached. Workspace Sidekicks remain ordinarily discoverable after detachment.
+The common recommendation service publishes the existing workspace `automations`
+sync topic after a successful change, including agent-originated changes. Every
+desktop window invalidates its recommendation queries on that topic, so an idle
+sibling view learns about shared changes without waiting for transcript activity.
+Both participant preconditions are checked before the shared delete. The two
+object removals remain idempotent, not a cross-object transaction. Executions
+with no eligible Sidekick sources skip recommendation authority reads entirely.
 
 A work stream's own rails list **Sidekicks**: the Sidekicks the room owns —
 `listWorkstreamAutomations`, read through `GET /sidekicks/workstream/:id`, which
-refuses a caller who is not a participant — together with the attachments its
-main conversation has loaded, folded into one list keyed by Sidekick id. A row
-opens that Sidekick in the library window; the removal on a row is the
-attachment's, and a room's own Sidekick that has never been loaded carries none.
+refuses a caller who is not a participant — together with explicit workspace
+recommendations and the current substream's loaded attachments, folded into one
+list keyed by Sidekick id. The plus-marked Add Sidekick rail row opens a menu:
+Attach existing Sidekick selects a non-archived workspace Sidekick, while Create
+new Sidekick opens the existing Sidekick composer.
+A row opens that Sidekick in the library window; Remove lives in its right-click
+menu when the viewer may remove it. Removing a workspace recommendation
+also clears its current local attachment. An owned Sidekick that has never been
+loaded carries no removal action; its recommendation follows ownership.
+The rail marks recommendations with a right-aligned circled carambola icon whose
+tooltip explains shared discovery without automatic loading.
+Picker state is keyed by workstream, and an attachment response cancels older
+recommendation reads before updating that workstream's cache. Removal state is
+keyed by conversation, so navigation cannot carry an error into another substream.
 A merged row takes its lifecycle from the owned summary and its availability
 from the attachment, because each list knows one of them. The section is absent
 entirely — heading included — for a room with none and while the answer is
@@ -70,9 +106,9 @@ sidebar renders participants as a facepile and provides attachment removal.
 
 The Worker exports `SidekickDO`. PR #583 supplied the dual-export compatibility
 release with the old v9 bindings. The
-rename release appends v10 in both regions and points `AUTOMATION_DOS` at
+rename release appends v10 in configured deployments and points `AUTOMATION_DOS` at
 `SidekickDO`, preserving namespace IDs and all `:automation:` object-name bytes.
-It requires verified compatibility deployments in both regions before rollout.
+It requires verified compatibility deployments in configured deployments before rollout.
 The object now reports class `SidekickDO` but retains component `automation_do`
 and its existing schema ledger. Migration commands queued with `AutomationDO`
 are translated at dispatch to the new class; the tracker accepts both names so
@@ -80,7 +116,6 @@ pre-rename inventory and reports remain actionable during regional rollout.
 The final cleanup removes the old Worker export only after verifying the rename.
 An internal source-import shim still exposes the historical type name; it does
 not export a Cloudflare class from the Worker entrypoint.
-
 
 ## Where the code lives
 
@@ -90,18 +125,18 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
-| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the drafting plugin's host, which creates a room's automation on its first submission and posts the proposal card; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `sidekick_post_result` tool; and the run prompt context built from the definition. |
+| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; `createAutomationPostResultPlugin`, the `post_result` tool; and the run prompt context built from the definition. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
-| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `all` over leaves), the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
+| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Delete, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows the participant facepile and this room's Sidekicks. |
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
@@ -110,8 +145,6 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/desktop/src/renderer/styles/app.css` | `.sidekick-tile-tooltip`, the one width every answer a strip tile's tooltip gives is held to. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
-
-## How it works
 
 ### Creation and ownership
 
@@ -142,18 +175,25 @@ a filter.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
-create a second draft. The existing `rally:sidekicks` plugin can also create a
-workstream-owned Sidekick from a workstream conversation. The persisted plugin
-id and the canonical tool names stay; the model reads the plugin as
+create a second draft. Coordinating conversations use `rally_agents` to discover
+and reuse a suitable Sidekick owned by their workstream, or create a minimal one
+there by default, then send setup instructions to its authoring agent. Drafting
+tools are available only in that authoring conversation. The persisted drafting
+plugin id and canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix. Workstream-owned
 entries are managed in the library and listed in their own room's rails, beside
 that conversation's loaded attachments.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
 `SubstreamAgent`, preserving the existing automation parent identity and routes.
-The same conversation remains available for subsequent edits. Personal versus
-workspace scope is selected conversationally while drafting; a workstream-owned
-Sidekick remains owned by that workstream.
+The same conversation remains available for subsequent edits. Personal and
+workspace drafts retain their existing ability to adopt an explicitly requested
+personal/workspace scope before publication; a workstream-owned Sidekick remains
+owned by that workstream. Authoring guidance uses the scope already selected
+instead of requiring another scope question. The host supplies its Sidekick ID,
+and directory reads provide the current definition before revision. Questions
+from an agent exchange return through ordinary replies, without participant
+elicitation forms.
 
 ### Conversational publication
 
@@ -166,18 +206,15 @@ captions and shrink to the work-stream rows' 54px square with 9px padding and
 The tiles change shape over the sidebar's own collapse motion, so they arrive
 with the edge rather than a frame ahead of it. Enabled means lifecycle
 `active`, not a run currently in progress and not the stored `loadable` capability.
-Draft, paused, and workstream-owned Sidekicks are excluded. A workspace that has
-**no Sidekick of any kind** gets one **New Sidekick** tile in the strip instead,
-which opens the library window on `/sidekicks/new`. That is a stricter test than
-"nothing qualifies for the strip", deliberately: `/sidekicks/new` creates a draft
-as it opens, so a tile keyed on the strip being empty would still be on screen
-afterwards and would create another draft on every press, and it would also tell
-somebody whose Sidekicks are all paused that they have none. A workspace with
-only drafts, paused, or workstream-owned Sidekicks therefore sees no strip at
-all, as it did before the tile existed; those are reached from the library. The
-strip is likewise absent while the workspace answer carrying the Sidekicks has
-not arrived, which the list itself reports by being `undefined` rather than
-empty. Each tile reuses the rounded hexagon, stable identity
+Draft, paused, and workstream-owned Sidekicks are excluded. A workspace with
+**no active personal or workspace Sidekick** gets one **New Sidekick** tile in
+the strip instead, which opens the library window on `/sidekicks/new`. Draft,
+paused, and workstream-owned Sidekicks remain reachable from the library, but
+they do not occupy this strip; if they are the only Sidekicks available, the
+new-Sidekick tile keeps the sidebar from leaving the slot blank. The strip is
+absent while the workspace answer carrying the Sidekicks has not arrived, which
+the list itself reports by being `undefined` rather than empty. Each tile reuses
+the rounded hexagon, stable identity
 color, and centered symbol introduced for automation shortcuts. A running
 Sidekick — lifecycle `active`, which is every Sidekick the strip shows — carries
 a **play** in `success-base` at the bottom right, cut out of the hexagon's own
@@ -216,7 +253,6 @@ up to 92px. The deliberate differences are one horizontally scrolling row
 state, and an indicator at bottom right as requested — the reference's dot,
 here the play the changelog below explains.
 
-
 ### Drafting in the conversation
 `sidekick_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
 actor's management authority. The owner appends an immutable revision and publishes
@@ -239,6 +275,21 @@ rule cannot name someone the agent *invented*, and the execution principal is
 the one id on the run the host supplied itself. `rememberAutomationPeopleSearchResult`
 restores `you` alongside the matches so a resumed run rebuilding the set from
 replayed tool output agrees with a fresh one.
+
+**A connection advertises only the events its own scope can receive.**
+`connectorActivityTriggerDescriptors` takes the connection's scope and returns
+nothing where the connector's activity cannot arrive in it, so a personal
+Granola, Fireflies or Ashby connection reports `activityTriggerCount: 0` —
+their webhooks belong to the workspace install, and `normalize` refuses every
+other connection. A zero count on a plugin that plainly has events reads as
+"this connector has no events", so the catalog entry also carries the scope
+those events *do* need: `plugins_list`, `plugins_search` and `plugin_inspect`
+turn it into one sentence saying a workspace connection is required, and
+`set_evaluator_rules` refuses a rule on such a plugin with the same sentence
+rather than the generic "no event of that name" — which reads as a typo to
+correct, and sent the run looking for another event and then a schedule. The
+model already saw `scope: "personal"` beside four healthy-looking triggers and
+reasonably concluded the connection was usable.
 
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
@@ -279,7 +330,7 @@ run it already made. The object must hold an accepted revision
 | --- | --- | --- | --- |
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
 | **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
-| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
+| **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
 | **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
 **Connector events** follow one regional path. The regional activity Queue
@@ -294,19 +345,33 @@ predicate with no model inference, and returns one complete
 `workspace_external_event_delivery_v1` message per match carrying the
 registration, the destination, and the event. There is no delivery ledger and
 no lease: the consumer sends each message to the Queue, and the destination is
-idempotent on the event id, which is all a lease ever guaranteed. A redelivery
-answers `sidekick_occurrence_replayed`. Registrations for an automation and
+idempotent on the occurrence key — the event id, unless the connector named the
+occurrence the event reports, as Granola does for a note that can arrive as a
+share and as a generation — which is all a lease ever guaranteed. A redelivery
+answers `sidekick_occurrence_replayed`, and so does a second delivery for the
+same named occurrence. Registrations for an automation and
 for a watched work-stream resource share one candidate index; a watched work
 stream sends no evaluator object, while an automation needs predicates because
 it selects event families, content, people, and provider fields.
 
 An evaluator rule is one AND group: `when` is `{kind: "always"}` or
-`{kind: "all", allOf: [leaf, ...]}` over the manifest's declared attributes.
+`{kind: "matching", allOf: [leaf, ...]}` over the manifest's declared attributes.
 Unknown keys, operators, attributes, plugin/event pairs, duplicate ids, empty
 groups, non-finite numbers, and wrong scalar kinds are rejected at every
 boundary; missing fields make positive and negative predicates false and only
 `presence.not_exists` matches absence; matching is case-sensitive with no
 coercion. A rule that needs OR is two rules.
+
+`matching` was spelled `all` until the rename, and rows carrying that spelling
+are still stored in `definition_revisions.evaluator_rules_json` and
+`workspace_external_event_registrations.evaluator_json`. A Zod `preprocess` on
+`ExternalEventPredicateV1Schema` rewrites the legacy discriminant before
+validation, so both columns keep parsing while every reader past that seam sees
+`matching` alone. Because it maps the value *before* the union rather than
+adding a third branch to it, the JSON schema `set_evaluator_rules` derives for
+the drafting model still names one spelling — which is the point of the rename,
+`all` being indistinguishable from `always` to a model reading the two side by
+side. What has to be true before the seam can go is in the changelog.
 
 A rule may also narrow itself to one resource, and `automationBindableResourceTypes`
 (contracts) is the single answer to which one: the resource types the rule's own
@@ -402,7 +467,7 @@ row, no activity, and no notification.
 
 A run of a room's automation holds one extra plugin, `rally:sidekick-result`
 (`rally_sidekick_result` to the model), preloaded, with the tool
-`sidekick_post_result`. It is offered only when
+`post_result`. It is offered only when
 `readRunDefinition().owningWorkstreamId` is not null, so a personal or
 workspace automation cannot post into a room at all. The tool asks
 `WorkstreamDO.authority` for the room's generation and archive state, refuses an
@@ -419,7 +484,7 @@ instructions name is the run's own work with its connector tools.
 | --- | --- | --- |
 | `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule and run alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
 | `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
-| `remove` (`DELETE`) | a manager | open runs stopped, `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object is kept, and `authorizeViewer` answers unauthorized and archived from then on |
+| `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
 | `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving pauses an `active` automation with `paused_by = 'room_archive'`; unarchiving resumes only an automation the archive paused, so a person's pause is never undone by somebody unarchiving the room. The Worker's viewer decision reports `archived` while the room is, which makes the automation's conversation and runs read-only |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
@@ -532,13 +597,19 @@ Sidekick's id, exactly what every Sidekick showed before the picker existed.
 - **`AutomationDO` forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
-- **The one way a result reaches a room is `sidekick_post_result`.** Rally
+- **The one way a result reaches a room is `post_result`.** Rally
   posts nothing after a run; the run posts, once, when its instructions say the
   room should hear it. A second delivery path is a duplicate the room reads
   twice.
 - **Bindings are derived from the definition, never taken from a request.**
   `apply` carries an id and nothing else; a request field restating what the
   draft settled is a second source of truth for it.
+- **A trigger is advertised only to a connection that can receive it.** The
+  drafting catalog and the accept path both read a connection's triggers
+  through `connectorActivityTriggerDescriptors` with its scope, so neither can
+  offer an event the connection's scope cannot carry. A Sidekick built on one
+  drafts, applies and activates, and then differs from a working Sidekick with
+  nothing to do only in that it never fires.
 - **A room's automation is the room's.** Its scope is fixed at creation, its
   managers are the room's participants, it is listed only in the room's rail,
   and the room's archive pauses it. Authorship confers nothing on it.
@@ -591,7 +662,7 @@ or the memory store the automation scope lives in.
   when its alarm fires.
 - **The Queue redelivers a matched event.** `admitExternalEvent` answers
   `sidekick_occurrence_replayed`; the consumer logs it and acks.
-- **A result cannot be posted.** `sidekick_post_result` throws
+- **A result cannot be posted.** `post_result` throws
   `sidekick_owning_room_archived`, `sidekick_owning_room_missing`, or
   `sidekick_post_result_refused:<code>` (a stale generation or an archived
   room decided inside the room's object); the run sees the tool error and says
@@ -607,6 +678,17 @@ or the memory store the automation scope lives in.
 
 ## Testing
 
+Workstream recommendation coverage lives in `test-workers/automation-do.test.ts`
+(child agent tool attachment, fresh main/sibling catalogs, local loading, combined
+removal) and `test-workers/conversation-parent-contract.test.ts` (v12 migration,
+idempotency, scope, participation, durable sync publication and unsupported
+automation parents). Hidden child tool coverage also proves REST refusal,
+stopped-execution refusal and preservation of Main's loaded attachment.
+Run them with `pnpm --filter @rally/api
+test:workers`. Desktop `sidekick-picker.test.tsx`, `sidekick-section.test.tsx`, and
+`workstream-sidekicks.test.tsx` cover selection, merged badges/removal, and switching
+substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
+
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
@@ -617,14 +699,14 @@ or the memory store the automation scope lives in.
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
-| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
+| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation. |
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
-| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `all` evaluator shape, and the submission pre-check. |
+| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, the submission pre-check, and the sentence a scope-blocked connection carries into the catalog and into a refused rule. |
 | `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
-| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
+| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
 Traps worth knowing before writing one here. The `test-workers` D1 starts with
 no schema, so a test that exercises membership or sessions declares those tables
@@ -724,12 +806,367 @@ the regional activities dead-letter queue, per
 [`workstream-durable-object.md`](workstream-durable-object.md#operations). A
 missing scheduled run is a schedule row whose `next_due_at` is null or an
 alarm entry behind its backoff gate in `_internal_durable_alarms`;
-`sidekick_scheduled_alarm_failed` names the entry and the handler's code. A
+`sidekick_scheduled_alarm_failed` names the entry and the handler's code. When
+that code is a schema rejection it names the schema and the failing paths — a
+bare `ZodError` there is a parse that has not yet been moved onto
+`parseRpcInput`, and is itself the defect to fix before diagnosing further. A
 run refusing provider writes with "This automation run is no longer running"
 was paused or deleted after admission. [`runbook.md`](runbook.md) has the
 production inspection paths.
 
 ## Changelog
+
+### 2026-09-17 — A connector event admits under the occurrence its connector named
+
+**What changed:** `admitExternalEvent` keys the run on `occurrence:<key>` when
+the delivery carries the occurrence the connector named, and on
+`external:<workspaceEventId>` otherwise. The key is a field of the normalized
+activity that adapter code sets; the workspace store drops a same-named key
+from provider metadata at ingest and lifts only that field onto the delivery.
+
+**Why:** Granola reports one note twice, as a share and as a generation, and a
+Sidekick on "Transcript added" must run for the note once. The fuller entry,
+with the Granola behaviour behind it and the alternatives rejected, is in
+[`connectors.md`](connectors.md#2026-09-17--a-note-shared-into-the-workspace-after-it-was-generated-is-a-transcript-added).
+
+**Considered and rejected:** Reading the key out of the event's metadata. The
+generic webhook copies a caller's metadata whole, and the key a Sidekick dedupes
+on is not a caller's to pick. Also rejected: one key space for both, where a
+connector naming a bare id could collide with another event's.
+
+**Consequences:** Every trigger still converges on `occurrence_key` with
+`INSERT OR IGNORE`; a named occurrence delivered twice answers with the run it
+already made, like a redelivery.
+
+PR [#807](https://github.com/juno-ai-labs/avalon/pull/807).
+
+### 2026-09-15 — The empty Sidekick slot stays visible until an active shortcut occupies it
+
+**What changed:** The sidebar shows its dashed **New Sidekick** tile whenever
+the loaded Sidekick directory has no active personal or workspace Sidekick.
+Draft, paused, and workstream-owned Sidekicks still do not become shortcuts,
+but they no longer suppress the empty-slot action and leave this part of the
+sidebar blank.
+
+**Why:** The strip is a visual slot for active standalone Sidekicks. Basing its
+empty state on whether any Sidekick record existed made a draft count as though
+it occupied that slot even though drafts are deliberately filtered from the
+strip. The result was neither a shortcut nor an action. The slot's own occupancy
+is the smaller and more legible authority for whether to show its empty state.
+The same rule deliberately applies to a paused-only workspace: the tile names
+the empty active-shortcut slot, not the absence of every Sidekick, and a blank
+slot was judged less useful than keeping the library entry point available.
+
+**Consequences:** The tile remains absent while the directory is loading and
+disappears as soon as one active standalone Sidekick can occupy the strip.
+When a personal draft already exists, the tile resumes the most recently
+updated one rather than routing through `/sidekicks/new` and multiplying
+abandoned drafts. A workspace draft is not a resume candidate because the
+directory summary proves visibility but not whether this viewer may manage it;
+with only workspace drafts, paused, or workstream-owned Sidekicks the tile still
+opens `/sidekicks/new`. This reverses the stricter record-existence rule
+documented by the 2026-09-10 **The empty strip makes the first Sidekick** entry
+below.
+
+### 2026-09-15 — Recommend Sidekicks across a workstream
+
+**What changed:** Workspace Sidekicks can be attached through the rail or agent
+tools. Those links and Workstream ownership add a Recommended catalog badge in
+every substream. Each substream independently persists its loaded Sidekicks.
+
+**Why:** People and agents need a shared way to nominate relevant knowledge
+while each conversation chooses when to load the instructions. The existing
+ownership relation and one small attachment table compose those behaviors.
+
+**Consequences:** Recommendations affect future executions. Removing a workspace
+recommendation also clears its loaded attachment in the current substream.
+The service checks parent and local participation before removal; management
+tools are withheld from workspace-principal runs. Empty skill catalogs do not
+wake recommendation authorities just to intersect their results with nothing.
+The existing `automations` sync topic also refreshes recommendation queries;
+publication belongs in the common service because agent tools bypass REST
+middleware and otherwise leave other windows stale.
+Hidden agents use their durable execution identity for the same commands because
+their child conversations intentionally have no human viewer admission. That
+exception stays host-only and clears only the executing child's local attachment.
+
+### 2026-09-15 — A rule can name Fireflies
+
+**What changed:** `fireflies` is added to `ConnectorTypeSchema`, and a test in
+`apps/api/test/connector-activity-trigger-vocabulary.test.ts` asserts that every
+connector manifest declaring an activity trigger is accepted by it.
+
+**Why:** It was the only connector with activity triggers missing from that
+enum, so `ExternalEventRegistrationProjectionV1Schema` rejected every Fireflies
+registration at `evaluators.0.source.connectorType`. The projection is built
+from `connection.connector_type` verbatim (`sidekick-do.ts:1880`) and
+`prepareApplication` returns it as `unknown[]`, so nothing typed the value on
+the way out and the rejection happened at the far end of the RPC hop.
+
+The visible behaviour was a Fireflies Sidekick that accepted, showed as
+published, and never fired. `lifecycle` and `accepted_definition_revision`
+commit in the accept's own transaction; registrations are written afterwards by
+`applyEffects`, which threw here on every attempt. Scheduled alarms have no
+retry ceiling, so it retried indefinitely against a deterministic failure while
+`meeting.summarized` arrived, normalized, committed, and matched zero
+destinations. The entry above made that failure readable; this is what it
+turned out to say.
+
+`TELEMETRY_CONNECTOR_TYPES` already listed `fireflies`. Two spellings of the
+registry's membership live in the same package, and the connector was added to
+one of them.
+
+**How it is proved:** The test builds the fully-configured registry and lists
+the connectors that declare an activity trigger but are not nameable in a rule.
+Removing `fireflies` from the enum fails it with
+`expected [ 'fireflies' ] to deeply equal []` — the connector by name, which is
+the whole diagnosis. It also asserts `unconfiguredConnectorTypes` is empty, so a
+connector missing from the fixture cannot pass by never being built.
+
+**What a future change has to respect:** a connector that declares no activity
+trigger is deliberately not required in the enum — it can never produce an event
+for a rule to match. The test encodes that, so widening it to every connector
+would be adding vocabulary for nothing.
+
+**Considered and rejected:** deriving `ConnectorTypeSchema` from
+`TELEMETRY_CONNECTOR_TYPES`. It is the wrong authority — it is a telemetry
+dimension whose membership answers a different question, and it already
+contains `custom_mcp`, which has no activity triggers. The manifests are the
+authority, and `@rally/contracts` cannot see them, so the link is a test rather
+than a derivation. Also rejected: typing `prepareApplication`'s `evaluators` as
+`ExternalEventEvaluatorV1[]` so this failed at compile time. It is the right
+shape and worth doing, but it changes an apply path on the strength of a
+diagnosis made minutes ago; the guard that fails in CI is the cheaper half and
+does not.
+
+Shipped in #765.
+
+### 2026-09-14 — Sidekicks configure themselves through their authoring conversations
+
+Long setup work must leave Rally's coordinating conversation available. Creation
+establishes a minimal Sidekick and communication supplies its instructions;
+only its authoring agent receives drafting tools. Discovery prefers reuse within
+the current workstream. The authoring prompt names its identity and uses the
+already selected scope, while existing publication and scope validation remain
+authoritative. Returning questions and saved results through the same message
+primitives avoids a second setup protocol or an unavailable elicitation form.
+
+### 2026-09-14 — A publication that cannot parse says which field it choked on
+
+**What changed:** `applyExternalEventRegistrations` parses its input through
+`parseRpcInput` (`apps/api/src/lib/rpc-input.ts`) rather than
+`Schema.parse`. On a rejection it throws a plain `Error` whose message is
+`<schema>_invalid:<path>:<code>` for the first three issues, capped at 120
+characters.
+
+**Why:** A `ZodError` does not survive a Durable Object RPC hop. The serializer
+reduces it to a bare `Error` carrying no `issues`, no derived message and not
+even the name, so the calling object logs the bare word `ZodError` and
+stops.
+
+That was not a cosmetic loss. A Sidekick's registrations are written only by
+the publication tail — `applyEffects` → `replaceRegistrations` → this RPC — and
+in production a malformed projection made that hop throw on every attempt. The
+alarm has no retry ceiling, so it retried forever; the Sidekick meanwhile
+showed as published, because `lifecycle` and `accepted_definition_revision` are
+committed in the accept's own transaction and nothing a reader sees consults
+`applied_effects_revision`. The visible symptom was a workspace Fireflies
+connection delivering `meeting.summarized` correctly and matching zero
+destinations, with `sidekick_scheduled_alarm_failed ZodError` as the only
+evidence — which names neither the field, nor the schema, nor which of the
+handler's several parses failed.
+
+Issue paths and codes are schema shape, not member data; `errorHandler` already
+draws that line when it records `validation_issues`, so the same line is drawn
+here and values are left behind. The message stays inside the character class
+`scheduledAlarmErrorCode` requires, so the operator notice at the third attempt
+carries the code rather than degrading to `handler_error`.
+
+**How it is proved:**
+`apps/api/test-workers/external-event-rules.test.ts` sends a malformed
+projection through a real WorkspaceDO RPC hop and asserts the rejection names
+`external_event_registration_projection_invalid` and `evaluators.0.source`.
+Restoring `Schema.parse` fails it with `expected 'ZodError' to contain …` —
+the production symptom exactly, which is what makes the test worth having on
+real workerd rather than against the schema.
+
+**What a future change has to respect:** the Sidekick showing as published
+while its registrations are missing is still true, and is not fixed here. This
+change makes that state diagnosable in one log line; making it visible — a
+Sidekick whose `applied_effects_revision` trails its accepted revision should
+not read as healthy — is a change of its own.
+
+**Considered and rejected:** widening `reportScheduledAlarmAttempt` to unpack a
+Zod issue list. There is nothing left to unpack by the time it runs; the issues
+are gone at the boundary, which is the only place they still exist. Also
+rejected: moving every DO RPC entry point onto `parseRpcInput` in this change.
+The primitive is there for the next one to adopt as it is touched; converting
+some hundred call sites blind is how a diagnostic fix becomes a risk.
+
+Shipped in the pull request for this change.
+
+### 2026-09-14 — A connection advertises only the events its scope can receive
+
+**What changed:** `connectorActivityTriggerDescriptors` takes the connection's
+scope and returns `[]` where the connector's events cannot arrive in it, from
+the new `activityConnectionScopes` declaration described in
+[`connectors.md`](connectors.md#activity-ingestion). The drafting catalog
+carries `activityRequiresScope` beside the emptied list, and the three
+discovery tools and `set_evaluator_rules` turn it into one sentence naming the
+scope a connection needs. `set_evaluator_rules` refuses a rule on a
+scope-blocked plugin outright, on the plugin rather than the event: a rule that
+names an event type outright is not otherwise checked against the catalog at
+drafting time, so without it the draft was accepted and the automation was
+silent for good.
+
+**Why:** A personal Granola or Fireflies connection advertised its connector's
+full trigger set while `normalize` refuses any connection that is not
+workspace-scoped, so the events were ones it could never receive. The model saw
+`scope: "personal"` beside four healthy triggers, built the Sidekick on them,
+and nothing in the product distinguished the silence that followed from a
+Sidekick with nothing to do yet. The first fix was the filter alone, and it
+moved the failure rather than removing it: a count of zero is what a drafting
+model reads as "this connector has no events", and the next thing it reaches
+for is a timer that runs forever and never does the thing it was asked for. The
+refusal has to name the scope, because that is the only correction the model
+can act on.
+
+**Consequences:** An existing Sidekick bound to a personal connection of one of
+these connectors is refused at accept instead of applying and going quiet;
+it never fired, so the refusal is the first honest answer it has had. A
+connector that later delivers events to personal connections declares it once,
+in its adapter, and both surfaces follow.
+
+### 2026-09-14 — `matching` is the model's spelling; `all` stays the stored one
+
+**What changed:** The external-event predicate now has two schemas.
+`ExternalEventPredicateV1Schema` is the stored one and still spells its
+conjunction `all`, unchanged. `ModelFacingExternalEventPredicateV1Schema`
+spells it `matching` and is a `transform` onto the stored one; it is what
+`DraftExternalEventEvaluatorV1Schema` uses, and therefore what
+`set_evaluator_rules` advertises. `always` and the `allOf` field name are
+untouched on both sides.
+
+**Why:** `all` and `always` sat next to each other and read as near-synonyms —
+`all` means "every one of these leaves holds", `always` means "every event of
+this type". A model authoring this grammar has nothing to separate them, so the
+ambiguity landed in real rules rather than in review comments. But the
+discriminant is also *stored*, and Worker versions deploy gradually and can be
+rolled back, so a version serving beside or after this one must be able to read
+anything it writes. Renaming the stored spelling would have written rows the
+previous version cannot parse — the same silent outage as the reverse, arriving
+by rollback instead of by migration. Confining `matching` to the model's side of
+the boundary buys the legibility with no stored change at all, so there is no
+compatibility window to manage and nothing to migrate later.
+
+**How the two stay apart:** `z.toJSONSchema(…, { io: "input" })` renders a
+transform's *input*, so the tool offers `matching` and never `all`; parsing
+yields its *output*, so every reader and every column sees `all`. The stored
+schema does not admit `matching` at all, which is what makes "a `matching`
+reached a column" a parse failure in a test rather than a row nobody notices.
+`packages/contracts` and `apps/api/test/external-event-evaluator.test.ts` pin
+both directions.
+
+**Considered and rejected:** renaming the stored discriminant with a
+`preprocess` accepting the legacy `all`. It reads as the conservative option and
+is the opposite: the parse canonicalizes to `matching` and the writers persist
+whatever they parsed, so the first accept under the new version rewrites
+`definition_revisions.evaluator_rules_json`, `automation.evaluator_projection_json`
+and `workspace_external_event_registrations.evaluator_json` into a spelling the
+previous version refuses. Three columns rather than the two an earlier draft of
+this entry named: the projection is written from the parsed set in `apply`, and
+replayed by the `sidekick_publication` alarm and by `resumeFromPause`, both of
+which reach `applyExternalEventRegistrations`. Also rejected: keeping that
+design and translating back to `all` at each write, which leaves three
+boundaries that must each remember to, and a fourth that will be added later
+without.
+
+**Consequences:** `matching` exists in exactly one schema and must not spread;
+anything reading a predicate compares against `all`. A future change may rename
+the stored spelling once no Worker version predating it can serve or be rolled
+back to — at which point the transform becomes an identity and should be
+deleted, not left to suggest the two ever disagreed. `ReadPolicy` in
+`authorization-policy.ts` has its own unrelated `{kind: 'all'}`; it shares the
+spelling and nothing else.
+
+**Also in this change: a source-binding disagreement names both sides.**
+`submit_draft`'s `sidekick_activity_source_unbound` refusal now names the
+bindings the submitted triggers declare and the rules sitting outside that set,
+and `set_evaluator_rules` echoes the same two facts as `declaredSourceBindings`
+and `rulesNamingNoTrigger` once a draft exists. Both read one predicate,
+`unboundEvaluatorRules`, which is the one `automationDraftAcceptanceBlocker`
+refuses on.
+
+**Why:** a source binding key is invented by the drafting model and discoverable
+from no catalog — `plugin_inspect` does not emit one and `resources_search`
+returns none — so it is the one field where both halves of a disagreement are
+values only the model itself chose. "They must agree" therefore left it guessing
+which of two labels it had typed wrong. A production drafting run merging a
+second trigger into an existing Sidekick hit exactly that and stopped, having
+correctly diagnosed the refusal and had no way to act on it.
+
+The echo is a report and not a refusal, and is silent when nothing has been
+submitted: rules may be set before the draft, which is what keeps the two calls
+order-independent, and a disagreement at that moment may be against a draft the
+model is about to replace. Refusing there would answer the ordering question the
+buffering exists to avoid. A future change must keep both sites on
+`unboundEvaluatorRules` rather than rederiving either: an echo that cleared a
+submission the object then rejected would be worse than no echo, because it
+would be believed.
+
+**And the field itself now says what it is.** `sourceBindingKey`'s description
+told the model to take the value "from plugin_inspect or resources_search
+rather than composed". Neither returns one: the `plugin_inspect` projection has
+no such field, and `resources_search` fills `sourceBindingKeys` with `[]` for
+every row. The value is a label the model composes, validated only as
+`^[a-z][a-z0-9_-]{0,62}$` and resolved away at apply, so the description named
+a lookup that has never existed. It now says the label is composed, that no
+tool returns one, that the identical label goes on each rule, and that
+narrowing to a channel or folder is `resourceId`'s business rather than this
+field's. The rule half is described too, which it never was — the side that has
+to match was the undocumented one.
+
+**Why:** the two descriptions contradicted each other, and the wrong one won. A
+connector declaring no resource relationship — Fireflies declares none, so
+`automationBindableResourceTypes` is empty for it by construction — makes
+`resources_search` correctly return nothing, and that tool's own description
+says exactly what to do about it: omit `resourceId` and filter on a declared
+field. A production drafting run read the `sourceBindingKey` sentence instead,
+searched, found nothing, and reported to the person that a workspace
+administrator had to expose "a bindable Fireflies resource" — a thing no
+administrator can create. The draft it refused to make was already legal.
+
+**Consequences:** the one case where the value is *not* the model's to choose
+is where a resource search returns `sourceBindingKeys` for the resource a rule
+names; `evaluatorRuleIssues` has always narrowed to those when present, and the
+description now states that exception rather than leaving it to a refusal.
+Populating `sourceBindingKeys` later therefore needs no further wording change.
+
+### 2026-09-13 — Removing a Sidekick is presented as archive
+
+**What changed:** The current client calls the retained tombstone transition
+**Archive Sidekick** and sends `POST /sidekicks/:id/archive`. The confirmation
+states that schedules stop while the retained conversation and run history
+become inaccessible. The
+legacy `DELETE` route still reaches the same transition for installed clients;
+the persisted lifecycle remains `deleted`, and no archive browser or unarchive
+operation was added.
+
+**Why:** The operation never destroyed the Sidekick object or its historical
+data, so “Delete” overstated what happened and hid the retention semantics from
+the person making the choice.
+
+**Considered:** Renaming the stored lifecycle to `archived` now would require a
+schema and projection migration without changing any behavior available in the
+product. The compatibility tombstone is kept until a future unarchive design
+needs to make archived objects addressable again.
+
+**Consequences:** New clients use an archive-shaped API and vocabulary. Old
+clients continue to work, archived Sidekicks remain absent from the library,
+and restoration remains deliberately unavailable. During a rolling Worker
+deployment, a new client falls back to legacy `DELETE` only when the archive
+request returns the generic `not_found` route response; a domain
+`sidekick_not_found` response is not replayed.
 
 ### 2026-09-11 — A Sidekick's result names the Sidekick, and its documents land in the room
 
@@ -1443,7 +1880,6 @@ icon and gave Sidekicks different spacing from work streams. Expanded navigation
 retains its captioned horizontal strip; compact navigation uses the same 54px
 row geometry as work streams while the account controls remain fixed.
 
-
 ### 2026-09-08 — Finish authoring conversations after publication
 
 Ready submissions now return to the model for an acknowledgement instead of
@@ -1756,7 +2192,6 @@ there, and the card the room posts is the natural place to continue.
 the draft is parsed, so the stored definition never carries an address.
 `automations_list` reads through `WorkspaceDO.listWorkstreamAutomations` and
 `AutomationDO.readDetail` as the person the run acts for.
-
 
 ### 2026-09-04 — A posted result drains into the room, and the rail survives an archive
 
@@ -2347,7 +2782,6 @@ has no third scope, and the enum is used wherever a room's audience is chosen �
 widening it would offer `workstream` in every one of those places. Automations
 got `AutomationScopeSchema` of their own instead.
 
-
 ### 2026-09-01 — A completed run's result is judged before it is delivered
 
 **What changed:** `resolveRunDisposition` on AutomationAgent, four columns on
@@ -2438,16 +2872,6 @@ client retries and retrying is the one thing that never turns a non-member into
 a member. They are reachable: the membership read in `requireAuth` and the one
 inside the object are two separate reads of `workspace_members`, so a revocation
 landing between them arrives here.
-
-The larger half of the same class is `acceptDraft` reaching
-`WorkstreamEmailRoutingService` to claim the automation's address. That service
-throws `ApiError`, and an EU region whose `GLOBAL_EMAIL_ROUTER` binding is
-unreachable raises a deliberate 503 there — which arrived as `500` because
-`instanceof` does not survive the hop and the human sentence matches neither the
-table nor `SAFE_CODE`. `automationApiError` now recognises it by shape, which
-does survive. This one is defence rather than a proven repair: the workers pool
-preserves the class, so the test that guards the outcome passes with the rebuild
-removed, and the boundary where it does not is one no suite here reproduces.
 
 `applyAutomationProjection` is deliberately **not** wrapped. Everything it can
 throw is a fault rather than a refusal — a `ZodError` on its own strict schema,
@@ -2636,13 +3060,6 @@ one message rather than a regional fan-out. The
 `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` justification is corrected, as is every
 neighbouring comment and document section that still described the script as
 something a deploy runs.
-
-**Why:** The cutover ran in production on 2026-08-28 and cannot run again
-meaningfully; every step above was written to be temporary. The refusal is the
-one that costs something if it stays: it bans an EU-only or Global-only deploy
-outright, so the next person needing a one-region hotfix would be blocked by a
-gate naming a cutover that finished months earlier, with nothing to tell them
-it had already happened.
 
 The limit's stated reason was simply wrong, which is worse than terse. It
 claimed a failing message would retry forever without reaching the dead-letter

@@ -38,11 +38,6 @@ before a search needs it.
 
 ## How it works
 
-A namespace belongs to one deployment, region, workspace, and embedding space.
-Its name hashes those values. Global uses `gcp-us-west1`; EU uses
-`gcp-europe-west1`. Production reads `TURBO_PUFFER_PROD_API_KEY`; other environments
-read `TURBO_PUFFER_DEV_API_KEY`. There is no credential or region fallback.
-
 Generation v3 uses two namespaces: `rally-search-v3-<identity hash>-text` holds
 complete lexical documents without vectors; `rally-search-v3-semantic-<hash>` holds
 embedded chunks. The semantic hash combines the workspace identity with tokenizer revision, algorithm version, chunk size,
@@ -88,36 +83,6 @@ the highlighted row is scrolled back into view whenever one opens or closes.
 Query and category changes discard old pages. A row shows its excerpt and source
 only; ⌘1-9 still opens the nth row, unadvertised.
 
-Requests opt into pagination with `pageSize` and continue with `nextCursor`, the
-last consumed Turbopuffer id boundary (stable hash order, not relevance or
-recency). This deterministic position is never an authorization grant.
-Continuation exposes matching index progress even if the page has no admitted
-results; it does not guarantee a readable match on a subsequent page. The read
-path reads no content owner (WorkstreamDO, SubstreamAgent, WorkspaceDO resource
-rows) and no R2. Each source admits its candidate batch through the projected
-search decision (`checkMany`: Global reads KV; EU, which has no KV binding, reads
-the WorkspaceDO snapshot table, the one Durable Object read left on the EU
-request path) and renders every result from the attributes the
-candidate came back with: the full text, the title and source label, the time,
-the transcript position, the link URL, the MIME type and the archive state. A
-decision the projection does not hold yet is answered unavailable, the candidate
-is omitted without the page saying so, and the fill (registration, canonical
-walk, publication) runs after the response through `waitUntil`, so the next
-search finds it. That is the exception: push jobs register every pair their
-target reaches from the WorkspaceDO directories before a member's first search
-(see [authorization](authorization.md)). Conversation messages and links are
-grouped by parent/substream. A connector resource row carries `connection_id`
-and is admitted by the `(subject, connection)` decision, read once per page;
-an attachment or note is admitted by its own resource decision. A row indexed before the display attributes existed, or whose
-conversation is archived, is omitted: not finding something is the safe failure.
-No revision or content-hash check runs against canonical text on the read path;
-the conditional upsert, the deletion watermark and the pipeline's post-write
-fence are what keep the index current. A conversation rename or archive reaches
-its indexed rows through `search_conversation_projection_v1`: one coalesced
-outbox row per conversation, a job that names the conversation only, and a
-`patch_by_filter` pass per source that rewrites the rows still showing the old
-values until none does.
-
 Older clients omit `pageSize` and retain the array response shape with up to 50
 results from one candidate batch. They receive no pagination or timing fields and
 do not trigger hidden refill scans. The 250ms typing debounce, REST, and final
@@ -160,7 +125,6 @@ canonical document; resource category tombstones remain separate documents.
 The final freshness read never recaptures a failed page. Browser failures record
 only numeric HTTP status and provider code, preserving the reference in the DLQ
 when retries are exhausted. A failed page does not retry sibling documents.
-
 
 All current message, upload, generated-artifact, and captured-page sources emit
 reference-only jobs through their transactional outboxes to the existing regional
@@ -218,7 +182,7 @@ and canonical revalidation; embedding messages are acknowledged after their batc
 and post-write freshness checks finish; individual failures request a
 Queue retry and eventually use the existing regional dead-letter queue. Reusing the
 existing Queue avoids a second transport and rollout configuration for the same
-source references. Global and EU stay on their respective Workers and queues.
+source references. configured deployments stay on their respective Workers and queues.
 
 ### Semantic chunks
 
@@ -517,7 +481,6 @@ The cursor follows [Turbopuffer attribute pagination](https://turbopuffer.com/do
 upgrade, each search input, duplicate description keys against canonical extraction,
 no-op writes, and deletion watermarks using real workerd storage.
 
-
 Run `pnpm --filter @rally/api exec vitest run test/text-search.test.ts test/semantic-chunks.test.ts test/search-embedding-policy.test.ts`.
 The external SDK is doubled to prove source filtering and canonical result
 loading. No database or Durable Object runtime is simulated by this suite.
@@ -525,8 +488,8 @@ loading. No database or Durable Object runtime is simulated by this suite.
 Disposable live namespaces in both configured regions verified literal asterisk
 substring matching, conditional upserts, deletion watermarks, and rejection of
 same-revision resurrection. The namespaces were deleted after verification.
-Generation deletion filters also preserved newer vectors in both regions. Production content was not used for these checks. Vector-free lexical writes
-and tombstones were also checked in both regions. Workerd tests cover resource
+Generation deletion filters also preserved newer vectors in configured deployments. Production content was not used for these checks. Vector-free lexical writes
+and tombstones were also checked in configured deployments. Workerd tests cover resource
 revision watermarks, upgrading committed transcript history, transactional search
 intent, and rejecting stale link labels. `test-workers/search-indexing-pipeline.test.ts`
 drives the Queue consumer through real source RPC and R2 reads, verifies identical
@@ -631,15 +594,6 @@ BM25/semantic canonical filtering can shorten a page; their refill and client
 pagination are not implemented. Substring clients that supply pageSize can
 explicitly continue; legacy clients receive only the first candidate page.
 
-## Regional impact
-
-Global projects content into Turbopuffer gcp-us-west1; EU uses gcp-europe-west1.
-Namespace identity includes workspace, environment and region. Browser Run is a
-Cloudflare hosted dependency in each regional Worker. The Qwen embedding provider
-receives the source passages through the existing inference integration; the
-Turbopuffer region alone does not establish residency for that separate processor.
-No cross-region fallback is permitted.
-
 ## Security and trust model
 
 Index content is never an access grant. Member routes revalidate workspace sessions
@@ -661,8 +615,6 @@ Worker's private network. Captures are snapshots and are not refreshed just beca
 the same URL is mentioned again. Missing extraction/capture work remains observable
 through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
-
-## Changelog
 
 ### 2026-09-11 — An unlisted resource leaves the index
 
@@ -810,7 +762,6 @@ redrive or a re-projection until the open question is taken up.
 
 Shipped in #691.
 
-
 ### 2026-09-10 — Hold the search modal at one size, and unlabel row shortcuts
 
 The modal grew and shrank under the reader: the "Loading more" line and the
@@ -895,54 +846,6 @@ not fit a per-resource projection. Nothing on the read path changed shape: the
 request field `supportsPartialResults` is still accepted and ignored for
 desktop builds that send it. Resource lists keep their own `complete` field.
 
-### 2026-09-10 — Serve results from the index and keep content owners off the read path
-
-Production traces of member search showed retrieval at about 45ms and the rest
-of a 5 to 47 second response spent reloading each candidate from cold Durable
-Objects, one conversation at a time: a WorkstreamDO read that woke and waited on
-its SubstreamAgent, then a content read from that agent, then WorkspaceDO and R2
-for resources. The team chose read performance over re-validation, accepted
-eventual consistency for what search shows within a ten-minute bound, and kept
-the KV projection as the security layer. The index therefore carries what a
-result renders (title, source label, time, transcript position, link URL, MIME
-type, archive state), written by the owning object beside the text with no
-extra RPC, and the read path renders from those attributes: no content owner,
-no R2, no revision or content-hash re-validation (EU admission still reads the
-WorkspaceDO snapshot table, one warm object, because EU has no KV binding). A rename or archive reaches
-the rows through a coalesced `search_conversation_v1` outbox row and a job that
-reads the current display and patches by filter for as long as the provider
-reports rows remaining.
-Admission stays on the projected decision; a miss is answered unavailable and
-filled after the response, so a request never waits on an owner. Rows without
-the display attributes are omitted rather than reloaded, which is why migration
-52 requeues every turn and WorkspaceDO migration 47 every resource (a resource
-already in retry backoff keeps its `not_before`; an upgrade does not reset a
-committed retry schedule). Review of the first revision found that archived and
-pre-rewrite rows still filled the provider's page and were discarded only
-afterwards, leaving a page sparse or empty ahead of live matches, so member
-retrieval now filters `archived Eq false`. A namespace with no write since the
-attributes shipped refuses both the filter and the `include_attributes` with a
-400 (both messages verified live); it has nothing renderable, so it answers
-with an empty page rather than failing the search until an unrelated write
-extends its schema; the display patch treats the same refusal as nothing to
-patch, since no row there carries a substream id (a schema on the patch write
-does not lift the refusal, verified live). The patch loop continues on the
-provider's `rows_remaining` rather than on a positive `rows_patched`, so its
-termination is the provider's statement and not an inference that every patched
-row left the filter. Semantic retrieval no longer asks for the display
-attributes, which chunk rows never carry. Migration 52's lazy requeue is now
-named as the gap it is: a conversation whose object never wakes is absent from
-search until the fleet is force-migrated. The
-alternative of moving readability keys into the index as well was designed and
-rejected for now: the KV projection already exists, little data mutates, and a
-missed result is acceptable where a wrong one is not. `readAdmittedSearchContent`
-and `resourceSearchRecords` stay callable for one release for Workers still
-rolling out; the Worker-side loaders are gone. This reverses the 2026-09-08
-entries below that retained canonical text and revision validation on the read
-path; future changes must keep every display writer writing current state and
-must not reintroduce a canonical reload as a fallback for a row the index has
-not rewritten yet.
-
 ### 2026-09-09 — Remove directory discovery from paginated retrieval
 
 Paginated search now uses the same unrestricted candidate retrieval as the first
@@ -953,7 +856,6 @@ still follows scanned candidates, not the number of returned results. KV negativ
 lookups reuse durable snapshots before resolving owners. Memory authorization now
 uses the shared projected resolver without a post-retrieval authority check.
 
-
 ### 2026-09-08 — Remove canonical authorization from cache-hit hydration
 
 Trust the search authorization projection across requests to avoid serial owner
@@ -962,7 +864,6 @@ RPC, without another product authorization or viewer seating. Permissions are
 eventually consistent; missing decisions still resolve through canonical owners,
 and source mutations push replacement decisions while cached decisions remain usable. Revision/hash checks
 continue to reject stale indexed content.
-
 
 ### 2026-09-08 — Index resource content changes, not bookkeeping
 
@@ -1002,7 +903,6 @@ canonical authorization and content stores; subsequent requests authorize again.
 Source revision validation remains required, and this change makes no production
 latency claim.
 
-
 ### 2026-09-08 — Remove age-triggered authorization stalls
 
 Authorization freshness is now a five-minute design goal, not a hard read cutoff.
@@ -1011,7 +911,6 @@ workspace's attachment inventory. Canonical checks share owner observations with
 persistent grant caches are not reused without mutation invalidation. This avoids
 permanent stale grants while keeping the existing Queue discovery and explicit
 partial-results contract. Search latency targets still require production validation.
-
 
 ### 2026-09-07 — Add an owner-backed authorization cutover and remove its rollout gates
 
@@ -1046,7 +945,6 @@ prefiltering follows the directory projection, so a newly granted scope can wait
 for that projection; it never allows stale grants to bypass final authority.
 Seven is a layout-derived page size, not a truncation of searchable content.
 Latency targets still require production measurement after deployment.
-
 
 ### 2026-09-06 — Plan and capture each document independently
 

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 /** Public hostname routing at the isolated artifact Worker boundary. */
 import { asArtifactId, type ArtifactManifest } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -559,7 +560,7 @@ describe("artifact serving hostname routes", () => {
     const crossed = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
-      region: "eu",
+      region: "enterprise",
     });
     expect((await artifactWorker.fetch(new Request(
       `https://${STUB}-g.rallyusercontent.test/__rally/open`,

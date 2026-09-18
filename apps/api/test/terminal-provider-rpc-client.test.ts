@@ -40,6 +40,7 @@ function rpcBinding(overrides: Partial<TerminalProviderRpcSession> = {}): Termin
     createSandbox: vi.fn(async () => success(snapshot)),
     prepareSandbox: vi.fn(async () => success(snapshot)),
     getSandbox: vi.fn(async () => success(snapshot)),
+    recoverSandbox: vi.fn(async () => success(undefined)),
     startSandbox: vi.fn(async () => success(undefined)),
     stopSandbox: vi.fn(async () => success(undefined)),
     archiveSandbox: vi.fn(async () => success(undefined)),

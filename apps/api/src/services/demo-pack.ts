@@ -83,6 +83,7 @@ const MENTION_TOKEN = /@\{([a-z][a-z0-9-]{0,39})\}/gu;
 
 const CreateWorkstreamStepSchema = z.strictObject({
   kind: z.literal("create_workstream"),
+  execution: z.enum(["run", "history"]).optional(),
   id: StepIdSchema,
   room: RoomKeySchema,
   as: DemoPackRoleSchema,
@@ -280,7 +281,7 @@ export interface DemoPackRoomFacts {
   /** Index of the room's last step in `steps`; recency order follows it. */
   lastStepIndex: number;
   /** How the room's loop ends: parked on a question, or completed. */
-  finalState: "needs_input" | "completed";
+  finalState: "idle" | "needs_input" | "completed";
   /** Step ids of the room's uploads. */
   uploads: string[];
 }
@@ -314,7 +315,7 @@ export function packRoomFacts(steps: readonly DemoPackStep[]): Map<string, DemoP
         seated: [...new Set([step.as, ...step.participants, ...mentions])],
         mentioned: [...new Set(mentions)],
         lastStepIndex: index,
-        finalState: step.assistant.kind === "ask" ? "needs_input" : "completed",
+        finalState: step.execution === "history" ? "idle" : step.assistant.kind === "ask" ? "needs_input" : "completed",
         uploads: [],
       });
       return;
@@ -562,6 +563,9 @@ export const DemoPackSchema = z.strictObject({
       }
     }
     if (step.kind === "create_workstream") {
+      if (step.execution === "history" && (step.assistant.kind !== "say" || mentions.length)) {
+        context.addIssue({ code: "custom", path, message: "Prepared history requires prose without live mention effects" });
+      }
       if (seated.has(step.room)) {
         context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is created twice` });
       }
@@ -757,6 +761,7 @@ interface RoomActionBase extends ActionBase {
 export type DemoSeedAction =
   | (RoomActionBase & {
       kind: "create_workstream";
+      execution: "run" | "history";
       substream: null;
       title: string;
       scope: "workspace" | "personal";
@@ -833,6 +838,7 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
         const resolved = resolveMentions(step.openingMessage, cast);
         return {
           kind: "create_workstream",
+          execution: step.execution ?? "run",
           actionId: step.id,
           room: step.room,
           substream: null,
@@ -957,6 +963,7 @@ export const PLACEHOLDER_DEMO_PACK = {
     {
       kind: "create_workstream",
       id: "memo-open",
+      execution: "history",
       room: "decision-memo",
       as: "priya",
       title: "Insights pricing before the Northgate renewal",

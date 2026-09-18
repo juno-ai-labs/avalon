@@ -26,38 +26,53 @@ function expectOrdered(source: string, markers: readonly string[]): void {
 }
 
 describe("what a run may consult, and what it may do", () => {
-  it("offers the built-in library to roots and inline children while child writes remain denied", () => {
+  it("offers the built-in library through the shared substream harness", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
+      "function azureInferenceConfig(",
     );
-    // Offered to both live run kinds. Withholding a skill would hide advice and
-    // never authority, and would hide a future general skill along with it.
-    expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => entry.skill)]");
+    // Foreground and background substreams use this same harness. Skills
+    // offer guidance; normal tool authorization still decides execution.
+    expect(root).toContain("skills: [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({");
 
-    const inlineChild = section(
-      "function createInlineChildAgentTool(",
-      "async function recordOpenRouterInferenceAttempt(",
-    );
-    // What the read-only child may *do* is decided by tool mode before the call.
-    expect(inlineChild).toContain('rejectToolModesBeforeCall(\n              ["write"],');
-    expect(inlineChild).toContain("skills: [...BUILT_IN_SKILLS]");
+
   });
 
+});
+
+describe("what a run reports when Bind refuses a tool result", () => {
+  it("wires the rejection port the production run would otherwise drop on the floor", () => {
+    const root = section(
+      "export async function runWorkstreamHarness(",
+      "function azureInferenceConfig(",
+    );
+
+    // Bind synthesizes rejected tool results rather than throwing them. Keep
+    // the rejection port so the model-facing refusal has an operational record.
+    expect(root).toContain("onToolCallRejected: ({ toolCallId, code }) => {");
+    expect(root).toContain('logStructuredEvent(env, "warn", "agent_tool_call_rejected", {');
+    // Queryable fields, not prose: Workers Logs filters on these.
+    for (const field of ["code,", "tool_call_id:", "workspace_id:", "workstream_id:", "run_id:"]) {
+      expect(root).toContain(field);
+    }
+  });
 });
 
 describe("harness liveness-monitor lifetime", () => {
   it("starts the root monitor only after fallible pre-inference setup", () => {
     const root = section(
       "export async function runWorkstreamHarness(",
-      "function inlineChildOutcomeAsToolResult(",
+      "function azureInferenceConfig(",
     );
 
     expectOrdered(root, [
+      'await liveness.pulse("run_start", true);',
+      "promptPreparation.get();",
+      "toolsPreparation.get();",
       "await loadTriggerFencedTranscriptMessages(",
       "await projectModelProtocolTranscript(",
-      "await loadRunPromptContext(",
-      "await loadHarnessTools(",
+      "await promptPreparation.get()",
+      "await toolsPreparation.get()",
       "await persistImmutableRunScope(",
       "await persistInitialPluginActivations(",
       "await liveness.pulse(\"inference_start\", true);",
@@ -68,21 +83,5 @@ describe("harness liveness-monitor lifetime", () => {
     ]);
   });
 
-  it("does not start the child monitor until its fallible tool surface exists", () => {
-    const child = section(
-      "function installInlineChildAgentTool(",
-      "async function recordOpenRouterInferenceAttempt(",
-    );
 
-    expectOrdered(child, [
-      "await createInlineChildHarnessSurface({",
-      "await childLiveness.pulse(\"inference_start\", true);",
-      "const childMonitor = childLiveness.startMonitor(5_000);",
-      "try {",
-      "await persistInlineChildScope(",
-      "const outcome = await runHarness({",
-      "} finally {",
-      "await childMonitor.stop();",
-    ]);
-  });
 });

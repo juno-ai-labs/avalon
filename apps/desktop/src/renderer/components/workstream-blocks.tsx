@@ -7,6 +7,7 @@ import {
   IconImageGeneration,
   IconKeyframes,
   IconPlug,
+  IconStackBackward,
   IconWebhook,
   IconWorldSearch,
   type TablerIcon,
@@ -39,8 +40,16 @@ import {
   isConnectorHref,
   openFootnoteReferencePattern,
   personIdFromMentionHref,
+  personMentionMarkdownRanges,
 } from '@rally/contracts/citations';
-import { ConnectorEmbedCard, ConnectorMentionChip } from './connector-mentions';
+import {
+  ConnectorConnectionCard,
+  ConnectorEmbedCard,
+  ConnectorMentionChip,
+  connectorConnectionCardInput,
+  connectorConnectionCardProvider,
+  connectorConnectionCardSelectionKey,
+} from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -57,14 +66,18 @@ import {
 } from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { useCopy } from '../lib/use-copy';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
+import { useFaviconApi } from '../lib/favicon-api';
+import type { RallyApi } from '../lib/api';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
 import { MessageByline } from './message-byline';
+import { MessageTextMenu } from './message-text-menu';
 import {
   MarkdownCollapseAllButton,
   MarkdownCollapseController,
@@ -226,7 +239,6 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
   renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
   const rawLanguage = language.trim().toLowerCase();
   const normalizedLanguage = rawLanguage || 'plain';
   const requestedLanguage = markdownLanguageAliases[normalizedLanguage] ?? normalizedLanguage;
@@ -238,19 +250,19 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
   // wrote. An explicit ```text or ```plain fence still gets one.
   const languageLabel = rawLanguage ? codeLanguageLabel(normalizedLanguage, requestedLanguage) : '';
 
-  const copy = async (): Promise<void> => {
-    try {
-      await desktopBridge().copyText(code);
+  // The header's control is its own element rather than a `CopyButton`: the
+  // block renders wherever markdown does, including a card drawn for export
+  // with no tooltip provider above it, and the header's rule already sizes and
+  // paints the button. The behaviour underneath is still the shared one.
+  const { copy, state: copyState } = useCopy({
+    value: code,
+    onCopied: () => {
       if (telemetry) reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'code_block', resourceType: 'message',
         resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
       });
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      setCopied(false);
-    }
-  };
+    },
+  });
 
   const highlighted = (
     <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
@@ -276,8 +288,17 @@ function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }
       {glance ? null : (
         <div className="markdown-code-block-header">
           <span className="markdown-code-language">{languageLabel}</span>
-          <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
-            {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+          <button
+            aria-label={copyState === 'copied' ? 'Code copied' : copyState === 'failed' ? 'Copy failed — click to retry' : 'Copy code'}
+            data-clipboard-exclude=""
+            onClick={() => void copy()}
+            type="button"
+          >
+            {copyState === 'copied'
+              ? <Check aria-hidden="true" size={14} />
+              : copyState === 'failed'
+                ? <CircleAlert aria-hidden="true" size={14} />
+                : <Copy aria-hidden="true" size={14} />}
           </button>
         </div>
       )}
@@ -684,6 +705,58 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
   return output + text.slice(cursor);
 }
 
+const RENDERED_PERSON_MENTION_PREFIX = 'person://render:';
+
+function renderedPersonMentionHref(token: string, personId: string): string {
+  return `${RENDERED_PERSON_MENTION_PREFIX}${token}:${personId}`;
+}
+
+function renderedPersonId(href: string | undefined, token: string): string | undefined {
+  const prefix = `${RENDERED_PERSON_MENTION_PREFIX}${token}:`;
+  if (!href?.toLowerCase().startsWith(prefix.toLowerCase())) return undefined;
+  return personIdFromMentionHref(`person:${href.slice(prefix.length)}`);
+}
+
+/**
+ * Mint render-local identity links only for the exact authoritative ranges.
+ * A second model-authored link to the same person must not borrow authority
+ * from the first one merely because its destination has the same id.
+ */
+function withAuthoritativeMentionLinks(text: string, mentions: MessageMention[], token: string): string {
+  const candidates = mentions
+    .filter((mention) => mention.type === 'connector' ? mention.connectorType : mention.personId)
+    .sort((left, right) => left.startOffset - right.startOffset);
+  if (candidates.length === 0) return text;
+  const hasPersonCandidate = candidates.some((mention) => mention.type === 'person');
+  const personRanges = new Set((hasPersonCandidate ? personMentionMarkdownRanges(text) : []).map((range) => (
+    `${range.startOffset}:${range.endOffset}:${range.personId}`
+  )));
+
+  let cursor = 0;
+  let output = '';
+  for (const mention of candidates) {
+    const { startOffset, endOffset } = mention;
+    if (startOffset < cursor || endOffset > text.length || endOffset <= startOffset) continue;
+    const source = text.slice(startOffset, endOffset);
+    let replacement: string | undefined;
+    if (mention.type === 'connector' && mention.connectorType && source.startsWith('@')) {
+      replacement = `[${escapeMarkdownLabel(source)}](${connectorMentionHref(token, mention.connectorType)})`;
+    } else if (mention.type === 'person' && mention.personId) {
+      const personId = mention.personId.toLowerCase();
+      if (personRanges.has(`${startOffset}:${endOffset}:${personId}`)) {
+        const destinationStart = source.lastIndexOf('](');
+        if (destinationStart >= 0) {
+          replacement = `${source.slice(0, destinationStart + 2)}${renderedPersonMentionHref(token, personId)})`;
+        }
+      }
+    }
+    if (replacement === undefined) continue;
+    output += text.slice(cursor, startOffset) + replacement;
+    cursor = endOffset;
+  }
+  return output + text.slice(cursor);
+}
+
 function mentionInitials(label: string): string {
   return label
     .replace(/^@/u, '')
@@ -764,7 +837,7 @@ function renderIdentity(
   mentions: MessageMention[],
   token: string,
 ): React.ReactNode {
-  const personId = personIdFromHref(href);
+  const personId = renderedPersonId(href, token);
   if (personId) {
     const mention = mentions.find((candidate) => (
       candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
@@ -772,6 +845,7 @@ function renderIdentity(
     if (!mention) return <span className="mention-text-fallback">{label}</span>;
     return <MentionChip fallbackLabel={label} mention={mention} personId={personId} />;
   }
+  if (personIdFromHref(href)) return <span className="mention-text-fallback">{label}</span>;
   if (isConnectorHref(href)) {
     const connectorType = tokenedConnectorType(href, token);
     const text = linkLabelText(label);
@@ -964,6 +1038,40 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
 const NO_MENTIONS: MessageMention[] = [];
 const EMPTY_DEFINITION_BLOCKS: string[] = [];
 
+function httpHostname(href: string | undefined): string | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.hostname : null;
+  } catch {
+    return null;
+  }
+}
+
+function MarkdownLinkFavicon({ api, href }: { api: RallyApi | null; href: string | undefined }): React.JSX.Element | null {
+  const hostname = httpHostname(href);
+  const [source, setSource] = useState<string | null>(null);
+  useEffect(() => {
+    if (!api || !hostname) return;
+    let active = true;
+    let objectUrl: string | null = null;
+    void api.getFavicon(hostname)
+      .then((blob) => {
+        if (!blob || !active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSource(objectUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [api, hostname]);
+  return source
+    ? <img alt="" aria-hidden="true" className="markdown-link-favicon" src={source} />
+    : <span aria-hidden="true" className="markdown-link-favicon-sentinel" />;
+}
+
 export function MarkdownBody({
   children,
   citations,
@@ -971,6 +1079,7 @@ export function MarkdownBody({
   glance = false,
   mentions = NO_MENTIONS,
   preserveLineBreaks = false,
+  speechKind = 'response',
   still = false,
   streaming = false,
   telemetry,
@@ -1010,6 +1119,12 @@ export function MarkdownBody({
    */
   still?: boolean;
   /**
+   * Whether Speak's accessible name is *Speak response* (an assistant turn)
+   * or *Speak* (a person's own words). Human bodies keep the visible *Speak*
+   * and must not answer to *Speak response*.
+   */
+  speechKind?: 'response' | 'message';
+  /**
    * The message is still growing. Rendering switches to settled segments plus
    * an open tail so a per-frame commit does not re-parse the whole body. When
    * heading collapse is off, the commit that ends the stream renders the source
@@ -1029,6 +1144,7 @@ export function MarkdownBody({
    */
   verbatim?: boolean;
 }): React.JSX.Element {
+  const faviconApi = useFaviconApi();
   // One token per mounted body, so the links keep stable identity across renders.
   const token = useMemo(createConnectorMentionToken, []);
   // Socket hydration may replace a message with an equivalent object and a
@@ -1047,7 +1163,7 @@ export function MarkdownBody({
   // Mentions first, normalization second, and the order is load-bearing: the
   // connector offsets are measured against the stored text, so anything that
   // changes its length has to run after they have been resolved into links.
-  const linked = withConnectorMentionLinks(children, stableMentions, token);
+  const linked = withAuthoritativeMentionLinks(children, stableMentions, token);
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;
@@ -1100,7 +1216,11 @@ export function MarkdownBody({
               footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
               href={href}
               identity={() => renderIdentity(href, linkChildren, stableMentions, token)}
-            >{linkChildren}</CitationLink>
+            >
+              {!still && httpHostname(href)
+                ? <><MarkdownLinkFavicon key={href} api={faviconApi} href={href} />{linkChildren}</>
+                : linkChildren}
+            </CitationLink>
           )
       ),
       img: ({ alt, node, src, ...props }) => {
@@ -1150,7 +1270,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [glance, renderCode, stableMentions, token]);
+  }), [faviconApi, glance, renderCode, stableMentions, still, token]);
   // Heading overrides are a second map so a nested h3 in a section body does
   // not grow a chevron: only the section's own heading markdown uses these.
   const headingComponents = useMemo<MarkdownComponents>(() => ({
@@ -1349,9 +1469,12 @@ export function MarkdownBody({
   // arrives mid-stream has to reach the pills, and a context update crosses a
   // `memo` boundary where a changed prop would have re-parsed everything under
   // it instead.
+  const bodyInner = <div className="markdown-body">{rendered}</div>;
   const body = (
     <CitationsProvider value={render}>
-      <div className="markdown-body">{rendered}</div>
+      {telemetry && !glance && !still ? (
+        <MessageTextMenu markdown={children} speechKind={speechKind} streaming={streaming} telemetry={telemetry}>{bodyInner}</MessageTextMenu>
+      ) : bodyInner}
     </CitationsProvider>
   );
   if (!collapseParts) return body;
@@ -1938,6 +2061,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  */
 const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
   automations: IconKeyframes,
+  'background-agents': IconStackBackward,
   computer: IconDeviceDesktop,
   'image-generation': IconImageGeneration,
   plug: IconPlug,
@@ -2390,6 +2514,10 @@ interface MessageBlockProps {
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
   acceptDraftError?: string | undefined;
+  /** Main-feed opt-in; other transcript hosts keep core tools as neutral rows. */
+  connectorConnectionCards?: boolean;
+  connectedConnectorSelections?: ReadonlySet<string>;
+  onConnectorConnected?: (selectionKey: string) => void;
 }
 
 export function MessageBlock({
@@ -2406,6 +2534,9 @@ export function MessageBlock({
   onAcceptDraft,
   acceptingDraftFor,
   acceptDraftError,
+  connectorConnectionCards = false,
+  connectedConnectorSelections,
+  onConnectorConnected,
 }: MessageBlockProps): React.JSX.Element {
   const presentations = useContext(MemberPresentationContext);
   const profileUserId = message.authorType === 'human' ? message.author?.id
@@ -2429,7 +2560,23 @@ export function MessageBlock({
     } : {}),
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
-  if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
+  if (message.messageType === 'tool_event') {
+    const connectionCard = connectorConnectionCards ? connectorConnectionCardInput(message) : null;
+    const connectionCardProvider = connectionCard ? connectorConnectionCardProvider(connectionCard) : null;
+    return (
+      <div className="transcript-event" id={`message-${message.id}`}>
+        {connectionCard && connectionCardProvider ? (
+          <ConnectorConnectionCard
+            latchedConnected={Boolean(connectedConnectorSelections?.has(
+              connectorConnectionCardSelectionKey(connectionCard),
+            ))}
+            {...(onConnectorConnected ? { onConnected: onConnectorConnected } : {})}
+            request={connectionCard}
+          />
+        ) : <ToolBlock message={message} />}
+      </div>
+    );
+  }
   if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} /></div>;
   if (message.messageType === 'work_accordion') {
     return (
@@ -2572,7 +2719,8 @@ export function MessageBlock({
           messages the one thing on screen with no time against it. */}
       <MessageByline
         align={human ? 'end' : 'start'}
-        author={human ? humanAuthorName : automation ? automationAuthor : 'Rally'}
+        author={human ? humanAuthorName : message.importProvenance ? (message.importProvenance.source.provider === 'chatgpt' ? 'ChatGPT' : 'Claude') : automation ? automationAuthor : 'Rally'}
+        importedBy={message.importProvenance?.importedByName}
         contextLabel={message.contextLabel}
         createdAt={message.createdAt}
         dot={human}
@@ -2587,6 +2735,7 @@ export function MessageBlock({
               <MarkdownBody
                 mentions={message.mentions}
                 preserveLineBreaks
+                speechKind="message"
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
               >{message.text}</MarkdownBody>

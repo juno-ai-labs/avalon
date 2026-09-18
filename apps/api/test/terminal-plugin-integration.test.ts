@@ -116,6 +116,7 @@ function provider(): TerminalSandboxProvider {
       state: "running" as const,
       domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
     })),
+    recoverSandbox: vi.fn(async () => undefined),
     startSandbox: vi.fn(async () => undefined),
     stopSandbox: vi.fn(async () => undefined),
     archiveSandbox: vi.fn(async () => undefined),
@@ -176,7 +177,7 @@ describe("Terminal Bind integration", () => {
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
 
-    expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "terminal" });
+    expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "" });
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual([
       "read_file", "edit_file", "write_file", "apply_patch", "run_command",
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",

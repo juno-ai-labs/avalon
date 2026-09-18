@@ -12,14 +12,12 @@ const postHogModules = [
 test('accepts regional API graphs without PostHog modules', () => {
   assert.doesNotThrow(() => assertTelemetryStartupBoundary({
     globalBundle: '// src/index.ts',
-    euBundle: '// src/index.ts',
   }));
 });
 
-test('rejects a PostHog module leaking into either regional API graph', () => {
+test('rejects a PostHog module leaking into the API graph', () => {
   for (const [label, bundles] of [
-    ['Global API', { globalBundle: `// src/index.ts\n${postHogModules}`, euBundle: '// src/index.ts' }],
-    ['EU API', { globalBundle: '// src/index.ts', euBundle: `// src/index.ts\n${postHogModules}` }],
+    ['Global API', { globalBundle: `// src/index.ts\n${postHogModules}` }],
   ]) {
     assert.throws(() => assertTelemetryStartupBoundary({
       ...bundles,

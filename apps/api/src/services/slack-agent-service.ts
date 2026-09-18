@@ -1,3 +1,4 @@
+import type { Region } from "@rally/contracts/regions";
 import {
   ConnectorError,
   joinAllSlackPublicChannels,
@@ -42,6 +43,7 @@ import {
   type SlackOriginNearbyMessage,
   type SlackSearchAuthorization,
 } from "@rally/contracts";
+import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { HttpsUrlSchema, httpsUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
 import {
@@ -3751,9 +3753,17 @@ function slackErrorReason(error: unknown): string {
     if (details && typeof details === "object" && typeof (details as { error?: unknown }).error === "string") {
       return String((details as { error: string }).error);
     }
+    // A malformed Slack body arrives as `provider_error` with the failing
+    // paths the adapter attached, not as a raw `ZodError`: the adapter parses
+    // the response and wraps the rejection. The word `provider_error` alone
+    // is what a network fault also says.
+    const responseIssues = details && typeof details === "object" ? (details as { responseIssues?: unknown }).responseIssues : undefined;
+    if (typeof responseIssues === "string" && isCodeShaped(responseIssues)) return codeShaped(`invalid_slack_data:${responseIssues}`);
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  // Slack answered with a body this binary does not model. The failing path
+  // is the diagnosis and is schema shape; the body's values stay behind.
+  if (error instanceof z.ZodError) return codeShaped(`invalid_slack_data:${describeZodIssues(error)}`);
   return error instanceof Error ? error.name : "unknown_error";
 }
 
@@ -3821,7 +3831,7 @@ function unlinkedHome(): Record<string, unknown>[] {
   ];
 }
 
-function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, region: "global" | "eu", workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
+function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, region: Region, workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
   const automationsTarget = addWorkspaceTarget(new URL("rallywithai://automations/new"), { region, workspaceId }).toString();
   const connectionsTarget = addWorkspaceTarget(new URL("rallywithai://settings/connections"), { region, workspaceId }).toString();
   const blocks: Record<string, unknown>[] = [
@@ -3882,7 +3892,7 @@ function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
     }));
 }
 
-function responseActionBlocks(workstreamId: string, webBase: string, region: "global" | "eu", workspaceId: string): Record<string, unknown>[] {
+function responseActionBlocks(workstreamId: string, webBase: string, region: Region, workspaceId: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
     { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_task" },
     { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },
@@ -4127,7 +4137,13 @@ function slackIngressRetryable(error: unknown): boolean {
 function slackIngressErrorCode(error: unknown): string {
   if (error instanceof ApiError) return error.code;
   const reason = slackErrorReason(error);
-  return reason && reason !== "Error" ? reason.slice(0, 120) : "slack_ingress_failed";
+  // The persisted code keys the exhausted-job notice's once-per-hour dedup on
+  // exact equality, and a rejection's path carries the index of the array
+  // element that failed. Slack's origin shapes are bounded arrays of strict
+  // objects, so one contract drift would be a different code — and a
+  // separate page — per slot. The log row keeps the exact path; the persisted
+  // code folds every index to `n`.
+  return reason && reason !== "Error" ? reason.replace(/\.\d+(?=[.:]|$)/gu, ".n").slice(0, 120) : "slack_ingress_failed";
 }
 
 function escapeMrkdwn(value: string): string {
@@ -4171,6 +4187,8 @@ function recordableUnfurlLinks(
 
 export const __slackAgentTesting = {
   SLACK_AUTHORIZATION_ERROR_CODES,
+  slackErrorReason,
+  slackIngressErrorCode,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,
   modalPromptSource,

@@ -104,8 +104,6 @@ exceptions are migration debt and must be removed when those files are touched;
 native host-language calls such as Objective-C's `ObjC.import` are not
 JavaScript module imports.
 
-## Changelog
-
 ### 2026-09-01 — Cold API schema families construct on first use
 
 **What changed:** API-reachable telemetry properties, capability-specific

@@ -6,6 +6,8 @@ import {
   WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type AgentCompactionState,
+  type InferenceDelayState,
+  InferenceDelayStateSchema,
   type ActiveStreamCheckpoint,
   type ClientSocketEvent,
   type WorkstreamSocketCommandResult,
@@ -19,6 +21,7 @@ import {
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { retainQueryData } from './retain-query-data';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
@@ -72,7 +75,7 @@ import {
   upsertTranscriptOverlay,
   upsertTranscriptMessage,
 } from './transcript';
-import type { HarnessStatus, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from './types';
 import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
@@ -84,6 +87,11 @@ import {
   type ConversationCacheKeys,
 } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import { desktopBridge } from './platform';
+import {
+  isSocketTicketRequestTimeoutError,
+  SOCKET_TICKET_REQUEST_TIMEOUT_MS,
+} from './socket-ticket-request';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
@@ -118,6 +126,7 @@ export interface WorkstreamSocketConnection {
   sendReady: boolean;
   /** Legacy telemetry field name; this now reports the message-carrying room socket. */
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+  activeInferenceDelays: InferenceDelayState[];
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
   answerElicitation(
@@ -151,6 +160,8 @@ interface PendingSubstreamCommand {
   command: SubstreamMutationCommand;
   resolve: (result: SuccessfulSubstreamMutation) => void;
   reject: (error: Error) => void;
+  /** The live connection which already received this unresolved command. */
+  sentOn: RealtimeSocket | null;
 }
 
 const HEARTBEAT_BASE_MS = 45_000;
@@ -505,8 +516,16 @@ export function applyHarnessStatus(
   harnessStatus: HarnessStatus,
   substreamId = '0',
 ): void {
+  // `stopRequested` describes the run this status belonged to, so it is cleared
+  // with the status rather than left for the canonical snapshot that follows.
+  // The window is narrow and self-healing, but it is no longer invisible: the
+  // composer dock now says "stopping" in a full sentence while a live run
+  // carries the flag, so a fresh run inheriting a stale one would open by
+  // announcing a wait nobody asked for.
   queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(workstreamId, substreamId), (current) =>
-    current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
+    current && current.harnessStatus !== harnessStatus
+      ? { ...current, harnessStatus, stopRequested: false }
+      : current);
   if (substreamId !== '0') return;
   setCachedWorkstreams(queryClient, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
@@ -740,6 +759,7 @@ export function useWorkstreamSocket(
   const [openingError, setOpeningError] = useState<string>();
   const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
   const [sendReady, setSendReady] = useState(false);
+  const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>(resumeState.activeInferenceDelays);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
   const retryOpening = useCallback((): void => {
@@ -823,6 +843,11 @@ export function useWorkstreamSocket(
   useEffect(() => {
     attempts.current = 0;
     setActiveCompaction(null);
+    setActiveInferenceDelays((current) => current.length === 0 && resumeState.activeInferenceDelays.length === 0 ? current : resumeState.activeInferenceDelays);
+    const updateInferenceDelays = (next: InferenceDelayState[]) => {
+      resumeState.activeInferenceDelays = next;
+      setActiveInferenceDelays((current) => current.length === 0 && next.length === 0 ? current : next);
+    };
     setOpeningError(undefined);
     if (!api || !enabled) {
       setState('idle');
@@ -858,6 +883,10 @@ export function useWorkstreamSocket(
     const contextQueryKey = substreamInitialContextQueryKey(parentId, substreamId);
     const overlaysQueryKey = transcriptOverlaysQueryKey(parentId, substreamId);
     const feedSourceQueryKey = workstreamFeedSourceQueryKey(parentId, substreamId);
+    const releaseData = retainQueryData(queryClient, [
+      detailQueryKey, transcriptQueryKey, contextQueryKey, overlaysQueryKey, feedSourceQueryKey,
+      workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
+    ]);
     const localCacheKeys: ConversationCacheKeys = {
       detail: detailQueryKey,
       transcript: transcriptQueryKey,
@@ -895,8 +924,17 @@ export function useWorkstreamSocket(
     const sendPendingSubstreamCommands = (target: RealtimeSocket | null = socket): void => {
       if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
       for (const pending of pendingSubstreamCommands.values()) {
+        // A command remains pending until its private receipt arrives. An
+        // ordinary later command must not replay it onto the same healthy
+        // connection, while a reconnect deliberately sends every unresolved
+        // command again. Application-foreground recovery is the one explicit
+        // same-socket exception: the renderer may have missed the private
+        // receipt while suspended, and the original operation ID makes that
+        // replay idempotent.
+        if (pending.sentOn === target) continue;
         try {
           target.send(JSON.stringify(pending.command));
+          pending.sentOn = target;
         } catch {
           // The readyState check and send are not atomic. Preserve every entry
           // for the next connection; the close path owns reconnect scheduling.
@@ -941,7 +979,12 @@ export function useWorkstreamSocket(
         ));
       }
       return new Promise((resolve, reject) => {
-        pendingSubstreamCommands.set(command.operationId, { command, resolve, reject });
+        pendingSubstreamCommands.set(command.operationId, {
+          command,
+          resolve,
+          reject,
+          sentOn: null,
+        });
         sendPendingSubstreamCommands();
         void connect();
       });
@@ -1032,6 +1075,7 @@ export function useWorkstreamSocket(
      * arriving would pile up behind a paused reveal. Nobody is watching a
      * hidden window: show everything at once, which is also what new frames do
      * while it stays hidden.
+     *
      */
     const handleVisibilityChange = (): void => {
       if (document.visibilityState !== 'hidden') return;
@@ -1039,6 +1083,32 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<TranscriptOverlay[]>(overlaysQueryKey, (current) =>
           mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
       }
+    };
+    /**
+     * Electron may suspend this renderer after it sends a command but before
+     * the private receipt is processed. Main's application-focus signal is the
+     * trustworthy recovery edge: a window can lose and regain application
+     * focus without ever becoming document-hidden.
+     *
+     * Replay only unresolved commands with their original operation IDs,
+     * reconcile canonical state, and verify an open transport immediately. A
+     * socket which already closed bypasses its background-throttled reconnect
+     * timer and starts a fresh attempt now. Retained conversations without a
+     * pending command do no foreground work.
+     */
+    const handleApplicationForegroundChange = (foregrounded: boolean): void => {
+      if (!foregrounded) return;
+      if (pendingSubstreamCommands.size === 0) return;
+      if (socket?.readyState === REALTIME_SOCKET_CONNECTING) return;
+      if (socket?.readyState !== REALTIME_SOCKET_OPEN) {
+        clearReconnectTimer();
+        void connect();
+        return;
+      }
+      for (const pending of pendingSubstreamCommands.values()) pending.sentOn = null;
+      sendPendingSubstreamCommands();
+      requestCanonicalSnapshot();
+      probeHeartbeatNow(socket);
     };
     /**
      * When this effect began dialling, so an open trace can report how long the
@@ -1073,6 +1143,7 @@ export function useWorkstreamSocket(
         const mentions = await trace.step('resolve_mentions', () => api.messageMentionPayload(
           input.text,
           input.mentions,
+          queryClient.getQueryData<WorkspaceMember[]>(['workspace-members']),
         ));
         if (closedByEffect || accessRevoked) {
           throw new ApiError(
@@ -1331,6 +1402,7 @@ export function useWorkstreamSocket(
           'The work stream resynchronized while loading transcript ranges.',
         );
         setActiveCompaction(event.activeCompaction);
+        updateInferenceDelays(event.activeInferenceDelays);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
@@ -1501,6 +1573,7 @@ export function useWorkstreamSocket(
         if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
+        updateInferenceDelays(event.activeInferenceDelays);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1682,7 +1755,10 @@ export function useWorkstreamSocket(
         scheduleReveal();
       } else if (event.type === 'harness_status_changed') {
         applyHarnessStatus(queryClient, parentId, normalizeHarnessStatus(event.status), substreamId);
-        if (event.status !== 'running') setActiveCompaction(null);
+        if (event.status !== 'running') {
+          setActiveCompaction(null);
+          updateInferenceDelays([]);
+        }
         if (
           event.status === 'running'
           || event.status === 'needs_input'
@@ -1693,6 +1769,9 @@ export function useWorkstreamSocket(
         ) {
           requestCanonicalSnapshot();
         }
+      } else if (event.type === 'inference_delay_changed') {
+        const others = resumeState.activeInferenceDelays.filter((delay) => delay.inferenceRequestId !== event.inferenceRequestId);
+        updateInferenceDelays(event.active ? [...others, InferenceDelayStateSchema.parse(event)] : others);
       } else if (event.type === 'compaction_started') {
         setActiveCompaction(event.compaction);
       } else if (event.type === 'compaction_finished') {
@@ -1830,18 +1909,32 @@ export function useWorkstreamSocket(
       }, SOCKET_STABLE_CONNECTION_MS);
     };
 
+    const probeHeartbeatNow = (target: RealtimeSocket): void => {
+      if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
+      // Preserve the older deadline. Restarting it on every focus flap would
+      // let a half-open socket avoid heartbeat_timeout indefinitely.
+      if (pongTimer !== null) return;
+      clearHeartbeat();
+      try {
+        target.send('ping');
+      } catch {
+        socketTelemetry.willClose('transport_error');
+        target.close();
+        return;
+      }
+      pongTimer = window.setTimeout(() => {
+        pongTimer = null;
+        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
+        socketTelemetry.willClose('heartbeat_timeout');
+        target.close();
+      }, PONG_TIMEOUT_MS);
+    };
+
     const scheduleHeartbeat = (target: RealtimeSocket): void => {
       clearHeartbeat();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
-        if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
-        target.send('ping');
-        pongTimer = window.setTimeout(() => {
-          pongTimer = null;
-          if (closedByEffect || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
-          socketTelemetry.willClose('heartbeat_timeout');
-          target.close();
-        }, PONG_TIMEOUT_MS);
+        probeHeartbeatNow(target);
       }, socketHeartbeatDelay());
     };
 
@@ -1861,6 +1954,7 @@ export function useWorkstreamSocket(
       resumeState.lastSequence = 0;
       streamCursors.clear();
       setActiveCompaction(null);
+      updateInferenceDelays([]);
       clearReconnectTimer();
       clearOpeningTimer();
       connectGeneration += 1;
@@ -1928,6 +2022,7 @@ export function useWorkstreamSocket(
           if (closedByEffect || openingTerminal || generation !== connectGeneration) return;
           openingTimer = null;
           const recoveredCanonically = completeOpeningFromCanonicalCaches();
+          const timedOutDuringTicket = activeTicketAbort === ticketAbort;
           connectGeneration += 1;
           if (activeTicketAbort === ticketAbort) {
             activeTicketAbort = null;
@@ -1942,13 +2037,21 @@ export function useWorkstreamSocket(
           trace.end({ outcome: 'timeout', timeoutMs });
           if (openTrace === trace) openTrace = null;
           if (recoveredCanonically) {
-            socketTelemetry.disconnected({ attempts: attempts.current, retrying: true });
+            socketTelemetry.disconnected({
+              attempts: attempts.current,
+              retrying: true,
+              ...(timedOutDuringTicket ? { cause: 'ticket_timeout' as const } : {}),
+            });
             scheduleReconnect();
             return;
           }
           openingTimedOutAttempts += 1;
           const retrying = openingTimedOutAttempts < WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS;
-          socketTelemetry.disconnected({ attempts: attempts.current, retrying });
+          socketTelemetry.disconnected({
+            attempts: attempts.current,
+            retrying,
+            ...(timedOutDuringTicket ? { cause: 'ticket_timeout' as const } : {}),
+          });
           if (!retrying) {
             openingTerminal = true;
             rejectPendingSubstreamCommands(new ApiError(
@@ -2006,6 +2109,7 @@ export function useWorkstreamSocket(
           effectiveAfterSequence,
           speculative,
           ticketAbort.signal,
+          openingCompleted ? SOCKET_TICKET_REQUEST_TIMEOUT_MS : workstreamOpenTimeoutMs(openingTimedOutAttempts),
         );
         if (closedByEffect || generation !== connectGeneration) return;
         if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
@@ -2220,7 +2324,9 @@ export function useWorkstreamSocket(
             scheduleReconnect();
           }
         });
-      } catch {
+      } catch (error) {
+        // Offline and teardown advance the generation before aborting the
+        // ticket, so those owner cancellations are deliberately silent here.
         if (closedByEffect || generation !== connectGeneration) return;
         clearOpeningTimer();
         trace.end({ outcome: 'failed' });
@@ -2229,7 +2335,7 @@ export function useWorkstreamSocket(
           socketTelemetry.disconnected({
             attempts: attempts.current,
             retrying: !isOffline(),
-            cause: 'ticket_failed',
+            cause: isSocketTicketRequestTimeoutError(error) ? 'ticket_timeout' : 'ticket_failed',
           });
         }
         scheduleReconnect();
@@ -2263,6 +2369,9 @@ export function useWorkstreamSocket(
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    const stopApplicationForeground = desktopBridge().onApplicationForegroundChanged(
+      handleApplicationForegroundChange,
+    );
     // The disk paints first and the socket corrects it. Hydration lands only
     // in caches that are still empty, so a live snapshot that beats the read
     // is never overwritten; the mirror writes only what a live snapshot
@@ -2299,6 +2408,7 @@ export function useWorkstreamSocket(
     return () => {
       closedByEffect = true;
       localCacheMirror?.stop();
+      releaseData();
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
       markOpenedRef.current = () => undefined;
@@ -2336,6 +2446,7 @@ export function useWorkstreamSocket(
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopApplicationForeground();
       if (revealFrame !== null) {
         window.cancelAnimationFrame(revealFrame);
         revealFrame = null;
@@ -2370,6 +2481,7 @@ export function useWorkstreamSocket(
       sendReady: sendReady && admissionAllowed,
       workspaceSocketState,
       activeCompaction,
+      activeInferenceDelays,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
@@ -2382,6 +2494,7 @@ export function useWorkstreamSocket(
     [
       admissionAllowed,
       activeCompaction,
+      activeInferenceDelays,
       answerElicitation,
       createMessage,
       loadTranscriptRange,

@@ -92,6 +92,8 @@ automationRoutes.post("/:id/appearance", zValidator("param", idParam),
   ))));
 automationRoutes.post("/:id/pause", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).pause(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).resume(c.req.valid("param").id); return c.body(null, 204); });
+automationRoutes.post("/:id/archive", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).archive(c.req.valid("param").id); return c.body(null, 204); });
+// Compatibility for installed clients that shipped the earlier Delete wording.
 automationRoutes.delete("/:id", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getAuth(c)).delete(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.get("/:id/runs", zValidator("param", idParam), async (c) =>
   c.json(AutomationRunPageSchema.parse(await new AutomationService(c.env, getAuth(c)).runs(c.req.valid("param").id))));

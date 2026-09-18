@@ -74,6 +74,7 @@ export type MultimodalGenerationToolExecutors = {
 const definitions = memoizedValue(() => ({
   generate_image: {
     name: "generate_image",
+    longRunning: true,
     description: "Generate one new PNG image from a text prompt and attach it to the current workstream as a durable resource.",
     capability: "multimodal.generate",
     mode: "write",
@@ -83,6 +84,7 @@ const definitions = memoizedValue(() => ({
   },
   edit_image: {
     name: "edit_image",
+    longRunning: true,
     description: "Edit one attached image, optionally using an attached PNG mask, and publish the single resulting PNG as a new version of that same resource.",
     capability: "multimodal.edit",
     mode: "write",
@@ -132,7 +134,10 @@ export function createMultimodalGenerationPlugin(
   return {
     canonicalId: AVALON_MULTIMODAL_GENERATION_PLUGIN_ID,
     modelId: "rally_multimodal_generation",
-    shortWireName: "multimodal_generation",
+    // No wire prefix. `generate_image`, `edit_image` and `generate_audio` are
+    // the names a model already knows, and the prefix both pushed them off that
+    // vocabulary and stuttered: `multimodal_generation_generate_image`.
+    shortWireName: "",
     displayName: "Multimodal generation",
     searchAliases: ["image", "generate image", "edit image", "illustration", "picture", "visual", "audio", "speech", "voice", "text to speech"],
     description: "Generate a new image, edit an attached image, or turn text into an AI voice recording.",

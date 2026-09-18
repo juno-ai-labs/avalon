@@ -6,19 +6,32 @@ import type {
 /** Existing provider request bound used by durable submission fencing. */
 export const DAYTONA_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * Daytona's sandbox states, reduced to what Rally decides between.
+ *
+ * `unknown` is the fallback, and it is a member rather than a collapse into
+ * `failed` because the difference is destructive: acquisition replaces a lost
+ * sandbox, and Daytona publishes twenty-two states to this union's seven. A
+ * state nobody has mapped — a newer SDK's, or one of the transitional ones —
+ * must be waited out, never read as a verdict that the workspace is gone.
+ */
 export type TerminalSandboxState =
   | "starting"
   | "running"
   | "stopped"
   | "archived"
   | "expired"
-  | "failed";
+  | "failed"
+  | "unknown";
 
 export interface TerminalSandboxSnapshot {
   id: string;
   name: string;
   state: TerminalSandboxState;
   domainAllowList: string[];
+  labels?: Record<string, string> | undefined;
+  /** Undefined means the provider has not established recoverability. */
+  recoverable?: boolean | undefined;
 }
 
 export type TerminalManagedBootstrapCapability = "sqlite3" | "gh" | "pnpm" | "tsx";
@@ -63,6 +76,7 @@ export interface TerminalSandboxProvider {
   prepareSandbox?(idOrName: string, expectedDomainAllowList: string[]): Promise<TerminalSandboxSnapshot>;
   getSandbox(idOrName: string): Promise<TerminalSandboxSnapshot>;
   startSandbox(idOrName: string): Promise<void>;
+  recoverSandbox(idOrName: string): Promise<void>;
   stopSandbox(idOrName: string): Promise<void>;
   archiveSandbox(idOrName: string): Promise<void>;
   deleteSandbox(idOrName: string): Promise<void>;
@@ -106,6 +120,65 @@ export function isTerminalProviderNotFound(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const value = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } };
   return value.status === 404 || value.statusCode === 404 || value.response?.status === 404;
+}
+
+/** Only a metadata lookup can establish absence; a toolbox 404 cannot. */
+export async function observeTerminalSandbox(
+  provider: Pick<TerminalSandboxProvider, "getSandbox">,
+  id: string,
+): Promise<TerminalSandboxSnapshot | null> {
+  try {
+    return await provider.getSandbox(id);
+  } catch (error) {
+    if (isTerminalProviderNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/** Missing recovery metadata is uncertainty, never permission to discard files. */
+export function isTerminalSandboxLost(snapshot: TerminalSandboxSnapshot | null): boolean {
+  return snapshot !== null && (snapshot.state === "expired"
+    || (snapshot.state === "failed" && snapshot.recoverable === false));
+}
+
+/** A failed operation is reconciled through metadata, never its HTTP status. */
+export async function deleteTerminalSandbox(provider: TerminalSandboxProvider, id: string): Promise<void> {
+  try {
+    await provider.deleteSandbox(id);
+  } catch (error) {
+    const observed = await observeTerminalSandbox(provider, id);
+    if (observed && observed.state !== "expired") throw error;
+  }
+}
+
+export async function stopTerminalSandbox(
+  provider: TerminalSandboxProvider,
+  id: string,
+): Promise<"stopped" | "absent"> {
+  try {
+    await provider.stopSandbox(id);
+    return "stopped";
+  } catch (error) {
+    const observed = await observeTerminalSandbox(provider, id);
+    if (observed?.state === "expired") return "absent";
+    if (observed?.state === "stopped" || observed?.state === "archived") return "stopped";
+    throw error;
+  }
+}
+
+/** A lifecycle state is not proof that either toolbox surface is serving requests. */
+export async function assertTerminalSandboxReady(
+  provider: Pick<TerminalSandboxProvider, "runUtilityCommand" | "readFile">,
+  id: string,
+): Promise<void> {
+  // Read-only probes, using the existing provider request budget. Never replay
+  // user work to establish readiness, and never infer deletion from this failure.
+  const command = await provider.runUtilityCommand(id, {
+    operation: "sandbox.readiness", command: ":", cwd: "/",
+    timeoutMs: DAYTONA_REQUEST_TIMEOUT_MS,
+  });
+  if (command.exitCode !== 0 || command.timedOut) throw new Error("terminal_runner_not_ready");
+  await provider.readFile(id, "/etc/hostname");
 }
 
 export function terminalShellQuote(value: string): string {

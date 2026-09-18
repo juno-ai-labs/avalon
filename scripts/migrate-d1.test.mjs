@@ -480,7 +480,7 @@ test("both manifest shapes are read, so a checkout mid-upgrade still runs", () =
 
 test("regions come from the Wrangler configs that actually own a migration history", () => {
   const discovered = discoverRegions();
-  assert.deepEqual(discovered.map((entry) => entry.region), ["eu", "global"]);
+  assert.deepEqual(discovered.map((entry) => entry.region), ["global"]);
   assert.ok(discovered.every((entry) => entry.binding === "DB"));
   // `wrangler.test.jsonc` binds D1 with no `migrations_dir`. Migrating it would
   // create schema in a fixture database, so the marker is the migrations
@@ -504,7 +504,7 @@ test("a region whose migrations_dir is a different chain is refused", () => {
   // later check would notice because each half is internally consistent.
   const directory = mkdtempSync(join(tmpdir(), "avalon-chain-"));
   try {
-    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+    writeFileSync(join(directory, "wrangler.enterprise.jsonc"), JSON.stringify({
       d1_databases: [{ binding: "DB", migrations_dir: "../../other/migrations" }],
     }), "utf8");
     assert.throws(
@@ -512,12 +512,12 @@ test("a region whose migrations_dir is a different chain is refused", () => {
       /points migrations_dir at \.\.\/\.\.\/other\/migrations/u,
     );
 
-    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+    writeFileSync(join(directory, "wrangler.enterprise.jsonc"), JSON.stringify({
       d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations" }],
     }), "utf8");
     assert.deepEqual(
       discoverRegions(directory, { migrationsDirectory: sharedChain(directory) }).map((entry) => entry.region),
-      ["eu"],
+      ["enterprise"],
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -529,7 +529,7 @@ test("the repository's own configs all name the shared chain", () => {
   // the one that holds the real configs to the real directory.
   assert.deepEqual(
     discoverRegions().map((entry) => entry.region),
-    ["eu", "global"],
+    ["global"],
   );
 });
 
@@ -557,8 +557,8 @@ test("a new region config is discovered without any list being edited", () => {
 test("a config that cannot be parsed stops discovery rather than dropping a region", () => {
   const directory = mkdtempSync(join(tmpdir(), "avalon-regions-"));
   try {
-    writeFileSync(join(directory, "wrangler.eu.jsonc"), "{ this is not json", "utf8");
-    assert.throws(() => discoverRegions(directory), /wrangler\.eu\.jsonc could not be parsed/u);
+    writeFileSync(join(directory, "wrangler.enterprise.jsonc"), "{ this is not json", "utf8");
+    assert.throws(() => discoverRegions(directory), /wrangler\.enterprise\.jsonc could not be parsed/u);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -636,7 +636,7 @@ function wranglerAgainst(database, { failOn = null } = {}) {
   };
 }
 
-const LOCAL_TARGET = { region: "eu", config: "wrangler.eu.jsonc", binding: "DB", remote: false };
+const LOCAL_TARGET = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB", remote: false };
 
 test("a database that already has tables still has its ledger read", async () => {
   // The whole value of `outOfOrder` and `unknownApplied` is on databases that
@@ -674,7 +674,7 @@ test("an out-of-order migration is reported on a populated database, end to end"
   });
   assert.equal(plan.action, "migrate");
   assert.deepEqual(plan.outOfOrder, ["0084_inserted_later.sql"]);
-  assert.match(describePlan("eu", plan), /0084_inserted_later\.sql/u);
+  assert.match(describePlan("enterprise", plan), /0084_inserted_later\.sql/u);
   database.close();
 });
 
@@ -741,7 +741,7 @@ test("a hosted database that cannot be inspected still gets its migrations appli
       { run: wranglerAgainst(database, { failOn: "sqlite_schema" }) },
     );
     assert.deepEqual(state, { userTables: 0, applied: null, hasLedger: false, ledgerRead: false });
-    assert.match(warnings.join("\n"), /eu: could not inspect before applying/u);
+    assert.match(warnings.join("\n"), /enterprise: could not inspect before applying/u);
   } finally {
     console.warn = warn;
   }
@@ -762,7 +762,7 @@ test("a local database that cannot be inspected stops rather than guessing", asy
 
 test("a discovered region with no env file is named, rather than left to wrangler", () => {
   // Regions come from the Wrangler configs; `pnpm env:sync` still writes env
-  // files for a hardcoded global and eu. A third region is therefore discovered
+  // files for a hardcoded global and enterprise. A third region is therefore discovered
   // and handed an `--env-file` nothing created, and wrangler's message for that
   // names the file rather than the reason.
   const directory = mkdtempSync(join(tmpdir(), "envfiles-"));
@@ -794,23 +794,23 @@ test("a discovered region with no env file is named, rather than left to wrangle
 test("arguments parse into the run's shape", () => {
   assert.deepEqual(parseArguments([]), { remote: false, list: false, regions: [] });
   assert.deepEqual(parseArguments(["--remote"]), { remote: true, list: false, regions: [] });
-  assert.deepEqual(parseArguments(["--remote", "--list", "--region", "eu"]),
-    { remote: true, list: true, regions: ["eu"] });
-  assert.deepEqual(parseArguments(["--region", "eu", "--region", "global"]).regions, ["eu", "global"]);
+  assert.deepEqual(parseArguments(["--remote", "--list", "--region", "enterprise"]),
+    { remote: true, list: true, regions: ["enterprise"] });
+  assert.deepEqual(parseArguments(["--region", "enterprise", "--region", "global"]).regions, ["enterprise", "global"]);
   assert.throws(() => parseArguments(["--region"]), /--region needs a region name/u);
   assert.throws(() => parseArguments(["--region", "--remote"]), /--region needs a region name/u);
   assert.throws(() => parseArguments(["--nope"]), /Unrecognized argument --nope/u);
 });
 
 test("an unknown region is refused, naming the ones that exist", () => {
-  const discovered = [{ region: "global" }, { region: "eu" }];
+  const discovered = [{ region: "global" }, { region: "enterprise" }];
   assert.deepEqual(resolveTargets(discovered, []), discovered);
-  assert.deepEqual(resolveTargets(discovered, ["eu"]), [{ region: "eu" }]);
-  assert.throws(() => resolveTargets(discovered, ["apac"]), /apac is not a region here; found global, eu/u);
+  assert.deepEqual(resolveTargets(discovered, ["enterprise"]), [{ region: "enterprise" }]);
+  assert.throws(() => resolveTargets(discovered, ["apac"]), /apac is not a region here; found global, enterprise/u);
 });
 
 test("the database name lands after the subcommand, whichever subcommand it is", () => {
-  const target = { region: "eu", config: "wrangler.eu.jsonc", binding: "DB", remote: false };
+  const target = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB", remote: false };
   // `d1 execute DB …` is one token deep; `d1 migrations apply DB` is two.
   // Splicing on a fixed index puts the binding inside `migrations apply`.
   assert.deepEqual(
@@ -824,13 +824,13 @@ test("the database name lands after the subcommand, whichever subcommand it is",
 });
 
 test("a local run is pinned to its own state directory and a hosted run is not", () => {
-  const target = { region: "eu", config: "wrangler.eu.jsonc", binding: "DB" };
+  const target = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB" };
   const local = wranglerArguments({ ...target, remote: false }, ["migrations", "apply"]);
   assert.ok(local.includes("--local"));
   assert.deepEqual(local.slice(local.indexOf("--persist-to"), local.indexOf("--persist-to") + 2),
-    ["--persist-to", ".wrangler/state/eu"]);
+    ["--persist-to", ".wrangler/state/enterprise"]);
   assert.deepEqual(local.slice(local.indexOf("--env-file"), local.indexOf("--env-file") + 2),
-    ["--env-file", ".dev.vars.eu"]);
+    ["--env-file", ".dev.vars.enterprise"]);
 
   const remote = wranglerArguments({ ...target, remote: true }, ["migrations", "apply"]);
   assert.ok(remote.includes("--remote"));
@@ -838,7 +838,7 @@ test("a local run is pinned to its own state directory and a hosted run is not",
   assert.ok(!remote.includes("--local"));
   assert.ok(!remote.includes("--persist-to"));
   assert.ok(!remote.includes("--env-file"));
-  assert.deepEqual(remote.slice(-2), ["--config", "wrangler.eu.jsonc"]);
+  assert.deepEqual(remote.slice(-2), ["--config", "wrangler.enterprise.jsonc"]);
 });
 
 test("every discovered region produces a runnable argument vector", () => {
@@ -954,7 +954,7 @@ test("a read ledger reports the real pending count", async () => {
       migrationsOnDisk: context.onDisk(), digestFor: context.digestFor,
     });
     assert.equal(plan.pending.length, CHAIN.length - 2);
-    assert.match(describePlan("eu", plan), /applying 4 pending migration\(s\)/u);
+    assert.match(describePlan("enterprise", plan), /applying 4 pending migration\(s\)/u);
   });
 });
 
@@ -1185,7 +1185,7 @@ test("nothing is flagged out of order when every pending file sorts above what r
     });
     assert.deepEqual(plan.pending, ["0006_later.sql"]);
     assert.deepEqual(plan.outOfOrder, []);
-    assert.ok(!describePlan("eu", plan).includes("out of order"));
+    assert.ok(!describePlan("enterprise", plan).includes("out of order"));
   });
 });
 
@@ -1376,16 +1376,16 @@ test("a region declaring its own migrations_table is refused rather than silentl
   // failure would be the tooling reading a ledger Wrangler never writes.
   const directory = mkdtempSync(join(tmpdir(), "avalon-mt-"));
   try {
-    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+    writeFileSync(join(directory, "wrangler.enterprise.jsonc"), JSON.stringify({
       d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations", migrations_table: "custom_ledger" }],
     }), "utf8");
     const options = { migrationsDirectory: sharedChain(directory) };
     assert.throws(() => discoverRegions(directory, options), /sets migrations_table to "custom_ledger"/u);
 
-    writeFileSync(join(directory, "wrangler.eu.jsonc"), JSON.stringify({
+    writeFileSync(join(directory, "wrangler.enterprise.jsonc"), JSON.stringify({
       d1_databases: [{ binding: "DB", migrations_dir: "../../packages/db/migrations", migrations_table: "d1_migrations" }],
     }), "utf8");
-    assert.deepEqual(discoverRegions(directory, options).map((entry) => entry.region), ["eu"],
+    assert.deepEqual(discoverRegions(directory, options).map((entry) => entry.region), ["enterprise"],
       "spelling out the default explicitly is fine");
   } finally {
     rmSync(directory, { recursive: true, force: true });

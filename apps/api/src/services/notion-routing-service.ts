@@ -1,3 +1,5 @@
+import { regionalBindings } from "../lib/regional-bindings";
+import { isConfiguredRegion, configuredRegions } from "@rally/contracts/regions";
 import {
   ConnectorError,
   readNotionWebhookVerificationToken,
@@ -251,14 +253,15 @@ export class NotionRoutingService {
     const headers = relevantNotionHeaders(inputHeaders);
     const rawText = decodeUtf8(bytes);
 
-    // The one subscription verifies once, against the one ingress. EU never
+    // The one subscription verifies once, against the one ingress. regional never
     // receives that request, so the token is replicated to it here rather than
     // left to an operator step that would fail silently much later.
     const verificationToken = readNotionWebhookVerificationToken(rawText, this.maxBytes());
     if (verificationToken !== null) {
       const captured = await this.captureChallenge(verificationToken, setupNonce, bytes, headers);
       const setupGeneration = await this.setupGenerationForToken(verificationToken);
-      await this.storeChallengeInRegion("eu", verificationToken, setupGeneration);
+      await Promise.all(configuredRegions.filter((region) => region !== this.env.AVALON_REGION)
+        .map((region) => this.storeChallengeInRegion(region, verificationToken, setupGeneration)));
       return captured;
     }
 
@@ -272,7 +275,7 @@ export class NotionRoutingService {
       // full retry budget on every one, against the single subscription every
       // customer shares. Only an unrouted workspace is asked to come back.
       if (routes.length > 0) return { accepted: true, duplicate: false, activityCount: 0 };
-      // Do not retain possibly EU-resident payloads in Global. A non-200 asks
+      // Do not retain possibly regional-resident payloads in Global. A non-200 asks
       // Notion to retry after the regional OAuth callback records its route.
       throw new ApiError(503, "notion_route_pending", "The Notion workspace route is not ready yet");
     }
@@ -309,8 +312,9 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).completeProvider("notion", code, state);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
-      return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.completeNotion({ code, state }));
+    const bridge = regionalBindings(this.env, region).notion;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      return unwrapNotionRpcResult(await bridge.completeNotion({ code, state }));
     }
     throw this.regionUnavailable(region);
   }
@@ -319,8 +323,9 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).completeProviderDenial("notion", state);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
-      return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.denyNotion({ state }));
+    const bridge = regionalBindings(this.env, region).notion;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      return unwrapNotionRpcResult(await bridge.denyNotion({ state }));
     }
     throw this.regionUnavailable(region);
   }
@@ -329,8 +334,9 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ConnectionService(this.env).failProviderAttempt("notion", state, errorCode);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
-      return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.failNotionAttempt({ state, errorCode }));
+    const bridge = regionalBindings(this.env, region).notion;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      return unwrapNotionRpcResult(await bridge.failNotionAttempt({ state, errorCode }));
     }
     throw this.regionUnavailable(region);
   }
@@ -343,8 +349,9 @@ export class NotionRoutingService {
     if (region === this.env.AVALON_REGION) {
       return new ProviderWebhookService(this.env).ingestNotion(rawBody, headers);
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
-      return unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.ingestNotion({
+    const bridge = regionalBindings(this.env, region).notion;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      return unwrapNotionRpcResult(await bridge.ingestNotion({
         rawBody: exactArrayBuffer(rawBody),
         headers,
       }));
@@ -365,8 +372,9 @@ export class NotionRoutingService {
       );
       return;
     }
-    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_NOTION_BRIDGE) {
-      unwrapNotionRpcResult(await this.env.EU_NOTION_BRIDGE.storeNotionChallenge({
+    const bridge = regionalBindings(this.env, region).notion;
+    if (this.env.AVALON_REGION === "global" && bridge) {
+      unwrapNotionRpcResult(await bridge.storeNotionChallenge({
         verificationToken,
         setupGeneration,
       }));
@@ -409,7 +417,7 @@ function validateRoute(input: NotionRouteInput): void {
   if (
     !input.notionWorkspaceId
     || input.notionWorkspaceId.length > 200
-    || !["global", "eu"].includes(input.region)
+    || !isConfiguredRegion(input.region)
     || !input.workspaceId
     || !input.connectionId
   ) {

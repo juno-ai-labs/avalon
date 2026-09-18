@@ -15,6 +15,7 @@ import {
   canonicalToolInputHash,
   classifyAddressing,
   classifyAddressingHeuristically,
+  classifyAddressingWithModel,
   composeBeforeToolCallHooks,
   HarnessPluginActivationError,
   memberSafeHarnessFailureMessage,
@@ -23,6 +24,7 @@ import {
   rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
+  type AddressingContextMessage,
   type AzureModelPricing,
   type BindLoopTransition,
   type BindLoopProjectionState,
@@ -284,6 +286,434 @@ describe("agent harness", () => {
       type: "json_schema",
       json_schema: { name: "message_addressing", strict: true },
     });
+  });
+
+  it("locks DeepSeek addressing calls to the selected latency-ranked providers", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "uncertain", confidence: 0.61, rationaleCode: "active_task",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await classifyAddressingWithModel({
+      apiKey: "test-key",
+      model: "deepseek/deepseek-v4.1-flash",
+      message: "The second section still needs work",
+      activeTask: true,
+      reasoningEffort: "low",
+      fetch: fetcher,
+    });
+
+    expect(requestBody).toMatchObject({
+      provider: {
+        order: ["modal", "together"],
+        allow_fallbacks: false,
+        require_parameters: true,
+      },
+      reasoning: { effort: "low" },
+    });
+  });
+
+  it("accepts a JEV choice above the confidence threshold without calling the fallback", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    let requestUrl = "";
+    let requestAuthorization = "";
+    const fetcher = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(request);
+      requestAuthorization = new Headers(init?.headers).get("authorization") ?? "";
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        model: "jev-1.13.0",
+        answers: {
+          addressing: {
+            type: "choice",
+            choice: "rally_should_act",
+            confidence: 0.51,
+            probabilities: { rally_should_act: 0.51, people_only: 0.49 },
+          },
+        },
+        usage: { input_tokens: 100, output_tokens: 10 },
+      });
+    }) as typeof fetch;
+
+    await expect(classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      message: "Please review the launch plan",
+      activeTask: false,
+      humanMentions: ["Morgan"],
+      recentMessages: [{ authorType: "human", authorName: "Morgan", message: "The draft is ready" }],
+      fetch: fetcher,
+    })).resolves.toMatchObject({ classification: "agent_action", confidence: 0.51 });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(requestUrl).toBe("https://api.typesafe.ai/v1/systemone");
+    expect(requestAuthorization).toBe("Bearer typesafe-key");
+    expect(requestBody).toMatchObject({
+      model: "jev-latest",
+      state: {
+        current_message: {
+          text: "Please review the launch plan",
+          explicitly_addresses_rally: false,
+          mentioned_people: ["Morgan"],
+          mentioned_connectors: [],
+        },
+        current_agent_state: { task_active: false },
+        conversation_context: {
+          recent_messages: [{ authorType: "human", authorName: "Morgan", message: "The draft is ready" }],
+        },
+      },
+      questions: {
+        addressing: {
+          type: "choice",
+          instructions: { question: "Who is expected to act on `current_message.text` now?" },
+          criteria: {
+            people_only: {
+              include: expect.arrayContaining([
+                "Follow-up questions in an established person-to-person exchange retain that human addressee until redirected to Rally.",
+              ]),
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("routes a JEV choice at exactly 0.5 to the exact low-reasoning fallback", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const diagnostics: Array<{ provider?: string; success?: boolean }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (requestBodies.length === 1) {
+        return Response.json({
+          model: "jev-1.13.0",
+          answers: {
+            addressing: {
+              type: "choice",
+              choice: "people_only",
+              confidence: 0.5,
+              probabilities: { rally_should_act: 0.5, people_only: 0.5 },
+            },
+          },
+          usage: { input_tokens: 100, output_tokens: 10 },
+        });
+      }
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "agent_action", confidence: 0.82, rationaleCode: "imperative",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await expect(classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      fallbackModels: ["unmeasured/model"],
+      message: "Please review the launch plan",
+      activeTask: false,
+      fetch: fetcher,
+      onDiagnostic: (event) => { diagnostics.push(event); },
+    })).resolves.toMatchObject({ classification: "agent_action", confidence: 0.82 });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(requestBodies[1]).toMatchObject({
+      model: "deepseek/deepseek-v4-flash-0731",
+      provider: {
+        only: ["wafer/fast"],
+        allow_fallbacks: false,
+        require_parameters: true,
+      },
+      reasoning: { effort: "low" },
+    });
+    expect(requestBodies[1]).not.toHaveProperty("models");
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "typesafe", success: true }),
+      expect.objectContaining({ success: true }),
+    ]));
+  });
+
+  it("sends the same center-truncated boundary history to JEV and Terra", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const exactLimitMessage = "e".repeat(1_000);
+    const overLimitMessage = `A${"🧭".repeat(999)}Z`;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (requestBodies.length === 1) {
+        return Response.json({
+          model: "jev-1.13.0",
+          answers: {
+            addressing: {
+              type: "choice",
+              choice: "people_only",
+              confidence: 0.5,
+            },
+          },
+        });
+      }
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "agent_action", confidence: 0.82, rationaleCode: "imperative",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "openai/gpt-5.6-terra",
+      message: "Please review the launch plan",
+      activeTask: false,
+      recentMessages: [
+        { authorType: "human", authorName: "Morgan", message: exactLimitMessage },
+        { authorType: "human", authorName: "Morgan", message: overLimitMessage },
+      ],
+      fetch: fetcher,
+    });
+
+    const jevRecentMessages = ((requestBodies[0]!.state as {
+      conversation_context: { recent_messages: AddressingContextMessage[] };
+    }).conversation_context.recent_messages);
+    const fallbackMessages = requestBodies[1]!.messages as Array<{ role: string; content: string }>;
+    const fallbackInput = fallbackMessages[1]!.content.split("\n\nExpected structured output JSON Schema", 1)[0]!;
+    const fallbackRecentMessages = (JSON.parse(fallbackInput) as {
+      recentMessages: AddressingContextMessage[];
+    }).recentMessages;
+    expect(jevRecentMessages).toEqual(fallbackRecentMessages);
+    expect(jevRecentMessages[0]!.message).toBe(exactLimitMessage);
+    const boundedCharacters = Array.from(jevRecentMessages[1]!.message);
+    const sourceCharacters = Array.from(overLimitMessage);
+    expect(sourceCharacters).toHaveLength(1_001);
+    expect(boundedCharacters).toHaveLength(1_000);
+    expect(boundedCharacters.slice(0, 500)).toEqual(sourceCharacters.slice(0, 500));
+    expect(boundedCharacters[500]).toBe("…");
+    expect(boundedCharacters.slice(501)).toEqual(sourceCharacters.slice(-499));
+  });
+
+  it("bounds JEV latency and starts the OpenRouter fallback after the owned deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const urls: string[] = [];
+      const diagnostics: StructuredModelDiagnostic[] = [];
+      const fetcher = vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        urls.push(url);
+        if (url.includes("typesafe.ai")) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("timed out", "AbortError"));
+            }, { once: true });
+          });
+        }
+        return Promise.resolve(Response.json({
+          choices: [{ message: { content: JSON.stringify({
+            classification: "human_only", confidence: 0.81, rationaleCode: "human_coordination",
+          }) } }],
+        }));
+      }) as typeof fetch;
+
+      const pending = classifyAddressing({
+        apiKey: "openrouter-key",
+        typesafeApiKey: "typesafe-key",
+        model: "deepseek/deepseek-v4-flash-0731",
+        message: "Morgan, please review this",
+        activeTask: false,
+        fetch: fetcher,
+        onDiagnostic: (event) => { diagnostics.push(event); },
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(pending).resolves.toMatchObject({ classification: "human_only", confidence: 0.81 });
+      expect(urls).toEqual([
+        "https://api.typesafe.ai/v1/systemone",
+        "https://openrouter.ai/api/v1/chat/completions",
+      ]);
+      expect(diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ provider: "typesafe", failureKind: "typesafe_request_timed_out" }),
+      ]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not turn caller cancellation into a fallback request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException("cancelled", "AbortError");
+      return Response.json({});
+    }) as typeof fetch;
+
+    await expect(classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      message: "Please review this",
+      activeTask: false,
+      signal: controller.signal,
+      fetch: fetcher,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("uses the deterministic floor when both cascade providers fail", async () => {
+    const fetcher = vi.fn(async () => Response.json({ error: "unavailable" }, { status: 503 })) as typeof fetch;
+
+    await expect(classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      message: "Please review this",
+      activeTask: false,
+      fetch: fetcher,
+    })).resolves.toMatchObject({ classification: "agent_action", rationaleCode: "imperative" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds a stalled OpenRouter fallback before using the deterministic floor", async () => {
+    vi.useFakeTimers();
+    try {
+      let requestCount = 0;
+      const diagnostics: StructuredModelDiagnostic[] = [];
+      const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+        requestCount += 1;
+        if (requestCount === 1) return Response.json({ error: "unavailable" }, { status: 503 });
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("timed out", "AbortError"));
+          }, { once: true });
+        });
+      }) as typeof fetch;
+
+      const pending = classifyAddressing({
+        apiKey: "openrouter-key",
+        typesafeApiKey: "typesafe-key",
+        model: "deepseek/deepseek-v4-flash-0731",
+        message: "Please review this",
+        activeTask: false,
+        fetch: fetcher,
+        onDiagnostic: (event) => { diagnostics.push(event); },
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(pending).resolves.toMatchObject({
+        classification: "agent_action",
+        rationaleCode: "imperative",
+      });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          model: "deepseek/deepseek-v4-flash-0731",
+          stage: "complete",
+          failureKind: "timeout",
+        }),
+      ]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not mark the ordinary verb rally as an explicit JEV address", async () => {
+    const requestBodies: Array<{
+      state: { current_message: { explicitly_addresses_rally: boolean } };
+    }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as {
+        state: { current_message: { explicitly_addresses_rally: boolean } };
+      });
+      return Response.json({
+        model: "jev-1.13.0",
+        answers: {
+          addressing: {
+            type: "choice",
+            choice: "people_only",
+            confidence: 0.9,
+          },
+        },
+      });
+    }) as typeof fetch;
+
+    await classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      message: "Let's rally the team before Friday",
+      activeTask: false,
+      fetch: fetcher,
+    });
+
+    expect(requestBodies[0]?.state.current_message.explicitly_addresses_rally).toBe(false);
+  });
+
+  it("marks a Rally vocative as an explicit JEV address", async () => {
+    const requestBodies: Array<{
+      state: { current_message: { explicitly_addresses_rally: boolean } };
+    }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as {
+        state: { current_message: { explicitly_addresses_rally: boolean } };
+      });
+      return Response.json({
+        model: "jev-1.13.0",
+        answers: { addressing: { type: "choice", choice: "rally_should_act", confidence: 0.9 } },
+      });
+    }) as typeof fetch;
+
+    await classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      message: "Rally, please review this",
+      activeTask: false,
+      fetch: fetcher,
+    });
+
+    expect(requestBodies[0]?.state.current_message.explicitly_addresses_rally).toBe(true);
+  });
+
+  it("falls back, names an invalid JEV response field, and retains the response envelope", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    let requestCount = 0;
+    const fetcher = vi.fn(async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return Response.json({
+          model: "jev-1.13.0",
+          answers: { addressing: { type: "choice", choice: "people_only" } },
+        });
+      }
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "human_only", confidence: 0.8, rationaleCode: "human_coordination",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await expect(classifyAddressing({
+      apiKey: "openrouter-key",
+      typesafeApiKey: "typesafe-key",
+      model: "deepseek/deepseek-v4-flash-0731",
+      message: "Morgan, please review this",
+      activeTask: false,
+      fetch: fetcher,
+      onDiagnostic: (event) => { diagnostics.push(event); },
+    })).resolves.toMatchObject({ classification: "human_only" });
+
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: "typesafe",
+        failureKind: expect.stringContaining("answers.addressing.confidence"),
+        responsePayload: {
+          model: "jev-1.13.0",
+          answers: { addressing: { type: "choice", choice: "people_only" } },
+        },
+      }),
+    ]));
   });
 
   it("does not tell an automation author whether an event type is digestible", () => {
@@ -3739,6 +4169,42 @@ describe("agent harness", () => {
     });
   });
 
+  it.each([true, false, undefined])("preserves advisory longRunning=%s through plugin loading without blocking direct execution", async (longRunning) => {
+    const requests: Array<{ tools?: Array<{ function: { name: string; description?: string } }>; messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDeltaWithArguments(0, "load", "load_plugin", '{"pluginId":"rally_test"}')] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDeltaWithArguments(0, "draw", "test_draw", "{}")] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const execute = vi.fn(async () => ({ output: { resourceId: "image-1" }, summary: "Created image" }));
+    const plugin: HarnessPlugin = {
+      ...testCorePlugin([{
+        definition: {
+          name: "draw", description: "Draw an image.", capability: "image.generate",
+          mode: "write", idempotency: "safe", longRunning,
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+        execute,
+      }]),
+      preload: false,
+    };
+    const outcome = await runHarness({ ...runInput(fetcher), plugins: [plugin] });
+    expect(outcome).toMatchObject({ status: "completed", content: "done" });
+    expect(execute).toHaveBeenCalledTimes(1);
+    const description = requests[1]?.tools?.find((tool) => tool.function.name === "test_draw")?.function.description;
+    if (longRunning) {
+      expect(description).toContain("Consider delegating it");
+      expect(description).toContain("use it directly when appropriate");
+      expect(requests[1]?.messages.find((message) => message.role === "tool")?.content).toContain("Consider delegating it");
+    } else {
+      expect(description).toBe("Draw an image.");
+    }
+  });
+
   it("normalizes schema-declared numeric strings before receipts and execution", async () => {
     const requestBodies: Array<{
       messages: Array<{ role: string; content?: unknown }>;
@@ -4308,7 +4774,7 @@ describe("agent harness", () => {
     const terminalPlugin: HarnessPlugin = {
       canonicalId: "rally:terminal",
       modelId: "rally_terminal",
-      shortWireName: "terminal",
+      shortWireName: "",
       description: "Terminal",
       preload: true,
       explicit: false,

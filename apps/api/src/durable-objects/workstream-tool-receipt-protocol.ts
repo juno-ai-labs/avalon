@@ -23,6 +23,8 @@ export type ToolReceiptOperation = keyof WorkstreamToolReceiptStorage;
 export type ToolReceiptObjectPort = ObjectPortOf<WorkstreamToolReceiptStorage>;
 
 const DISPATCHED_OPERATIONS = [
+  "issuePage",
+  "claimPage",
   "admit",
   "checkpoint",
   "complete",

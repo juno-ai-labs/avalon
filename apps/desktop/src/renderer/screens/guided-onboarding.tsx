@@ -5,9 +5,10 @@ import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, X } from 'lucide-react';
-import { PERSONAL_COLOR_KEYS, OnboardingJourneySchema, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
+import { ConnectorInstallationProviders, PERSONAL_COLOR_KEYS, OnboardingJourneySchema, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
 import { Button, ConnectorMark, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
@@ -245,7 +246,13 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       <Button className="button-primary" disabled={busy} onClick={() => {
         const pageSelected = connectorProviders.some((provider) => selected.includes(`${connectorScope}:${provider.id}`) && provider.scopes.some((scope) => scope === connectorScope));
         if (!configuring && pageSelected) void perform(async () => {
-          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: OnboardingJourneySchema.shape.connectorIds.parse(selected) });
+          // Nothing the picker produces can fail this: every tile's id is a
+          // compile-time proven selection and the rest was parsed on the way in.
+          // It stays a guard rather than a cast, so it owes a reason somebody can
+          // act on instead of a ZodError's JSON blob.
+          const connectorIds = OnboardingJourneySchema.shape.connectorIds.safeParse(selected);
+          if (!connectorIds.success) throw new Error(`Rally could not save these connections (${describeZodIssues(connectorIds.error)}). Try again, or skip for now.`);
+          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: connectorIds.data });
           queryClient.setQueryData(key, saved);
           setConfiguring(true);
         });
@@ -256,11 +263,11 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     </>}>
     <p className="connector-access-note">{connectorScope === 'workspace' ? 'Workspace connections · 1 of 2' : 'Personal connections · 2 of 2. Any results you post in a shared stream are visible to its participants.'}</p>
     <label className="guided-search"><Search size={19} /><input aria-label="Search connectors" placeholder="Search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-    <div className="guided-connector-grid">{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(`${connectorScope}:${provider.id}`)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
+    <div className={configuring ? 'guided-connector-grid' : 'guided-connector-grid is-picking'}>{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(`${connectorScope}:${provider.id}`)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
       const connected = connections.data?.some((connection) => connection.connectorType === provider.provider && connection.scope === connectorScope && connection.status === 'healthy' && (connection.scope === 'you' && 'personalCapabilities' in provider ? provider.personalCapabilities : provider.capabilities).every((capability) => connection.capabilities?.includes(capability)));
       return <div className="guided-connector" key={provider.id}><button type="button" aria-pressed={selected.includes(`${connectorScope}:${provider.id}`)} onClick={() => setSelected((values) => values.includes(`${connectorScope}:${provider.id}`) ? values.filter((value) => value !== `${connectorScope}:${provider.id}`) : [...values, `${connectorScope}:${provider.id}`])}>{'mark' in provider ? <ConnectorMark mark={provider.mark} /> : <provider.icon size={24} />}<span>{provider.name}</span>{(connected || selected.includes(`${connectorScope}:${provider.id}`)) && <Check size={17} />}</button>{configuring && <><p>{provider.description}</p><div className="guided-connection-actions">{connected ? <span>Connected</span> : provider.scopes.filter((scope) => scope === connectorScope).map((scope) => <Button key={scope} disabled={busy} onClick={() => void perform(async () => {
         if (provider.provider === 'x') { await api!.createXConnection([...provider.capabilities]); await connections.refetch(); return; }
-        if (provider.provider === 'custom_mcp' || provider.provider === 'generic_webhook' || (provider.provider === 'granola' && scope === 'workspace')) { await desktopBridge().openSettings('connections'); return; }
+        if (provider.provider === 'custom_mcp' || provider.provider === 'generic_webhook' || (ConnectorInstallationProviders.includes(provider.provider as (typeof ConnectorInstallationProviders)[number]) && scope === 'workspace')) { await desktopBridge().openSettings('connections'); return; }
         const capabilities = scope === 'you' && 'personalCapabilities' in provider ? [...provider.personalCapabilities] : [...provider.capabilities];
         const authorization = await api!.startProviderConnection(provider.provider, scope, capabilities);
         setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id, source: 'onboarding' });
