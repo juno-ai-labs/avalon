@@ -1,3 +1,5 @@
+import { applyWorkspaceRelationshipChange } from '../src/queues/access-revocation-consumer';
+import { WorkspaceRelationshipChangeMessageSchema } from '../src/services/workspace-relationship-delivery';
 import { WorkspaceService } from '../src/services/workspace-service';
 import { readFileSync } from 'node:fs';
 import { pushSearchAuthorization } from '../src/services/search-authorization';
@@ -318,9 +320,10 @@ function fixture(): {
     register: (created) => { openDatabases.push(created); },
   });
   const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, [...MEMORY_OBJECT_METHODS, 'publishSync', 'listSearchAuthorizationSnapshots',
-    'enumerateSearchAuthorization', 'registerSearchAuthorization']);
+    'enumerateSearchAuthorization', 'registerSearchAuthorization', 'revokeSocketAccess']);
   const envWith = (rpcs: Record<string, unknown>): Env => createTestEnv({
     DB: sqliteD1(database),
+    ACCESS_REVOCATION_QUEUE: { send: async () => undefined, sendBatch: async () => undefined },
     MEMORY_INDEX: createCloudflareTestBinding<VectorizeIndex>(vector),
     // Freezing a run's recall now goes through the harness-run authority, so
     // this fixture needs the object namespace as well as the SQL callback
@@ -629,9 +632,16 @@ describe("scoped agent memory", () => {
       toolContext(runInput, 'projected-add'));
     expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
     objectDatabase.exec('DELETE FROM search_authorization_push');
+    const sent = vi.spyOn(env.ACCESS_REVOCATION_QUEUE, 'send');
     await new WorkspaceService(env, { sessionId: 'test', userId: OWNER_ID, workspaceId: WORKSPACE_ID,
       region: 'global', role: 'owner' }).removeMember(MEMBER_ID);
     expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
+    // Membership publication now crosses the durable delivery queue. Consume
+    // the real producer's messages before inspecting its projection work.
+    expect(sent).toHaveBeenCalled();
+    for (const [body] of [...sent.mock.calls]) {
+      await applyWorkspaceRelationshipChange(env, WorkspaceRelationshipChangeMessageSchema.parse(body));
+    }
     const jobs = objectDatabase.prepare('SELECT kind, target_id FROM search_authorization_push').all();
     expect(jobs.length).toBeGreaterThan(0);
     for (const job of jobs) await pushSearchAuthorization(env, { type: 'search_authorization_push_v1', region: 'global',
