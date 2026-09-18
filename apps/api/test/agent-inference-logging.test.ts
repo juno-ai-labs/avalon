@@ -378,14 +378,20 @@ describe("agent inference logging", () => {
       expect(logged.mock.calls.filter(([entry]) => (
         entry as { event?: string }
       ).event === "agent_inference_started")).toHaveLength(1);
+      // Background archive writes may finish in a different order than requests.
       const records = put.mock.calls.map((call) => JSON.parse(String(call[1])) as {
+        inference_request_id: string;
         metadata: Record<string, unknown>;
       });
-      expect(records[0]?.metadata).toMatchObject({
+      expect(records).toHaveLength(2);
+      const first = records.find((record) => record.inference_request_id === request.inferenceRequestId);
+      const second = records.find((record) => record.inference_request_id === "00000000-0000-7000-8000-000000000091");
+      expect(first?.metadata).toMatchObject({
         journey: "message_send",
         requestToInferenceStartMs: 100,
       });
-      expect(records[1]?.metadata).not.toHaveProperty("requestToInferenceStartMs");
+      expect(second).toBeDefined();
+      expect(second!.metadata).not.toHaveProperty("requestToInferenceStartMs");
     } finally {
       now.mockRestore();
       logged.mockRestore();
