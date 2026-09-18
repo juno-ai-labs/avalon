@@ -325,7 +325,10 @@ Equivalent session refreshes update the stable RallyApi with `setSession`; they
 must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 Responsive navigation uses shell state, closes on navigation and supplies the
-shared dismissal scrim. Sharing reads distinguish loading, empty and error states.
+shared dismissal scrim. Sharing reads distinguish loading, empty and error states. The header uses the shared
+icon button with Tabler `share-2`; its open state stays highlighted. Work-stream
+and substream right-click menus open the same sharing dialog for their own row.
+Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
 
