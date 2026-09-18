@@ -855,6 +855,14 @@ export class RallyApi {
     }));
   }
 
+  /** Make an existing member an administrator, or hand them back to member. */
+  async setWorkspaceMemberRole(userId: string, role: 'admin' | 'member'): Promise<void> {
+    await this.requestVoid(`/workspace/members/${encodeURIComponent(userId)}/role`, {
+      method: 'PATCH',
+      body: { role },
+    });
+  }
+
   async getInvitationPreview(token: string, signal?: AbortSignal): Promise<WorkspaceInvitationPreview> {
     return this.request(`/auth/invitations/preview?token=${encodeURIComponent(token)}`, {
       schema: WireWorkspaceInvitationPreviewSchema,

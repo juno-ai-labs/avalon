@@ -788,6 +788,19 @@ export function WorkspaceSettingsScreen({
       void queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] });
     },
   });
+  // Promotion and demotion are the same write, so they are the same mutation:
+  // a `promote`/`demote` pair would be two pending states and two error slots
+  // for one field with two values.
+  const setMemberRole = useMutation({
+    mutationFn: (input: { userId: string; role: 'admin' | 'member' }) =>
+      api!.setWorkspaceMemberRole(input.userId, input.role),
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+      // The viewer may have just demoted themselves, and `workspace` is where
+      // the role that draws these controls comes from.
+      queryClient.invalidateQueries({ queryKey: ['workspace'] }),
+    ]),
+  });
   const revokeInvitation = useMutation({
     mutationFn: (id: string) => api!.revokeWorkspaceInvitation(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
@@ -1283,9 +1296,28 @@ export function WorkspaceSettingsScreen({
                       <Avatar member={member} size="medium" />
                       <span><strong>{member.name}</strong><small>{member.email}</small></span>
                       <Badge className="role-badge">{member.role ?? 'member'}</Badge>
+                      {/*
+                        * The owner has no control beside them: their role is the
+                        * one the server refuses to reassign, so drawing a button
+                        * that can only fail is worse than drawing none. Everybody
+                        * else an administrator is looking at can be handed the
+                        * same powers the viewer is using right now.
+                        */}
+                      {isAdmin && member.role !== 'owner' && member.status !== 'invited' && (
+                        <Button
+                          disabled={setMemberRole.isPending}
+                          onClick={() => setMemberRole.mutate({
+                            userId: member.id,
+                            role: member.role === 'admin' ? 'member' : 'admin',
+                          })}
+                        >
+                          {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                        </Button>
+                      )}
                     </div>
                   ))}
                 </div>
+                {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
 
                 {isSettingAvailable(settings.invitations, settingsContext) && (
                   <div className="settings-subsection">
@@ -1308,7 +1340,7 @@ export function WorkspaceSettingsScreen({
                         <span><SettingLabel setting={settings.inviteRole} /></span>
                         <select onChange={(event) => setRole(event.target.value as 'admin' | 'member')} value={role}>
                           <option value="member">Member</option>
-                          {workspace.currentUser.role === 'owner' && <option value="admin">Administrator</option>}
+                          <option value="admin">Administrator</option>
                         </select>
                       </label>
                       <Button className="button-primary" disabled={!email.trim() || createInvitation.isPending} type="submit">

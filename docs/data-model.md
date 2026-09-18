@@ -142,7 +142,11 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
   zone chosen in one region does not cross to another.
 
-- `workspace_members` authorizes users as owner, admin, or member.
+- `workspace_members` authorizes users as owner, admin, or member — one row per
+  person per workspace, so a workspace may hold any number of administrators.
+  [`workspace-member-roles.md`](workspace-member-roles.md) owns what each role
+  means, the one write that assigns one, and the guard against demoting a
+  workspace's last administrator.
 
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion. A session that
