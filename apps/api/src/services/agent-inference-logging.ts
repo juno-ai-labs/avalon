@@ -33,6 +33,37 @@ export interface AgentInferenceLogger {
   onAttempt(attempt: InferenceAttemptEvent): Promise<void>;
 }
 
+export function logAgentInferencePrepared(
+  env: Env,
+  context: AgentInferenceLogContext,
+  timing: {
+    runStartedAtMs: number;
+    initialAuthorityReadyAtMs: number;
+    harnessInputsReadyAtMs: number;
+    preparationFinishedAtMs: number;
+  },
+): void {
+  if (context.inferenceStartEligible === false || context.requestReceivedAt === undefined) return;
+  const requestToPreparedMs = timing.preparationFinishedAtMs >= context.requestReceivedAt
+    ? timing.preparationFinishedAtMs - context.requestReceivedAt
+    : undefined;
+  logStructuredEvent(env, "info", "agent_inference_prepared", {
+    request_id: context.requestId,
+    operation_id: context.operationId,
+    journey: context.journey,
+    request_received_at: context.requestReceivedAt,
+    request_to_prepared_ms: requestToPreparedMs,
+    request_clock_skewed: requestToPreparedMs === undefined,
+    workspace_id: context.workspaceId,
+    workstream_id: context.workstreamId,
+    substream_id: context.workstreamId ? context.substreamId ?? "0" : undefined,
+    initial_authority_ms: timing.initialAuthorityReadyAtMs - timing.runStartedAtMs,
+    context_tools_ms: timing.harnessInputsReadyAtMs - timing.initialAuthorityReadyAtMs,
+    scope_activation_routing_ms: timing.preparationFinishedAtMs - timing.harnessInputsReadyAtMs,
+    total_ms: timing.preparationFinishedAtMs - timing.runStartedAtMs,
+  });
+}
+
 export function createAgentInferenceLogger(
   env: Env,
   context: AgentInferenceLogContext,

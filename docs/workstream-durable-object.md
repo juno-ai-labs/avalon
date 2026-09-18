@@ -1638,6 +1638,31 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-09-18 — Overlap independent inference preparation reads
+
+**What changed:** The harness starts independent initial authority reads,
+model routing, attachment receipt replay, and activation-hint loading through
+the shared rejection-observing `Preparation` primitive, while independent
+transcript bootstrap reads load together. Each result is still awaited before
+the same consuming authority boundary, and immutable run-scope persistence,
+plugin activation, the final liveness pulse, and provider dispatch retain their
+order. Attachment replay's existing five-second wall-clock budget still begins
+immediately before receipt outputs are restored; overlapping work does not
+start that deadline early.
+
+**Why:** Production traces showed roughly 2.7 seconds after substream
+confirmation completed but before the first provider request. These reads were
+being paid sequentially even though none grants authority to another.
+
+**Considered and rejected:** Lifecycle-deferring the reads or provider dispatch
+would let failures escape durable attempt settlement. Removing replay,
+authorization, or scope checks would trade latency for incorrect execution.
+
+**Consequences:** The critical path now pays the slowest overlapping read in a
+group instead of their sum. Failures remain observed and propagate when their
+existing consumer awaits them; no logging, analytics, or lakehouse write joins
+the execution gate.
+
 ### 2026-09-17 — Start durable loop work eagerly and overlap creation projections
 
 **What changed:** message and initialization admission still persist their loop
