@@ -1153,18 +1153,46 @@ export function isExternalEventTrigger(
 export function semanticConditionsForEventType(
   definition: { triggers: ReadonlyArray<z.infer<typeof TriggerDefinitionSchema>> } | null,
   eventType: string,
-): { conditions: string[]; connectorType: string | null } {
-  const matching = (definition?.triggers ?? []).filter((trigger) => {
-    if (trigger.type !== "semantic_activity") return false;
+): { conditions: string[]; connectorType: string | null; gated: boolean } {
+  const semantic = (definition?.triggers ?? []).filter(
+    (trigger): trigger is Extract<z.infer<typeof TriggerDefinitionSchema>, { type: "semantic_activity" }> =>
+      trigger.type === "semantic_activity",
+  );
+  const matching = semantic.filter((trigger) => {
     const declared = trigger.deterministicPrefilter["eventType"];
     return typeof declared !== "string" || declared.trim().length === 0 || declared === eventType;
   });
+  const named = [...new Set(matching.map((trigger) => trigger.connectorType).filter(
+    (connectorType): connectorType is string => connectorType !== null,
+  ))];
   return {
-    conditions: matching.map((trigger) => (trigger as { condition: string }).condition),
-    connectorType: matching.reduce<string | null>(
-      (found, trigger) => found ?? (trigger as { connectorType: string | null }).connectorType,
-      null,
-    ),
+    conditions: matching.map((trigger) => trigger.condition),
+    /**
+     * The connector the classifier is shown, and only when it is not in doubt.
+     *
+     * It reaches the model as `candidate_event.connector` — in the untrusted half
+     * of the state, as evidence — so naming the wrong one is worse than naming
+     * none. This used to take the first non-null value across every matching
+     * trigger, which is wrong exactly when two of them name different connectors:
+     * reachable through the documented "a trigger that names no event type gates
+     * every event", where a Slack event judged against a GitHub trigger's
+     * condition would have been shown `connector: "github"`. The delivery does
+     * not carry the event's own connector, so where the triggers disagree there
+     * is nothing honest to say and it says nothing.
+     */
+    connectorType: named.length === 1 ? named[0]! : null,
+    /**
+     * Whether this definition gates events at all, regardless of which ones matched.
+     *
+     * Read together with an empty `conditions`, this is the difference between
+     * "nothing here is gated" and "something here is gated and the join found
+     * none of it" — and the second must not admit. A semantic trigger whose
+     * declared event type has drifted from the one its evaluator rule actually
+     * registered would otherwise fall through to an ungated run, which is
+     * precisely the defect this whole mechanism exists to fix, reintroduced
+     * silently and with no log line distinguishing it from a clean admission.
+     */
+    gated: semantic.length > 0,
   };
 }
 

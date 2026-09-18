@@ -12,11 +12,7 @@
     "eval:addressing:report": "tsx evals/addressing/build-combination-report.ts",
     "eval:addressing:judge": "tsx evals/addressing/judge.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "eval:semantic": "tsx evals/semantic-trigger/run.ts",
-    "eval:semantic:gepa": "tsx evals/semantic-trigger/gepa.ts",
-    "eval:semantic:calibration": "tsx evals/semantic-trigger/calibration.ts",
-    "eval:semantic:rescore": "tsx evals/semantic-trigger/rescore.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@juno-ai/bind": "16.0.0",

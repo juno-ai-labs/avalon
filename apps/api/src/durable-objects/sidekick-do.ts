@@ -977,9 +977,19 @@ export class SidekickDO extends ConversationParentDurableObject {
       return { kind: "refuse", outcomeCode: "sidekick_event_before_activation_boundary" };
     }
     const semantic = semanticConditionsForEventType(definition, request.event.eventType);
-    return semantic.conditions.length === 0
-      ? { kind: "admit" }
-      : { kind: "judge", conditions: semantic.conditions, connectorType: semantic.connectorType };
+    if (semantic.conditions.length > 0) {
+      return { kind: "judge", conditions: semantic.conditions, connectorType: semantic.connectorType };
+    }
+    // A Sidekick that gates events and whose join found none of them is refused,
+    // not admitted. The join is by declared event type, so it comes up empty when
+    // a semantic trigger's `deterministicPrefilter.eventType` has drifted from the
+    // event type its evaluator rule registered — and admitting there would run the
+    // Sidekick ungated, which is the defect this mechanism exists to fix. Refusing
+    // is visible in a way admitting is not: the outcome code says the condition
+    // could not be located rather than that it passed.
+    return semantic.gated
+      ? { kind: "refuse", outcomeCode: "sidekick_semantic_condition_unresolved" }
+      : { kind: "admit" };
   }
 
   /**
@@ -1010,7 +1020,16 @@ export class SidekickDO extends ConversationParentDurableObject {
       // displayed, and never applied.
       const verdict = request.conditionVerdict;
       if (!verdict) return { admitted: false, outcomeCode: "sidekick_semantic_condition_unjudged" };
-      if (!verdict.admit) return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
+      // Both halves of the verdict have to agree, because the schema lets them
+      // disagree: `{ admit: true, code: "classifier_unavailable" }` parses, and
+      // trusting `admit` alone would start a run on a verdict that says the
+      // classifier never answered. The one caller today derives both from one
+      // decision, so this changes nothing at runtime — it moves the invariant to
+      // the object that the doc comments say decides, where a second caller
+      // written later inherits it instead of having to remember it.
+      if (!verdict.admit || verdict.code !== "condition_met") {
+        return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
+      }
     }
     const admitted = await this.admitOccurrence(externalEventOccurrenceKey(request.event), {
       kind: "external_event",
