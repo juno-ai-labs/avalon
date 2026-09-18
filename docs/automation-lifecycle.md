@@ -428,9 +428,13 @@ it selects event families, content, people, and provider fields.
 
 **A `semantic_activity` trigger's `condition` is not evaluated.** The predicate
 above is the only runtime matcher, and it takes no semantic test; a
-registration carries `when` and nothing else. So a ready `semantic_activity`
-trigger admits on its `deterministicPrefilter` alone, exactly as a
-`connector_activity` trigger does, while its plain-language `condition` is
+registration carries `when` and nothing else. The projection is built from
+`evaluator_rules_json` alone (`SidekickDO.acceptDraft`), so a ready
+`semantic_activity` trigger admits on exactly what a `connector_activity`
+trigger does: the evaluator rules joined to it by `sourceBindingKey`. Neither of
+the two fields that distinguish the type reaches the runtime. The
+`deterministicPrefilter` is read only by the readiness refinement that makes the
+authoring model name one event type, and the plain-language `condition` is
 required by the draft schema, stored on the accepted revision and rendered back
 to its author as the trigger's summary. A member who asked for "only when the
 message asks for a design review" gets every message of that event type. The

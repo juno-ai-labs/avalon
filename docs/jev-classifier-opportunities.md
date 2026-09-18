@@ -90,10 +90,9 @@ product decision inside it:
   inlined in `classifyAddressing` and would be copied verbatim by the second
   caller.
 
-Both are the Lego-block shape [`AGENTS.md`](../AGENTS.md#how-we-build) asks
-for: addressing
-becomes a state shape plus a questions document plus a mapping, and so does
-every entry below. Extracting them with addressing as the only caller is a
+Both are the Lego-block shape [`AGENTS.md`](../AGENTS.md#how-we-build) asks for:
+addressing becomes a state shape plus a questions document plus a mapping, and so
+does every entry below. Extracting them with addressing as the only caller is a
 refactor with a behavior-preserving test, and it is the cheapest possible first
 step in this whole file. Do it before the second classifier, not after the
 third.
@@ -108,14 +107,15 @@ third.
 (`packages/contracts/src/index.ts:1081`) requires a non-empty plain-language
 `condition`, and two of the draft's six readiness refinements exist to make a
 ready one well-formed (a concrete connector type, exactly one declared event
-type in the prefilter); the harness tool description
-tells the authoring model to "write it so it can be judged from the event alone"
+type in the `deterministicPrefilter`, which is the only thing that field is ever
+read for); the harness tool description tells the authoring model to "write it so
+it can be judged from the event alone"
 (`packages/agent-harness/src/index.ts:2470`); the compiler carries it into the
-stored definition (`:2982`); the desktop client's `triggerSummary`
-returns it verbatim as the trigger's one-line description on the card a person
-approves (`apps/desktop/src/renderer/lib/api.ts:454`); and a prompt for
-judging it exists, complete with an untrusted-evidence rule and a 0.8 confidence
-floor, at `packages/agent-harness/src/prompts/semantic-trigger.ts`.
+stored definition (`:2982`); the desktop client's `triggerSummary` returns it
+verbatim as the trigger's one-line description on the card a person approves
+(`apps/desktop/src/renderer/lib/api.ts:454`); and a prompt for judging it exists,
+complete with an untrusted-evidence rule and a 0.8 confidence floor, at
+`packages/agent-harness/src/prompts/semantic-trigger.ts`.
 
 Nothing evaluates it. The prompt renderer has no caller outside
 `prompts.test.ts`. The runtime match is
@@ -129,8 +129,10 @@ condition to live.
 **What that means for a member.** A Sidekick whose trigger reads "the changed
 file is a customer contract" (the phrasing used in
 `packages/agent-harness/src/index.test.ts:6591`) fires on *every* Drive change
-event the deterministic prefilter admits. The condition is the sentence the
-approval card shows in the place where a trigger says what starts a run. Rally is
+event its evaluator rules admit, which is whatever a `connector_activity`
+trigger with the same rules would have admitted. The condition is the sentence
+the approval card shows in the place where a trigger says what starts a run.
+Rally is
 promising a semantic filter, storing it, displaying it, and ignoring it. Whether
 any member has one today is not knowable from the repository; the authoring
 agent will produce one whenever a person describes a trigger in those terms,
@@ -149,7 +151,7 @@ does well, and it is closer to JEV's strengths than addressing is:
   a trigger-started run holds the same tools as any other), and a false
   non-match silently does nothing, which the member experiences as a broken
   automation.
-- The decision sits behind a deterministic prefilter that has already narrowed
+- The decision sits behind a deterministic predicate that has already narrowed
   the population, which is the ordering
   [`jev-best-practices.md`](jev-best-practices.md#model-the-state-explicitly)
   asks for: derive upstream what the application knows reliably, and ask the
@@ -429,9 +431,9 @@ will otherwise propose it.
 - **Replacing the external-event predicate.** The deterministic matcher is
   intentionally total, fails closed on missing values, and its strict schemas
   make illegal operator/value pairs unrepresentable. A semantic classifier
-  belongs *after* it (entry 1), never instead of it: the prefilter is what keeps
-  the classifier's population small enough to afford and its state small enough
-  to name.
+  belongs *after* it (entry 1), never instead of it: the rules' predicate is what
+  keeps the classifier's population small enough to afford and its state small
+  enough to name.
 - **The correctable-argument classifier.** `classifyAttemptError` and the
   tool-argument path decide whether a rejected tool call is the model's fault or
   a provider's, and they do it by reading whether the arguments fail the
