@@ -3531,16 +3531,6 @@ describe("a member's message travels the whole pipeline", () => {
       const admission = await parent.authorizeViewer({ workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID,userId:USER_ID,substreamId:asSubstreamId("0") });
       expect(admission.authorized).toBe(true);
       expect(admission.membershipVersion).toBeGreaterThan(0);
-      // A ticket issued against the old roster cannot bypass the new Main fence.
-      const stale = await stub.fetch("https://substream.test/socket",{ headers:{
-        Upgrade:"websocket","x-rally-workspace-id":WORKSPACE_ID,"x-rally-workstream-id":WORKSTREAM_ID,
-        "x-rally-substream-id":"0","x-rally-user-id":USER_ID,"x-rally-session-id":SESSION_ID,
-        "x-rally-socket-ticket-id":crypto.randomUUID(),
-        "x-rally-socket-ticket-expires-at":String(Math.floor(Date.now()/1000)+60),
-        "x-rally-socket-admission-membership-version":"0",
-      } });
-      if (stale.webSocket) { stale.webSocket.accept();stale.webSocket.close(1000,"unexpected admission"); }
-      expect(stale.status).toBe(403);
       const { socket } = await openSubscribedSocket(stub,crypto.randomUUID(),"0",admission.membershipVersion);
       const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close",resolve,{ once:true }));
       try {
@@ -3550,6 +3540,17 @@ describe("a member's message travels the whole pipeline", () => {
         if (result.status !== "committed") throw new Error("Expected revocation");
         await runDurableObjectAlarm(parent);
         expect((await closed).code).toBe(1008);
+        // Version zero is reserved for parent-authorized implicit Main readers.
+        // A formerly admitted positive grant revision must fail after revocation.
+        const stale = await stub.fetch("https://substream.test/socket",{ headers:{
+          Upgrade:"websocket","x-rally-workspace-id":WORKSPACE_ID,"x-rally-workstream-id":WORKSTREAM_ID,
+          "x-rally-substream-id":"0","x-rally-user-id":USER_ID,"x-rally-session-id":SESSION_ID,
+          "x-rally-socket-ticket-id":crypto.randomUUID(),
+          "x-rally-socket-ticket-expires-at":String(Math.floor(Date.now()/1000)+60),
+          "x-rally-socket-admission-membership-version":String(admission.membershipVersion),
+        } });
+        if (stale.webSocket) { stale.webSocket.accept();stale.webSocket.close(1000,"unexpected admission"); }
+        expect(stale.status).toBe(403);
         await runInDurableObject(parent, (_instance) => {
           expect(_instance['scopeGrants'](target).pendingParticipantProjection("0",USER_ID,result.grant.revision)).toBeNull();
         });
