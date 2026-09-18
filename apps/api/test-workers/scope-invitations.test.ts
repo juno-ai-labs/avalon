@@ -300,11 +300,11 @@ it("preserves browser sessions and independent shares across a second workstream
     .bind(workspaceId,recipientId).first()).toEqual({ n:1 });
 });
 
-it("refuses to strand a new grant ahead of its legacy participant handoff", async () => {
+it("reports missing legacy sharing authority without pretending migration is pending", async () => {
   await runInDurableObject(room(), (_instance, state) => {
     state.storage.sql.exec("DELETE FROM child_participant_migrations WHERE substream_id=?", childId);
   });
-  expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "denied", reason: "migration_pending" });
+  expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "denied", reason: "sharing_required" });
   await runInDurableObject(room(), (_instance, state) => {
     expect(state.storage.sql.exec("SELECT 1 FROM scope_invitations").toArray()).toEqual([]);
   });

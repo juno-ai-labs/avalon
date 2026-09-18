@@ -35,8 +35,8 @@ them all, while archive preserves reading and disables mutation.
 First-share preparation starts the addressed participant handoff after canonical
 participant checks. Once that conversation completes its handoff, parent viewer checks and canonical authorization
 reads use its scope grants. Unmigrated conversations retain the existing behavior
-below until their own handoff. The full implementation checklist is in the
-[guest sharing PRD](PRDs/2026-09-16_guest-sharing-browser/prd.md).
+below until their own handoff. [Scoped invitations](scope-invitations.md) owns
+sharing and handoff behavior; [browser sessions](browser-sessions.md) owns cookie transport.
 
 WorkstreamDO migration 14 installs `scope-grant-storage.ts`'s local tables and
 adds child audience with `restricted` as the preserving default. Mutations use
@@ -60,18 +60,22 @@ sharing. All local facts are read after the external relationship reads, with no
 await between the local decision and the write. Expected denials are typed RPC
 results, distinct from transport failures. Abandoned workspaces have no usable
 relationship. Migrated conversation reads recheck this relationship and scope after the D1
-await. Pending handoff refuses admission. The canonical resolver requests the
+await. Pending handoff refuses admission to the addressed conversation until its
+source freezes and the parent commits the roster transfer; unrelated conversations
+keep their existing path. A failed transfer resumes through the durable alarm.
+Falling back to a legacy roster after source authority freezes would create two
+competing authorities, so recovery retains this availability tradeoff. The canonical resolver requests the
 exact conversation, so an independent migrated child does not read Main's agent
 or require its participation. Its evidence includes relationship incarnation,
 relationship revision and the current participant projection revision. Main and
 child socket admission compare that version against the local applied projection;
-the legacy Main bypass and private-child membership table no longer authorize
-migrated conversations. Socket preparation carries the same parent-issued
+explicit grants use the applied projection, while Main retains parent-authorized
+implicit workspace-member access with version zero. The private-child membership
+table no longer authorizes migrated children. Socket preparation carries the same parent-issued
 revision. Public conversation snapshots, feed tickets, read-state and child title
 changes accept guest identities only through `requireGrantAuthority` parent
 admission. Unmigrated workstreams and Sidekick authoring conversations refuse
-that requirement. Other product routes and serving surfaces remain pending before
-live rollout; workspace-public legacy visibility never admits a guest here.
+that requirement. Workspace-public legacy visibility never admits a guest here.
 
 Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run

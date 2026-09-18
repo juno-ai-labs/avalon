@@ -34,6 +34,8 @@ async function seedActorGrant(target: ScopeGrantTarget) {
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
+    env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)"),
+    ...[actorId, recipientId].map((id) => env.DB.prepare("INSERT INTO users VALUES (?, 'Person', 'person@example.test', NULL, 'UTC', '2026-09-18T00:00:00.000Z')").bind(id)),
     env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')"),
     env.DB.prepare("INSERT INTO workspaces (id) VALUES (?)").bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT,user_id TEXT,access_class TEXT,
@@ -160,6 +162,12 @@ it("serves migrated child grants without reading Main and retains admission revi
   expect(await room().readAuthorizationFacts({ workspaceId,parentId,userId:recipientId,substreamIds:[childId] }))
     .toMatchObject({ exists:true,authority:"grants",scopes:[{ substreamId:childId,access:{ allowed:true } }] });
   expect(await room().authorizeViewer({ ...request,substreamId:asSubstreamId("0") })).toMatchObject({ authorized:false });
+  // Direct grant mutations now deliver to the actual source before returning.
+  await seedOpenWorkstreamAuthority(env.DB);
+  const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId, childId));
+  await source.bootstrapRuntime({ workspaceId, parentId, substreamId: childId, parentKind: "workstream", generation: 1 });
+  await source.transferParticipantAuthority({ workspaceId, parentId, substreamId: childId, transferId, phase: "prepare" });
+  await source.transferParticipantAuthority({ workspaceId, parentId, substreamId: childId, transferId, phase: "commit" });
   const revoked = await room().mutateScopeGrant({ ...mutation(),operationId:crypto.randomUUID(),active:false,expectedRevision:added.grant.revision });
   expect(revoked.status).toBe("committed");
   expect(await room().authorizeViewer(request)).toMatchObject({ authorized:false });
@@ -294,4 +302,35 @@ it("requires a parent grant for guest recommendation management and observes its
   await expect((async () => room().setSidekickRecommendation({ ...recommendation, attached: false }))())
     .rejects.toThrow("sidekick_attachment_participant_required");
   expect(await room().recommendedSidekickIds({ workspaceId, parentId })).toEqual([recommendation.sidekickId]);
+});
+
+it("does not count grants from a previous relationship as remaining participants", async () => {
+  await seedActorGrant(child);
+  await room().mutateScopeGrant(mutation());
+  await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(recipientId).run();
+  expect(await room().mutateScopeGrant({ ...mutation(), userId: actorId, active: false,
+    expectedRevision: 1 })).toEqual({ status: "denied", reason: "participant_required" });
+});
+
+it("retains implicit Main member admission after participant authority transfer", async () => {
+  await env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(recipientId).run();
+  const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
+  await seedOpenWorkstreamAuthority(env.DB);
+  await source.bootstrapRuntime({ workspaceId, parentId, substreamId: asSubstreamId("0"), parentKind: "workstream", generation: 1 });
+  await source.executeIdentityOperation({ workspaceId, workstreamId: parentId, substreamId: asSubstreamId("0"),
+    operation: "provision", args: [{ title: "Public workstream", objective: "Member admission",
+      scope: "workspace", originType: "ad_hoc", createdByUserId: actorId, participantUserIds: [actorId], harnessStatus: "idle",
+      emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null, plannedFor: null,
+      modelOverride: null, now: Date.now() }] });
+  await runInDurableObject(room(), (_instance, state) => {
+    state.storage.sql.exec("UPDATE workstream_metadata SET scope='workspace'");
+  });
+  await room().beginMainParticipantMigration({ workspaceId, parentId });
+  await runInDurableObject(room(), async (instance) => { await instance['runMainParticipantMigration'](); });
+  const admission = await room().authorizeViewer({ workspaceId, parentId, substreamId: asSubstreamId('0'), userId: recipientId });
+  expect(admission).toMatchObject({ authorized: true, membershipVersion: 0 });
+  await runInDurableObject(source, (instance) => {
+    expect(instance['conversationMembershipAllows'](recipientId, admission.membershipVersion ?? 0)).toBe(true);
+    expect(instance['conversationMembershipAllows'](recipientId, 999)).toBe(false);
+  });
 });

@@ -11,6 +11,13 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
   const email = EmailSchema.parse(input.email);
   const at = nowIso();
   await db.batch([
+    // Both providers have proved this primary mailbox. Attach the provider to
+    // the existing user, preserving grants, sessions and immutable platform ID.
+    db.prepare(`UPDATE users SET google_subject = ?
+      WHERE google_subject IS NULL AND email = ?
+        AND id = (SELECT user_id FROM user_verified_emails WHERE email = ?)
+        AND NOT EXISTS (SELECT 1 FROM users WHERE google_subject = ?)`)
+      .bind(input.subject, email, email, input.subject),
     db.prepare(`INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(google_subject) DO UPDATE SET

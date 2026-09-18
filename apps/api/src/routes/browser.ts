@@ -1,3 +1,4 @@
+import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
@@ -52,13 +53,13 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     await next();
     c.header("Cache-Control","no-store");
   });
-  routes.post("/email/start",zValidator("json",EmailLoginStartSchema),async (c) => {
+  routes.post("/email/start",authBodyLimit,zValidator("json",EmailLoginStartSchema),async (c) => {
     const started = await startEmailLogin(c.env,c.req.valid("json"));
     await deliverEmailLogin(c.env,started.challengeId);
     return c.json(EmailLoginStartedSchema.parse(started),202);
   });
   routes.get("/email/redeem",(c) => { c.header("Allow","POST");return c.body(null,405); });
-  routes.post("/email/redeem",zValidator("json",EmailLoginRedeemSchema),async (c) => {
+  routes.post("/email/redeem",authBodyLimit,zValidator("json",EmailLoginRedeemSchema),async (c) => {
     const receipt = await redeemEmailLogin(c.env,c.req.valid("json"));
     const session = await new AuthService(c.env).resumeEmailLogin(receipt);
     const service = new BrowserSessionService(c.env);
@@ -95,8 +96,9 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const workspaceId = workspace === "_" ? undefined : WorkspaceIdSchema.parse(workspace);
     const url = new URL(c.req.url);
     url.pathname = url.pathname.replace(/^\/browser\/api\/[^/]+/u,"");
-    // The adapter never exposes auth/token minting, setup, ingress or internal
-    // operations. The allowlist is over the normalized destination pathname.
+    // Keep auth/token minting, ingress and internal routes outside this adapter.
+    // Business routes retain their ordinary role and scope authorization; lite
+    // describes the UI, not an additional permission system.
     if (!/^\/(conversations|sharing|resources|feature-flags|telemetry|workspace|workstreams|sidekicks|automations|connections|favicons|search|speech|realtime)(\/|$)/u.test(url.pathname)) {
       throw new ApiError(404,"not_found","This browser operation is unavailable");
     }

@@ -52,15 +52,16 @@ describe("verified login identities", () => {
     expect(db.prepare("SELECT email FROM user_verified_emails WHERE user_id = ?").all(id)).toEqual([{ email: "new@example.com" }]);
   });
 
-  it("refuses an unverified profile match and does not silently link another provider", async () => {
+  it("refuses an unverified profile match but links a Google-verified mailbox to its email identity", async () => {
     const db = database();
     const binding = sqliteD1(db);
     db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
     await expect(resolveVerifiedEmailIdentity(binding, "raw@example.com")).rejects.toMatchObject({ code: "verified_identity_required" });
     const guest = await resolveVerifiedEmailIdentity(binding, google.email);
-    await expect(persistVerifiedGoogleIdentity(binding, google)).rejects.toThrow();
+    expect(await persistVerifiedGoogleIdentity(binding, google)).toBe(guest);
     expect(await resolveVerifiedEmailIdentity(binding, google.email)).toBe(guest);
-    expect(db.prepare("SELECT * FROM user_login_identities WHERE provider = 'google'").all()).toEqual([]);
+    expect(db.prepare("SELECT user_id FROM user_login_identities WHERE provider = 'google'").all()).toEqual([{ user_id: guest }]);
+    expect(db.prepare("SELECT platform_user_id FROM users WHERE id = ?").get(guest)).toEqual({ platform_user_id: guest });
   });
 
   it("upgrades populated identities with foreign keys on, preserving membership, sessions and routes", async () => {
