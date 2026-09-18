@@ -31,6 +31,24 @@ describe("independent harness preparations", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("measures only the loader attempt and retains the settled measurement", async () => {
+    let finish!: (value: string) => void;
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValueOnce(100).mockReturnValueOnce(137);
+    const preparation = new Preparation(() => new Promise<string>((resolve) => { finish = resolve; }));
+
+    const pending = preparation.get();
+    expect(preparation.elapsedMs).toBeNull();
+    await Promise.resolve();
+    expect(preparation.elapsedMs).toBeNull();
+    finish("ready");
+    await expect(pending).resolves.toBe("ready");
+    expect(preparation.elapsedMs).toBe(37);
+    expect(preparation.get()).toBe(pending);
+    expect(preparation.elapsedMs).toBe(37);
+    now.mockRestore();
+  });
+
   it("replaces a changed tool surface without an older result overwriting it", async () => {
     const surfaces = new ToolSurfacePreparations();
     const old = surfaces.get("builtin", "old schema");
