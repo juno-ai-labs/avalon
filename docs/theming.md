@@ -22,9 +22,8 @@ properties without knowing which appearance is active.
 | `scripts/build-theme-assets.mjs` | Generates the renderer stylesheet and remote-font manifest. |
 | `packages/ui/src/styles/themes.css` | Generated light and dark custom-property blocks. |
 | `packages/ui/src/styles/app.css` | Component and layout rules expressed through semantic tokens. |
-| `apps/desktop/src/common/themes.ts` | The shared `system | light | dark` preference and resolver. |
-| `packages/ui/src/lib/theme.ts` | Shared appearance, device preference, and system appearance watcher. |
-| `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
+| `packages/ui/src/themes.ts` | The shared appearance preference, resolver, and initial window backgrounds; desktop common imports re-export it. |
+| `apps/desktop/src/renderer/lib/theme.ts` | Device preference persistence, system appearance watching, DOM application, and native window synchronization. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/projects.ts` | `PALETTE_INK` — which of the two absolute inks each palette fill carries, and the reasoning behind the rule that picks it. |
@@ -182,13 +181,17 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
-### 2026-09-17 — Share theme presentation between desktop and browser
+### 2026-09-18 — Share theme presentation between desktop and browser
 
 **What changed:** The shared UI package owns generated/component styles, bundled
-fonts and theme type definitions. The generator and desktop use those files;
-the next stack layer extracts the appearance runtime and native reporting adapter.
+fonts, the Rally mark, and theme definitions. The generator and desktop use those
+files, and the desktop main bundle includes the shared theme definitions.
 
-**Why:** The browser and desktop must receive the same appearance changes.
+**Why:** Adding browser collaboration would otherwise copy desktop styles and
+assets into a second independently maintained tree. One package keeps appearance
+changes together; host-specific preference storage and native reporting stay in
+the desktop runtime. Asset URLs must resolve inside the shared package, and
+shared package changes must trigger desktop release planning.
 
 **Considered and rejected:** A separate browser stylesheet would drift; a shared
 runtime that calls Electron would break browser startup.

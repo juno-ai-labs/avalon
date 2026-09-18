@@ -199,6 +199,8 @@ def main() -> None:
     generic_icon = app_icon(1024)
     dark_macos_icon = macos_app_icon(1024)
     save(transparent, ROOT / "assets" / "brand" / "rally-mark.png")
+    save(transparent, ROOT / "packages" / "ui" / "src" / "assets" / "rally-mark.png")
+    # The HTML entry point needs a host-local favicon URL in Vite development.
     save(transparent, ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "rally-mark.png")
     save(transparent, ROOT / "apps" / "site" / "public" / "brand" / "rally-mark.png")
     save(generic_icon, ROOT / "apps" / "desktop" / "resources" / "icon.png")
