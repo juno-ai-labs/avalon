@@ -33,7 +33,14 @@ const SLICES = [
 ];
 const MERGED = `${DIR}/cases.jsonl`;
 const STRIPPED = `${DIR}/cases-for-adjudication.jsonl`;
-const ADJUDICATION = `${DIR}/adjudication.jsonl`;
+/**
+ * Every independent adjudication pass, applied in order.
+ *
+ * A list rather than one file because the corpus grew in slices and each pass
+ * judged the slice that existed when it ran. Later entries win, which is what
+ * makes a correction possible without losing the record of what was corrected.
+ */
+const ADJUDICATIONS = [`${DIR}/adjudication.jsonl`, `${DIR}/adjudication-loops.jsonl`];
 /**
  * A second pass over cases whose text changed after the first adjudication.
  *
@@ -128,7 +135,10 @@ function merge(): void {
 
 /** What an adjudicator is allowed to see: the decision, and nothing about the answer. */
 function strip(): void {
-  const cases = readJsonl<EvalCase>(MERGED);
+  // Only what has not been judged yet. The corpus grows in slices, and
+  // re-presenting an already-adjudicated case wastes a judge's attention on a
+  // label that exists while risking a second, different answer for it.
+  const cases = readJsonl<EvalCase>(MERGED).filter((testCase) => !testCase.adjudicatedLabel);
   // The scenario fields are withheld as well. An adjudicator who can see that a
   // case belongs to a watch with eleven siblings can infer that almost none of
   // them fire, and label to that prior instead of to the evidence.
@@ -146,10 +156,13 @@ function strip(): void {
 
 function fold(): void {
   const cases = readJsonl<EvalCase>(MERGED);
-  const adjudications = new Map(
-    readJsonl<{ id: string; label: string; rationale: string }>(ADJUDICATION)
-      .map((row) => [row.id, row]),
-  );
+  const adjudications = new Map<string, { id: string; label: string; rationale: string }>();
+  for (const path of ADJUDICATIONS) {
+    if (!existsSync(path)) continue;
+    for (const row of readJsonl<{ id: string; label: string; rationale: string }>(path)) {
+      adjudications.set(row.id, row);
+    }
+  }
   if (existsSync(READJUDICATION)) {
     for (const row of readJsonl<{ id: string; label: string; rationale: string }>(READJUDICATION)) {
       adjudications.set(row.id, row);
