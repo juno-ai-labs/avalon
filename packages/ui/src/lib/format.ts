@@ -1,4 +1,13 @@
 import type { HarnessStatus } from './types';
+/**
+ * What a work-stream marker can say, which is more than the run can.
+ *
+ * Five of these are the harness's own status. Three — `unread`, `mentioned`,
+ * `unseen` — are the reader's, and they are in the same vocabulary because
+ * they compete for the same dot: a work stream is never showing a person two
+ * markers, so the states have to be ranked against each other rather than
+ * drawn side by side.
+ */
 export type WorkstreamMarkerStatus = HarnessStatus | 'unread' | 'mentioned' | 'unseen';
 
 export const statusLabel: Record<WorkstreamMarkerStatus, string> = {

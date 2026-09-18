@@ -257,7 +257,7 @@ function WorkspaceApp(): React.JSX.Element {
       {mainSurface ? <HashRouter useTransitions={false}>
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
-            <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
+            <WorkspaceWorkstreamSockets api={workspace.error ? null : api} enabled={session?.workspace?.accessClass !== 'guest'}>
               {content}
             </WorkspaceWorkstreamSockets>
           </WorkspaceOnboardingJourney>

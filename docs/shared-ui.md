@@ -1,7 +1,7 @@
 # Shared collaboration UI
 
-`@rally/ui` owns the collaboration presentation used by desktop and the lite
-browser. Desktop's current UI is the reference; a browser host supplies fewer
+`@rally/ui` owns the collaboration presentation used by desktop and prepared for the lite
+browser in the next stacked change (#825). Desktop's current UI is the reference; a browser host supplies fewer
 actions to the same components rather than drawing a second design.
 
 ## Where the code lives
@@ -13,11 +13,11 @@ actions to the same components rather than drawing a second design.
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
   queries. Existing import sites re-export shared primitives during migration.
-- The browser host owns email entry, cookie session restoration and its scoped
-  directory. Its collaboration adapter supplies selected-conversation data.
+- The next stacked browser host supplies email entry, cookie session restoration,
+  its scoped directory and selected-conversation data. Those screens are not in #824.
 
 The application error boundary is shared, with host-specific error reporting.
-Both collaboration hosts use the existing API query defaults: no focus refresh
+The collaboration adapter uses the existing API query defaults: no focus refresh
 unless a query opts in, and no retry for a rejected 4xx request.
 
 ## How it works
@@ -39,14 +39,17 @@ appearance observation. Visual primitives share the same theme subscription.
 
 Sidekick management options are requested when management controls open. Transcript
 updates continue refreshing existing attachment/recommendation state, but do not
-fetch management choices. Mutation handlers invalidate the existing scoped keys.
+fetch management choices. Canonical management denial hides the picker; unresolved management capability disables
+creation and shows a loading row menu only for eligible rows. Attachment updates
+seed the selected cache and invalidate siblings without discarding the new seed.
 
 ## Invariants
 
 - Shared components import no application, IPC, authentication or transport code.
-- Desktop and browser consume the same semantic styles and presentation elements.
+- Hosts reuse the same semantic styles and presentation elements.
 - Host callbacks perform mutations through existing admitted application paths.
-- Child-only sharing must not expose Main labels or resource context.
+- Child-only sharing must not expose Main labels or resource context. Guest hosts
+  use the selected conversation socket and omit desktop parent prewarming.
 
 ## Boundary
 
@@ -64,18 +67,25 @@ Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 ## Testing
 
-Build and typecheck both consumers and the package. Compare Chrome and Electron at
-matching sizes in light/dark appearance. Component tests cover interaction, but
-screenshots are required to establish layout and visibility.
+Run `pnpm lint`, `pnpm typecheck`, and `pnpm --filter @rally/desktop exec vitest run
+src/renderer/components/sidekick-picker.test.tsx
+src/renderer/components/sidekick-section.test.tsx` (as one command). The desktop
+suite imports the real shared implementations through their re-export adapters.
+Run `pnpm --filter @rally/desktop exec electron-vite build` and inspect the changed
+surfaces in Electron. The browser host in #825 adds Chrome verification; no second
+component test runner is needed for the same implementations.
 
 ## Changelog
 
 ### 2026-09-17 — Share desktop presentation with the lite browser
 
-**What changed:** Extracted the current desktop header, navigation rows, context
-sidebar, primitives and theme styles into a package consumed by both clients.
+**What changed:** Desktop now renders collaboration chrome through shared
+components so the next browser host can supply scoped data and omit unsupported
+actions while retaining the same layout and interactions.
 
-**Why:** The separate browser shell had already diverged from the app.
+**Why:** The browser shell in the original combined change had already diverged
+from the app. Sharing the implementations makes subsequent visual changes apply
+to both hosts.
 
 **Considered and rejected:** Copying styles into a browser-specific lookalike would
 preserve that drift. Moving Electron IPC into the package would couple browser

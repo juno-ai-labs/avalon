@@ -148,7 +148,7 @@ const FILE_KIND_LABELS: Record<AttachmentKind, string> = {
   other: 'File',
 };
 
-const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
+import { FILE_PROVENANCE_TYPES } from '@rally/ui/components/resource-icon';
 
 export function resourceKindLabel(resource: ResourceKindInput): string {
   const type = resource.resourceType;
@@ -171,17 +171,6 @@ function isAttachmentKind(value: string): value is AttachmentKind {
  */
 export type ResourceKindInput = Pick<CitationResource, 'mimeType' | 'resourceType' | 'title'>;
 
-/**
- * The one name a resource is drawn under.
- *
- * A provenance type says who made the resource, not what it is, so it is
- * replaced by the attachment kind its MIME and filename classify to. That is
- * the only place the translation happens, and it is why `ResourceIcon` takes a
- * resource rather than a string: a caller holding a raw `resourceType` cannot
- * tell that a `generated_file` carrying the site manifest is a live site, and
- * the two rails proved it by both passing the raw type and both drawing a
- * `.docx` sheet over a page somebody opens.
- */
 export { resourceIconType, ResourceIcon } from '@rally/ui/components/resource-icon';
 import { ResourceIcon, resourceIconType } from '@rally/ui/components/resource-icon';
 

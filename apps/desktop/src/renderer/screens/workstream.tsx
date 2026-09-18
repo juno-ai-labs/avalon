@@ -64,6 +64,7 @@ export function WorkstreamHeader({ workspaceTarget, ...props }: Omit<React.Compo
       kind: 'content_copied', contentType, resourceType: 'workstream', resourceId: props.workstream.id,
     })).catch(() => undefined);
   };
+  // HTTPS links unfurl and work without the desktop app installed; custom schemes do not.
   return <ConversationHeader {...props} railOpen={railOpen} railVariant={railVariant} onCloseRail={closeRail}
     contextEnabled={RIGHT_SIDEBAR_ENABLED} onShowNavigation={() => setSidebarOpen(true)}
     onCopyLink={() => { if (workspaceTarget) void copyWorkstreamLink(workspaceTarget, props.workstream.id, props.substreamId ?? '0').catch(() => undefined); }}
@@ -79,9 +80,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
+  const guest = session?.workspace?.accessClass === 'guest';
   // Parent chrome remains live even on a direct link into a child. Reuse the
   // retained Main connection rather than deriving its inventory from the child.
-  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id), 'workstream', '0');
+  // A guest child grant proves nothing about Main; keep that host scoped to its child.
+  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!guest || selectedSubstreamId === '0')), 'workstream', '0');
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
@@ -232,7 +235,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     setSubstreamPending(true);
     setSubstreamMenuError(null);
     try {
-      if (target.substreamId === '0') {
+      // Match header renaming: guest Main is conversation-scoped authority.
+      if (target.substreamId === '0' && !guest) {
         const updated = await api.renameWorkstream(target.parentId, title);
         patchCachedWorkstream(queryClient, target.parentId, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
         reportParentAction(updated, 'rename');
@@ -425,7 +429,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     <ConversationSurface
       parentId={id}
       parentKind="workstream"
-      workstreamContext={parent.data}
+      workstreamContext={guest ? undefined : parent.data}
+      sidebarScope={guest ? 'conversation' : 'workstream'}
       onStartSubstream={startCreation}
       substreamLaunch={creation?.parentId === id ? {
         throughTurnId: creation.throughTurnId,
@@ -436,6 +441,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       } : null}
       renderSidebar={(context) => (
         <WorkstreamSidebar
+          mainVisible={!guest || selectedSubstreamId === '0'}
           onSidekickMenuOpen={context.loadSidekickOptions}
           addSidekick={<SidekickPicker workstreamId={context.detail.id} substreamId={selectedSubstreamId} />}
           sidekicks={context.sidekicks}
@@ -451,12 +457,12 @@ export function WorkstreamScreen(): React.JSX.Element {
           onNewSubstream={() => startCreation(null)}
           onOpenArtifact={context.openArtifact}
           onFocusTranscript={context.focusTranscript}
-          mainActions={parent.data ? {
-            onMakePublic: parent.data?.systemKind ? undefined : makePublic,
-            publicDisabled: parent.data.scope === 'workspace' || substreamPending,
+          mainActions={(guest ? selectedSubstreamId === '0' : parent.data) ? {
+            onMakePublic: guest || parent.data?.systemKind ? undefined : makePublic,
+            publicDisabled: parent.data?.scope === 'workspace' || substreamPending,
             onCopyLink: session?.workspace ? copyRowLink : undefined,
             onRename: (target) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuError(null); },
-            onArchive: (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
+            onArchive: guest ? undefined : (target) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuError(null); },
           } : undefined}
           substreamActions={{
             onCopyLink: session?.workspace ? copyRowLink : undefined,
@@ -473,7 +479,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           onAddParticipant={context.openParticipantDialog}
           onOpenRail={context.openRail}
           onRename={context.rename}
-          onAppearanceChange={mainConnection.setAppearance}
+          onAppearanceChange={guest ? undefined : mainConnection.setAppearance}
           presentUserIds={context.presentUserIds}
           socketState={context.socketState}
           workspaceTarget={session?.workspace ? {
