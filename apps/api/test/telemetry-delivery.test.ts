@@ -1,4 +1,6 @@
 import "../../../tests/isolated-region";
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { asUserId } from "@rally/contracts";
 import type { HonoAppEnv } from "../src/env";
@@ -63,6 +65,7 @@ function exceptionEnvelope(eventId: string) {
 function insertAcceptedException(
   database: ReturnType<typeof migratedSqliteDatabase>,
   delivery: ReturnType<typeof exceptionEnvelope>,
+  deleteAt = "2026-11-10T20:00:00.000Z",
 ): void {
   database.prepare(`
     INSERT INTO telemetry_accepted_events (
@@ -77,7 +80,7 @@ function insertAcceptedException(
     "subject-1",
     now,
     now,
-    "2026-11-10T20:00:00.000Z",
+    deleteAt,
   );
 }
 
@@ -126,7 +129,7 @@ describe("Global telemetry delivery", () => {
     database.close();
   });
 
-  it("purges through the inclusive request-entry cutoff when opting out", async () => {
+  it.each([false, true])("uses the inclusive cutoff and skips a stale opt-out purge (reenabled: %s)", async (reenabled) => {
     const database = migratedSqliteDatabase();
     database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at,
       product_analytics_enabled, product_analytics_preference_version)
@@ -139,6 +142,13 @@ describe("Global telemetry delivery", () => {
         subjectUserId: "018f22f2-4c22-7abc-8def-0123456789ad", workspaceAnalyticsId: null,
       });
     }
+    const prepare = env.DB.prepare.bind(env.DB);
+    const preferenceRead = vi.spyOn(env.DB, "prepare").mockImplementation((sql) => {
+      if (reenabled && sql === "SELECT product_analytics_enabled, product_analytics_preference_version FROM users WHERE id = ?") {
+        database.prepare("UPDATE users SET product_analytics_enabled = 1, product_analytics_preference_version = 3").run();
+      }
+      return prepare(sql);
+    });
     const app = new Hono<HonoAppEnv>();
     app.use("*", async (c, next) => {
       c.set("requestReceivedAt", Date.parse(now));
@@ -151,14 +161,18 @@ describe("Global telemetry delivery", () => {
       body: JSON.stringify({ enabled: false, expectedVersion: 1 }),
     }, env);
     expect(response.status).toBe(200);
-    expect(database.prepare("SELECT event_id FROM telemetry_accepted_events").all()).toEqual([
+    await vi.waitFor(() => expect(database.prepare("SELECT event_id FROM telemetry_accepted_events ORDER BY event_id").all()).toEqual([
+      ...(reenabled ? [{ event_id: "018f22f2-4c22-7abc-8def-0123456789ab" }] : []),
       { event_id: "018f22f2-4c22-7abc-8def-0123456789ac" },
-    ]);
+    ]));
+    preferenceRead.mockRestore();
     database.close();
   });
 
   it("batches pending rows and records successful acknowledgement", async () => {
-    const database = migratedSqliteDatabase();
+    const identity = migratedSqliteDatabase();
+    const database = new DatabaseSync(":memory:");
+    database.exec(readFileSync(new URL("../../../packages/db/telemetry-migrations/0001_initial.sql", import.meta.url), "utf8"));
     const deliverTelemetryBatch = vi.fn(async () => ({
       postHog: {
         result: "delivered" as const,
@@ -167,7 +181,8 @@ describe("Global telemetry delivery", () => {
       },
     }));
     const env = createTestEnv({
-      DB: sqliteD1(database),
+      DB: sqliteD1(identity),
+      TELEMETRY_DB: sqliteD1(database),
       AVALON_REGION: "global",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
@@ -188,13 +203,14 @@ describe("Global telemetry delivery", () => {
       throw new Error("the regional API must not call PostHog directly");
     }));
 
+    insertAcceptedException(identity, exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af"), now);
     await expect(processTelemetryOutbox(env)).resolves.toEqual({
       selected: 1,
       delivered: 1,
       retried: 0,
       terminal: 0,
       suppressed: 0,
-      expired: 0,
+      expired: 1,
     });
     expect(database.prepare(
       "SELECT delivery_state, delivered_at, attempt_count FROM telemetry_accepted_events",
@@ -208,6 +224,8 @@ describe("Global telemetry delivery", () => {
         analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
       })],
     }));
+    expect(identity.prepare("SELECT COUNT(*) AS count FROM telemetry_accepted_events").get()).toEqual({ count: 0 });
+    identity.close();
     database.close();
   });
 

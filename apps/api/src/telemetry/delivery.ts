@@ -44,12 +44,16 @@ async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
   ] as const;
   let expired = 0;
   for (const table of tables) {
-    const db = ["telemetry_accepted_events", "telemetry_delivery_receipts", "telemetry_replay_audit"].includes(table) ? env.TELEMETRY_DB : env.DB;
-    const row = await db.prepare(
-      `SELECT COUNT(*) AS count FROM ${table} WHERE delete_at <= ?`,
-    ).bind(now).first<{ count: number }>();
-    expired += row?.count ?? 0;
-    await db.prepare(`DELETE FROM ${table} WHERE delete_at <= ?`).bind(now).run();
+    // Legacy accepted rows retain their original expiry after the fresh cutover.
+    const databases = ["telemetry_accepted_events", "telemetry_delivery_receipts", "telemetry_replay_audit"].includes(table)
+      ? [env.TELEMETRY_DB, env.DB] : [env.DB];
+    for (const db of new Set(databases)) {
+      const row = await db.prepare(
+        `SELECT COUNT(*) AS count FROM ${table} WHERE delete_at <= ?`,
+      ).bind(now).first<{ count: number }>();
+      expired += row?.count ?? 0;
+      await db.prepare(`DELETE FROM ${table} WHERE delete_at <= ?`).bind(now).run();
+    }
   }
   return expired;
 }
@@ -112,11 +116,6 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   ]);
   if (!captureAllowed && !exceptionAllowed) return summary;
 
-  const transitions = await env.DB.prepare(
-    `SELECT DISTINCT subject_user_id FROM telemetry_profile_jobs
-     WHERE job_kind = 'epoch_transition' AND state IN ('pending', 'delivering')
-       AND subject_user_id IS NOT NULL`,
-  ).all<{ subject_user_id: string }>();
   const pending = await env.TELEMETRY_DB.prepare(
     `SELECT e.event_id, e.envelope_json, e.analytics_subject_id, e.workspace_analytics_id,
             e.normalized_timestamp, e.attempt_count, e.delete_at, e.subject_user_id
@@ -124,13 +123,11 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
      WHERE e.delivery_state IN ('pending', 'retrying')
        AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= ?)
        AND e.delete_at > ?
-       AND (e.subject_user_id IS NULL OR e.subject_user_id NOT IN (SELECT value FROM json_each(?)))
      ORDER BY e.accepted_at
      LIMIT 50`,
-  ).bind(now.toISOString(), now.toISOString(), JSON.stringify(transitions.results.map((row) => row.subject_user_id))).all<DeliveryDatabaseRow>();
+  ).bind(now.toISOString(), now.toISOString()).all<DeliveryDatabaseRow>();
 
-  // Recheck fences after selecting events: a transition may have committed
-  // between the identity and telemetry database reads above.
+  // Read transition fences after selecting events, for only this page of subjects.
   const subjects = await env.DB.prepare(
     `SELECT u.id, u.product_analytics_enabled, EXISTS (
        SELECT 1 FROM telemetry_profile_jobs transition

@@ -49,6 +49,12 @@ with events so their existing acceptance transaction remains local. Identity,
 preferences, and profile jobs remain in `DB`; background delivery and replay
 read preferences there instead of joining across databases. These telemetry
 IDs are historical references, without foreign keys to identity tables.
+There is currently no user-deletion operation in the API. Removing an identity
+row directly no longer cascades into these databases: pending attributable
+nonessential telemetry is suppressed during delivery, retained events expire
+at their existing deadlines, and audits remain historical records. A future
+account-erasure operation must explicitly delete from these stores if required;
+this split does not claim automatic erasure.
 
 Product-derived telemetry uses the existing `runtimeDeferral`/`waitUntil`
 mechanism. Audit writes likewise run in the background against `AUDIT_DB`.
@@ -59,9 +65,14 @@ boundary, and the existing accepted-event delivery machinery is unchanged.
 
 Deployment applies both independent schemas before activating the API Worker.
 The cutover starts fresh; pre-cutover rows in the regional database are inactive
-history, not copied or read by the new delivery path. Applied regional migrations
+history, not copied or read by the new delivery path. The reaper continues to
+enforce their existing `delete_at` deadlines in `DB`; the large pre-recovery
+telemetry and audit backlog was already deleted during deployment recovery.
+Applied regional migrations
 remain immutable. Opt-out purges pending events in the background through the
-request-entry timestamp inclusively; delivery also checks the canonical user
+request-entry timestamp inclusively after rechecking the disabled preference
+version. This is best-effort across databases, not an atomic cross-database
+transaction. Delivery also checks the canonical user
 preference and rechecks pending identity transitions after selecting events.
 
 ## How it works
