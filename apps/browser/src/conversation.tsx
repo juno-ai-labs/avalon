@@ -1,6 +1,7 @@
+import { createQueryClient } from "../../desktop/src/renderer/lib/query-client";
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Archive, Menu } from 'lucide-react';
@@ -10,12 +11,12 @@ import { NavigationFrame, NavigationRowContent } from '@rally/ui/components/navi
 import { ConversationHeader } from '@rally/ui/components/conversation-header';
 import { WorkstreamSidebar } from '@rally/ui/components/workstream-sidebar';
 import { Button, IconButton, InlineError } from '@rally/ui/components/primitives';
-import { RallyApi } from '../lib/api';
-import { ShareConversationButton } from '../components/scope-sharing-panel';
-import { SidekickPicker } from '../components/sidekick-picker';
-import { useCollaborationSession, CollaborationSessionProvider } from '../lib/collaboration-session';
-import { SpeechPlaybackProvider } from '../components/speech-playback';
-import { ConversationSurface } from './conversation-surface';
+import { RallyApi } from '../../desktop/src/renderer/lib/api';
+import { ShareConversationButton } from '../../desktop/src/renderer/components/scope-sharing-panel';
+import { SidekickPicker } from '../../desktop/src/renderer/components/sidekick-picker';
+import { useCollaborationSession, CollaborationSessionProvider } from '../../desktop/src/renderer/lib/collaboration-session';
+import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
+import { ConversationSurface } from '../../desktop/src/renderer/screens/conversation-surface';
 import '@rally/ui/styles/app.css';
 
 function SharedConversationRoute({ onShowNavigation }: { onShowNavigation: () => void }): React.JSX.Element {
@@ -123,7 +124,7 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
 
 /** A tab owns only its visible feed. It never installs the desktop socket swarm. */
 export default function BrowserConversation({ session, onSignOut }: { session: CookieClientSession; onSignOut: () => void }): React.JSX.Element {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(() => createQueryClient());
   // Metadata/expiry reconciliation must preserve pending commands and the live socket.
   const api = useMemo(() => new RallyApi(session.apiBaseUrl, session), [
     session.apiBaseUrl, session.user.id, session.workspace?.id, session.workspace?.region,

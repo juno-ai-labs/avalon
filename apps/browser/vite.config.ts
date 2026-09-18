@@ -8,6 +8,6 @@ export default defineConfig({
   plugins: [react()],
   resolve: { dedupe: ["react", "react-dom"] },
   css: { postcss: { plugins: [tailwindcss({ ...desktopTheme,
-    content: [fileURLToPath(new URL("../../packages/ui/src/**/*.{ts,tsx}", import.meta.url)), fileURLToPath(new URL("../desktop/src/renderer/**/*.{html,ts,tsx}", import.meta.url))],
+    content: [fileURLToPath(new URL("./src/**/*.{html,ts,tsx}", import.meta.url)), fileURLToPath(new URL("../../packages/ui/src/**/*.{ts,tsx}", import.meta.url)), fileURLToPath(new URL("../desktop/src/renderer/**/*.{html,ts,tsx}", import.meta.url))],
   }), autoprefixer()] } },
 });
