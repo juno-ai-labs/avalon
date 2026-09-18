@@ -45,6 +45,7 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 // value it takes is read inside a function body — see `runHarness` below.
 import { runHarnessWithBind } from "./bind-runtime";
 import {
+  limitAddressingRecentMessages,
   renderAddressingMessages,
   type AddressingContextMessage,
 } from "./prompts";
@@ -2198,7 +2199,7 @@ export async function classifyAddressingWithTypeSafe(input: {
         mentioned_connectors: input.connectorMentions ?? [],
       },
       current_agent_state: { task_active: input.activeTask },
-      conversation_context: { recent_messages: input.recentMessages ?? [] },
+      conversation_context: { recent_messages: limitAddressingRecentMessages(input.recentMessages ?? []) },
     },
     questions: typesafeAddressingQuestions,
     model: TYPESAFE_ADDRESSING_MODEL,
