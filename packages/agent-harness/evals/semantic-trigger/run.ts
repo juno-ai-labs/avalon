@@ -21,9 +21,10 @@ import {
   candidateQuestions,
   candidateState,
   groundTruth,
+  gateShapeOf,
   primitiveOf,
   type CandidateContract,
-  type CandidatePrimitive,
+  type GateShape,
   type EvalCase,
   type Verdict,
 } from "./contract";
@@ -218,7 +219,12 @@ function resolveVerdict(
     if (judged === judgeability.unjudgeableLabel) return "not_judgeable";
   }
   const midpoint = OPERATING_BAND[Math.floor(OPERATING_BAND.length / 2)]!;
-  return confidence > midpoint ? "met" : "not_met";
+  // Under `ignore` polarity the scalar is P(ignore this event), so a high one is a
+  // non-match. The verdict vocabulary stays the product's either way.
+  const high = confidence > midpoint;
+  return (candidate.polarity ?? "match") === "ignore"
+    ? (high ? "not_met" : "met")
+    : (high ? "met" : "not_met");
 }
 
 function noulProbabilities(
@@ -232,7 +238,8 @@ function noulProbabilities(
     && choice.slice("noul|".length) === judgeability.unjudgeableLabel) {
     return { met: 0, not_met: 0, not_judgeable: 1 };
   }
-  return { met: noul, not_met: 1 - noul, not_judgeable: 0 };
+  const match = (candidate.polarity ?? "match") === "ignore" ? 1 - noul : noul;
+  return { met: match, not_met: 1 - match, not_judgeable: 0 };
 }
 
 /**
@@ -260,23 +267,45 @@ export function utility(fires: boolean, shouldFire: boolean): number {
 /**
  * Whether the gate fires, at each threshold in the band.
  *
- * A Choice must both pick the match label and clear the threshold; a Noul only
- * has to clear it, because the scalar is the whole answer. A hybrid that calls
- * the condition unsettleable never fires whatever the scalar says.
+ * Under `match` polarity the threshold guards the fire: a Choice must both pick
+ * the match label and clear it, a Noul only has to clear it because the scalar is
+ * the whole answer, and a hybrid that calls the condition unsettleable never fires
+ * whatever the scalar says.
+ *
+ * Under `ignore` polarity the threshold guards the *refusal*, and that is the
+ * whole point of the polarity: the run stops only on a confident answer that this
+ * event should be ignored, so a hesitant one falls through to firing rather than
+ * being discarded. An answer that never arrived is not a hesitant answer and does
+ * not fall through — no answer is no verdict, and `judgeSemanticTriggerCondition`
+ * treats a provider outage as its own refusal for reasons that have nothing to do
+ * with confidence.
  *
  * Exported because `rescore.ts` re-derives the objective from stored runs, and
  * two implementations of the gate's own rule is how a rescore quietly stops
  * measuring what the runtime does.
  */
 export function firesInBand(
-  primitive: CandidatePrimitive,
+  gate: GateShape,
   verdict: Verdict | null,
   confidence: number | null,
   band: readonly number[] = OPERATING_BAND,
 ): boolean[] {
-  return band.map((threshold) => (primitive === "choice"
-    ? verdict === "met" && (confidence ?? 0) > threshold
-    : verdict !== "not_judgeable" && (confidence ?? 0) > threshold));
+  return band.map((threshold) => {
+    const clearsThreshold = (confidence ?? 0) > threshold;
+    if (gate.primitive === "choice") {
+      // No answer is not a hesitant answer, so it never falls through.
+      if (verdict === null) return false;
+      return gate.polarity === "ignore"
+        ? !(verdict !== "met" && clearsThreshold)
+        : verdict === "met" && clearsThreshold;
+    }
+    // A Noul's scalar is the whole answer, so the threshold applies to it directly
+    // rather than through the midpoint-derived verdict the reports carry — reading
+    // the verdict here would leave half the band inert for a Noul. A hybrid's
+    // judgeability answer is categorical and refuses under either polarity.
+    if (confidence === null || verdict === "not_judgeable") return false;
+    return gate.polarity === "ignore" ? !clearsThreshold : clearsThreshold;
+  });
 }
 
 /** Mean utility over the band, on the −2..+1 scale the product pays. */
@@ -493,17 +522,17 @@ async function evaluateCase(
   const confidence = attempt.outcome.confidence ?? null;
   const verdict = resolveVerdict(candidate, choice, confidence);
   const shouldFire = truth.label === "met";
-  const primitive = primitiveOf(candidate);
-  const fires = firesInBand(primitive, verdict, confidence);
+  const fires = firesInBand(gateShapeOf(candidate), verdict, confidence);
   const bandUtility = bandUtilityOf(fires, shouldFire);
   const probabilities = primitiveOf(candidate) === "choice"
     ? verdictProbabilities(
       { choice, confidence, probabilities: attempt.outcome.probabilities ?? null },
       candidate.mapping,
     )
-    // For a Noul the scalar *is* P(match), which is the cleanest probability in
-    // the whole comparison: a Choice's confidence is about the label it picked,
-    // while this is about the thing being asked.
+    // For a Noul the scalar *is* P(match), or its complement under `ignore`
+    // polarity, which is the cleanest probability in the whole comparison: a
+    // Choice's confidence is about the label it picked, while this is about the
+    // thing being asked.
     : noulProbabilities(candidate, choice, confidence);
   const brier = (["met", "not_met", "not_judgeable"] as const)
     .reduce((total, key) => total + (probabilities[key] - (truth.label === key ? 1 : 0)) ** 2, 0);

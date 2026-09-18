@@ -31,7 +31,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { primitiveOf, type CandidateContract, type Verdict } from "./contract";
+import { gateShapeOf, type CandidateContract, type GateShape, type Verdict } from "./contract";
 import { firesInBand, loadCases, utility } from "./run";
 import type { CandidateReport, CaseOutcome } from "./run";
 
@@ -57,14 +57,16 @@ const BINS: Array<[number, number]> = [[0, 0.5], [0.5, 0.7], [0.7, 0.85], [0.85,
 function matchProbability(
   outcome: CaseOutcome,
   mapping: Record<string, Verdict>,
-  primitive: ReturnType<typeof primitiveOf>,
+  gate: GateShape,
 ): number {
-  if (primitive !== "choice") {
+  if (gate.primitive !== "choice") {
     // The scalar *is* P(match), whichever side of the threshold it fell on.
     // Reading it as zero below the midpoint would flatter the Noul's
     // calibration by pretending it had claimed certainty it never claimed.
     if (outcome.verdict === "not_judgeable") return 0;
-    return outcome.confidence ?? 0;
+    // Under `ignore` polarity the scalar is P(ignore), so P(match) is its complement.
+    const scalar = outcome.confidence ?? 0;
+    return gate.polarity === "ignore" ? 1 - scalar : scalar;
   }
   if (outcome.probabilities) {
     let total = 0;
@@ -97,7 +99,7 @@ function main(): void {
 
   const pooled = new Map<string, {
     mapping: Record<string, Verdict>;
-    primitive: ReturnType<typeof primitiveOf>;
+    gate: GateShape;
     judgeability: CandidateContract["judgeability"] | null;
     runs: number;
     outcomes: CaseOutcome[];
@@ -110,7 +112,7 @@ function main(): void {
       const entry = pooled.get(report.candidateId)
         ?? {
           mapping: candidate.mapping,
-          primitive: primitiveOf(candidate),
+          gate: gateShapeOf(candidate),
           judgeability: candidate.judgeability ?? null,
           runs: 0,
           outcomes: [],
@@ -137,16 +139,16 @@ function main(): void {
     console.log("| --- | ---: | ---: | ---: |");
     for (const [low, high] of BINS) {
       const inBin = answered.filter((outcome) => {
-        const probability = matchProbability(outcome, entry.mapping, entry.primitive);
+        const probability = matchProbability(outcome, entry.mapping, entry.gate);
         return probability >= low && probability < high;
       });
       if (inBin.length === 0) continue;
       const matched = inBin.filter((outcome) => outcome.truth === "met").length;
-      const predicted = mean(inBin.map((outcome) => matchProbability(outcome, entry.mapping, entry.primitive)));
+      const predicted = mean(inBin.map((outcome) => matchProbability(outcome, entry.mapping, entry.gate)));
       console.log(`| ${low.toFixed(2)}–${Math.min(high, 1).toFixed(2)} | ${inBin.length} | ${((matched / inBin.length) * 100).toFixed(1)}% | ${(predicted * 100).toFixed(1)}% |`);
     }
 
-    if (entry.primitive === "choice") {
+    if (entry.gate.primitive === "choice") {
       const right = answered.filter((outcome) => outcome.verdict === outcome.truth).map((outcome) => outcome.confidence ?? 0);
       const wrong = answered.filter((outcome) => outcome.verdict !== outcome.truth).map((outcome) => outcome.confidence ?? 0);
       console.log(`\nMean confidence right ${mean(right).toFixed(3)}, wrong ${mean(wrong).toFixed(3)}, separation ${(mean(right) - mean(wrong)).toFixed(3)}.`);
@@ -162,13 +164,13 @@ function main(): void {
     }
 
     const brier = mean(entry.outcomes.map((outcome) => {
-      const probability = matchProbability(outcome, entry.mapping, entry.primitive);
+      const probability = matchProbability(outcome, entry.mapping, entry.gate);
       const actual = outcome.truth === "met" ? 1 : 0;
       return (probability - actual) ** 2;
     }));
     console.log(`Brier score over P(match): ${brier.toFixed(4)} (0 is perfect, 0.25 is a coin flip).`);
 
-    console.log(`\nThe fire decision, swept over the threshold${entry.primitive === "choice"
+    console.log(`\nThe fire decision, swept over the threshold${entry.gate.primitive === "choice"
       ? ". A fire needs the `met` choice AND confidence above it"
       : ". A fire needs the scalar above it, and no unjudgeable answer"}, with what the product pays:\n`);
     console.log("| threshold | fires | wanted | unwanted | missed | utility | precision | recall | watches made noisy | silence broken |");
@@ -180,7 +182,7 @@ function main(): void {
       // count to its midpoint verdict and reported its recall as flat across the
       // whole sweep. A threshold recommendation came out of that table.
       const firesAt = (outcome: CaseOutcome) =>
-        firesInBand(entry.primitive, outcome.verdict, outcome.confidence, [threshold])[0]!;
+        firesInBand(entry.gate, outcome.verdict, outcome.confidence, [threshold])[0]!;
       const fired = entry.outcomes.filter(firesAt);
       const wanted = fired.filter((outcome) => outcome.truth === "met").length;
       const unwanted = fired.length - wanted;

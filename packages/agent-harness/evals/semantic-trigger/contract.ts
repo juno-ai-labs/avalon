@@ -86,6 +86,38 @@ export type DerivedFact =
  */
 export type CandidatePrimitive = "choice" | "noul" | "noul_with_judgeability";
 
+/**
+ * Which way the question points, and therefore which way an unsure answer falls.
+ *
+ * `match` asks the obvious question — does this event satisfy the condition — and
+ * fires on a confident yes. Every other answer, including "probably yes, at 0.4",
+ * stops the run. That means **the gate's uncertainty defaults to the expensive
+ * error**: a hesitant match is scored as a miss in production, and no threshold
+ * fixes it, because the threshold is the thing doing it. The sweep shows the
+ * shape of the problem rather than a way out — recall falls monotonically as the
+ * threshold rises, so every setting trades away the error we care about to buy the
+ * one we do not.
+ *
+ * `ignore` asks the negative question — should this Sidekick ignore this event —
+ * and refuses only on a *confident* yes. An unsure answer falls through to
+ * firing. The threshold now guards the cheap error instead of the expensive one,
+ * which is what the price list in `objective.md` says it should guard, and the
+ * classifier's hesitation buys a session that finds nothing instead of dropping a
+ * request somebody made.
+ *
+ * This is not the same thing as lowering the threshold on a `match` question. A
+ * threshold at zero makes the label the whole decision and there is nowhere below
+ * that to go; polarity changes which answer needs to clear a bar at all. It is
+ * also not free: a model that hedges on ordinary non-matches will fire on them,
+ * and on a standing watch at a 10.4% match rate that is a lot of sessions. Which
+ * way it lands is what the measurement is for.
+ *
+ * Both are scored against the same three product verdicts through `mapping`, so
+ * accuracy, the confusion matrix and the Brier scores compare across polarities
+ * without a special case. Only the gate rule knows.
+ */
+export type CandidatePolarity = "match" | "ignore";
+
 /** The second question of a hybrid: is this condition settleable by such an event at all. */
 export interface CandidateJudgeability {
   /** The answer key, which is part of the request. */
@@ -111,6 +143,8 @@ export interface CandidateContract {
   mapping: Record<string, Verdict>;
   /** Defaults to `choice`, so every candidate written before this existed is unchanged. */
   primitive?: CandidatePrimitive;
+  /** Defaults to `match`, so every candidate written before this existed is unchanged. */
+  polarity?: CandidatePolarity;
   /** The answer key for a Noul candidate's scalar. Defaults to `satisfaction`. */
   noulName?: string;
   /** Present only on `noul_with_judgeability`. */
@@ -119,6 +153,23 @@ export interface CandidateContract {
 
 export function primitiveOf(candidate: CandidateContract): CandidatePrimitive {
   return candidate.primitive ?? "choice";
+}
+
+/**
+ * Everything the gate rule needs, and nothing about the question's wording.
+ *
+ * One value rather than two loose arguments because the two travel together
+ * everywhere the rule is applied — the runner, the rescore, the calibration sweep
+ * — and the sweep has already shipped one bug from reading the rule's inputs
+ * separately in two places.
+ */
+export interface GateShape {
+  primitive: CandidatePrimitive;
+  polarity: CandidatePolarity;
+}
+
+export function gateShapeOf(candidate: CandidateContract): GateShape {
+  return { primitive: primitiveOf(candidate), polarity: candidate.polarity ?? "match" };
 }
 
 export interface EvalCase {

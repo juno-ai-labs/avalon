@@ -17,9 +17,18 @@ there. Every score below is computed at 0.5, 0.6 and 0.7 and averaged, so a
 candidate cannot win by being tuned to one point inside the band.
 
 The band is an input, not a finding: it is where the threshold is allowed to
-sit. Under the asymmetry below the objective will pull towards its low end,
-because the error a higher threshold buys down is the cheap one. Where inside
-the band to land is reported from the sweep rather than chosen here.
+sit. Where inside it to land is reported from the sweep rather than chosen here,
+and **which direction is "safer" depends on which way the question points.**
+
+Under a `match` question the threshold guards the fire, so raising it buys
+precision and spends recall — and since recall is the expensive axis, the
+objective pulls towards the band's low end. Under an `ignore` question the
+threshold guards the *refusal*: raising it means refusing less readily, so it
+spends precision and buys recall, and the pull is the other way. Both polarities
+meet at zero, where the label decides alone and the confidence is unused. A
+candidate declares its polarity and is swept the same way regardless;
+`CandidatePolarity` in `contract.ts` carries the argument for why the choice
+matters.
 
 ## The three numbers, in priority order
 

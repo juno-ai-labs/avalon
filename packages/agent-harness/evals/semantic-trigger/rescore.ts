@@ -22,8 +22,8 @@
  */
 import { readFileSync } from "node:fs";
 
-import type { CandidateContract, EvalCase } from "./contract";
-import { primitiveOf } from "./contract";
+import type { CandidateContract, CandidatePolarity, EvalCase } from "./contract";
+import { gateShapeOf } from "./contract";
 import {
   bandUtilityOf,
   firesInBand,
@@ -85,10 +85,18 @@ function scoreRun(
   report: CandidateReport,
   scenarioOf: Map<string, string | undefined>,
   curve: number[],
-): RunScore {
+  polarity: CandidatePolarity | null,
+): RunScore | null {
   const candidate = file.candidates.find((entry) => entry.id === report.candidateId);
   if (!candidate) throw new Error(`${reportFile} has a report for ${report.candidateId} with no candidate`);
-  const primitive = primitiveOf(candidate);
+  const own = gateShapeOf(candidate);
+  // A Choice's confidence attaches to the label it picked, so "refuse only on a
+  // confident refusal" is answerable from a stored run. A Noul's scalar means
+  // whatever its question said it means, and no re-reading recovers the question
+  // that was not asked — re-gating one would print a number for a request nobody
+  // ever sent.
+  if (polarity !== null && polarity !== own.polarity && own.primitive !== "choice") return null;
+  const gate = polarity === null ? own : { ...own, polarity };
 
   let utilityTotal = 0;
   const utilityAt = OPERATING_BAND.map(() => 0);
@@ -104,10 +112,10 @@ function scoreRun(
 
   for (const outcome of report.cases) {
     const shouldFire = outcome.truth === "met";
-    const fires = firesInBand(primitive, outcome.verdict, outcome.confidence);
+    const fires = firesInBand(gate, outcome.verdict, outcome.confidence);
     utilityTotal += bandUtilityOf(fires, shouldFire);
     fires.forEach((fired, index) => { utilityAt[index]! += utility(fired, shouldFire); });
-    firesInBand(primitive, outcome.verdict, outcome.confidence, curve)
+    firesInBand(gate, outcome.verdict, outcome.confidence, curve)
       .forEach((fired, index) => { curveUtility[index]! += utility(fired, shouldFire); });
 
     // The decision counts are reported at one threshold rather than over the
@@ -153,7 +161,26 @@ function scoreRun(
 }
 
 function main(): void {
-  const files = process.argv.slice(2).filter((argument) => !argument.startsWith("--") && !/^[\d.,]+$/.test(argument));
+  // Positional arguments are report files; every `--flag` takes one value, which is
+  // not one. Filtering on the shape of the token instead read `--polarity ignore`
+  // as a file called `ignore`.
+  const files: string[] = [];
+  const argv = process.argv.slice(2);
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index]!.startsWith("--")) index += 1;
+    else files.push(argv[index]!);
+  }
+  // Re-gating a stored run under the other polarity costs nothing and answers half
+  // the question on its own: polarity changes only the gate rule, and the verdict
+  // and confidence of every case are already on disk. What it cannot answer is
+  // whether *asking* the negative question changes what the model attends to.
+  const asPolarity = process.argv.indexOf("--polarity") === -1
+    ? null
+    : process.argv[process.argv.indexOf("--polarity") + 1] as CandidatePolarity;
+  if (asPolarity !== null && asPolarity !== "match" && asPolarity !== "ignore") {
+    console.error(`--polarity takes "match" or "ignore"`);
+    process.exit(1);
+  }
   const curveIndex = process.argv.indexOf("--curve");
   // The band is where the threshold is *allowed* to sit; the curve is for asking
   // whether that band is the right one, which the reversed asymmetry reopened.
@@ -170,6 +197,7 @@ function main(): void {
   );
 
   const byCandidate = new Map<string, { words: number; runs: RunScore[] }>();
+  const skipped = new Set<string>();
   const splits = new Set<string>();
   const corpora = new Set<string>();
   for (const path of files) {
@@ -177,15 +205,28 @@ function main(): void {
     splits.add(file.split);
     corpora.add(file.corpusHash);
     for (const report of file.reports) {
+      const scored = scoreRun(file, path, report, scenarioOf, curve, asPolarity);
+      if (scored === null) {
+        skipped.add(report.candidateId);
+        continue;
+      }
       const entry = byCandidate.get(report.candidateId)
         ?? { words: report.size.words, runs: [] };
-      entry.runs.push(scoreRun(file, path, report, scenarioOf, curve));
+      entry.runs.push(scored);
       byCandidate.set(report.candidateId, entry);
     }
   }
 
   if (corpora.size > 1) {
     console.log(`WARNING: pooling runs across ${corpora.size} corpus hashes; the labels moved between them.`);
+  }
+  if (asPolarity !== null) {
+    console.log(`Re-gated as polarity=${asPolarity}: the threshold guards`
+      + ` ${asPolarity === "ignore" ? "the refusal, so an unsure answer fires" : "the fire, so an unsure answer refuses"}.`);
+    if (skipped.size > 0) {
+      console.log(`Not re-gated, because a scalar cannot be re-read as the answer to a question`
+        + ` it was not asked: ${[...skipped].sort().join(", ")}.`);
+    }
   }
   console.log(`band=[${OPERATING_BAND.join(", ")}] splits=${[...splits].join(",")}`
     + ` corpus=${[...corpora].map((hash) => hash.slice(0, 8)).join(",")}`);
