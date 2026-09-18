@@ -304,6 +304,43 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;
 
 /**
+ * The names these three tools were suggested under before their plugins dropped
+ * their wire prefixes.
+ *
+ * A suggestion is not only produced and forwarded in one turn: it is written
+ * into a tool receipt's stored `errorJson` and re-parsed whenever that failure
+ * is reprojected. A row written before the rename carries the retired spelling,
+ * and the sanitizer that re-reads it drops the *whole* detail object when any
+ * one field fails — so without this the resource id and attachment kind beside
+ * it would be lost too, leaving a bare error code and no recovery.
+ */
+const RETIRED_SUGGESTED_TOOL_NAMES: Readonly<Record<string, string>> = {
+  workstream_read_resource: "read_resource",
+  workstream_view_resource: "view_resource",
+  terminal_import_resource: "import_resource",
+};
+
+/**
+ * Parse a suggestion that may have been stored under a retired wire name,
+ * normalizing it to the name this run advertises. Producers are unaffected:
+ * they build the current names through `SuggestedAttachmentToolCallSchema`
+ * directly, and only this read path accepts the old ones.
+ */
+export function parseStoredSuggestedAttachmentToolCall(
+  value: unknown,
+): { success: true; data: SuggestedAttachmentToolCall } | { success: false } {
+  const parsed = SuggestedAttachmentToolCallSchema.safeParse(value);
+  if (parsed.success) return { success: true, data: parsed.data };
+  const tool = typeof value === "object" && value !== null && "tool" in value
+    ? (value as { tool?: unknown }).tool
+    : undefined;
+  const current = typeof tool === "string" ? RETIRED_SUGGESTED_TOOL_NAMES[tool] : undefined;
+  if (!current) return { success: false };
+  const retry = SuggestedAttachmentToolCallSchema.safeParse({ ...(value as object), tool: current });
+  return retry.success ? { success: true, data: retry.data } : { success: false };
+}
+
+/**
  * These two are flat objects with a refinement rather than the union the choice
  * they express would suggest, and that is a provider constraint rather than a
  * preference.

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
+import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
@@ -3658,7 +3658,10 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
       return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
     }
     case "suggestedCall": {
-      const parsed = SuggestedAttachmentToolCallSchema.safeParse(value);
+      // Accepts the wire names retired when the plugins dropped their prefixes:
+      // this runs against stored `errorJson` on every reprojection, and an
+      // invalid field here discards the entire detail rather than just itself.
+      const parsed = parseStoredSuggestedAttachmentToolCall(value);
       return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
     }
   }

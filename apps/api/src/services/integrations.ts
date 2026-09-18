@@ -5129,7 +5129,11 @@ async function loadHarnessTools(
     ? {
       ...sidekickPlugin,
       description: "Discover Sidekicks and attach or detach workspace Sidekick recommendations for this workstream.",
-      systemMessage: "Use sidekicks_list, attach and detach to manage workstream recommendations when useful. Recommendations affect future executions; load_skill is still required to use a Sidekick now. Coordinate authoring in the Sidekick's own conversation through the agent communication tools.",
+      // Named with the `sidekick_` prefix this plugin still carries. Bare,
+      // `sidekicks_list` now resolves to the always-active agent-communication
+      // tool of the same canonical name, which returns a different shape and
+      // none of the `canAttach`/`attached` state these two need.
+      systemMessage: "Use sidekick_sidekicks_list, sidekick_attach and sidekick_detach to manage workstream recommendations when useful. Recommendations affect future executions; load_skill is still required to use a Sidekick now. Coordinate authoring in the Sidekick's own conversation through the agent communication tools.",
       tools: sidekickPlugin.tools.filter((tool) => ["sidekicks_list", "attach", "detach"].includes(tool.definition.name)),
     }
     : sidekickPlugin;

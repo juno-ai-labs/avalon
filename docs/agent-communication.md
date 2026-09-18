@@ -250,6 +250,20 @@ neither the current name nor `agents_` plus the current name, so
 `AVALON_TOOL_PROSE` carries it as its own entry rather than through the derived
 mapping the other agent tools use.
 
+One transitional gap is accepted rather than closed. The rename moves both
+`name` and `capability`, which `storedToolPolicyMatches` compares against a
+receipt's stored execution plan. `legacyReceiptIdentity` — the existing
+mechanism for exactly this — is populated only for connector plugins, and
+`avalon:agents` resolves through the loadable-built-in branch, which sets it to
+`null`. So a run resumed across this one deploy that had already completed a
+`reply` call at a given turn replays as a policy mismatch rather than a
+recognized completion: `findCompletedToolResult` returns null and the call lands
+in recoverable-write reconciliation. That fails safe — no duplicate message is
+sent — but reads as a stalled delegation until the run settles. It is bounded to
+in-flight runs at deploy time. Populating `legacyReceiptIdentity` for built-ins
+is the fix if this class of rename happens again; it was not worth building for
+one tool.
+
 ### 2026-09-15 — Remove caller-orchestrated delegation round trips
 
 A production image delegation spent seconds in discovery and creation before its
