@@ -310,6 +310,25 @@ mandate on three different parents, all three raised recall, and all three paid 
 it almost exactly proportionally in false fires. The prose is not the lever that
 trades those two; the threshold is.
 
+*Asking the negative question* — "should this Sidekick ignore this event?", refusing
+only on a confident yes so that hesitation falls through to firing. This is the one
+alternative that addresses a real defect in the shipped shape rather than a
+preference: under the positive question the gate's uncertainty falls towards the
+expensive error, and no threshold setting changes that, because the threshold is
+what does it. Measured on three candidates, the mechanism worked exactly as
+intended and lost anyway. Misses fell to almost nothing and recall reached 99%,
+against 32 to 75 unwanted sessions per 151 cases and all twelve standing watches
+gone noisy. Two reasons, both worth respecting before anyone tries it again. The
+negation **damaged the label rather than only its calibration**: compared at a
+threshold of zero, where the fall-through is inactive and only the question
+differs, three-class accuracy fell 10 to 16 points and the fire-decision Brier
+roughly doubled. And the fall-through has a floor that the price list computes —
+with a correct decision at 1, a false fire at 0 and a miss at −2, firing beats not
+firing exactly when a calibrated P(match) exceeds **1/4**, so "err towards firing"
+is true and stops being true at one in four. The negative question fires at roughly
+P(match) > 0.05. The shipped threshold of `0.5` on the positive question sits in
+the flat region that both the sweep and that arithmetic point at.
+
 **What a future change has to respect:** the object is the authority. A delivery
 path may compute a verdict, but `admitExternalEvent` decides, and a gated event
 without an admitting verdict must never start a run — that is the whole defect,
