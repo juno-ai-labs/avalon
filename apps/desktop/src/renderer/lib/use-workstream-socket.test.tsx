@@ -1305,6 +1305,79 @@ describe('useWorkstreamSocket', () => {
     await Promise.all([first, second]);
   });
 
+  it('reconciles and replays an unresolved command when the app returns to the foreground', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    let visibilityState: DocumentVisibilityState = 'visible';
+    const visibility = vi.spyOn(document, 'visibilityState', 'get')
+      .mockImplementation(() => visibilityState);
+    const workstreamId = '00000000-0000-7000-8000-000000000607';
+    const clientMessageId = 'client-message-foreground-recovery';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    try {
+      await flushPromises();
+      const socket = FakeWebSocket.instances[0]!;
+      act(() => socket.open());
+      const admission = result.current.createMessage({
+        text: 'Recover this message.',
+        clientId: clientMessageId,
+      });
+      await flushPromises();
+      const firstCommand = sentFrames(socket).find((frame): frame is Extract<ClientSocketEvent, {
+        type: 'create_message';
+      }> => frame.type === 'create_message');
+      expect(firstCommand).toBeDefined();
+      expect(sentFrames(socket).filter((frame) => frame.type === 'create_message')).toHaveLength(1);
+
+      visibilityState = 'hidden';
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      visibilityState = 'visible';
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+
+      const foregroundFrames = sentFrames(socket);
+      expect(foregroundFrames.filter((frame) => frame.type === 'create_message')).toEqual([
+        firstCommand,
+        firstCommand,
+      ]);
+      expect(foregroundFrames.filter((frame) => frame.type === 'request_snapshot')).toHaveLength(1);
+      expect(socket.send).toHaveBeenCalledWith('ping');
+
+      act(() => socket.rawMessage('pong'));
+      act(() => socket.message({
+        type: 'client_command_succeeded',
+        command: 'create_message',
+        operationId: firstCommand!.operationId,
+        clientMessageId,
+        turn: {
+          turnId: '00000000-0000-7000-8000-000000000608',
+          clientMessageId,
+          createdAt: '2026-09-17T12:00:00.000Z',
+        },
+        deliveryState: 'canonical',
+      }));
+      await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
+
+      const settledCallCount = socket.send.mock.calls.length;
+      visibilityState = 'hidden';
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      visibilityState = 'visible';
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(socket.send).toHaveBeenCalledTimes(settledCallCount);
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
   it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000631';
