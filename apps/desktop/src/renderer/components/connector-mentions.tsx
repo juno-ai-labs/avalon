@@ -7,6 +7,7 @@ import {
 import { Check, AlertTriangle, LoaderCircle, Minus } from 'lucide-react';
 import { createContext, useContext, useEffect } from 'react';
 import { useAppSession } from '../lib/app-session';
+import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
   connectorProviderById,
   isOAuthConnectorProvider,
@@ -109,6 +110,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
   const { api, pendingConnectorOAuth, session, setPendingConnectorOAuth } = useAppSession();
+  const viewerIsAdmin = useViewerIsWorkspaceAdmin();
   const connections = useConnectorConnections();
 
   const scope = request.scope === 'personal' ? 'you' : 'workspace';
@@ -198,9 +200,12 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
     },
   });
   const pending = connect.isPending || awaiting;
-  const adminRequired = request.scope === 'workspace'
-    && session?.workspace?.role !== 'owner'
-    && session?.workspace?.role !== 'admin';
+  // Read from the workspace query rather than the desktop session: a role can
+  // change while somebody is signed in now, and the session's copy only moves
+  // when its access token rotates. Somebody promoted so that they could connect
+  // a workspace account was still told they could not, for the rest of the
+  // token window — in the one flow this gate exists for. See `use-workspace.ts`.
+  const adminRequired = request.scope === 'workspace' && !viewerIsAdmin;
   const providerAvailable = availability.data?.includes(provider.provider) ?? false;
   return (
     <ConnectorConnectionCardView

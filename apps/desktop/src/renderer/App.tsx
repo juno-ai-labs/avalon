@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Region } from "@rally/contracts/regions";
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
-import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { logError } from '../common/logger';
@@ -15,7 +15,7 @@ import { localCacheScope } from './lib/local-cache';
 import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
 import { desktopBridge } from './lib/platform';
-import { workspaceFromSession } from './lib/session-workspace';
+import { useWorkspaceQuery } from './lib/use-workspace';
 import {
   abandonPendingWorkstreamFeedOpen,
   abandonWorkstreamFeedOpenOutsideRoute,
@@ -229,14 +229,10 @@ function WorkspaceApp(): React.JSX.Element {
   // The placeholder ends that: the tree mounts on the session's own copy and
   // this read replaces it in place. `null` when the session cannot fully
   // describe the workspace, which is the old behaviour exactly.
-  const placeholderWorkspace = useMemo(() => workspaceFromSession(session) ?? undefined, [session]);
-  const workspace = useQuery({
-    queryKey: ['workspace', session?.workspace?.id, session?.user.id],
-    queryFn: ({ signal }) => api!.getWorkspace(signal),
-    enabled: Boolean(api && session),
-    staleTime: 30_000,
-    placeholderData: placeholderWorkspace,
-  });
+  // One definition of this read, shared with every surface that needs the
+  // viewer's own role — see `lib/use-workspace.ts` for why the session's copy
+  // is no longer good enough for a gate.
+  const workspace = useWorkspaceQuery();
   useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),

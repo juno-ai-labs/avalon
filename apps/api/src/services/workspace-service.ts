@@ -17,7 +17,7 @@ import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant, revokeDownlo
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { randomToken, sha256 } from "../lib/crypto";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
   sendWorkspaceInvitationEmail,
   sendWorkspaceInvitationResolutionEmail,
@@ -578,7 +578,15 @@ export class WorkspaceService {
         "That person has not joined this workspace yet. Their invitation carries their role.",
       );
     }
-    if (member.role === assigned) return;
+    // Already there. The write is skipped, but the announcement is not: a
+    // publish that failed after an earlier identical call left the row correct
+    // and every other window stale, and this is the only request that can
+    // repair it — a retry is exactly what a caller does after a failure, and it
+    // would otherwise land here and do nothing at all.
+    if (member.role === assigned) {
+      await this.publishMemberRoleChange(userId, assigned);
+      return;
+    }
 
     const updated = await this.env.DB.prepare(
       `UPDATE workspace_members
@@ -632,17 +640,45 @@ export class WorkspaceService {
         "The workspace membership changed while this role change was in flight. Check it and try again.",
       );
     }
-    // Two topics, and no `memberUserIds`: the roster every administrator reads
-    // and the workspace profile that carries a person's own role both go stale,
-    // but nobody joined or left, so there are no search decisions to project.
-    // Published here rather than through `workspaceSyncTopicsForMutation` so it
-    // is awaited in the request that wrote it, as every other membership write
-    // in this service is.
-    await publishWorkspaceSync(
-      this.env,
-      this.auth.workspaceId,
-      ["member_directory", "workspace_profile"],
-    );
+    await this.publishMemberRoleChange(userId, assigned);
+  }
+
+  /**
+   * Announce a role that is now what the caller asked for.
+   *
+   * **Post-commit, and best effort.** The role has already changed, so a failure
+   * to announce it cannot be reported as a failure to change it. Letting this
+   * throw was a real defect: the caller saw an error for a write that had
+   * committed, and on a self-demotion their next request no longer carried the
+   * standing to retry. `workspaceRealtimeInvalidation` treats publication the
+   * same way for every other mutation; this route is not in
+   * `workspaceSyncTopicsForMutation`, so it does it here.
+   *
+   * Two topics, and no `memberUserIds`: the roster every administrator reads and
+   * the workspace profile that carries a person's own role both go stale, but
+   * nobody joined or left, so there are no search decisions to project.
+   *
+   * What it costs when it fails: other open windows keep a stale roster until
+   * this call is retried or something else invalidates it. Nothing is
+   * mis-authorized by that — `auth.role` is read from `workspace_members` on
+   * every request — so the stale copy decides what is drawn and never what is
+   * allowed.
+   */
+  private async publishMemberRoleChange(userId: string, role: AssignableMemberRole): Promise<void> {
+    try {
+      await publishWorkspaceSync(
+        this.env,
+        this.auth.workspaceId,
+        ["member_directory", "workspace_profile"],
+      );
+    } catch (error) {
+      logWarn(this.env, "workspace_member_role_sync_publish_failed", {
+        workspace_id: this.auth.workspaceId,
+        user_id: userId,
+        role,
+        error_code: diagnosticErrorCode(error, "workspace_sync_publish_failed"),
+      });
+    }
   }
 
   /**
