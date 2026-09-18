@@ -24,7 +24,7 @@ import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef10");
@@ -48,31 +48,12 @@ function sidekickStub(sidekickId: string) {
 }
 
 async function seedRegionalDatabase(): Promise<void> {
-  await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, sessionId: SESSION_ID });
-  await env.DB.batch([
-    // The inspection route reads the identity columns the shared fixture's
-    // workspaces table does not carry.
-    env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN name TEXT NOT NULL DEFAULT 'Inspection workspace'`),
-    env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN slug TEXT NOT NULL DEFAULT 'inspection-workspace'`),
-    env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN placement_affinity TEXT NOT NULL DEFAULT 'wnam'`),
-    env.DB.prepare(`CREATE TABLE workspace_product_authority_routes (
-      workspace_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, state TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`INSERT INTO workspace_product_authority_routes
-      (workspace_id, generation, state, updated_at) VALUES (?, 1, 'active', ?)`)
-      .bind(WORKSPACE_ID, NOW),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
-      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
-    )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
-      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
-      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
-      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
-      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
-      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
-    )`),
-  ]);
+  await seedInspectableWorkspace(env.DB, {
+    workspaceId: WORKSPACE_ID,
+    userId: AUTHOR_ID,
+    sessionId: SESSION_ID,
+    at: NOW,
+  });
 }
 
 /**

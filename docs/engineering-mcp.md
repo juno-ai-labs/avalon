@@ -1,8 +1,8 @@
 # Engineering MCP
 
 The engineering MCP is Rally's authenticated operator path to the authoritative
-SQLite database inside a workspace, work stream, substream, or Sidekick Durable
-Object.
+SQLite database inside a workspace, work stream, substream, Sidekick, or live
+web artifact Durable Object.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It is not a product API and it is never available to Rally users
@@ -18,7 +18,11 @@ by virtue of product membership.
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
   authority inherit that RPC. WorkspaceDO, WorkstreamDO, SubstreamAgent, and
-  SidekickDO have the capability, and this MCP routes all four.
+  SidekickDO have the capability that way.
+- `apps/api/src/durable-objects/artifact-host-do.ts` inherits the same base
+  directly. It is the one inspectable object that is not a scheduled authority,
+  so it names the inspectable base in its own declaration rather than picking it
+  up from the scheduler. This MCP routes all five.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
@@ -43,10 +47,12 @@ The regional bridge uses D1 only for identity and routing:
 | `list_workstreams` | Active workspace route at the open regional authority generation | `workspace_workstream_directory` in WorkspaceDO |
 | `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
 | `list_sidekicks` | Active workspace route at the open regional authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
+| `list_artifacts` | Active workspace route at the open regional authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the active workspace route generation | WorkspaceDO SQLite |
 | `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | WorkstreamDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
 | `run_sidekick_sql` | Resolve the active workspace route and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
+| `run_artifact_sql` | Resolve the active workspace route and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
@@ -64,6 +70,23 @@ SidekickDO from a work-stream ID would create an object that never existed. The
 `automation_directory` row is what distinguishes them, and it is also why a
 Sidekick created since its last directory projection is refused: refusing an
 object that exists is recoverable, materializing one that does not is not.
+
+`run_artifact_sql` takes a workspace ID for a sharper version of the same
+reason. ArtifactHostDO's name — `<region>:artifact:<uuid>` — carries no
+workspace segment at all, so nothing in the name says which workspace may reach
+it and every UUID in the account is a valid object name. `artifact_registry`,
+which lives in WorkspaceDO beside the resource authority rather than in D1, is
+the only thing that says which artifacts a workspace has.
+
+**`run_artifact_sql` opens the supervisor, not the artifact's own data.** A
+stateful artifact keeps its tables in a Durable Object *facet* with a separate
+SQLite database, and `runInspectionSql` runs against the supervisor's storage:
+the current version, viewer sessions, and the bounded error log — which is what
+an operator diagnosing a broken artifact wants. The facet's tables are reachable
+only through the product's own read-only admitted query path
+(`queryData`/`pageData`, behind work-stream authorization), and giving the
+console arbitrary SQL there would mean changing the facet host module every
+stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
 
 The shared Durable Object base waits for the object's checked-in migrations,
 runs the supplied statement through `ctx.storage.sql.exec`, and returns column
@@ -83,7 +106,7 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 - Main substream `0` needs no directory row: route activation happens only after
   creation or import initializes that object. Child substreams still require a
   directory membership row before their stub is obtained, and so does every
-  Sidekick.
+  Sidekick and every artifact.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
 - The Access application is separate from Ace and has its own audience, while
@@ -109,11 +132,13 @@ schedules, and run history. Its *conversations* are `SubstreamAgent`s, reached
 with the substream tools under the Sidekick's ID as the parent, exactly as a
 work stream's are.
 
-`ArtifactHostDO` and `SlackReactionTicker` hold SQLite this MCP cannot reach.
-Neither inherits the inspection RPC — the first extends the migratable base
-without it, and the second is not a scheduled authority at all — so routing
-either is a change to its class, not a tool registration. Neither has been asked
-for.
+A stateful artifact's facet database is outside this MCP for the reason above:
+its contents are reachable only through the product's admitted read path.
+
+`SlackReactionTicker` is the one remaining object holding SQLite that no tool
+reaches. It is neither a scheduled authority nor migratable through the shared
+base, so routing it is a change to its class rather than a tool registration,
+and nobody has asked. `MigrationProbeDO` holds no product state by design.
 
 The Worker does not retain query history, cache results, copy databases, or
 provide a D1 fallback. It also does not turn Access identity into Rally product
@@ -144,6 +169,13 @@ bridge's Sidekick tools against a Sidekick created through the real path, and
 proves the fence in the direction that matters: a work stream holding an active
 route but no directory row is refused, and the statement it carried leaves no
 trace in the object that ID would have named.
+
+`apps/api/test-workers/engineering-artifact-inspection.test.ts` does the same
+for an artifact published through `registerArtifact` and `recordPublish`, and
+additionally proves the facet boundary: after a real request through the facet
+writes the model's own table, the supervisor's inspection SQL still sees only
+the supervisor's. Both files seed their D1 route from
+`test-workers/helpers/engineering-inspection-fixture.ts`.
 
 `apps/engineering-mcp/test/server.test.ts` exercises the production Agents SDK
 MCP handler, tool discovery, cross-region aggregation, destructive annotations,
@@ -194,6 +226,35 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-09-18 — Route ArtifactHostDO, and stop at the facet
+
+**What changed:** `list_artifacts` and `run_artifact_sql` open a live web
+artifact's supervisor. `ArtifactHostDO` now extends
+`InternallyInspectableDurableObject` directly — it is the first inspectable
+object that is not a scheduled authority — and `EngineeringSqlLookup` carries a
+nullable `artifactId`.
+
+**Why:** The supervisor holds the bounded log of what a model's server module
+threw, which is what turns "the artifact page is broken" into a diagnosis, plus
+the current version and the viewer sessions. None of it was reachable: the class
+skipped the inspectable base, so the object had no inspection RPC at all.
+
+**Considered and rejected:** Routing the facet as well, so the tools reached a
+stateful artifact's own tables. The facet is a separate SQLite database behind
+Rally's facet host module, whose only SQL surface is the read-only admitted
+`rallyQuery` the product's Data view uses; arbitrary operator SQL there means
+editing the module every stateful artifact runs and loading the artifact's own
+code just to inspect it, which can fail for reasons that have nothing to do with
+the inspection. The boundary is documented instead, and the tool description says
+so, because an operator's natural assumption is the opposite.
+
+**Consequences:** `viewer_sessions` is now operator-readable and writable. It
+stores only digests, so nothing there reconstructs a live cookie, but an
+admitted operator can mint artifact access by writing a row — inside this
+console's stated destructive authority rather than beyond it, and worth knowing
+it is there. A publish that has not yet written its `artifact_registry` row is
+refused, matching the Sidekick fence.
 
 ### 2026-09-18 — Route SidekickDO, fenced on workspace directory membership
 

@@ -1,5 +1,7 @@
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  EngineeringArtifactListLookupSchema,
+  EngineeringArtifactTargetLookupSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
@@ -12,6 +14,7 @@ import {
   ListEngineeringWorkspacesResultSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
+  ArtifactIdSchema,
   AutomationIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
@@ -169,6 +172,19 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return found.value;
   }));
 
+  server.registerTool("list_artifacts", {
+    description: "List every live web artifact in the authoritative WorkspaceDO registry for a workspace ID.",
+    inputSchema: { workspaceId: WorkspaceIdSchema },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ workspaceId }) => tool(principal, "list_artifacts", { workspace_id: workspaceId }, async () => {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listArtifacts({ workspaceId })));
+    const found = oneRegionalResult(
+      results.map((result) => EngineeringArtifactListLookupSchema.parse(result)),
+      `Workspace ${workspaceId}`,
+    );
+    return found.value;
+  }));
+
   server.registerTool("run_workspace_sql", {
     description: "Run arbitrary SQLite against a WorkspaceDO. Statements may mutate production state.",
     inputSchema: { workspaceId: WorkspaceIdSchema, ...sqlInputSchema },
@@ -270,6 +286,34 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Sidekick ${sidekickId}`);
+    },
+  ));
+
+  server.registerTool("run_artifact_sql", {
+    description: "Run arbitrary SQLite against an ArtifactHostDO — the artifact's supervisor, holding its current version, viewer sessions and error log. A stateful artifact's own tables live in a separate facet database this tool does not reach. The workspace ID is required: the Durable Object name carries none. Statements may mutate production state.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      artifactId: ArtifactIdSchema,
+      ...sqlInputSchema,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, ({ workspaceId, artifactId, sql, bindings = [] }) => tool(
+    principal,
+    "run_artifact_sql",
+    { workspace_id: workspaceId, artifact_id: artifactId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveArtifact({ workspaceId, artifactId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringArtifactTargetLookupSchema.parse(result)),
+        `Artifact ${artifactId}`,
+      );
+      return executedSql(await resolved.binding.runArtifactSql({
+        workspaceId,
+        artifactId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Artifact ${artifactId}`);
     },
   ));
 
