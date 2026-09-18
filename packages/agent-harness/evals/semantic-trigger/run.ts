@@ -65,6 +65,25 @@ export interface CaseOutcome {
   bandUtility: number;
   /** Contribution to the multiclass Brier score, over P(verdict). */
   brier: number;
+  /**
+   * Contribution to the binary Brier over P(fire), which is the fair comparison
+   * across primitives.
+   *
+   * The three-class Brier charges a pure Noul for a class it cannot express: it
+   * has no way to say "no event of this kind could settle this", so every such
+   * case costs it mass it was never able to place. That is a penalty for the
+   * primitive's shape rather than for being wrong about the decision, and on a
+   * tuning split with ten such cases it is worth about 0.126 — larger than the
+   * differences being measured.
+   *
+   * The product does not care either: `not_met` and `not_judgeable` take the same
+   * action. So the binary score asks the only question the gate asks, P(fire)
+   * against whether it should have fired, and it is the number a
+   * cross-primitive comparison is settled on. The three-class score stays because
+   * it is what separates a candidate that understands the third class from one
+   * that has quietly dropped it.
+   */
+  brierBinary: number;
   /** Whether the gate would fire, at each threshold in the band. */
   firesInBand: boolean[];
 }
@@ -111,6 +130,8 @@ export interface CandidateReport {
     meanConfidenceIncorrect: number | null;
     bandUtility: number;
     brier: number;
+    /** The cross-primitive comparison. See `CaseOutcome.brierBinary`. */
+    brierBinary: number;
     /**
      * What a standing watch cares about, which is not accuracy.
      *
@@ -450,6 +471,7 @@ async function evaluateCase(
     : noulProbabilities(candidate, choice, confidence);
   const brier = (["met", "not_met", "not_judgeable"] as const)
     .reduce((total, key) => total + (probabilities[key] - (truth.label === key ? 1 : 0)) ** 2, 0);
+  const brierBinary = (probabilities.met - (shouldFire ? 1 : 0)) ** 2;
   return {
     caseId: testCase.id,
     family: testCase.family,
@@ -470,6 +492,7 @@ async function evaluateCase(
     score: (bandUtility + 2) / 3,
     bandUtility,
     brier,
+    brierBinary,
     firesInBand,
   };
 }
@@ -570,6 +593,7 @@ export async function evaluateCandidate(
       bandUtility: outcomes.reduce((total, outcome) => total + outcome.bandUtility, 0) / outcomes.length,
       /** Multiclass Brier over P(verdict). Zero is perfect, 0.667 is a guess. */
       brier: outcomes.reduce((total, outcome) => total + outcome.brier, 0) / outcomes.length,
+      brierBinary: outcomes.reduce((total, outcome) => total + outcome.brierBinary, 0) / outcomes.length,
       fires,
       ...(scenarios ? { scenarios } : {}),
       latency: {
@@ -627,7 +651,8 @@ async function main(): Promise<void> {
     console.log(
       `${candidate.id.padEnd(22)} n=${report.aggregate.n}`
       + ` util=${report.aggregate.bandUtility.toFixed(3)}`
-      + ` brier=${report.aggregate.brier.toFixed(3)}`
+      + ` fireBrier=${report.aggregate.brierBinary.toFixed(3)}`
+      + ` brier3=${report.aggregate.brier.toFixed(3)}`
       + ` 3class=${(report.aggregate.threeClassAccuracy * 100).toFixed(2)}%`
       + ` admit=${(report.aggregate.admitAccuracy * 100).toFixed(2)}%`
       + ` hard=${(report.aggregate.hardThreeClassAccuracy * 100).toFixed(2)}%`
