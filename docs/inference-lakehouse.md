@@ -43,6 +43,13 @@ classes, cost, and response bytes. The full request, response, error, routing
 cursor, retry/repair positions, validation issues, and counts remain JSON
 columns. The `request` and `attempt` rows join on `inference_request_id`;
 `event_id` adds the event type and is the stable deduplication key.
+For user-started work-stream creation, substream creation, and ordinary message
+sends, the request row's `metadata` also carries `operationId`, `journey`,
+`requestReceivedAt`, `providerRequestIssuedAt`, and
+`requestToInferenceStartMs`. Keeping the additive boundary fields in the
+existing JSON column avoids an immutable Pipeline stream replacement. The
+attempt row's `ttft_ms` is the independent provider-dispatch-to-first-token
+clock; both rows join on `inference_request_id`.
 
 For PostHog destinations, OpenRouter maps `user` to `distinct_id`, `session_id`
 to `$ai_session_id`, `trace_id` to `$ai_trace_id`, and `generation_name` to
@@ -191,12 +198,14 @@ as proof that a model call committed product state.
 
 - A capture archive or Queue-send failure emits `inference_lakehouse_stage_failed`
   and does not fail the inference. The object is removed when Queue acceptance
-  itself fails. Exact request and attempt capture is registered with the owning
-  runtime lifecycle. Worker invocations register it through `waitUntil`;
-  Durable Objects already remain active while asynchronous I/O is pending, and
-  their `waitUntil` compatibility method adds no lifetime. Hashing and the R2 /
-  Queue hand-off are off the provider and result critical paths. Capture remains
-  best effort until that hand-off is accepted; it is not a durable retry fence.
+  itself fails. Exact provider request, terminal attempt, and structured
+  diagnostic capture is registered with the owning runtime lifecycle. Worker
+  invocations register it through `waitUntil`; Durable Objects already remain
+  active while asynchronous I/O is pending, and their `waitUntil` compatibility
+  method adds no lifetime. Hashing and the R2 / Queue hand-off therefore cannot
+  delay provider dispatch, the next tool/model step, or run settlement. Capture
+  remains best effort until that hand-off is accepted; it is not a durable retry
+  fence.
 - Invalid or cross-region pointers are poison: the consumer logs and acknowledges
   them so they cannot retry forever. Missing, corrupt, or schema-invalid archived
   bytes and Pipeline failures retry and eventually reach the Global DLQ.
@@ -550,22 +559,28 @@ becomes product-state repair authority.
 
 ## Changelog
 
-### 2026-09-17 — Exact inference archives leave provider critical paths
+### 2026-09-17 — Measure inference start without making observation part of it
 
-Streaming requests and attempts, standalone structured requests and responses,
-and addressing-classifier diagnostics now register exact-envelope lakehouse
-capture on the current Cloudflare invocation instead of awaiting R2 and Queue
-staging inside provider callbacks. The operational log and durable inference
-ledger remain synchronous where they are authoritative. A production addressing
+Streaming request rows now record the user journey's receipt and provider
+first-dispatch boundaries in `metadata`, while the regional logger emits the
+same content-free duration only for the first durable attempt. Later provider
+requests and recovered attempts omit the SLO duration. Streaming requests and
+attempts, standalone structured
+requests and responses, addressing diagnostics, and tool/run analytics register
+their observation through the shared Cloudflare lifecycle deferral instead of
+awaiting R2 and Queue staging on a product critical path. A production addressing
 trace showed archive staging consuming about 1.8 seconds before a roughly
 400-millisecond JEV call, which made observational persistence the dominant
-controlled latency. Dropping exact archives was rejected because they are the
-evidence used for evals and incident diagnosis; bare floating promises were
-rejected because Workers may end an invocation after its response. The shared
-deferral guards synchronous registration failure and observes promise rejection;
-it does not promise completion across deployment or runtime reset. Future
-inference callers must use that primitive rather than recreating either failure
-mode.
+controlled latency. The operational log and durable inference ledger remain
+synchronous where they are authoritative. Dropping exact archives was rejected
+because they are the evidence used for evals and incident diagnosis; bare
+floating promises were rejected because Workers may end an invocation after its
+response. The shared deferral guards synchronous registration failure and
+observes promise rejection; it does not promise completion across deployment or
+runtime reset. Future inference callers must use that primitive rather than
+recreating either failure mode. The existing JSON column was used instead of
+changing the immutable Pipeline schema; `ttft_ms` remains the provider-side half
+of the latency.
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 

@@ -77,7 +77,8 @@ conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", par
 })), async (c) => {
   const auth = getAuth(c);
   const parentId = c.req.valid("param").parentId;
-  const operation = await new SubstreamCreationService(c.env, auth).prepare(parentId, c.req.valid("json"));
+  const operation = await requestFlowSpan(c, "substream.prepare", { flow: "substream_prepare" }, (span) =>
+    new SubstreamCreationService(c.env, auth).prepare(parentId, c.req.valid("json"), span));
   const prepared = operation.preparedContext;
   if (!prepared) throw new Error("substream_preparation_missing_context");
   return c.json(SubstreamPreparationPreviewSchema.parse({
@@ -110,10 +111,18 @@ conversationRoutes.post("/:parentId/substreams/confirm", requireSendableMessageL
    */
   modelOverride: AgentModelOverrideSchema.optional(),
 })), async (c) => {
+  const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
-  const result = await new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
-    c.req.valid("param").parentId, body.operationId, body.opening ?? null, body.modelOverride ?? null,
-  );
+  const result = await requestFlowSpan(c, "substream.create", { flow: "substream_create" }, (span) =>
+    new SubstreamCreationService(c.env, getAuth(c), requestDeferral(c)).confirm(
+      c.req.valid("param").parentId,
+      body.operationId,
+      body.opening ?? null,
+      body.modelOverride ?? null,
+      undefined,
+      span,
+      requestReceivedAt,
+    ));
   return c.json(SubstreamCreationResultSchema.parse(result));
 });
 const childParticipantBody = z.strictObject({ userId: IdSchema, operationId: IdSchema });
