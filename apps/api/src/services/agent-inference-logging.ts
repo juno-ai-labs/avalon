@@ -42,7 +42,8 @@ export interface AgentInferencePreparationBreakdown {
   runContextMs: number;
   memoryContextMs: number;
   transcriptBootstrapMs: number;
-  toolLoadingMs: number;
+  toolInventoryMs: number;
+  toolConstructionMs: number;
   attachmentReplayMs: number;
   transcriptBootstrapRequired: boolean;
   sidekickSnapshotReused: boolean;
@@ -85,7 +86,8 @@ export function logAgentInferencePrepared(
     run_context_ms: timing.breakdown.runContextMs,
     memory_context_ms: timing.breakdown.memoryContextMs,
     transcript_bootstrap_ms: timing.breakdown.transcriptBootstrapMs,
-    tool_loading_ms: timing.breakdown.toolLoadingMs,
+    tool_inventory_ms: timing.breakdown.toolInventoryMs,
+    tool_construction_ms: timing.breakdown.toolConstructionMs,
     attachment_replay_ms: timing.breakdown.attachmentReplayMs,
     transcript_bootstrap_required: timing.breakdown.transcriptBootstrapRequired,
     sidekick_snapshot_reused: timing.breakdown.sidekickSnapshotReused,

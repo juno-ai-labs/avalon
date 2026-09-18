@@ -2636,7 +2636,8 @@ export async function runWorkstreamHarness(
     runContextMs: 0,
     memoryContextMs: 0,
     transcriptBootstrapMs: 0,
-    toolLoadingMs: 0,
+    toolInventoryMs: 0,
+    toolConstructionMs: 0,
     attachmentReplayMs: 0,
     transcriptBootstrapRequired: false,
     sidekickSnapshotReused: false,
@@ -2777,8 +2778,12 @@ export async function runWorkstreamHarness(
   // value grants authority, and tool/prompt setup still waits for the heartbeat.
   const runDefinitionPreparation = new Preparation(() => input.automationRun
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null));
-  const toolLoadingStartedAtMs = Date.now();
-  const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
+  const inventoryPreparation = new Preparation(async () => {
+    const toolInventoryStartedAtMs = Date.now();
+    const inventory = await loadHarnessInventory(env, input);
+    preparationBreakdown.toolInventoryMs = Date.now() - toolInventoryStartedAtMs;
+    return inventory;
+  });
   runDefinitionPreparation.get();
   inventoryPreparation.get();
   const leaseHeartbeatStartedAtMs = Date.now();
@@ -2793,11 +2798,12 @@ export async function runWorkstreamHarness(
     return promptContext;
   });
   const toolsPreparation = new Preparation(async () => {
+    const toolConstructionStartedAtMs = Date.now();
     const tools = await loadHarnessTools(
       env, input, runAuthoritySnapshot, runtime?.runtimeResourceAttacher,
       runDefinitionPreparation, inventoryPreparation, attemptLease,
     );
-    preparationBreakdown.toolLoadingMs = Date.now() - toolLoadingStartedAtMs;
+    preparationBreakdown.toolConstructionMs = Date.now() - toolConstructionStartedAtMs;
     return tools;
   });
   promptPreparation.get();
