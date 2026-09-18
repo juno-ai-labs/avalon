@@ -625,7 +625,13 @@ shape with the work-stream foreign keys the object import has to detach. Use one
 of them rather than replaying the migration directory in your own file — sixteen
 tests used to, and that is where most of the suite's runtime sat.
 
-They do not replay the migrations per call. The sequence runs once for the whole
+`migratedObservabilityFixture()` is a compatibility helper for focused query
+tests: it adds the complete telemetry and audit migration chains to a regional
+fixture. Because all three schemas share a connection, it cannot prove binding
+isolation or disallow cross-database joins. Routing tests must use separate
+connections; the collector and delivery tests show that pattern.
+
+The three regional shapes do not replay the migrations per call. The sequence runs once for the whole
 run, in `test/global-setup.ts`, and each call rebuilds the shape it ended in
 against an empty database: ~7ms rather than ~800ms. Global setup carries both the
 compact rebuild snapshot and a full description of the replayed database into

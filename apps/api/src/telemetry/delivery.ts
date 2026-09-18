@@ -31,21 +31,20 @@ interface DeliveryDatabaseRow {
 }
 
 async function reapExpiredTelemetry(env: Env, now: string): Promise<number> {
-  const tables = [
-    "telemetry_accepted_events",
-    "telemetry_delivery_receipts",
-    "telemetry_crash_access_audit",
-    "telemetry_identity_links",
-    "telemetry_ingest_rate_buckets",
-    "telemetry_onboarding_journeys",
-    "telemetry_profile_jobs",
-    "telemetry_rejection_buckets",
-    "telemetry_replay_audit",
-  ] as const;
+  const tables = {
+    telemetry_accepted_events: "TELEMETRY_DB",
+    telemetry_delivery_receipts: "TELEMETRY_DB",
+    telemetry_replay_audit: "TELEMETRY_DB",
+    telemetry_crash_access_audit: "DB",
+    telemetry_identity_links: "DB",
+    telemetry_ingest_rate_buckets: "DB",
+    telemetry_onboarding_journeys: "DB",
+    telemetry_profile_jobs: "DB",
+    telemetry_rejection_buckets: "DB",
+  } as const;
   let expired = 0;
-  for (const table of tables) {
-    const db = ["telemetry_accepted_events", "telemetry_delivery_receipts", "telemetry_replay_audit"].includes(table)
-      ? env.TELEMETRY_DB : env.DB;
+  for (const [table, binding] of Object.entries(tables)) {
+    const db = env[binding];
     const row = await db.prepare(
       `SELECT COUNT(*) AS count FROM ${table} WHERE delete_at <= ?`,
     ).bind(now).first<{ count: number }>();

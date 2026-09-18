@@ -1929,7 +1929,12 @@ the inactive regional copies to remove their residual data and identity-migratio
 coupling, and stop reaping them. The existing Worker-first migration sequence
 ensures the reaper no longer queries the tables when they are dropped. Keeping
 unused history and permanent dual-database cleanup would leave the original
-coupling in place; the agreed fire-and-forget cutover needs neither.
+coupling in place; the agreed fire-and-forget cutover needs neither. The large
+pre-recovery telemetry and audit backlog was already deleted during deployment
+recovery. The approved cleanup also deliberately discards any remaining legacy
+`audit_events` (no expiry) and `telemetry_replay_audit` (normally a 90-day deadline),
+even before those replay deadlines, without export. This is a one-time retirement
+decision, not a change to retention in the new databases.
 
 ### 2026-09-18 — Isolate event and audit storage from identity
 
