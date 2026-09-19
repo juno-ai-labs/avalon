@@ -43,7 +43,7 @@ observed designs. Discussion scans visit all thread pages and each thread's repl
 pages, preserving progress between polls. The first complete scan establishes a
 baseline. Later scans deduplicate by thread/reply identity, without relying on
 ordering or parent timestamps. Events contain identities rather than discussion
-bodies. Digest delivery is withheld while the recipient policy remains unresolved.
+bodies. Events are digestible under the existing owner-targeted visibility rules.
 
 Changing a watch target establishes a fresh baseline; it cannot reuse the old
 design’s timestamp or discussion identities.
@@ -72,8 +72,10 @@ so unresolved outcomes remain a durable settlement diagnostic.
 ## Boundary
 
 The connector uses the shared hosted MCP transport, authorization service and
-polling runner. Recipient eligibility and the remaining live acceptance cases must be settled
-before this gate is enabled. This document does not claim those paths are finished.
+polling runner. The requester is responsible for sharing resulting content with
+the work stream. Recipients do not need separate Canva authorization to see that
+output; ordinary Rally permissions apply. Remaining live acceptance cases are
+tracked in the PRD implementation plan.
 
 ## Failure modes and limits
 
@@ -110,6 +112,15 @@ real event ingestion and stops provider calls for a paused watch.
 
 ## Changelog
 
+### 2026-09-19 — Requester-controlled sharing
+
+The product decision places responsibility for sharing Canva content on the
+member who requests it in a work stream. The extra recipient-eligibility gate
+was therefore removed instead of requiring every viewer to connect Canva.
+Polling no longer withholds otherwise digestible events for that gate; existing
+owner-targeted visibility and personal credential ownership remain unchanged.
+
+
 ### 2026-09-19 — Native handoff and explicit observation foundation
 
 The server callback is awaiting Canva approval, so the interim listener forwards
@@ -117,6 +128,6 @@ only a code to the API instead of storing desktop provider credentials. Shared
 links can carry access rights, which requires encrypted access storage separate
 from navigation metadata. Polling uses complete discussion scans because replies
 do not reliably advance parent timestamps; a sorted top-ID watermark would miss
-activity. Production stays gated until the remaining lifecycle and policy work is
+activity. Production stays gated until the remaining lifecycle and provider approval work is
 verified. The support page labels the feature early access so documentation does
 not imply that a Canva subscription enables an unapproved deployment.

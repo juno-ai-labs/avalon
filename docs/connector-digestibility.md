@@ -34,8 +34,8 @@ case rather than a failure.
 
 ## Canva
 
-These are newsworthy types, but the gated implementation withholds their polling
-streams from digest delivery until Canva's recipient policy is settled.
+Both types are digestible under Rally's ordinary visibility rules. Personal watch
+events target their connection owner; there is no additional Canva recipient gate.
 
 | Activity type | Digestible? | Why |
 | --- | --- | --- |

@@ -33,8 +33,8 @@ export function createCanvaPolling(call: Call): ConnectorPollingActivitySource {
       return ['design', 'discussion'].map((kind) => ({
         id: `${watch.data.watchId}:${kind}`, idlePollIntervalSeconds: CANVA_POLL_SECONDS,
         backlogPollIntervalSeconds: CANVA_POLL_SECONDS, failurePollIntervalSeconds: CANVA_POLL_SECONDS,
-        // Shared-output/digest policy remains a launch gate; never widen an audience.
-        digestible: false,
+        // Ordinary Rally visibility applies; these events still target only the owner.
+        digestible: true,
       }));
     },
     normalizeHighWatermark(_connection, _stream, value) { return Cursor.parse(value ?? {}); },

@@ -1,4 +1,4 @@
-import { asUserId } from '@rally/contracts';
+import { ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY, asUserId } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { createCanvaConnector } from './canva';
 import { normalizeHostedMcpRedirect } from './hosted-mcp';
@@ -68,8 +68,10 @@ describe('Canva', () => {
       },
     });
     const conn = connection(); conn.credentials = { accessToken: 'fixture-token' };
+    const ownerId = asUserId('00000000-0000-7000-8000-00000000ca01');
+    conn.ownerUserId = ownerId;
     const result = await adapter.executeTool('start-editing-transaction', { design_id: 'design', user_intent: 'Unrelated confidential conversation' }, {
-      connection: conn, principal: { type: 'user', userId: asUserId('owner') }, signal: neverAborts(),
+      connection: conn, principal: { type: 'user', userId: ownerId }, signal: neverAborts(),
     });
     expect(result.providerOperationId).toBe('transaction');
     expect(calls).toEqual([{ name: 'start-editing-transaction', arguments: { design_id: 'design', user_intent: 'Use Canva to start editing transaction.' } }]);
@@ -114,6 +116,8 @@ describe('Canva', () => {
     });
     const result = await pollCheckpointedActivityStreams(source, conn, neverAborts());
     expect(result.activities).toHaveLength(1);
+    expect(result.activities[0]?.metadata?.[ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY]).toBeUndefined();
+    expect(result.activities[0]?.visibility).toEqual({ scope: 'restricted', userIds: ['owner'] });
     expect(result.cursor).toMatchObject({ activityStreams: { 'watch:design': { highWatermark: { updatedAt: 11 } }, 'watch:discussion': { highWatermark: { known: ['thread:old'] } } } });
     expect(result.streamErrors?.[0]?.streamId).toBe('watch:discussion');
   });
