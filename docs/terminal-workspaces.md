@@ -89,8 +89,12 @@ name: `*** Add File:`, `*** Update File:` (optionally followed by
 numbers and are placed by their context lines, with whitespace tolerance. That
 one is applied by OpenAI's reference implementation, vendored unmodified under
 `services/terminal/vendor/` and written into the sandbox beside the patch for
-that call. Every path the patch names is contained in its own right before the
-applier runs, because it follows symlinks. The applier needs `pydantic`; the
+that call. Every path the patch names passes the rules every `filePath` gets
+before any provider I/O, and is contained in its own right before the applier
+runs, because the applier follows symlinks. A path an `*** Add File:` or
+`*** Move to:` section would create is refused if it already exists, because
+the applier would truncate it and report success; `git apply` refuses the same
+collision in a unified diff. The applier needs `pydantic`; the
 first such call in a sandbox installs it from PyPI into `/workspace/.rally/pylib`,
 which the trusted-only baseline permits, and a sandbox that cannot refuses with
 `patch_tooling_unavailable` rather than failing later.
@@ -839,7 +843,10 @@ update lag before changing the default.
 first non-blank line decides; `patch-format.ts` holds both parsers, and the
 envelope is applied by OpenAI's reference `apply_patch.py`, vendored byte for
 byte under `vendor/` (MIT, provenance and hash in its README, the hash pinned
-by a test) and written into the sandbox beside the patch. The applier's one
+by a test) and written into the sandbox beside the patch. Both parsers hold
+every path to the shared Terminal path rules, and the envelope command refuses
+to create a file that already exists before the applier runs, because the
+applier opens a new file for writing without looking. The applier's one
 dependency, `pydantic`, is installed from PyPI into `/workspace/.rally/pylib`
 on the first such call in a sandbox. The Worker bundles gained a Text-module
 rule for `.py` imports and the Node test run a matching Vite plugin.

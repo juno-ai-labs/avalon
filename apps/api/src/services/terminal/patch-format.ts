@@ -1,4 +1,4 @@
-import { TerminalToolError, type TerminalPatchOutput } from "./tools";
+import { safeRelativePath, TerminalToolError, type TerminalPatchOutput } from "./tools";
 import APPLY_PATCH_SCRIPT from "./vendor/apply_patch.py";
 
 /**
@@ -14,9 +14,10 @@ import APPLY_PATCH_SCRIPT from "./vendor/apply_patch.py";
  * unmodified under `./vendor/` and written into the sandbox beside a patch
  * that needs it.
  *
- * Both parsers produce the tool's result shape and refuse a path that leaves
- * the work space before any provider I/O. Neither decides whether a hunk
- * applies: `git apply` and the reference applier do, in the sandbox.
+ * Both parsers produce the tool's result shape and hold every path they name
+ * to the rules every other Terminal path gets, before any provider I/O.
+ * Neither decides whether a hunk applies: `git apply` and the reference
+ * applier do, in the sandbox.
  */
 export type TerminalPatchFormat = "unified" | "openai";
 
@@ -47,14 +48,6 @@ type PatchFile = TerminalPatchOutput["files"][number];
 export function parsePatch(patch: string): { format: TerminalPatchFormat; output: TerminalPatchOutput } {
   const format = detectPatchFormat(patch);
   return { format, output: format === "openai" ? parseOpenAiPatch(patch) : parseUnifiedPatch(patch) };
-}
-
-function pathOutsideRoot(): TerminalToolError {
-  return new TerminalToolError("path_outside_root", "A patch path leaves the Terminal workspace. Regenerate it using relative paths only.");
-}
-
-function escapesRoot(path: string): boolean {
-  return path.startsWith("/") || path.split("/").includes("..");
 }
 
 function finish(files: Map<string, PatchFile>, none: string): TerminalPatchOutput {
@@ -99,7 +92,9 @@ function parseUnifiedPatch(patch: string): TerminalPatchOutput {
         current.path = newPath;
         current.operation = "renamed";
       }
-      if (escapesRoot(current.path)) throw pathOutsideRoot();
+      // The same rules every `filePath` gets: no `/` prefix, `..`, `\` or NUL,
+      // and `./` segments dropped, so the reported path is the file's own.
+      current.path = safeRelativePath(current.path, "patch");
       files.set(current.path, current);
     } else if (current && line.startsWith("+") && !line.startsWith("+++")) {
       current.additions += 1;
@@ -131,9 +126,9 @@ function parseOpenAiPatch(patch: string): TerminalPatchOutput {
   const invalid: (line: number, what: string) => never = (line, what) => {
     throw new TerminalToolError("patch_invalid", `Line ${line} of the patch ${what}. Regenerate the patch and retry.`);
   };
-  const section = (line: number, path: string, operation: PatchFile["operation"]): PatchFile => {
-    if (!path) invalid(line, "names no file");
-    if (escapesRoot(path)) throw pathOutsideRoot();
+  const section = (line: number, named: string, operation: PatchFile["operation"]): PatchFile => {
+    if (!named) invalid(line, "names no file");
+    const path = safeRelativePath(named, "patch");
     if (files.has(path)) invalid(line, "names a file the patch already changes");
     const file: PatchFile = { path, operation, additions: 0, deletions: 0 };
     files.set(path, file);
@@ -159,9 +154,9 @@ function parseOpenAiPatch(patch: string): TerminalPatchOutput {
     }
     if (line.startsWith("*** Move to: ")) {
       if (!current || !moveAllowed) invalid(number, "moves a file anywhere but directly under its `*** Update File:` line");
-      const target = line.slice("*** Move to: ".length);
-      if (!target) invalid(number, "moves a file to no path");
-      if (escapesRoot(target)) throw pathOutsideRoot();
+      const named = line.slice("*** Move to: ".length);
+      if (!named) invalid(number, "moves a file to no path");
+      const target = safeRelativePath(named, "patch");
       if (files.has(target)) invalid(number, "moves a file onto one the patch already changes");
       const moved: PatchFile = { path: target, previousPath: current.path, operation: "renamed", additions: current.additions, deletions: current.deletions };
       files.delete(current.path);

@@ -55,7 +55,11 @@ export const StartAgentInputSchema = z.strictObject({
   description: z.string().trim().min(1).max(4_000).describe("Describe the agent’s job for teammates. Put the full assignment in message."),
   ...MessageFields,
 }).refine(hasContent, contentError);
-export const StartAgentResultSchema = z.strictObject({ agentId: AgentIdSchema });
+// `next` is where the delivery contract lives: the reply arrives as a message
+// whether the model keeps working or finishes, and there is no tool to fetch
+// it. It is result text because a result is read at the moment the model
+// decides its next step.
+export const StartAgentResultSchema = z.strictObject({ agentId: AgentIdSchema, name: z.string(), next: z.string() });
 export const ListAgentsInputSchema = z.strictObject({});
 export const SendAgentMessageInputSchema = z.strictObject({
   agentId: AgentIdSchema.describe("Copy the recipient’s agentId from creation or discovery. Do not use a Sidekick ID."),
@@ -65,11 +69,13 @@ export const ReplyToAgentMessageInputSchema = z.strictObject({
   messageId: IdSchema.describe("Copy Message ID from the message you received. The response goes to its sender."),
   ...MessageFields,
 }).refine(hasContent, contentError);
-export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema });
+export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema, next: z.string() });
 export const StopAgentInputSchema = z.strictObject({
   agentId: AgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
 });
 
 export type StartAgentInput = z.infer<typeof StartAgentInputSchema>;
+export type StartAgentResult = z.infer<typeof StartAgentResultSchema>;
+export type AgentMessageResult = z.infer<typeof AgentMessageResultSchema>;
 export type SendAgentMessageInput = z.infer<typeof SendAgentMessageInputSchema>;
 export type ReplyToAgentMessageInput = z.infer<typeof ReplyToAgentMessageInputSchema>;

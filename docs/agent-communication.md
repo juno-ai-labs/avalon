@@ -124,8 +124,9 @@ The `start_agent`, `send_message` and `reply_to_message` results each carry a
 model keeps working or finishes its turn, and that there is no tool to fetch
 it; a result is read at the moment the model decides its next step, where a
 description was skimmed, so the descriptions say only that the call returns
-at once. `list_agents` is a directory of `agentId`, name and description, not
-a status feed.
+at once. `list_agents` returns each teammate's `agentId`, name, description
+and execution status; the status says whether a teammate is still running
+without resuming it, and its reply is still the thing to wait for.
 
 Background identity travels in the existing child common-state projection.
 The conversation parent counts running background substreams, including nested
@@ -232,8 +233,7 @@ results carry a `next` sentence: the reply will arrive here as a message
 whether you keep working or finish your turn, and there is no tool to fetch
 it. Their descriptions say only that the call returns at once, where they said
 "does not wait"; the delivery contract is stated once, in the result, where it
-is read. `list_agents` returns `agentId`, name and description and no longer a
-status. Every role's guidance gained four short sentences: after delegating,
+is read. Every role's guidance gained four short sentences: after delegating,
 keep working on what does not need the result or end the turn with a short
 status; the reply arrives as a message and wakes the conversation; do not poll
 or resend; schedule one wake-up only as a deadline, not a repeating one. A
@@ -265,7 +265,10 @@ polling and finishing, but ending the turn already is that wait once the
 result says so, and a parked run is one more state for stop, archive and
 recovery to reason about. A repeating wake-up while a delegate works: each
 firing is a full inference at the run's context, and the 12-minute delegation
-above would have fired 24 times.
+above would have fired 24 times. Dropping `status` from `list_agents`: the
+field read as something to poll, but the uninterrupted-workstreams PRD requires
+it and it is the one way to ask whether a teammate is still running without
+resuming it; the guidance carries the no-polling rule instead.
 
 **Consequences:** A worker that completes without replying now wakes its
 owner once, which costs the owner one inference; a worker that reports

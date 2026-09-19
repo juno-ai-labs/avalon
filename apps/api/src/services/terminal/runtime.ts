@@ -59,6 +59,7 @@ const FILE_TOO_LARGE_EXIT_CODE = 50;
 const FILE_LINE_TOO_LARGE_EXIT_CODE = 51;
 /** The `*** Begin Patch` applier's one dependency could not be imported or installed. */
 const PATCH_TOOLING_UNAVAILABLE_EXIT_CODE = 53;
+const PATCH_DESTINATION_EXISTS_EXIT_CODE = 54;
 const COUNT_UTF8_LINES_PYTHON = "import pathlib, sys; text = pathlib.Path(sys.argv[1]).read_bytes().decode('utf-8'); print(0 if not text else len(text.split('\\n')) - int(text.endswith('\\n')))";
 export const TERMINAL_READ_TEXT_PAGE_PYTHON = [
   "import json, os, pathlib, sys",
@@ -201,16 +202,28 @@ function containmentCommands(): string[] {
  * reference applier, written into the sandbox beside the patch.
  *
  * Every path the patch names is contained in its own right first, because the
- * applier follows symlinks and `git apply` is not there to refuse them. The
- * applier's one dependency, `pydantic`, is imported from a Rally-owned
- * directory and installed there from PyPI only when that import fails, so the
- * system site is untouched and a sandbox pays the install once.
+ * applier follows symlinks and `git apply` is not there to refuse them. A
+ * path an `*** Add File:` or `*** Move to:` section would create must not
+ * exist yet, because the applier opens it for writing without looking and
+ * would report success over a truncated file; `git apply` refuses the same
+ * collision in a unified diff. The applier's one dependency, `pydantic`, is
+ * imported from a Rally-owned directory and installed there from PyPI only
+ * when that import fails, so the system site is untouched and a sandbox pays
+ * the install once.
  */
-function openAiApplyCommand(script: string, patch: string, touched: readonly string[]): string {
+function openAiApplyCommand(
+  script: string,
+  patch: string,
+  paths: { touched: readonly string[]; destinations: readonly string[] },
+): string {
   const lib = `${ROOT}/.rally/pylib`;
   return [
     `trap 'rm -f -- ${shellQuote(patch)} ${shellQuote(script)}' EXIT`,
-    ...touched.flatMap((path) => [`target=${shellQuote(absolutePath(path))}`, ...containmentCommands()]),
+    ...paths.touched.flatMap((path) => [`target=${shellQuote(absolutePath(path))}`, ...containmentCommands()]),
+    ...paths.destinations.flatMap((path) => [
+      `target=${shellQuote(absolutePath(path))}`,
+      `if [ -e "$target" ] || [ -L "$target" ]; then printf '%s\\n' ${shellQuote(path)}; exit ${PATCH_DESTINATION_EXISTS_EXIT_CODE}; fi`,
+    ]),
     `lib=${shellQuote(lib)}`,
     `PYTHONPATH="$lib" python3 -c 'import pydantic' 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check --no-cache-dir --target "$lib" pydantic >/dev/null 2>&1 || exit ${PATCH_TOOLING_UNAVAILABLE_EXIT_CODE}`,
     `PYTHONUTF8=1 PYTHONPATH="$lib" python3 ${shellQuote(script)} < ${shellQuote(patch)}`,
@@ -817,8 +830,10 @@ export function createDaytonaTerminalRuntime(
         result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
           operation: "file.apply_patch",
           command: script
-            ? openAiApplyCommand(script, temporary, [...new Set(parsed.files.flatMap((file) =>
-              file.previousPath ? [file.path, file.previousPath] : [file.path]))])
+            ? openAiApplyCommand(script, temporary, {
+              touched: [...new Set(parsed.files.flatMap((file) => file.previousPath ? [file.path, file.previousPath] : [file.path]))],
+              destinations: parsed.files.filter((file) => file.operation === "created" || file.operation === "renamed").map((file) => file.path),
+            })
             // Check, then apply: a patch that would not apply is reported as
             // such before anything changes.
             : [
@@ -841,6 +856,17 @@ export function createDaytonaTerminalRuntime(
             "patch_tooling_unavailable",
             "The *** Begin Patch applier needs the pydantic package and the sandbox could not import or install it. Send the same change as a unified diff, or retry later.",
             { reason: "Install pydantic in the sandbox, or send a unified diff." },
+          );
+        }
+        if (result.exitCode === PATCH_DESTINATION_EXISTS_EXIT_CODE) {
+          // The preflight printed the path it refused; it is one the patch
+          // names, so echoing it back tells the model which section to fix.
+          const path = sanitizeTerminalOutput(result.stdout.trim().split("\n")[0]?.slice(0, 4_096) ?? "");
+          const section = parsed.files.find((file) => file.path === path)?.operation === "renamed" ? "*** Move to:" : "*** Add File:";
+          throw new TerminalToolError(
+            "patch_does_not_apply",
+            `The patch could not be applied: \`${path}\` already exists, and \`${section}\` would replace it. Read it and change it in place, or choose another path.`,
+            { reason: "The patch would create a file that already exists; nothing was applied." },
           );
         }
         // The reference applier prints `Done!` on success, prints a rejected
