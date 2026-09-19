@@ -440,6 +440,22 @@ function decodeChannelCursor(cursor: string): string | null {
   }
 }
 
+/**
+ * One arrangement laid over another: what this write named, then what it did
+ * not.
+ *
+ * The rule every kind of container order is written by, and one function
+ * because the reason is one reason. A request carries the ids the person was
+ * *looking at* — a search has hidden rows, a page has not been fetched, a
+ * Channel has been archived — and never the ids it left out. Read as a complete
+ * picture it would delete them; read as a move it says only where the named
+ * ones go, which is the whole of what a drag means.
+ */
+function mergedOrder(named: readonly string[], rest: readonly string[]): string[] {
+  const moved = new Set(named);
+  return [...named, ...rest.filter((id) => !moved.has(id))];
+}
+
 /** What the cutover's alarm claimed, and what the consumer should do with it. */
 export interface SpaceBootstrapClaim {
   kind: "general" | "preflight" | "memberships" | "finalize";
@@ -732,10 +748,16 @@ export class WorkspaceSpaceStorage {
    *   that names nothing costs this person one row and nobody else anything —
    *   the rows are theirs, and the only reader is their own sidebar.
    *
-   * Unlike the Organization's list, the other two are replaced rather than
-   * merged: nothing reads them but the client's own helper, so an item nobody
-   * mentioned belongs at its natural position rather than pinned to a stale
-   * one.
+   * **All three merge, and a write never deletes a position it was not about.**
+   * The ids the request names go first in the order it named them, and every
+   * other id this person already has for that container follows in the order it
+   * already had. The request is not a picture of the list: the only client there
+   * is sends the ids it is *drawing*, which is what is left after an archived
+   * Channel, a Breakout on a page this device never loaded, or a Channel outside
+   * the sidebar's first page of 250 has already been dropped. Replacing would
+   * read that silence as "delete these", so one drag on a laptop that has loaded
+   * one page would throw away the arrangement made on a desktop that had loaded
+   * four — everywhere, with no error and no signal.
    */
   writeOrder(
     workspaceId: string,
@@ -785,11 +807,30 @@ export class WorkspaceSpaceStorage {
     if (container.kind === "organization") {
       return this.organizationOrder(workspaceId, userId, requestedIds, now);
     }
-    if (container.kind === "space") {
-      const orderable = this.orderableChannelIds(userId, container.id, requestedIds);
-      return requestedIds.filter((id) => orderable.has(id));
-    }
-    return [...requestedIds];
+    const merged = mergedOrder(
+      requestedIds,
+      this.storedContainerOrder(userId, container.kind, container.id),
+    );
+    if (container.kind !== "space") return merged;
+    // Over the merge rather than over the request, so the same rule decides
+    // what stays as decides what may arrive: a Channel that has left this Space
+    // loses the position it kept only because nobody mentioned it. An archived
+    // Channel is *not* one of those — neither read looks at `archived_at` — so
+    // it keeps its place and a restore brings the arrangement back.
+    const orderable = this.orderableChannelIds(userId, container.id, merged);
+    return merged.filter((id) => orderable.has(id));
+  }
+
+  /** What this person currently has stored for one container, in its own order. */
+  private storedContainerOrder(userId: string, kind: string, containerId: string): string[] {
+    return this.storage.sql.exec<{ item_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT item_id FROM workspace_container_order
+        WHERE user_id = ? AND container_kind = ? AND container_id = ?
+        ORDER BY position, item_id`,
+      userId,
+      kind,
+      containerId,
+    ).toArray().map((row) => row.item_id);
   }
 
   /**
@@ -809,16 +850,11 @@ export class WorkspaceSpaceStorage {
     const visible = this.visibleSpaceIds(userId);
     for (const spaceId of visible) this.appendOrder(workspaceId, userId, spaceId, now);
     const visibleSet = new Set(visible);
-    const current = this.storage.sql.exec<{ item_id: string } & Record<string, SqlStorageValue>>(
-      `SELECT item_id FROM workspace_container_order
-        WHERE user_id = ? AND container_kind = 'organization' AND container_id = ?
-        ORDER BY position, item_id`,
-      userId,
-      workspaceId,
-    ).toArray().map((row) => row.item_id).filter((id) => visibleSet.has(id));
-    const requested = requestedIds.filter((id) => visibleSet.has(id));
-    const requestedSet = new Set(requested);
-    const ordered = [...requested, ...current.filter((id) => !requestedSet.has(id))];
+    const ordered = mergedOrder(
+      requestedIds.filter((id) => visibleSet.has(id)),
+      this.storedContainerOrder(userId, "organization", workspaceId)
+        .filter((id) => visibleSet.has(id)),
+    );
     for (const [position, spaceId] of ordered.entries()) {
       this.storage.sql.exec(
         `UPDATE workspace_container_order SET position = ?, updated_at = ?
