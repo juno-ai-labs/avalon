@@ -154,7 +154,8 @@ that two rows are the same turn.
 ### What the server makes you wait for
 
 Everything. `POST /workstreams` finishes the participant and attachment checks,
-the address reservation, the authoritative SubstreamAgent work-stream/opening
+the Space placement below, the address reservation, the authoritative
+SubstreamAgent work-stream/opening
 turn/run write, the canonical `transcript_turn_upserted` publication, and the
 Workflows round trip that starts the run. It then synchronously drains the committed directory facts
 through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
@@ -162,6 +163,30 @@ changes the minimal
 D1 route from `verified` to `active`, and activates email —
 only then does it answer. The one thing off the path is the naming call, which
 was already deferred before this module existed.
+
+The Space placement is four more awaited steps, in this order, and each of them
+repeats once per Space the Channel is being born into:
+
+1. **Resolving General** (`SpaceService.ensureGeneral`) — *conditional: only when
+   the request named no Space at all*. When the Organization has no General yet
+   this is also where its Space object is provisioned, which is the D1 reads and
+   the object reservations [`spaces.md`](spaces.md#regional-impact) lists;
+   ordinarily General already exists and this is one WorkspaceDO call.
+2. **Staging the membership** (`WorkspaceDO.prepareSpaceMembership`), before the
+   D1 anchor, so a Space the caller may not reach refuses while nothing has been
+   built yet. It answers with the Space revision and membership generation the
+   three steps below are fenced on.
+3. **Settling the membership** (`WorkspaceDO.finalizeSpaceMembership`), before
+   the main conversation is reserved — see the section below for why that order
+   is load-bearing rather than incidental.
+4. **Recording the provenance** on the Channel's own authority
+   (`WorkstreamDO.applySpaceAccessSource`, then `confirmSpaceAccessSource`),
+   after the reservation, because the Channel's authority asserts a parent
+   identity the reservation is what writes.
+
+What a Space hands *down* is not on the path: the resources and Sidekick
+recommendations a Space's defaults give a new member Channel are staged by step 3
+and delivered over `ACTIVITY_QUEUE`.
 
 The explicit drain is not the normal delivery mechanism. Ordinary mutations
 use the child and parent SQL outboxes plus alarms. Creation overrides any alarm
