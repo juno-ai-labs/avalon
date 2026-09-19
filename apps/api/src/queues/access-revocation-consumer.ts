@@ -1,6 +1,7 @@
 import {
   asArtifactId,
   asAutomationId,
+  asSpaceId,
   asWorkspaceId,
   asWorkstreamId,
   type SubstreamId,
@@ -10,6 +11,7 @@ import {
   artifactHostDOName,
   automationDOName,
   conversationObjectName,
+  spaceDOName,
   workspaceDOName,
   workstreamDOName,
 } from "../durable-objects/names";
@@ -126,6 +128,30 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     await publishDescendantRevocations(env, children.map((child) => descendantRevocation(revocation, {
       scope: "substream",
       workstreamId: target.automationId,
+      substreamId: child.substreamId,
+    })));
+    return;
+  }
+
+  if (target.scope === "space") {
+    // No `revokeSocketAccess` call: a Space admits no client socket, so there
+    // is nothing here to close and asking would be a subrequest whose answer is
+    // always empty. Its children are addressed by the Space id exactly as a
+    // work stream's substreams are addressed by its own.
+    const space = await durableObjectStubForWorkspace(
+      env,
+      env.SPACE_DOS,
+      workspaceId,
+      spaceDOName(env.AVALON_REGION, workspaceId, asSpaceId(target.spaceId)),
+      placementAffinity,
+    );
+    const { children } = await space.listChildren({
+      workspaceId,
+      parentId: target.spaceId,
+    });
+    await publishDescendantRevocations(env, children.map((child) => descendantRevocation(revocation, {
+      scope: "substream",
+      workstreamId: target.spaceId,
       substreamId: child.substreamId,
     })));
     return;
