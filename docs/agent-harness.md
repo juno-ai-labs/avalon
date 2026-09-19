@@ -998,6 +998,13 @@ participants remain deferred product work.
   `harness_execution_failed`, and `provider_circuit_open` says only that Rally
   stopped calling — never why — because the breaker opens on those too. Widening
   the provider arm to cover them points an operator at the wrong system.
+- **Owning a failure is not a reason to stop naming it.** The one 400 whose
+  cause the endpoint states in a machine code — `context_length_exceeded` —
+  is reported under that name with kind `context`, still Rally's request and
+  never the provider's. The invariant above is about *who owns* a failure; this
+  one is about *what it was*, and answering the first by discarding the second
+  is how a run that crossed a known token limit reached a member as "Rally
+  could not complete this run. Retrying is unlikely to help."
 - **A retry never replays output a reader has already seen.** The transport retry
   checks the same `producedOutput` flag the route executor clamps traversal on;
   re-rendering a turn someone is part-way through reading is worse than the
@@ -1179,7 +1186,7 @@ whole-file read.
 
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
-When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, a 5xx, or a successful HTTP stream whose bounded provider error code is `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. An OpenAI-compatible endpoint can accept the HTTP request and disclose an outage only in a later SSE error envelope. The two named machine codes classify as `server_error`; numeric codes reuse Bind's HTTP taxonomy but admit only timeout, rate-limit, and server-error categories. The same provider traversal and whole-plan retry rules then apply despite the successful surrounding status. Other statusless stream codes, including numeric request, credential, and credit failures, stay terminal because a blanket retry would hide the owner of the fault. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, kind `routing`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. A refusal from the platform Rally runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
+When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, a 5xx, or a successful HTTP stream whose bounded provider error code is `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. An OpenAI-compatible endpoint can accept the HTTP request and disclose an outage only in a later SSE error envelope. The two named machine codes classify as `server_error`; numeric codes reuse Bind's HTTP taxonomy but admit only timeout, rate-limit, and server-error categories. The same provider traversal and whole-plan retry rules then apply despite the successful surrounding status. Other statusless stream codes, including numeric request, credential, and credit failures, stay terminal because a blanket retry would hide the owner of the fault. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, kind `routing`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. One 400 is the exception, and it is an exception about the *reason* rather than the owner: an OpenAI-compatible endpoint refusing a prompt longer than it accepts says so in a bounded machine code, `context_length_exceeded`, and that run fails under that name with kind `context`. Azure and OpenAI set it as `error.code`, which is read directly; OpenRouter does not adopt it, reporting its own numeric 400 and forwarding the endpoint's envelope in `metadata.raw`, which `isProviderContextLengthRejection` parses to read that endpoint's own `error.code`. It parses rather than pattern-matches because `openRouterProviderError` sets `detail` to the *whole* response body and not to `metadata.raw` alone: a substring search there also sees the provider's free-text `message`, so a provider that echoes the rejected request back or names codes in prose would have an unrelated 400 relabelled as a context refusal and its member told to start a new work stream over a schema fault. The first revision of this shipped with exactly that search, under a comment claiming it did not do it, and review caught it; the negative case is now pinned by a test. The rejection is still Rally's request and is never reported as the provider's; what changed is only that Rally stopped throwing away a reason it had been handed. A run died on 2026-09-17 with compaction sized from OpenRouter's catalog `context_length` of 1,050,000 for a model whose Azure deployment accepts 922,000, and the 400 that said so arrived as `harness_execution_failed` — Rally's own defect, with no remedy and no next step — which is the generic-code defect `CLAUDE.md` names, on a path that had the reason in hand. It traverses before it is named: another endpoint for the same model may have a larger window, so the code is what is left once every candidate has refused, read from the last attempt's error. Note that it says the endpoint disagreed with Rally's sizing, which `context_limit_exceeded` — Rally's own accounting declining to send a run it cannot make fit — does not; the two are near-namesakes and mean opposite things about who was wrong, so neither may be used for the other. A refusal from the platform Rally runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
 Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host sets from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output or an external effect has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
@@ -1344,6 +1351,54 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-09-18 — A 400 that names its own cause stops being reported as ours
+
+**What changed:** `context_length_exceeded` joined `HarnessFailureCodeSchema`,
+with kind `context`. `isProviderContextLengthRejection` in `bind-runtime.ts`
+reads the endpoint's own machine code out of a captured rejection — directly
+from `error.code` for Azure and OpenAI, and by parsing the envelope OpenRouter
+forwards in `metadata.raw`, since it reports its own numeric 400 instead of
+adopting the upstream code — and the outer catch names the run with it in the
+position the catch-all used to hold. Routing is untouched: the rejection still
+traverses every candidate for the model first, and the code is read from the
+last attempt's error once they have all refused.
+
+**Why:** a run failed on 2026-09-17 against an Azure deployment that accepts
+922,000 input tokens while compaction sized it from the 1,050,000 the OpenRouter
+catalog reports for that model, so no compaction ran and a 1,415,120-token
+request went out. Azure refused it with `context_length_exceeded` in the 400
+body, and the run reached its member as `harness_execution_failed`: Rally's own
+defect, "retrying is unlikely to help", no next step, and nothing for an
+operator to look at — while the log had carried the real code the whole time.
+That is the generic-code defect `CLAUDE.md` names, on a path that had the reason
+in hand, and the cost is that the sizing bug underneath it reads as an
+unexplained outage in every run that hits it.
+
+**Considered and rejected:** *reporting it as `context_limit_exceeded`*, the
+code that already exists, which avoids a second near-identical name. It says the
+opposite thing about who was wrong: that one is Rally's own accounting declining
+to send a run it cannot make fit, and reusing it here would file "the window
+Rally sized against is wrong" under "Rally correctly refused", which is the one
+distinction an operator needs. *Matching the provider's message text*, which
+would have caught more providers and also any rejection that happened to mention
+a length; the machine code is bounded and the prose is not. *Making the
+rejection terminal so it stops traversing*: a second endpoint for the same model
+may have a larger window, and one that does turns this into a recovery.
+
+**What a future change has to respect:** the invariant that a request Rally owns
+is never named as the provider's is about *ownership*, and this code does not
+weaken it — the kind is `context`, not `provider`. Read the forwarded envelope
+by parsing it, never by searching `providerError.detail`, which holds the whole
+response body including the provider's free-text `message`: the first revision
+searched it and would have relabelled any 400 whose prose named the code. Cover
+each transport on a model whose route policy *terminates* on it — the terminal
+catch classifies the last attempt's error, so an ordered model proves only the
+provider it traversed to. The fix for the sizing itself
+belongs in [`context-compaction.md`](context-compaction.md), and this code is
+what makes reaching for it possible rather than a substitute for it: a
+deployment's input limit is the authority on what fits, and the catalog's
+`context_length` is not always the same number.
 
 ### 2026-09-18 — JEV is three primitives, and addressing is one of its callers
 
