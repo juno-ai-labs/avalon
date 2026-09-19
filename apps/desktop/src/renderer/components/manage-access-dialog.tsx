@@ -199,7 +199,12 @@ export function ManageAccessDialog({
               const member = (sources.spaceIds as string[]).includes(spaceId);
               return (
                 <AccessSource
-                  action={member
+                  // A membership in a Space this viewer's directory does not
+                  // hold is still listed — it is one of the sources granting
+                  // access — but carries no control: the row cannot name what
+                  // leaving it would change, and the server refuses an edit to
+                  // a Space the caller may not read anyway.
+                  action={member && space !== undefined
                     ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
                     : undefined}
                   failure={failures[spaceId]}

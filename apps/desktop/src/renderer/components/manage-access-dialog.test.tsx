@@ -117,6 +117,18 @@ describe('Manage access', () => {
     expect(await screen.findByText(/public through a space/u)).toBeVisible();
   });
 
+  it('given a membership in a space the viewer cannot see, then it is named but not removable', async () => {
+    const unseen = '00000000-0000-7000-8000-0000000000f9';
+    renderDialog({
+      direct: { scope: 'personal', participantUserIds: [person] },
+      spaces: [{ spaceId: unseen, scope: 'personal', participantUserIds: [other] }],
+      spaceIds: [unseen],
+    });
+
+    expect(await screen.findByText('A space you can\u2019t see')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Remove from space' })).not.toBeInTheDocument();
+  });
+
   it('offers the public scope change on a channel whose own source is personal', async () => {
     const onChangeScope = vi.fn(async () => undefined);
     renderDialog({
