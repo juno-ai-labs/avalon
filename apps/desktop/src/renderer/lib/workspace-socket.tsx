@@ -2,7 +2,7 @@ import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
-  WorkspaceProjectSnapshotEventSchema,
+  WorkspaceSpaceSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -34,10 +34,11 @@ import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
 import {
-  PROJECTS_QUERY_KEY,
-  INACTIVE_PROJECTS_QUERY_KEY,
+  SPACES_QUERY_KEY,
+  INACTIVE_SPACES_QUERY_KEY,
+  SPACES_READY_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS,
-  applyVersionedProjectSnapshot,
+  applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
@@ -105,6 +106,16 @@ interface WorkspaceSocketContextValue {
   }): Promise<WorkstreamPage>;
   /** The last sidebar the server sent unasked, or null before the first one. */
   sidebarConnect: SidebarConnect | null;
+  /**
+   * Abandon the backoff and try the organization connection now.
+   *
+   * The one refresh a surface painting socket-owned state can offer. Every
+   * list here is pushed rather than fetched, so a **Try again** beside a stale
+   * one has nothing to refetch — reconnecting is the retry, and it is the same
+   * step the `online` listener already takes when the machine comes back.
+   * A no-op while the provider is unmounted or already connecting.
+   */
+  reconnect: () => void;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -145,9 +156,11 @@ function invalidateTopic(
       ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
     notes: [['note']],
-    // Project state is carried by the connect snapshot and every later project
-    // push. This legacy topic can arrive during rolling deployment, but it must
-    // never turn the socket into news followed by a REST read.
+    // Projects are gone and Spaces replaced them; Space state is carried by the
+    // connect snapshot and every later `workspace_space_snapshot`. This topic
+    // survives in the contract's closed enum and can still arrive from a server
+    // mid-deployment, but it must never turn the socket into news followed by a
+    // REST read.
     projects: [],
     resources: [['resources'], ['workstream-context']],
     activity: [['work-opportunities']],
@@ -212,6 +225,7 @@ export function WorkspaceSocketProvider({
   const [presenceUserIdsByWorkstream, setPresenceUserIdsByWorkstream] = useState<Record<string, readonly string[]>>({});
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
+  const reconnectRef = useRef<() => void>(() => undefined);
   const listWorkstreamsRef = useRef<WorkspaceSocketContextValue['listWorkstreams']>(
     () => Promise.reject(new ApiError(
       'The organization is not connected.',
@@ -224,7 +238,8 @@ export function WorkspaceSocketProvider({
     const releaseData = retainQueryData(queryClient, [
       WORKSTREAMS_QUERY_KEY,
       SIDEBAR_LIST_QUERY_KEYS.automations,
-      PROJECTS_QUERY_KEY, INACTIVE_PROJECTS_QUERY_KEY, CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
+      CLIENT_FEATURE_FLAGS_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
     let stopped = false;
@@ -344,7 +359,12 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
-      if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
+      // `spacesReady` is optional on the wire and read as ready when absent:
+      // a payload from a server that predates the cutover describes an
+      // Organization that was never going to open, not one still opening.
+      if (sidebar.spaces) {
+        applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.spacesReady ?? true);
+      }
       directoryLive = true;
       // The directory is the bound on the conversation cache: a conversation
       // stays on disk for as long as its parent is a row here. Only the whole
@@ -559,9 +579,13 @@ export function WorkspaceSocketProvider({
             }
             return;
           }
-          const projectSnapshot = safeParseSocketEvent(WorkspaceProjectSnapshotEventSchema, decoded);
-          if (projectSnapshot.success) {
-            applyVersionedProjectSnapshot(queryClient, projectSnapshot.data.projects);
+          const spaceSnapshot = safeParseSocketEvent(WorkspaceSpaceSnapshotEventSchema, decoded);
+          if (spaceSnapshot.success) {
+            applyVersionedSpaceSnapshot(
+              queryClient,
+              spaceSnapshot.data.spaces,
+              spaceSnapshot.data.spacesReady,
+            );
             return;
           }
         });
@@ -662,6 +686,8 @@ export function WorkspaceSocketProvider({
       clearReconnect();
       void connect();
     };
+    // Same step, asked for by a person rather than by the machine coming back.
+    reconnectRef.current = online;
     const offline = (): void => {
       clearReconnect();
       clearHeartbeat();
@@ -708,6 +734,7 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
+      reconnectRef.current = () => undefined;
       subscribed = false;
       clearReconnect();
       clearHeartbeat();
@@ -721,6 +748,7 @@ export function WorkspaceSocketProvider({
     (input) => listWorkstreamsRef.current(input),
     [],
   );
+  const reconnect = useCallback((): void => reconnectRef.current(), []);
   const setForegroundWorkstreamId = useCallback((workstreamId: string | null): void => {
     const parsed = WorkstreamIdSchema.safeParse(workstreamId);
     const validatedWorkstreamId = parsed.success ? parsed.data : null;
@@ -740,10 +768,12 @@ export function WorkspaceSocketProvider({
       setForegroundWorkstreamId,
       listWorkstreams,
       sidebarConnect,
+      reconnect,
     }),
     [
       listWorkstreams,
       presenceUserIdsByWorkstream,
+      reconnect,
       setForegroundWorkstreamId,
       sidebarConnect,
       state,
