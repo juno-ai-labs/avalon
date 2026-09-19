@@ -47,6 +47,10 @@ export const spaceFailureCopy: Record<SpaceFailure, string> = {
   // space's own authority saying nothing — nothing about the request, the
   // organization or the channels needs changing before a retry.
   space_authority_unreachable: 'That space couldn’t be reached to make the change. Try again in a moment.',
+  // Nothing a person did, and nothing they can fix: a stale cursor is the
+  // client asking for a page of an ordering that has moved on. The sentence is
+  // what the reader should do, which is look at the list again.
+  space_cursor_invalid: 'That list has moved on. Reopen the space to see it from the top.',
   unavailable: 'That change couldn’t be saved. Try again in a moment.',
 };
 

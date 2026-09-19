@@ -163,6 +163,7 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import { boundParameterChunks } from "./bound-parameters";
+import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import { automationDOName, workspaceDOName } from "./names";
 import {
@@ -3719,10 +3720,7 @@ function directoryWorkstream(
     ? null
     : Number(row.manual_unread_from_ordinal);
   const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
-  const titleStatus = row.title_status === "naming"
-    && Date.now() - row.source_created_at > WORKSTREAM_NAMING_GRACE_MS
-    ? "automatic"
-    : row.title_status;
+  const titleStatus = settledTitleStatus(row.title_status, row.source_created_at);
   const participantPreview = row.scope === "personal"
     ? preview
     : { participantUserIds: [], participantExtraCount: 0 };
@@ -3782,6 +3780,30 @@ function directoryWorkstream(
  * `breakoutOf`, which is what the row's link and its second line are built
  * from.
  */
+/**
+ * A title status with the naming grace applied.
+ *
+ * `naming` is a promise that a name is on its way, and the skeleton a client
+ * draws for it is only honest while that is true. A naming pass that died —
+ * the model refused, the object was evicted mid-run — leaves the status behind
+ * it forever, so past {@link WORKSTREAM_NAMING_GRACE_MS} from the
+ * conversation's own creation the row reads as `automatic` and the client
+ * draws the title it actually has.
+ *
+ * Here rather than inline in each projection because a Channel and one of its
+ * breakouts sit in the same dashboard list: a breakout that kept its skeleton
+ * while the Channel beside it had stopped showing one would read as a
+ * difference between the two kinds rather than as the bug it is.
+ */
+function settledTitleStatus(
+  titleStatus: "naming" | "automatic" | "settled",
+  sourceCreatedAt: number,
+): "naming" | "automatic" | "settled" {
+  return titleStatus === "naming" && Date.now() - sourceCreatedAt > WORKSTREAM_NAMING_GRACE_MS
+    ? "automatic"
+    : titleStatus;
+}
+
 function breakoutConversation(
   row: WorkspaceBreakoutRow,
   workspaceId: string,
@@ -3799,7 +3821,7 @@ function breakoutConversation(
     id: row.substream_id,
     workspaceId,
     title: truncateUtf16Safe(row.title, 180),
-    titleStatus: row.title_status,
+    titleStatus: settledTitleStatus(row.title_status, row.source_created_at),
     objective: truncateUtf16Safe(row.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
     emailAddress: null,
     createdByUserId: row.created_by_user_id,
@@ -5888,6 +5910,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
     if (refusal) return { ok: false, code: refusal };
     const page = this.spaceStorage().conversationPage(request.userId, request.spaceId, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
     if (page === false) return { ok: false, code: "space_not_found" };
     const channelIds = page.items.flatMap((item) => (
       item.kind === "channel" ? [item.workstreamId] : []
@@ -10773,27 +10796,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       let participantMembershipChanged = false;
       let archivalChanged = false;
       if (envelope.effect.kind === "directory_common") {
-        const current = this.state.storage.sql.exec<{
-          authority_generation: number;
-          waterline: number;
-          payload_hash: string;
+        const current = this.state.storage.sql.exec<StoredProjection & {
           archived_at: number | null;
-        }>(
+        } & Record<string, SqlStorageValue>>(
           `SELECT authority_generation, waterline, payload_hash, archived_at
              FROM workspace_workstream_directory WHERE workstream_id = ?`,
           envelope.parentId,
         ).toArray()[0];
-        const applies = !current
-          || envelope.generation > current.authority_generation
-          || (envelope.generation === current.authority_generation
-            && envelope.sourceVersion > current.waterline);
-        if (current
-          && envelope.generation === current.authority_generation
-          && envelope.sourceVersion === current.waterline
-          && envelope.payloadHash !== current.payload_hash) {
-          throw new Error("workspace_directory_projection_version_conflict");
-        }
-        if (applies) {
+        if (projectionSupersedes(
+          envelope, current, "workspace_directory_projection_version_conflict",
+        )) {
           const effect = envelope.effect;
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_directory
@@ -10924,12 +10936,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
       } else if (envelope.effect.kind === "directory_user") {
         const effect = envelope.effect;
-        const current = this.state.storage.sql.exec<{
-          authority_generation: number;
-          waterline: number;
-          payload_hash: string;
+        const current = this.state.storage.sql.exec<StoredProjection & {
           is_participant: number;
-        }>(
+        } & Record<string, SqlStorageValue>>(
           `SELECT authority_generation, waterline, payload_hash, is_participant
              FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
           envelope.parentId,
@@ -10945,17 +10954,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           changed = deleted !== undefined;
           participantMembershipChanged = deleted?.is_participant === 1;
         } else {
-          const applies = !current
-            || envelope.generation > current.authority_generation
-            || (envelope.generation === current.authority_generation
-              && envelope.sourceVersion > current.waterline);
-          if (current
-            && envelope.generation === current.authority_generation
-            && envelope.sourceVersion === current.waterline
-            && envelope.payloadHash !== current.payload_hash) {
-            throw new Error("workspace_directory_viewer_version_conflict");
-          }
-          if (applies) {
+          if (projectionSupersedes(
+            envelope, current, "workspace_directory_viewer_version_conflict",
+          )) {
             const wasParticipant = current?.is_participant === 1;
             this.state.storage.sql.exec(
               `INSERT INTO workspace_workstream_viewers

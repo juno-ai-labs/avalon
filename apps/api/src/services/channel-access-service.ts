@@ -641,5 +641,9 @@ export function spaceAccessError(code: SpaceErrorCode, channelTitle: string): Ap
       // told why the Channel in front of them did not change.
       return new ApiError(503, code,
         `The Space that reaches “${channelTitle}” could not be reached; try again`);
+    // Reachable only because this map is exhaustive over the shared union. No
+    // Channel access path is paginated, so no cursor reaches one.
+    case "space_cursor_invalid":
+      return new ApiError(400, code, "That page cursor is not one this Space issued");
   }
 }
