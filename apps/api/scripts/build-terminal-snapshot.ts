@@ -34,8 +34,8 @@ import {
   TERMINAL_SNAPSHOT_BASE_IMAGE,
   TERMINAL_SNAPSHOT_RESOURCES,
   terminalSnapshotImageBuildCommand,
-  terminalSnapshotResourceMismatches,
 } from "../src/services/terminal/snapshot-manifest";
+import { acceptBuiltTerminalSnapshot } from "./terminal-snapshot-acceptance";
 
 const configuration = parseTerminalRegionConfiguration(process.env);
 if (configuration.capability !== "supported") {
@@ -81,31 +81,10 @@ const created = await daytona.snapshot.create(
   { onLogs: (line: string) => process.stdout.write(`${line}\n`) },
 );
 
-// Accepting the request is not carrying the size. An under-sized snapshot passes
-// every probe the acceptance gate runs and only shows up as a work stream the
-// kernel killed, so the build fails here instead, naming each field that differs.
-const mismatches = terminalSnapshotResourceMismatches(created);
-if (mismatches.length > 0) {
-  const rejection = new Error(
-    `Daytona built ${created.name} with resources Rally did not request: ${mismatches.join(", ")}`,
-  );
-  // The candidate is registered on the provider even though nothing may adopt
-  // it, and every build takes a name of its own — the weekly job's is minute
-  // stamped — so failing without deleting it leaves one dead snapshot per
-  // attempt against the organization's quota. A failed delete must not lose the
-  // reason the build stopped, so both reasons travel in the message the operator
-  // reads, with the delete failure itself as the cause.
-  try {
-    await daytona.snapshot.delete(created);
-  } catch (error) {
-    throw new Error(
-      `${rejection.message}. Deleting the rejected snapshot failed too, so ${created.name} `
-      + `has to be removed by hand: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-  throw rejection;
-}
+// Refuses — and deletes — a snapshot Daytona did not build at the requested
+// size. `terminal-snapshot-acceptance.ts` holds the decision so it can be tested
+// against a stubbed delete; this script stays the thin executable part.
+await acceptBuiltTerminalSnapshot(created, () => daytona.snapshot.delete(created));
 
 process.stdout.write(
   `\nBuilt Terminal snapshot ${created.name} (id ${created.id}, state ${created.state}, `
