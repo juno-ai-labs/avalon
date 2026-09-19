@@ -64,6 +64,22 @@ const EXPIRE_DAYS = 30;
  */
 export const TERMINAL_WARM_STOP_MS = WARM_STOP_MINUTES * 60_000;
 
+/**
+ * How long Daytona keeps a stopped sandbox that no Rally sweep will reach.
+ *
+ * A work stream's sandboxes are stopped, archived and expired by the
+ * workspace alarm, whose directory entry the work stream's parent projects.
+ * An automation's parent projects no Terminal deadline, so a Sidekick's
+ * sandboxes — the authoring conversation's and one per triggered run — are
+ * retired by the provider instead: Daytona stops one fifteen idle minutes
+ * after its last use and deletes it this many minutes after that stop. The
+ * number is Rally's own thirty-day expiry so that both kinds of sandbox
+ * outlive their last use by the same time; a shorter life for a run's sandbox,
+ * which nothing reopens once the run has published its results, is a number
+ * the team sets, not one derived here.
+ */
+export const AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES = EXPIRE_DAYS * 24 * 60;
+
 export interface TerminalClock {
   now(): Date;
 }
@@ -214,6 +230,7 @@ export class TerminalSandboxCoordinator {
      * sandbox could be used by the agents it starts.
      */
     private readonly scope: TerminalSandboxScope = {
+      parentKind: "workstream",
       runSubstreamId: "0",
       authoritySubstreamId: "0",
       runsPort: createHarnessRunPortFactory(env),
@@ -826,6 +843,9 @@ export class TerminalSandboxCoordinator {
         generation: row.generation,
         domainAllowList: domains,
         environment: { AVALON_RESOURCE_DIR: TERMINAL_OUTPUT_ROOT },
+        ...(this.scope.parentKind === "automation"
+          ? { autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES }
+          : {}),
       });
     } catch {
       try {

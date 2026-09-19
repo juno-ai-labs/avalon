@@ -3,6 +3,7 @@ import type { HarnessToolContext } from "@rally/agent-harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
   TerminalSandboxCoordinator,
   terminalSandboxStableName,
   type TerminalClock,
@@ -980,7 +981,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+      { parentKind: "workstream", runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
     );
     await coordinator.acquire(context());
 
@@ -988,6 +989,30 @@ describe("Terminal sandbox coordinator", () => {
     expect(created.substreamId).toBe(thread);
     expect(created.stableName).not.toBe(mainName);
     expect(created.stableName).toBe(await terminalSandboxStableName(WORKSPACE_ID, WORKSTREAM_ID, thread));
+  });
+
+  it("hands a Sidekick's sandbox to Daytona for deletion, and a work stream's to the sweep", async () => {
+    const run = "00000000-0000-4000-8000-000000000088";
+    const created = async (parentKind: "automation" | "workstream", substreamId: string) => {
+      // Each conversation's object is its own store; one fixture is one conversation.
+      const { objectStore, env, provider, clock } = fixture();
+      const coordinator = new TerminalSandboxCoordinator(
+        env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+        undefined, false, undefined,
+        { parentKind, runSubstreamId: substreamId, authoritySubstreamId: substreamId, runsPort: () => testHarnessRunPort(objectStore) },
+      );
+      await coordinator.acquire(context());
+      expect(provider.createSandbox).toHaveBeenCalledOnce();
+      return vi.mocked(provider.createSandbox).mock.calls[0]![0];
+    };
+
+    // A triggered run's conversation sits under the automation, where no
+    // workspace sweep projects a deadline; Daytona must retire it alone.
+    expect(await created("automation", run)).toMatchObject({
+      substreamId: run,
+      autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
+    });
+    expect(await created("workstream", "0")).not.toHaveProperty("autoDeleteAfterStoppedMinutes");
   });
 
   it("lets a background agent hold its owner's lease from another conversation until it yields", async () => {
@@ -1006,12 +1031,12 @@ describe("Terminal sandbox coordinator", () => {
     const owner = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
     );
     const agent = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
     );
     const workerContext = { ...context(), harnessRunId: workerRun, toolCallId: "worker-call" };
 

@@ -42,9 +42,9 @@ describe("the conversation whose Terminal a run uses", () => {
     const ownerOf = owners([[agent(WORKSTREAM, THREAD), agent(WORKSTREAM, "0")]]);
 
     await expect(resolveTerminalRunScope(input(undefined, false), ownerOf))
-      .resolves.toEqual({ runSubstreamId: "0", authoritySubstreamId: "0" });
+      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0" });
     await expect(resolveTerminalRunScope(input(THREAD, false), ownerOf))
-      .resolves.toEqual({ runSubstreamId: THREAD, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: THREAD, authoritySubstreamId: THREAD });
     // An ordinary run's conversation is its own whatever the table says.
     expect(ownerOf).not.toHaveBeenCalled();
   });
@@ -56,9 +56,9 @@ describe("the conversation whose Terminal a run uses", () => {
     ]);
 
     await expect(resolveTerminalRunScope(input(WORKER, true), ownerOf))
-      .resolves.toEqual({ runSubstreamId: WORKER, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: WORKER, authoritySubstreamId: THREAD });
     await expect(resolveTerminalRunScope(input(NESTED_WORKER, true), ownerOf))
-      .resolves.toEqual({ runSubstreamId: NESTED_WORKER, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: NESTED_WORKER, authoritySubstreamId: THREAD });
   });
 
   it("refuses a root under another parent rather than sharing files across work streams", async () => {
