@@ -257,8 +257,32 @@ the clicked conversation and shows only email input and submission feedback.
 The Worker owns the web entry and transport, not product authority or sockets.
 The collaboration host reuses the existing conversation surface and its direct
 subscriptions. The host is separate from
-the public marketing site. Its production hostname is not configured or deployed
-by this change; API `BROWSER_APP_ORIGIN` must match its eventual exact origin.
+the public marketing site. Its production origin is `https://app.rallywith.ai`,
+configured as a Custom Domain on `rally-browser`. Cloudflare provisions its DNS
+record and certificate. Global API `BROWSER_APP_ORIGIN` matches that exact origin, which is also included
+in `ALLOWED_ORIGINS` for realtime WebSocket upgrades.
+
+### Production deployment
+
+`.github/workflows/deploy-browser.yml` builds, checks and deploys the browser on
+main changes to the host or its shared desktop/package dependencies. It reuses
+`site-production` Cloudflare credentials and verifies the public entry routes.
+The deployment token needs Workers and zone permissions for the Custom Domain;
+`rallywith.ai` must be an active zone in the same account and `app` must not have
+an unrelated conflicting DNS record. No browser secrets are added: `GLOBAL_API`
+already connects to `avalon-api-global` through a service binding.
+
+The API deploy workflow independently applies its checked-in browser origin and
+email policy. The team selected six-digit OTPs, ten-minute expiry and five failed
+attempts for production on 2026-09-18. The existing API Resend and session/encryption
+secrets must be present. Initial enablement is complete only after both deployments
+succeed; the browser shell can be available before API sign-in is enabled.
+
+Manual browser deployment from the repository root is
+`pnpm --filter @rally/browser run deploy`. After the first deployment, verify in
+Chrome that a real invitation arrives, email sign-in and acceptance work, and the
+shared conversation can send messages and receive realtime updates. The workflow's
+public route checks do not prove mailbox delivery or authenticated collaboration.
 
 For local work, start the API according to [dev-environment.md](dev-environment.md)
 and run `pnpm dev:browser` on port 8794. Client assets rebuild on source edits. The Global service binding discovers the local
@@ -329,6 +353,23 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-09-18 — Enable the production browser origin
+
+**What changed:** Host the lite browser at `app.rallywith.ai`, deploy it on main
+changes, and configure Global invitation/sign-in URLs and the team-selected OTP policy.
+
+**Why:** Desktop sharing refused invitations because production had no browser
+origin where recipients could sign in and accept them.
+
+**Considered and rejected:** Hosting under the marketing site's `/app` path would
+couple its routing and cookie origin to the collaboration application.
+
+**Consequences:** Browser and API deployments must both succeed for initial
+sign-in enablement. Keep their origins identical and include shared desktop code
+in browser deployment triggers. The public entry check is not an authenticated
+end-to-end guest test.
+
 
 ### 2026-09-17 — Add a browser entry over ordinary regional sessions
 
