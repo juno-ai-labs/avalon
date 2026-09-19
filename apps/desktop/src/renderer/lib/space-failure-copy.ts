@@ -17,23 +17,28 @@ import { ApiError } from './api';
  * keeps access through another source still has to be able to *find* the
  * Channel.
  *
- * One table for every Space surface, deliberately. It started on the dialog
- * while the dashboard and the sidebar section printed the server's own
- * sentence — the diagnostic a Worker wrote for a log, naming the Channel and
- * the Space in the Organization's internal words and changing whenever the
- * server's wording does.
+ * One table for every Space surface, deliberately. Each sentence is therefore
+ * written to be true wherever the refusal can arrive — the same
+ * `space_membership_final` answers a Channel leaving its last Space and a
+ * Space archive that would leave one of its Channels homeless, so it names the
+ * invariant rather than the row the reader happens to be looking at.
+ *
+ * It started on the dialog while the dashboard and the sidebar section printed
+ * the server's own sentence — the diagnostic a Worker wrote for a log, naming
+ * the Channel and the Space in the Organization's internal words and changing
+ * whenever the server's wording does.
  */
 export type SpaceFailure = SpaceErrorCode | 'unavailable';
 
 export const spaceFailureCopy: Record<SpaceFailure, string> = {
-  space_access_denied: 'You can’t change who sees this channel.',
+  space_access_denied: 'You don’t have permission to make that change.',
   space_not_found: 'That space no longer exists.',
   space_protected: 'General’s audience can’t be changed.',
-  space_membership_final: 'This is the channel’s only space, and every channel needs one. Add it to another space first.',
-  space_audience_incompatible: 'Some people who can read this channel would be left with no space to find it in. Add it to a space they can see first.',
+  space_membership_final: 'Every channel needs a space, and this would leave one with none. Add it to another space first.',
+  space_audience_incompatible: 'Some people who can read the channel would be left with no space to find it in. Add it to a space they can see first.',
   channel_scope_locked_by_space: 'An organization-wide space still makes this channel public. Remove it from that space first.',
-  space_membership_content_fence: 'This channel holds content the wider audience isn’t allowed to read.',
-  space_default_audience_mismatch: 'Everyone who can read this channel must be able to use that resource or Sidekick.',
+  space_membership_content_fence: 'The channel holds content the wider audience isn’t allowed to read.',
+  space_default_audience_mismatch: 'Everyone who can read the channel must be able to use that resource or Sidekick.',
   space_revision_conflict: 'The space changed while this was being applied. Try again.',
   space_bootstrap_pending: 'Rally is still opening this organization. Try again in a moment.',
   unavailable: 'That change couldn’t be saved. Try again in a moment.',
