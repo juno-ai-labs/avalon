@@ -1409,6 +1409,219 @@ describe("GitHub connector", () => {
     }]);
   });
 
+  it("returns the declared repository row, which no longer carries GitHub's numeric id", async () => {
+    // This row lost an assertion rather than gaining one: the existing policy
+    // test asserted `id: 41` and the projection made that false, so the
+    // expectation was removed. Removing it left the one row whose change was
+    // most visible with nothing proving the change happened. `id` is genuinely
+    // gone — no tool in this plugin accepts a repository id, and the access
+    // policy resolves it against the raw record before projection — so the
+    // assertion belongs here, stated as an absence.
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/graphql") return jsonResponse({ data: { repositoryOwner: null } });
+      expect(url.pathname).toBe("/user/installations/42/repositories");
+      return jsonResponse({
+        total_count: 1,
+        repositories: [{
+          id: 41,
+          node_id: "R_kgDOTpw9aA",
+          name: "widget",
+          full_name: "acme/widget",
+          owner: { login: "acme", id: 7, type: "Organization", avatar_url: "https://avatars.github.com/u/7" },
+          description: "The widget service",
+          default_branch: "main",
+          private: true,
+          archived: false,
+          language: "TypeScript",
+          pushed_at: "2026-09-18T20:00:00Z",
+          updated_at: "2026-09-18T20:05:00Z",
+          html_url: "https://github.com/acme/widget",
+          forks_url: "https://api.github.com/repos/acme/widget/forks",
+          archive_url: "https://api.github.com/repos/acme/widget/{archive_format}{/ref}",
+          branches_url: "https://api.github.com/repos/acme/widget/branches{/branch}",
+          permissions: { admin: false, push: true, pull: true },
+          license: { key: "mit", name: "MIT License", spdx_id: "MIT" },
+        }],
+      });
+    };
+    const listed = await githubAdapter(fetcher).executeTool("repositories.list", {}, {
+      connection: personalConnection([GitHubCapabilities.metadataRead]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    });
+
+    expect((listed.output as { repositories: unknown[] }).repositories).toEqual([{
+      // `name` and `owner.login` beside `full_name` because those two are the
+      // parameters every other tool in this plugin takes.
+      full_name: "acme/widget",
+      name: "widget",
+      owner: { login: "acme" },
+      description: "The widget service",
+      default_branch: "main",
+      private: true,
+      archived: false,
+      language: "TypeScript",
+      pushed_at: "2026-09-18T20:00:00Z",
+      html_url: "https://github.com/acme/widget",
+      // Added by the adapter rather than projected from GitHub.
+      pinned: false,
+      access: "full_access",
+    }]);
+  });
+
+  it("drops the provider's noise from every remaining list row", async () => {
+    // The rows with their own named tests are the loud ones. These five had
+    // only assertions written against lean fixtures, which cannot fail if the
+    // projection is reverted: `toMatchObject` on a fixture carrying no noise
+    // passes whether or not anything was dropped. Every fixture below carries
+    // the fields GitHub actually sends, and every assertion is exact.
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/repos/acme/widget/issues") {
+        return jsonResponse([{
+          number: 412,
+          title: "Rows are too wide",
+          state: "open",
+          state_reason: null,
+          created_at: "2026-09-01T09:00:00Z",
+          updated_at: "2026-09-02T09:00:00Z",
+          closed_at: null,
+          user: { login: "octocat", id: 1, gravatar_id: "", type: "User" },
+          labels: [{ id: 2, name: "bug", color: "d73a4a", default: true }],
+          assignees: [{ login: "hubot", id: 3, type: "Bot" }],
+          comments: 4,
+          html_url: "https://github.com/acme/widget/issues/412",
+          body: "belongs to issues.get",
+          reactions: { url: "https://api.github.com/x", total_count: 0, "+1": 0 },
+          timeline_url: "https://api.github.com/repos/acme/widget/issues/412/timeline",
+          author_association: "MEMBER",
+        }]);
+      }
+      if (url.pathname === "/repos/acme/widget/pulls/670/reviews") {
+        return jsonResponse([{
+          id: 5_253_805_651,
+          user: { login: "hubot", id: 3, avatar_url: "https://avatars.github.com/u/3" },
+          state: "CHANGES_REQUESTED",
+          submitted_at: "2026-09-12T12:00:00Z",
+          commit_id: "9fceb02",
+          body: "One note below.",
+          html_url: "https://github.com/acme/widget/pull/670#pullrequestreview-5253805651",
+          pull_request_url: "https://api.github.com/repos/acme/widget/pulls/670",
+          author_association: "MEMBER",
+          _links: { html: { href: "https://github.com/x" }, pull_request: { href: "https://api.github.com/y" } },
+        }]);
+      }
+      if (url.pathname === "/repos/acme/widget/pulls/670/files") {
+        return jsonResponse([{
+          filename: "packages/connectors/src/github.ts",
+          previous_filename: "packages/connectors/src/github-old.ts",
+          status: "renamed",
+          additions: 120,
+          deletions: 28,
+          changes: 148,
+          patch: "@@ -1 +1 @@\n-old\n+new",
+          sha: "bbf4b2e",
+          blob_url: "https://github.com/acme/widget/blob/9fceb02/packages/connectors/src/github.ts",
+          raw_url: "https://github.com/acme/widget/raw/9fceb02/packages/connectors/src/github.ts",
+          contents_url: "https://api.github.com/repos/acme/widget/contents/packages/connectors/src/github.ts",
+        }]);
+      }
+      if (url.pathname === "/repos/acme/widget/contents/src") {
+        return jsonResponse([{
+          name: "index.ts",
+          path: "src/index.ts",
+          type: "file",
+          sha: "aa11",
+          size: 4_096,
+          url: "https://api.github.com/repos/acme/widget/contents/src/index.ts",
+          html_url: "https://github.com/acme/widget/blob/main/src/index.ts",
+          git_url: "https://api.github.com/repos/acme/widget/git/blobs/aa11",
+          download_url: "https://raw.githubusercontent.com/acme/widget/main/src/index.ts",
+          _links: { self: "https://api.github.com/a", git: "https://api.github.com/b", html: "https://github.com/c" },
+        }]);
+      }
+      if (url.pathname === "/repos/acme/widget/git/trees/main") {
+        return jsonResponse({
+          sha: "tree-sha",
+          truncated: false,
+          tree: [{
+            path: "src/index.ts",
+            mode: "100644",
+            type: "blob",
+            sha: "aa11",
+            size: 4_096,
+            url: "https://api.github.com/repos/acme/widget/git/blobs/aa11",
+          }],
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url.pathname}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const context = {
+      connection: personalConnection([
+        GitHubCapabilities.issuesRead,
+        GitHubCapabilities.pullRequestsRead,
+        GitHubCapabilities.contentsRead,
+      ]),
+      principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
+      signal: neverAborts(),
+    };
+    const rows = async (name: string, args: Record<string, unknown>, key: string) => {
+      const result = await adapter.executeTool(name, args, context);
+      return (result.output as Record<string, unknown>)[key];
+    };
+
+    expect(await rows("issues.list", { owner: "acme", repo: "widget" }, "issues")).toEqual([{
+      number: 412,
+      title: "Rows are too wide",
+      state: "open",
+      state_reason: null,
+      created_at: "2026-09-01T09:00:00Z",
+      updated_at: "2026-09-02T09:00:00Z",
+      closed_at: null,
+      user: { login: "octocat" },
+      labels: [{ name: "bug" }],
+      assignees: [{ login: "hubot" }],
+      comments: 4,
+      html_url: "https://github.com/acme/widget/issues/412",
+    }]);
+
+    // The row that had no test of any kind before this.
+    expect(await rows("pull_requests.list_reviews", { owner: "acme", repo: "widget", pullNumber: 670 }, "reviews")).toEqual([{
+      id: 5_253_805_651,
+      user: { login: "hubot" },
+      state: "CHANGES_REQUESTED",
+      submitted_at: "2026-09-12T12:00:00Z",
+      commit_id: "9fceb02",
+      body: "One note below.",
+      html_url: "https://github.com/acme/widget/pull/670#pullrequestreview-5253805651",
+    }]);
+
+    // `patch` is the answer here, so this row is wide on purpose — but the
+    // three blob URLs beside it still go, and `previous_filename` survives
+    // because a rename is unreadable without it.
+    expect(await rows("pull_requests.list_files", { owner: "acme", repo: "widget", pullNumber: 670 }, "files")).toEqual([{
+      filename: "packages/connectors/src/github.ts",
+      previous_filename: "packages/connectors/src/github-old.ts",
+      status: "renamed",
+      additions: 120,
+      deletions: 28,
+      changes: 148,
+      patch: "@@ -1 +1 @@\n-old\n+new",
+    }]);
+
+    expect(await rows("contents.list", { owner: "acme", repo: "widget", path: "src" }, "entries")).toEqual([
+      { name: "index.ts", path: "src/index.ts", type: "file", sha: "aa11", size: 4_096 },
+    ]);
+
+    expect(await rows("contents.list", {
+      owner: "acme", repo: "widget", path: "", ref: "main", recursive: true,
+    }, "entries")).toEqual([
+      { path: "src/index.ts", mode: "100644", type: "blob", sha: "aa11", size: 4_096 },
+    ]);
+  });
+
   it("refuses a list item that is not an object rather than passing it through", async () => {
     // The envelope's contract is that every item has the declared shape. A
     // primitive forwarded unchanged would be an undeclared value sitting in a
