@@ -342,6 +342,13 @@ export function SpaceSidebarSection({
               const destination = `/spaces/${space.id}`;
               const active = location.pathname === destination || location.pathname.startsWith(`${destination}/`);
               const isExpanded = isOpen(space);
+              // A Space this reader reaches only through a Channel placed in
+              // it. They are shown its mark and name so that Channel has
+              // somewhere to be drawn; every write on the Space is refused
+              // them by name, so the row raises none of them — no plus, and
+              // no drop. Its placements are still theirs to arrange, because
+              // an arrangement is their own view preference.
+              const readOnly = space.reach === 'through_channel';
               // Recency is the natural order of a placement list, and the
               // arrangement this person committed goes in front of it: a
               // Channel they never dragged keeps moving up as it is used, and
@@ -463,6 +470,11 @@ export function SpaceSidebarSection({
                     onDrop: (event) => {
                       const workstreamId = event.dataTransfer.getData(CHANNEL_DRAG_TYPE);
                       if (!workstreamId) return;
+                      // Not a drop target. Ignored the way a Channel released
+                      // on a Space it is already in is ignored — the gesture
+                      // simply changed nothing — rather than refused, because
+                      // there is nothing here for a refusal to name.
+                      if (readOnly) return;
                       event.preventDefault();
                       event.stopPropagation();
                       dragging.current = null;
@@ -502,8 +514,10 @@ export function SpaceSidebarSection({
                       <SpaceRowContent space={space} />
                     </NavLink>
                   )}
-                  newChannelLabel={`New channel in ${space.name}`}
-                  onNewChannel={() => void navigate(`${destination}/workstreams/new`)}
+                  {...(readOnly ? {} : {
+                    newChannelLabel: `New channel in ${space.name}`,
+                    onNewChannel: () => void navigate(`${destination}/workstreams/new`),
+                  })}
                   onRowKeyDown={(event) => {
                     // Alt rather than a bare arrow: the arrows move focus
                     // through the sidebar, and a Space must stay reachable by
