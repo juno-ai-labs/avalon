@@ -20,8 +20,9 @@ conversation owner.
 | `packages/contracts/src/scope-grants.ts` | Batch, acceptance, revision and result contracts. |
 | `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email invitation form, stable retry operation and pending revocation. |
 | `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary; server-selected actor and recipient identities. |
-| `apps/api/src/services/scope-invitation-link.ts` | The emailed link's sealed credential, what opens it, and the workstream address it names. |
-| `apps/api/src/lib/crypto.ts` | `sealPayload`/`openPayload`: one purpose-bound opaque string for any link a person receives. |
+| `apps/api/src/services/scope-invitation-link.ts` | The emailed link's token kind, what opens it, and the workstream address it names. |
+| `packages/db/src/link-payloads.ts` | `defineLinkPayload`/`issueLinkPayload`/`openLinkPayload`: opaque tokens for any link a person receives, typed by their prefix. |
+| `packages/db/migrations/0114_link_payloads.sql` | The shared `link_payloads` table: token digest, type, JSON and optional expiry. |
 | `apps/api/src/routes/browser.ts` | Unauthenticated `POST /browser/invitation`, releasing the invited mailbox to a link holder. |
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, verified mailbox, relationship admission, grant activation and email delivery. |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, invitation state, encrypted delivery and acceptance binding. |
@@ -60,20 +61,38 @@ existing alarm mechanism. No GET consumes an invitation. Retrying the same
 operation returns its recorded invitations; changing its input conflicts.
 Delivery retries use the same provider idempotency key and encrypted body.
 
-The email's link is `<browser origin>/invite#<sealed credential>` and nothing
-else. Workspace, work stream, invitation and acceptance secret are sealed
-together with AES-GCM under the deployment's existing encryption key, bound to
-the purpose `scope-invitation-link` so no other link minted with that key opens
-as an invitation. Only the secret was ever a credential; the three identifiers
-beside it were the server's own routing, published to whoever the mail was
-forwarded to and describing the shape of a team they hold no access to. They are
-now unreadable to everyone but the deployment that sealed them, and the
-recipient learns where the invitation points from the acceptance they
-authorized, not from the link.
+The email's link is `<browser origin>/invite#inv_<43 characters>` and nothing
+else: a type prefix and 256 bits. Workspace, work stream, invitation and
+acceptance secret are a row in the issuing region's `link_payloads`, which
+stores the token's SHA-256 digest rather than the token, so a copy of that table
+lists what exists instead of handing over working links. Only the secret was
+ever a credential; the three identifiers beside it were the server's own
+routing, published to whoever the mail was forwarded to and describing the shape
+of a team they hold no access to. They are now readable only by the deployment
+holding the row, and the recipient learns where the invitation points from the
+acceptance they authorized, not from the link.
 
-`POST /sharing/accept` and `POST /browser/invitation` both take that credential
-and open it server-side; a credential this deployment cannot open is refused in
-the same sentence as a revoked one, because distinguishing them would tell a
+`link_payloads` is shared rather than invitation-specific, because a link whose
+URL should not describe its subject is a recurring shape rather than one
+feature. `defineLinkPayload` pairs a prefix with the schema that prefix
+promises; nothing is written or read without satisfying it, so a token minted
+for one kind can never be presented as another even though every kind shares the
+table. A row carries the expiry of the thing it addresses, which for an
+invitation is `expiresAt` or null, and each issue deletes rows already past
+their own deadline, so the table is swept by the writes that grow it rather than
+by a schedule nobody owns.
+
+The token is minted before the sharing checks and the transaction, with every
+other external await. A creation that is then denied, or that replays an earlier
+operation, therefore leaves a row addressing an invitation that never existed.
+Such a row is inert: opening it reaches an owner with no such invitation, which
+refuses it exactly as it refuses a revoked one. The alternative, writing the row
+after the invitation commits, risks the opposite and worse failure, an
+invitation whose emailed link resolves to nothing.
+
+`POST /sharing/accept` and `POST /browser/invitation` both take that token and
+resolve it server-side; a token this deployment cannot read is refused in the
+same sentence as a revoked invitation, because distinguishing them would tell a
 holder something about an invitation they do not hold. The addressed request
 body those routes took before — workspace, work stream, invitation and token —
 is still accepted, so links already in inboxes when this shipped continue to
@@ -171,15 +190,18 @@ and the panel states that distinction. Existing last-participant rules apply.
 - The grant transaction and invitation acceptance cannot be separated. A grant
   commit without its receipt would allow an interrupted acceptance to restore a
   later revocation.
-- The emailed link names no deployment, so the lite client opens it against the
-  one serving the page. A second browser deployment must give the link its own
-  routing again rather than offering a credential addressed to one deployment to
-  every other in turn.
-- A sealed payload that decrypts but no longer matches its schema is this
+- The emailed link names no deployment, and only the region holding its row can
+  resolve it, so the lite client opens it against the one serving the page. A
+  second browser deployment must give the link its own routing again rather than
+  offering a token to every deployment in turn.
+- A row whose payload no longer matches the shape its prefix promises is this
   deployment's own drift, not a forged link, and is raised as
-  `scope_invitation_link_invalid:<field>:<issue>` rather than reported as one
+  `link_payload_drifted:<prefix>:<field>:<issue>` rather than reported as one
   more unavailable invitation — otherwise a deploy that stopped honouring every
-  outstanding link looks exactly like recipients mistyping.
+  outstanding link of that kind looks exactly like recipients mistyping.
+- The token is the whole of what guards the row, so it carries the same 256 bits
+  as the acceptance secret inside it. A shorter handle would make the row easier
+  to reach than the secret it holds.
 - Email bodies and credentials are not returned by public routes. The only stored
   readable credential representation is encrypted with the existing server key.
 - Browser setup, onboarding and connector configuration are outside the lite
@@ -216,11 +238,12 @@ declares the D1 columns it uses. It covers verified-recipient admission, child-o
 access, atomic multi-target activation, replay after removal/revocation,
 sharer replacement, stable operation/email receipts and identity-only HTTP
 acceptance. It also reads the link out of the delivered encrypted body to prove
-it contains no identifier, region or secret in readable form, previews and
-accepts by that credential alone, and refuses an edited credential, a wrong
-secret and a revoked invitation. `apps/api/test/scope-invitation-link.test.ts`
-covers sealing in isolation: another deployment's key, another purpose, an
-edited character and a drifted payload. The deliberate SQL failure is caught inside the real object because
+it is one typed token with no identifier, region or secret in it, that the row
+holds a digest rather than that token, previews and accepts by the token alone,
+and refuses an edited token, a wrong secret and a revoked invitation.
+`apps/api/test/scope-invitation-link.test.ts` covers the store against the real
+migrations: the round trip, another kind's token, an edited one, an expired row,
+the sweep, and a payload that no longer matches its prefix. The deliberate SQL failure is caught inside the real object because
 the test RPC bridge otherwise reports its expected rejection twice.
 `message-to-output-pipeline.test.ts` additionally exercises invitation-triggered
 handoff against real Main and child agents, including refusal to transfer for a
@@ -228,20 +251,30 @@ nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
 
-### 2026-09-19 — Seal the emailed link and fill in the mailbox it was sent to
+### 2026-09-19 — Put the emailed link behind one token and fill in the mailbox it was sent to
 
 The invitation email published the server's routing to its recipient:
 `#region=…&workspace=…&workstream=…&invitation=…&token=…` told anyone the mail
 reached which deployment, workspace and work stream they were being offered,
 before they had accepted anything and whether or not the invitation was theirs
-to accept. Only the token was ever a credential. Sealing all four under the
-deployment's existing encryption key was chosen over shortening the link to a
-random handle with a lookup row: a handle needs a table, a write on the sending
-path and a read on every open, in a region that already holds a key that makes
-the link self-describing to itself and opaque to everyone else. The key is also
-why the link no longer names a region — a deployment that did not seal a
-credential cannot open it, so naming one would be routing the client already
-has.
+to accept. Only the secret was ever a credential.
+
+The link is now a typed token over a shared `link_payloads` row rather than the
+four fields encrypted into the URL, which was the first thing built here. Both
+hide the same information; the row wins on two counts the sealed form could not
+match. It is 47 characters instead of 321, because a pointer does not grow with
+what it points at. And outstanding links stop depending on
+`OAUTH_STATE_ENCRYPTION_KEY`, which under sealing would have made a key rotation
+silently invalidate every unaccepted invitation. What it costs is a table, a
+write on the sending path and a read on every open, and those are the things to
+weigh if this is ever revisited. The row is also why the link still names no
+region: only the deployment holding it can resolve it, so naming one would be
+routing the client already has.
+
+The store is generic because the shape recurs: a URL that should not describe
+its subject is not specific to invitations. The prefix is the type, and the type
+owns the schema, so one table can hold every kind of link without any kind being
+readable as another.
 
 Taking the identifiers out took the invited address with them, and the form
 still asks the recipient to sign in with the mailbox that received the

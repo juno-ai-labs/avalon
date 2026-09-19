@@ -14,6 +14,7 @@ import { BrowserSessionService } from "../src/services/browser-session-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { workstreamDOName } from "../src/durable-objects/names";
+import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000091");
 const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000092");
@@ -70,6 +71,7 @@ beforeEach(async () => {
     env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
     env.DB.prepare("INSERT INTO sessions VALUES ('recipient-session', ?, NULL, 'global', NULL, NULL, '2099-01-01T00:00:00.000Z')").bind(recipientId),
     env.DB.prepare("CREATE TABLE user_verified_emails (email TEXT PRIMARY KEY, user_id TEXT)") ,
+    env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
   ]);
   await room().authority({ workspaceId, parentId });
@@ -194,15 +196,20 @@ it("emails one opaque credential, fills in the mailbox it was sent to, and accep
   const link = await deliveredLink(invitationId);
   const credential = { link: link.hash.slice(1) };
   // Nothing a recipient can read out of the link says which deployment,
-  // workspace, work stream or invitation it addresses.
+  // workspace, work stream or invitation it addresses: one typed prefix and
+  // 256 bits, with everything it stands for in this region's own row.
   expect(link.pathname).toBe("/invite");
   expect(link.search).toBe("");
-  // The client reads a fragment with no `=` in it as the whole credential, so a
-  // credential that grew one would be parsed as the addressed format instead.
-  expect(credential.link).not.toContain("=");
+  expect(credential.link).toMatch(/^inv_[A-Za-z0-9_-]{43}$/u);
+  expect(link.toString()).toHaveLength(`${new URL("/invite", link).toString()}#inv_`.length + 43);
   for (const secret of [workspaceId, parentId, invitationId, await tokenFor(invitationId), "region", "global"]) {
     expect(link.toString()).not.toContain(secret);
   }
+  // The row holds the digest of the token in the email, never the token.
+  const stored = await env.DB.prepare("SELECT type, payload FROM link_payloads").first<{ type: string; payload: string }>();
+  expect(stored?.type).toBe("inv");
+  expect(JSON.parse(stored!.payload)).toMatchObject({ workspaceId, parentId, invitationId });
+  expect(await env.DB.prepare("SELECT 1 FROM link_payloads WHERE token_hash = ?").bind(credential.link).first()).toBeNull();
 
   const app = createApp();
   const origin = { origin: "https://app.test", "content-type": "application/json" };

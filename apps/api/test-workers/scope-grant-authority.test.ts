@@ -10,6 +10,7 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import type { Env } from "../src/env";
 import { consumeEffectBodies, pendingParentEffects } from "./helpers/conversation-effects";
 import { conversationObjectName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000071");
 const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000072");
@@ -34,6 +35,7 @@ async function seedActorGrant(target: ScopeGrantTarget) {
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
+    env.DB.prepare(LINK_PAYLOADS_TABLE),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)"),
     ...[actorId, recipientId].map((id) => env.DB.prepare("INSERT INTO users VALUES (?, 'Person', 'person@example.test', NULL, 'UTC', '2026-09-18T00:00:00.000Z')").bind(id)),
     env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')"),

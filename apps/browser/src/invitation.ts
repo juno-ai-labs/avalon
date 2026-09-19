@@ -6,10 +6,11 @@ import { workstreamCanonicalUrl } from "@rally/contracts/workstream-links";
 /**
  * A region only an addressed fragment can name.
  *
- * Current links carry one sealed credential and nothing else, so the page opens
- * them against the deployment serving it — the only one it can reach. Adding a
- * second browser deployment means giving the link its own routing again rather
- * than asking every deployment in turn for a credential addressed to one.
+ * Current links carry one opaque token and nothing else, so the page opens them
+ * against the deployment serving it — the only one it can reach, and the only
+ * one holding the row the token reads. Adding a second browser deployment means
+ * giving the link its own routing again rather than asking every deployment in
+ * turn for a token only one of them can resolve.
  */
 export const BrowserInvitationSchema = z.strictObject({
   region: ConfiguredRegionSchema.nullable(),
@@ -18,8 +19,8 @@ export const BrowserInvitationSchema = z.strictObject({
 export type BrowserInvitation = z.infer<typeof BrowserInvitationSchema>;
 
 /**
- * The whole fragment is the credential unless it spells out parameters, which
- * only the fragment format predating sealed links does.
+ * The whole fragment is the token unless it spells out parameters, which only
+ * the fragment format predating opaque links does.
  */
 export function invitationFromFragment(fragment: string): BrowserInvitation | null {
   if (!fragment.includes("=")) {
