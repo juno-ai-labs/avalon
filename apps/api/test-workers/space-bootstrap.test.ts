@@ -131,21 +131,38 @@ async function cutover(): Promise<SpaceBootstrapService> {
   return new SpaceBootstrapService(creationEnv(), driver);
 }
 
+async function bootstrapRow(): Promise<{ phase: string; cursor: string | null }> {
+  const row = await workspace().runInspectionSql({
+    sql: "SELECT phase, cursor FROM space_bootstrap WHERE id = 1",
+    bindings: [],
+  });
+  return row.rows[0] as { phase: string; cursor: string | null };
+}
+
+/**
+ * Run whatever the row says is due, the way the alarm and the Queue would.
+ *
+ * The phase on the row is the claim, so this is the consumer's `switch` with
+ * the Queue taken out: it walks the pages each pass owes and stops when the
+ * cutover settles, either at `complete` or at a `finalize` that refused.
+ */
 async function runWholeCutover(): Promise<void> {
   const service = await cutover();
-  await service.runGeneral();
-  let cursor = null as string | null;
-  do {
-    await service.runMemberships(cursor === null ? null : asWorkstreamId(cursor));
-    const row = await workspace().runInspectionSql({
-      sql: "SELECT phase, cursor FROM space_bootstrap WHERE id = 1",
-      bindings: [],
-    });
-    const state = row.rows[0] as { phase: string; cursor: string | null };
-    cursor = state.phase === "memberships" ? state.cursor : null;
-    if (state.phase !== "memberships") break;
-  } while (cursor !== null);
-  await service.runFinalize();
+  for (let step = 0; step < 100; step += 1) {
+    const state = await bootstrapRow();
+    if (state.phase === "complete") return;
+    const cursor = state.cursor === null ? null : asWorkstreamId(state.cursor);
+    if (state.phase === "pending" || state.phase === "general") await service.runGeneral();
+    else if (state.phase === "preflight") await service.runPreflight(cursor);
+    else if (state.phase === "memberships") await service.runMemberships(cursor);
+    else {
+      // One close per run. `finalize` either completes the cutover or sends it
+      // back to the walk, and a caller that wants the second walk asks for it.
+      await service.runFinalize();
+      return;
+    }
+  }
+  throw new Error("the cutover did not settle");
 }
 
 async function membershipRows(): Promise<Array<{ workstream_id: string; state: string }>> {
@@ -235,7 +252,7 @@ describe("the Space cutover", () => {
     expect(await channelScope(active)).toBe("workspace");
   });
 
-  it("leaves a fenced Channel personal, reports it, and refuses to close", async () => {
+  it("finds the fenced Channel before it widens any Channel, and refuses to close", async () => {
     const privateSpace = await personalSpace();
     const safe = await createChannel("safe-personal", [privateSpace]);
     const fenced = await createChannel("fenced-personal", [privateSpace]);
@@ -244,11 +261,14 @@ describe("the Space cutover", () => {
 
     await runWholeCutover();
 
-    // The fence is never bypassed and never deleted. The Channel keeps its own
-    // audience and takes no membership at all, so nothing partial is published
-    // for it — and the Organization stays open until somebody remediates it.
+    // The PRD's Existing Organizations section: an unsafe Channel blocks its
+    // Organization "without partial mutation". The read-only preflight walks
+    // the whole directory before `memberships` may be claimed, so the safe
+    // Channel beside the fenced one is *not* Organization-wide and holds no
+    // membership either — the disclosure did not happen by half.
     expect(await channelScope(fenced)).toBe("personal");
-    expect(await membershipRows()).toEqual([{ workstream_id: safe, state: "active" }]);
+    expect(await channelScope(safe)).toBe("personal");
+    expect(await membershipRows()).toEqual([]);
     const status = await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
     expect(status.ready).toBe(false);
     expect(status.blockedWorkstreamIds).toEqual([fenced]);

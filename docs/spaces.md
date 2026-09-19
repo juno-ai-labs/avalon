@@ -206,9 +206,11 @@ alarm claims one page of work, and the activity Queue carries it to
 
 The phases are ordered, and the alarm claims exactly one at a time because a
 page's cursor is only known once the page before it has been reported:
-`pending` → `general` (make the Organization's General Space) → `memberships`
-(walk the Channel directory in pages, placing each Channel in General) →
-`finalize` (close the cutover, or say why it cannot) → `complete`. `not_before`
+`pending` → `general` (make the Organization's General Space) → `preflight`
+(walk the Channel directory in pages asking whether each Channel may be
+widened, and write nothing) → `memberships` (walk it again, placing each
+Channel in General) → `finalize` (close the cutover, or say why it cannot) →
+`complete`. `not_before`
 and `attempts` are the same retry gate every other staged fan-out in this object
 uses — advanced *before* the send, cleared by progress — so a rejected batch is
 retried rather than spinning the alarm, and a page delivered but never reported
@@ -227,16 +229,31 @@ owners-first from active members. A Channel with no active participant left is
 recorded as blocked with `space_bootstrap_no_active_actor` rather than forced,
 because there is nobody the disclosure could honestly be attributed to.
 
-**A blocker is not a retry.** A personal Channel is asked
-`previewAudienceContainment` *before* anything is staged, because General is
-Organization-wide and placing a Channel there is the widening. A Channel whose
-retained content the Organization may not read keeps its own audience, gets no
-membership row and no mutation at all, and is recorded as blocked with
-`space_membership_content_fence`. The PRD is explicit that the cutover never
-deletes or bypasses those fences, so the Organization stays short of `complete`
-until somebody remediates it — which is the point: `spacesReady` stays false,
-the operator sees the Channel id on the row, and the fence is a product decision
-rather than a migration's to make.
+**Every blocker is found before any Channel is widened.** The PRD's Existing
+Organizations section says an unsafe Channel blocks its Organization "without
+partial mutation", and rollout step 3 asks the preflight to identify every
+blocker before promotion. A walk that discovered its blockers one placement at a
+time could do neither: by the time the fenced Channel refused, the Channels
+before it in the page would already be Organization-wide. So `preflight` asks
+the same two questions a placement asks — is there an active person to attribute
+the disclosure to, and does `previewAudienceContainment({ scope: "workspace" })`
+admit this Channel's retained content — over the same page, the same cursor and
+the same claim machinery, and writes nothing. `memberships` is claimed only when
+that pass recorded nothing; a pass that recorded something goes to `finalize`,
+which reports. `SpaceBootstrapService.admit` is the one implementation both
+passes call, and `place` calls it again at the moment of the mutation because
+the fence is a trigger inside the conversation and content can arrive between
+the two.
+
+**A blocker is not a retry.** A Channel whose retained content the Organization
+may not read keeps its own audience, gets no membership row and no mutation at
+all, and is recorded as blocked with `space_membership_content_fence`. The PRD
+is explicit that the cutover never deletes or bypasses those fences, so the
+Organization stays short of `complete` until somebody remediates it — which is
+the point: `spacesReady` stays false, the operator sees the Channel id on the
+row, and the fence is a product decision rather than a migration's to make. A
+`preflight` page also reports the Channels it found *clear*, which takes their
+blockers off the row: it is the pass that notices a remediation.
 
 `finalizeSpaceBootstrap` is the close, and it refuses three ways. `blocked`
 leaves the phase at `finalize` for the retry gate to republish. `unplaced` — a
@@ -657,8 +674,8 @@ rows share a key so their insertion is one transaction and publication can
 resume after a failed send.
 
 `space_bootstrap` is the singleton cutover row, seeded `pending` for every
-Organization: the phase (`pending`, `general`, `memberships`, `finalize`,
-`complete`), General's id once it exists, the walk's cursor, the blocked
+Organization: the phase (`pending`, `general`, `preflight`, `memberships`,
+`finalize`, `complete`), General's id once it exists, the walk's cursor, the blocked
 Channels as JSON, and `not_before`/`attempts` — the retry gate the alarm claims
 on, advanced before the send and cleared by progress. A redelivered page
 costs nothing because the membership row says what is already placed; there is
