@@ -231,9 +231,9 @@ export function SpaceSidebarSection({
                     },
                     onDragEnter: (event) => {
                       event.preventDefault();
-                      const active = dragging.current;
-                      if (!active || active === space.id) return;
-                      setDragOrder((current) => move(current ?? spaces.map((item) => item.id), active, index));
+                      const dragged = dragging.current;
+                      if (!dragged || dragged === space.id) return;
+                      setDragOrder((current) => move(current ?? spaces.map((item) => item.id), dragged, index));
                     },
                     onDragStart: (event) => {
                       // A Channel dragged out of this Space's placement list
