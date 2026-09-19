@@ -14,24 +14,26 @@ import { SPACE_SCOPE_OPTIONS } from '@rally/ui/components/space-dashboard';
 
 import { compareWorkstreamRecency } from '../lib/format';
 import { PROJECT_COLOR_DEFAULT } from '../lib/project-palette';
+import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
 /**
- * Every visible failure this section can produce, as a closed union.
+ * What this section says when the server named no Space refusal of its own.
  *
  * The same rule the Projects section it replaces was put under: a Space action
  * shares persistent navigation with unrelated requests, so a server diagnostic
  * rendered here reads as Space content long after the action that was refused.
- * Adding a failure means adding its sentence below.
+ * A named refusal goes through `spaceFailureCopy` with every other Space
+ * surface; these two are what is left when there is no code to name — and they
+ * say more than the shared sentence can, because "Spaces couldn't be
+ * reordered" also accounts for the row that just snapped back.
  */
-type SpaceSectionFailure = 'reorder' | 'add_channel';
-
-const spaceSectionFailureCopy: Record<SpaceSectionFailure, string> = {
+const spaceSectionFallbackCopy = {
   reorder: 'Spaces couldn’t be reordered.',
   add_channel: 'That channel couldn’t be added to the space.',
-};
+} as const;
 
 /** The transfer type a Channel row writes, and the only one a Space accepts. */
 const CHANNEL_DRAG_TYPE = 'application/x-rally-workstream-id';
@@ -117,7 +119,7 @@ export function SpaceSidebarSection({
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
   const [modalFailure, setModalFailure] = useState<'create' | 'restore' | null>(null);
-  const [sectionFailure, setSectionFailure] = useState<SpaceSectionFailure | null>(null);
+  const [sectionFailure, setSectionFailure] = useState<string | null>(null);
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const dragging = useRef<string | null>(null);
   const ordered = dragOrder
@@ -166,8 +168,8 @@ export function SpaceSidebarSection({
     setSectionFailure(null);
     try {
       await onReorder(ids);
-    } catch {
-      setSectionFailure('reorder');
+    } catch (cause) {
+      setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.reorder));
     } finally {
       setDragOrder(null);
     }
@@ -249,8 +251,8 @@ export function SpaceSidebarSection({
                       event.stopPropagation();
                       dragging.current = null;
                       setSectionFailure(null);
-                      void onAddChannel(space.id, workstreamId).catch(() => {
-                        setSectionFailure('add_channel');
+                      void onAddChannel(space.id, workstreamId).catch((cause: unknown) => {
+                        setSectionFailure(spaceFailureSentence(cause, spaceSectionFallbackCopy.add_channel));
                       });
                     },
                   }}
@@ -301,7 +303,7 @@ export function SpaceSidebarSection({
             })}
           </div>
         )}
-        {sectionFailure && <InlineError>{spaceSectionFailureCopy[sectionFailure]}</InlineError>}
+        {sectionFailure && <InlineError>{sectionFailure}</InlineError>}
       </section>
       <Modal
         footer={<>
