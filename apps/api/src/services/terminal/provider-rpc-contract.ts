@@ -55,16 +55,10 @@ export interface TerminalProviderRpcInstrumentation {
 
 export interface TerminalProviderRpcCallbacks {
   /**
-   * Per-call rather than per-session, and awaited rather than deferred, for two
-   * reasons the session-scoped form could not satisfy.
-   *
-   * A session callback is created once, outside any tool invocation, so the
-   * caller cannot tell which of several concurrent tools a measurement belongs
-   * to; a call-scoped one is created by the caller inside the invocation that
-   * is about to issue the request, which is where the trace lives. And the
-   * provider must await it: fired through `waitUntil`, the measurement raced
-   * the RPC result and routinely lost, so the tool's own log row was written
-   * before the last request it made had been counted.
+   * Per-call rather than per-session, and awaited rather than deferred: one
+   * session serves every concurrent tool on a run, so a session callback can
+   * name neither the tool nor its trace, and a deferred one races the result
+   * of its own call. `docs/terminal-workspaces.md` records both failures.
    */
   observeRequest?: (measurement: TerminalProviderRequestMeasurement) => Promise<void>;
   assertSubmissionAuthority?: () => Promise<TerminalProviderRpcCallbackResult>;

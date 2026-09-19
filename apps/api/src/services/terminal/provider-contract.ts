@@ -66,6 +66,12 @@ export interface TerminalProviderInstrumentation {
    * request had been counted.
    */
   observeRequest?: (measurement: TerminalProviderRequestMeasurement) => void | Promise<void>;
+  /**
+   * Whether `observeRequest` has anyone to report to right now. A caller whose
+   * `observeRequest` is a fixed routing function rather than a listener
+   * supplies this so measurement work is skipped when nothing is listening.
+   */
+  requestObserved?: () => boolean;
 }
 
 export interface CreateTerminalSandboxInput {

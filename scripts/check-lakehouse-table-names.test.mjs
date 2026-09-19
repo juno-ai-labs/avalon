@@ -166,6 +166,42 @@ test("check() walks a tree and reports the offending file, line and names", asyn
   }
 });
 
+test("names the manifest a syntax error came from", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lakehouse-check-"));
+  try {
+    await mkdir(join(root, "config"), { recursive: true });
+    await writeFile(join(root, "config", "broken.json"), "{ not json");
+
+    await assert.rejects(
+      lakehouseTables(join(root, "config")),
+      (error) => error.message.includes(join(root, "config", "broken.json")),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** Dated proposals are history; see the note beside `EXCLUDED`. */
+test("leaves docs/PRDs alone", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lakehouse-check-"));
+  try {
+    await mkdir(join(root, "docs", "PRDs", "2026-01-01-thing"), { recursive: true });
+    await mkdir(join(root, "config"), { recursive: true });
+    await writeFile(
+      join(root, "config", "inference-lakehouse.json"),
+      JSON.stringify({ namespace: "avalon", table: "llm_inference" }),
+    );
+    await writeFile(
+      join(root, "docs", "PRDs", "2026-01-01-thing", "prd.md"),
+      "As proposed then:\n\nFROM rally.llm_inference\n",
+    );
+
+    assert.deepEqual(await check(join(root, "docs"), join(root, "config")), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the repository's own documents pass", async () => {
   assert.deepEqual(await check(), []);
 });

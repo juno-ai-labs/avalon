@@ -445,8 +445,10 @@ opened ready for review rather than as a draft, that is most of a change's life.
 
 - **Documentation-only changes: run the documentation gates, not the suites.** No
   suite covers prose, but two things do. `pnpm docs:check` scans every file under
-  `docs/` for a heading a rebase truncated, and it runs nowhere in CI, so a
-  documentation change that skips it is a documentation change nothing checked.
+  `docs/` for a heading a rebase truncated and for a lakehouse table reference
+  that does not match its manifest in `config/`, and only the second of those
+  runs in CI — through `pnpm test:scripts` — so a documentation change that
+  skips `docs:check` is one whose headings nothing checked.
   And three documents are executable contracts, read off disk and asserted on:
   `docs/connector-digestibility.md` by
   `packages/connectors/src/digestibility-doc.test.ts`,

@@ -45,6 +45,20 @@ export function observeTerminalProviderRequest(
   return activeRequestObserver.getStore()?.(measurement);
 }
 
+/**
+ * Whether the call in flight asked for its provider requests to be reported.
+ *
+ * The provider Worker serves every caller, including the three that construct
+ * a client with no instrumentation at all, and it installs `observeRequest`
+ * unconditionally because it cannot know per call at construction time.
+ * Without this, `measureRequest` would build a measurement for those callers —
+ * and `bytes` on a utility command encodes the command's whole stdout — to
+ * hand it to nobody.
+ */
+export function terminalProviderRequestObserved(): boolean {
+  return activeRequestObserver.getStore() !== undefined;
+}
+
 export async function terminalProviderRpcCall<T>(
   operation: () => Promise<T>,
   callbacks?: TerminalProviderRpcCallbacks,

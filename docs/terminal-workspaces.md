@@ -501,6 +501,13 @@ personless; it is not duplicated into these product events.
 
 ## Invariants
 
+- **A provider measurement is reported per call, bound to the caller's tool
+  trace, and awaited at every hop.** Reported out of band — through a
+  session-scoped callback, or fired and not awaited — it is not measured at
+  all: it lands with no trace, attributed to no tool, or after the row it
+  belonged in. Each of those failures looks like a plausible number rather
+  than an error, which is why `terminal-provider-rpc-boundary.test.ts` and
+  `terminal-provider-session-target.test.ts` pin all three.
 - **One regional sandbox generation belongs to one conversation and one frozen
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
@@ -1085,9 +1092,9 @@ Delivery is then awaited at every hop it crosses: the provider awaits the
 report before its request completes, and the client awaits the caller's own
 reporting, which the contract types as `void | Promise<void>` and so may
 itself be asynchronous. A tool's totals are whole by the time it writes its
-own row. **A measurement reported out of band — through a session callback, or
-fired and not awaited at any one of those hops — is not measured at all: it
-lands with no trace, or after the row it belonged in.**
+own row, for every request that call awaited — a cancelled command abandons
+its in-flight provider execution by design, and that request's measurement
+goes with it. The rule this leaves behind is in [Invariants](#invariants).
 
 `terminal_plugin_activation_finished` uses the same acquisition and provider
 timing fields under the fixed `terminal_plugin_activation` tool identity. It

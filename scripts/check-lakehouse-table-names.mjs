@@ -31,13 +31,18 @@ export async function lakehouseTables(directory = 'config') {
   const tables = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-    const manifest = JSON.parse(await readFile(join(directory, entry.name), 'utf8'));
+    const path = join(directory, entry.name);
+    const source = await readFile(path, 'utf8');
+    let manifest;
+    try {
+      manifest = JSON.parse(source);
+    } catch (error) {
+      // A bare SyntaxError here names no file, which is the generic failure
+      // CLAUDE.md calls a defect: the check would fail and not say where.
+      throw new Error(`${path} is not valid JSON: ${error.message}`, { cause: error });
+    }
     if (typeof manifest.namespace !== 'string' || typeof manifest.table !== 'string') continue;
-    tables.push({
-      manifest: join(directory, entry.name),
-      namespace: manifest.namespace,
-      table: manifest.table,
-    });
+    tables.push({ manifest: path, namespace: manifest.namespace, table: manifest.table });
   }
   return tables.sort((left, right) => left.table.localeCompare(right.table));
 }
@@ -118,13 +123,24 @@ export function misqualifiedReferences(text, { namespace, table }) {
   return found;
 }
 
+/**
+ * `docs/PRDs/` is skipped. Those are dated, point-in-time proposals that
+ * `docs/prds.md` keeps out of the documentation index for the same reason:
+ * they record what was proposed then, not what is true now. A PRD quoting a
+ * pre-rebrand query is history, and failing an unrelated pull request over it
+ * would make this check a nuisance rather than a guard.
+ */
+const EXCLUDED = new Set(['PRDs']);
+
 export async function markdownFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await markdownFiles(path));
-    else if (entry.name.endsWith('.md')) files.push(path);
+    if (entry.isDirectory()) {
+      if (EXCLUDED.has(entry.name)) continue;
+      files.push(...await markdownFiles(path));
+    } else if (entry.name.endsWith('.md')) files.push(path);
   }
   return files.sort();
 }

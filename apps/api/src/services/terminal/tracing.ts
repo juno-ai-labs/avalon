@@ -121,14 +121,11 @@ export function recordTerminalAcquisition(input: { durationMs: number; cacheHit:
  * Bind a callback to the tool trace that is active *now*, so it still records
  * into that trace whenever something else invokes it later.
  *
- * `AsyncLocalStorage` follows an async chain inside one Worker. A callback
- * handed across the RPC boundary to the Terminal provider Worker leaves that
- * chain: the provider calls it, the call arrives back here as a fresh entry
- * point, and `currentTerminalToolTrace()` returns `undefined` — which is how
- * `provider_duration_ms` came to read `0` on every `terminal_tool_finished`
- * row while the locally recorded `acquisition_duration_ms` beside it was
- * right. Binding at the point the callback is *created*, which is still on the
- * chain, carries the trace across the hop explicitly.
+ * `AsyncLocalStorage` follows an async chain inside one Worker, and a callback
+ * the Terminal provider Worker invokes arrives here off that chain. Binding at
+ * the point the callback is *created*, which is still on it, carries the trace
+ * across the hop explicitly. `docs/terminal-workspaces.md` has the account of
+ * what that cost when it was missing.
  */
 export function bindToTerminalToolTrace<A extends unknown[], R>(
   callback: (...args: A) => R,

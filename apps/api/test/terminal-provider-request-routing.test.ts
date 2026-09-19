@@ -70,4 +70,39 @@ describe("Terminal provider request routing", () => {
     expect(delivered.map((measurement) => measurement.operation))
       .toEqual(["sandbox.get", "process.execute_utility"]);
   });
+
+  /**
+   * The provider Worker installs `observeRequest` unconditionally, because it
+   * cannot know at construction which callers report; three construct a client
+   * with no instrumentation at all. Discarding their measurements is not
+   * enough — `bytes` on a utility command encodes the command's whole stdout,
+   * so the work has to be skipped, not wasted.
+   */
+  it("does no measurement work when nothing is listening for this call", async () => {
+    const bytes = vi.fn(() => 0);
+    const sandbox = {
+      id: "sandbox-1", name: "sandbox-1", state: "started",
+      process: {
+        executeCommand: vi.fn(async () => ({ exitCode: 0, result: "ready\n" })),
+        createSession: vi.fn(), executeSessionCommand: vi.fn(), deleteSession: vi.fn(),
+      },
+    };
+    const now = vi.fn(() => 0);
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }), {
+      now,
+      observeRequest: () => { throw new Error("must not report"); },
+      requestObserved: () => false,
+    });
+
+    await expect(provider.runUtilityCommand("sandbox-1", {
+      operation: "file.inspect", command: "printf ready", cwd: "/workspace", timeoutMs: 5_000,
+    })).resolves.toMatchObject({ exitCode: 0 });
+
+    // Neither the clock nor the byte accounting is touched on the skipped path.
+    expect(now).not.toHaveBeenCalled();
+    expect(bytes).not.toHaveBeenCalled();
+  });
 });
