@@ -75,6 +75,13 @@ export interface CreateTerminalSandboxInput {
   generation: number;
   domainAllowList: string[];
   environment: Record<string, string>;
+  /**
+   * Have the provider delete the sandbox this many minutes after it stops.
+   * Absent, the provider never deletes on its own and Rally's lifecycle sweep
+   * is the only thing that retires the sandbox; set for a sandbox no sweep
+   * reaches, which today is any under an automation.
+   */
+  autoDeleteAfterStoppedMinutes?: number;
 }
 
 /**

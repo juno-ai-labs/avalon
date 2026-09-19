@@ -291,6 +291,46 @@ describe("Daytona Terminal provider", () => {
     );
   });
 
+  it("asks Daytona to delete a sandbox after it stops only when the caller sets a retention", async () => {
+    const created = { id: "sandbox-1", name: "avalon-run", state: "started" };
+    const observed = {
+      ...created,
+      domainAllowList: "github.com",
+      refreshData: vi.fn(async () => undefined),
+      process: {
+        executeCommand: vi.fn()
+          .mockResolvedValue({ exitCode: 0, result: "AVALON_BOOTSTRAP_INSTALLED=sqlite3,gh,pnpm,tsx\nbash:ok\n" }),
+        createSession: vi.fn(async () => undefined),
+        executeSessionCommand: vi.fn(async () => ({})),
+        deleteSession: vi.fn(async () => undefined),
+      },
+    };
+    const create = vi.fn(async () => created);
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported",
+      apiKey: "secret",
+      apiUrl: "https://app.daytona.io/api",
+      target: "us",
+      snapshot: "daytona-small",
+      emergencyDisabled: false,
+    }, vi.fn(() => ({ create, get: vi.fn(async () => observed) })));
+
+    await provider.createSandbox({
+      stableName: "avalon-run",
+      workspaceId: "workspace-1",
+      workstreamId: "sidekick-1",
+      substreamId: "run-1",
+      generation: 1,
+      domainAllowList: ["github.com"],
+      environment: {},
+      autoDeleteAfterStoppedMinutes: 43_200,
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ autoStopInterval: 15, autoDeleteInterval: 43_200 }),
+      { timeout: 60 },
+    );
+  });
+
   it("measures provisioning, compatibility installation, verification, and warming separately", async () => {
     const measurements: TerminalProviderOperationMeasurement[] = [];
     const times = [0, 100, 300, 400, 450, 2_450, 2_750, 3_000, 4_200];

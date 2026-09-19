@@ -53,7 +53,9 @@ Which conversation owns the sandbox is decided once, when the plugin is
 composed (`authority.ts`), and bound into the Terminal port factory so nothing
 below it knows a run's Terminal address can differ from its own. An ordinary
 run uses its own conversation's sandbox: the main conversation's sandbox is the
-work stream's, and a private side thread has one of its own. A background
+work stream's, a private side thread has one of its own, and so does each
+triggered run of a Sidekick, which is a conversation of its own under the
+automation, provisioned fresh for that run and never reopened. A background
 agent uses the sandbox of the conversation that started it — through any
 further delegation, up to the first conversation nobody delegated — so the
 agents a conversation spawns work in its files and its checkout, under its
@@ -303,6 +305,21 @@ conversation's, as every work stream was before conversations reported their
 own. A sandbox whose lease holder ran in another conversation is held while
 that conversation says the run is active.
 
+None of that reaches a sandbox under an automation. A Sidekick's parent
+projects no Terminal deadline into the workspace directory (its child effects
+are not forwarded, and its directory row has no such column), so the sweep
+never sees the authoring conversation's sandbox or a triggered run's, and a
+policy change, which enumerates the same directory, does not either. Those
+sandboxes are retired by the provider alone: the coordinator creates one under
+an automation with Daytona's auto-delete set to Rally's thirty-day expiry,
+counted from Daytona's own auto-stop, so that it outlives its last use by the
+same time as a work stream's; a work stream's sandbox is created with no
+auto-delete and left to the sweep. A run's sandbox is likewise stopped by
+nothing but that auto-stop, fifteen idle minutes after its last command,
+rather than the sweep's five. A shorter life for a run's sandbox, which
+nothing reopens once the run has published its result, is a number for the
+team to set.
+
 **Daytona owns provider state; Rally owns identity, authority, leases, and
 retention intent.** Acquisition reads metadata before reusing the recorded
 sandbox. A stale `running` row over a Daytona archive is restored with `start`,
@@ -496,6 +513,12 @@ personless; it is not duplicated into these product events.
   the holder having no unsettled task on the generation; a lease nobody held
   over a retained command would be one no successor could recover from, and
   the holder itself reattaches past its own unsettled task.
+- **A sandbox the workspace sweep cannot reach carries its retention from
+  creation.** The sweep finds sandboxes through the Terminal deadlines a work
+  stream's parent projects; an automation projects none, so a sandbox under
+  one is created with Daytona's auto-delete set, and a new kind of
+  conversation parent must either project a deadline or do the same. A
+  sandbox with neither is one Rally pays for until somebody finds it by hand.
 - **A stopped parent does not strand its in-flight tool receipt.** The live
   lease owner settles that receipt before terminalizing the run, retaining
   ambiguity for an interrupted command rather than guessing whether it ran.
@@ -660,7 +683,11 @@ waits; every recovery case there drives the successor through a write, since
 a read recovers nothing. `terminal-lifecycle.test.ts` holds a running sandbox
 whose last call is inside the warm window, and the workerd suite proves a
 release keeps the lease over the holder's own unsettled command, frees it once
-settled, and that the owner of an unsettled command reattaches past it.
+settled, and that the owner of an unsettled command reattaches past it. An
+automation-parented scope handing Daytona the auto-delete where a work
+stream's passes none is in `terminal-coordinator.test.ts`, and the provider's
+mapping of that field onto Daytona's create call is in
+`terminal-provider.test.ts`.
 Run the API set with:
 
 ```text
@@ -1176,6 +1203,49 @@ request merges, and sandboxes already created stay at the size they were made
 with. A future change to these numbers has to stay in this manifest: the weekly
 job builds from the repository, and a size configured anywhere else is reverted
 by the next adoption pull request without anyone noticing.
+
+### 2026-09-19 — A Sidekick's sandboxes are retired by Daytona
+
+**What changed:** `TerminalRunScope` carries the conversation's parent kind,
+and `createReservedSandbox` passes `autoDeleteAfterStoppedMinutes`, Rally's
+thirty-day expiry in minutes, to the provider for a sandbox whose parent is
+an automation; the Daytona provider maps it onto `autoDeleteInterval`, which
+stays disabled when the field is absent. Nothing else about a Sidekick's
+Terminal changed: the authoring conversation has a sandbox of its own and
+every triggered run, being a conversation of its own, provisions a fresh one,
+as before.
+
+**Why:** The lifecycle sweep finds a sandbox through the Terminal deadline a
+work stream's parent projects into the workspace directory. An automation
+forwards no child effect and its directory row has no Terminal deadline, so
+no sweep has ever stopped, archived or deleted a Sidekick's sandbox, and
+Daytona was told never to delete one either: every triggered run that used
+Terminal left an archived sandbox behind for good. The sandbox per run is
+kept on purpose, one box per run being the simplest shape and the one that
+matches each run being its own conversation; what was missing was an end to
+its life.
+
+**Considered and rejected:** Teaching the sweep about automations, with a
+Terminal deadline projected from `SidekickDO` and a column on the automation
+directory: the sweep's machinery (deadline aggregation, directory projection,
+a per-conversation reconcile) for a sandbox that is used once and never
+reopened is more than the product needs, and Daytona already has the timer.
+Sharing one sandbox across a Sidekick's runs so a checkout survives between
+them: a run's sandbox sits under the run's own authority fingerprint, and
+sharing it would need the ownership walk background agents got, for a benefit
+nobody has asked for. A shorter retention for a run's sandbox than a work
+stream's: that is a limit with a number of its own, and the number is the
+team's to set, which the constant's comment says.
+
+**Consequences:** A Sidekick's sandbox stops fifteen idle minutes after its
+last command on Daytona's auto-stop rather than the sweep's five, is archived
+by Daytona's sixty-minute auto-archive, and is deleted thirty days after it
+stopped. A sandbox created under an automation before this change keeps
+auto-delete disabled and stays until somebody deletes it at Daytona. A
+workspace network-policy change still does not reach a Sidekick's sandboxes,
+since the policy enumerator walks the same work-stream directory; a run's
+sandbox is created under the policy current at its start, which for a
+once-used sandbox is the policy it runs under throughout.
 
 ### 2026-09-19 — The lease is held per tool call, and reads take none
 
