@@ -213,10 +213,6 @@ export function SpaceSidebarSection({
               const placements = workstreams
                 .filter((workstream) => workstream.spaceIds.includes(space.id))
                 .sort(compareWorkstreamRecency);
-              // The Space's own count is the authority on how many Channels it
-              // holds; the sidebar's directory is one page of the Organization,
-              // so the rest are on the dashboard rather than missing.
-              const unlisted = space.channelCount - placements.length;
               return (
                 <SpaceRow
                   active={active}
@@ -287,13 +283,18 @@ export function SpaceSidebarSection({
                   onToggleExpanded={() => setOpen(space.id, !isExpanded)}
                   space={space}
                 >
-                  {isExpanded && (placements.length === 0 && unlisted <= 0
+                  {/* The sidebar holds one page of the Organization's
+                      Channels, so an expansion can list fewer than the Space
+                      has. The count is not viewer-scoped and cannot be shown
+                      as a number, but it is enough to keep a Space that holds
+                      Channels this device has not loaded from claiming to be
+                      empty. */}
+                  {isExpanded && (placements.length === 0 && space.channelCount === 0
                     ? <p className="space-sidebar-empty">No channels</p>
                     : <SpacePlacementList spaceId={space.id}>
                       {placements.map((workstream) => (
                         <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
                       ))}
-                      {unlisted > 0 && <p className="space-sidebar-empty">{space.channelCount} channel{space.channelCount === 1 ? '' : 's'}; open this space to see all</p>}
                     </SpacePlacementList>)}
                 </SpaceRow>
               );
