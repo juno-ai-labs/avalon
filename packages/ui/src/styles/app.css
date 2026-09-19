@@ -3312,7 +3312,33 @@ pre {
    element, and it is the weight that separates who from when. */
 .message-block time,
 .message-block .message-work-summary { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-feed-byline-font-size); font-weight: var(--av-cmp-feed-byline-time-weight); }
-.markdown-body { color: var(--av-ref-color-neutral-13); font-size: var(--av-sys-font-size-prose); line-height: var(--av-sys-font-leading-prose); overflow-wrap: anywhere; }
+/* Markdown's paint, as a group a surface can re-point in one block. Every
+   markdown rule below reads one of these rather than a ramp step, because not
+   every markdown surface sits on the appearance's canvas — a person's turn is
+   drawn on a fill the ramp knows nothing about, which is where a `/goal` in a
+   message became a near-white word on a near-white chip.
+   [`docs/markdown-rendering.md`](../../../../docs/markdown-rendering.md) owns
+   the contract, what a surface may re-point, and why the fence opts out. */
+.markdown-body {
+  --markdown-ink: var(--av-ref-color-neutral-13);
+  --markdown-ink-strong: var(--av-ref-color-neutral-14);
+  --markdown-ink-quiet: var(--av-ref-color-neutral-11);
+  --markdown-ink-muted: var(--av-sys-color-text-muted);
+  --markdown-ink-faint: var(--av-ref-color-neutral-9);
+  --markdown-wash: var(--av-ref-color-neutral-4);
+  --markdown-surface: var(--av-sys-color-surface-raised);
+  --markdown-rule: var(--av-ref-color-neutral-5);
+  --markdown-quote-bar: var(--av-ref-color-line-4);
+  --markdown-border: var(--av-sys-color-border-subtle);
+  --markdown-link: var(--av-sys-color-accent-soft);
+  --markdown-link-hover: var(--av-sys-color-accent-strong);
+  --markdown-mark: var(--av-sys-color-accent-base);
+  --markdown-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb);
+  color: var(--markdown-ink);
+  font-size: var(--av-sys-font-size-prose);
+  line-height: var(--av-sys-font-leading-prose);
+  overflow-wrap: anywhere;
+}
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
 .markdown-body p { margin: 0 0 var(--av-sys-space-prose-gap); }
@@ -3322,7 +3348,7 @@ pre {
 .markdown-body h4,
 .markdown-body h5,
 .markdown-body h6 {
-  color: var(--av-ref-color-neutral-11);
+  color: var(--markdown-ink-quiet);
   line-height: var(--av-cmp-markdown-heading-leading);
   margin: var(--space-6) 0 var(--space-3);
 }
@@ -3403,10 +3429,10 @@ pre {
 .message-block > header .message-collapse-all:hover,
 .message-block > header .message-collapse-all:focus-visible { color: var(--av-sys-color-text-subtle); }
 .message-block > header .message-collapse-all:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
-.markdown-body strong { color: var(--av-ref-color-neutral-14); font-weight: var(--av-cmp-markdown-strong-weight); }
+.markdown-body strong { color: var(--markdown-ink-strong); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body em { font-style: italic; }
-.markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
+.markdown-body a { color: var(--markdown-link); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.markdown-body a:hover { color: var(--markdown-link-hover); text-decoration: underline; }
 .markdown-body img.markdown-link-favicon {
   border-radius: 3px;
   display: inline-block;
@@ -3725,7 +3751,7 @@ pre {
 /* The footnotes GFM still renders — the definitions the citation grammar did
    not lift. Without a rule they read as an ordinary numbered list inside the
    answer, which is exactly what a footnote is not. */
-.markdown-body .footnotes { border-top: 1px solid var(--av-sys-color-border-subtle); color: var(--av-sys-color-text-muted); font-size: 0.9em; margin-top: var(--space-6); padding-top: var(--space-3); }
+.markdown-body .footnotes { border-top: 1px solid var(--markdown-border); color: var(--markdown-ink-muted); font-size: 0.9em; margin-top: var(--space-6); padding-top: var(--space-3); }
 
 .citation-identity-card { background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-ink); display: inline-block; font-size: 0.92em; font-weight: 580; padding: 3px 9px; }
 /* Markers are restated because Tailwind's preflight sets `list-style: none` on
@@ -3752,22 +3778,52 @@ pre {
 .markdown-body ol { margin: var(--space-3) 0 var(--space-4); padding-left: var(--av-cmp-markdown-list-indent); }
 .markdown-body li { margin: var(--space-1) 0; padding-left: 1px; }
 .markdown-body li > p { margin-bottom: var(--space-1); }
-.markdown-body li::marker { color: var(--av-ref-color-neutral-13); }
+.markdown-body li::marker { color: var(--markdown-ink); }
 /* Keeps its own `none`: a task list draws checkboxes, and a bullet beside each
    one is what this exception exists to prevent. It carries two classes to the
    marker rules' one, so it survives them. */
 .markdown-body .contains-task-list { list-style: none; padding-left: var(--space-1); }
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: var(--space-2); }
-.markdown-body .task-list-item > input { accent-color: var(--av-sys-color-accent-base); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
-.markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px var(--space-1); }
-.markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: var(--space-4) 0; overflow: hidden; }
-.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: var(--space-2); justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
-.markdown-code-language { color: var(--av-ref-color-neutral-9); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
-.markdown-code-block-header button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); display: flex; height: 26px; justify-content: center; padding: 0; width: 26px; }
-.markdown-code-block-header button:hover { background-image: var(--hover-layer); color: var(--av-ref-color-neutral-13); }
+.markdown-body .task-list-item > input { accent-color: var(--markdown-mark); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
+.markdown-inline-code { background: var(--markdown-wash); border-radius: var(--av-sys-size-radius-sm); color: var(--markdown-ink); font-size: 0.88em; padding: 2px var(--space-1); }
+.markdown-code-block { background: var(--markdown-surface); border-radius: var(--av-sys-size-radius-xl); margin: var(--space-4) 0; overflow: hidden; }
+.markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--markdown-border); display: flex; gap: var(--space-2); justify-content: space-between; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); }
+.markdown-code-language { color: var(--markdown-ink-faint); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
+.markdown-code-block-header button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--markdown-ink-quiet); display: flex; height: 26px; justify-content: center; padding: 0; width: 26px; }
+.markdown-code-block-header button:hover { background-image: var(--hover-layer); color: var(--markdown-ink); }
 .markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: var(--space-3) var(--space-4); tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
+/* A fenced block is an island of the appearance, whatever surface it sits on:
+   it takes the whole paint group back to the appearance's tokens, so its
+   ground, its header and its ink come from the same place its contents do.
+
+   Both kinds of contents are resolved from the root and cannot follow a
+   surface. `markdownCodeTheme` hands the highlighter inline references to the
+   `syntax` group, and `readMermaidThemeConfig` resolves a diagram's labels,
+   lines and fills against `document.documentElement` once per window, because
+   a code palette is the appearance's rather than any one surface's.
+
+   Leaving the panel on the group instead is what this rule was written for. A
+   ground washed toward the surface's own ink has *less* headroom for that ink
+   than the appearance's own ground does, and the fence is where the quietest
+   roles live: on the dark appearance's default bubble a language label went
+   from 4.14:1 to 2.93:1, and on a saturated profile fill to 2.00:1, where
+   before this group existed both were the appearance's own panel. Everything
+   outside the fence — the inline chip, a table, the quote bar — is full or
+   near-full ink and keeps following its surface.
+
+   So a code panel inside a coloured bubble reads as a panel from elsewhere.
+   That is the trade this rule takes deliberately, and it is the arrangement
+   that shipped before this group existed. */
+.markdown-body .markdown-code-block {
+  --markdown-ink: var(--av-ref-color-neutral-13);
+  --markdown-ink-quiet: var(--av-ref-color-neutral-11);
+  --markdown-ink-faint: var(--av-ref-color-neutral-9);
+  --markdown-wash: var(--av-ref-color-neutral-4);
+  --markdown-surface: var(--av-sys-color-surface-raised);
+  --markdown-border: var(--av-sys-color-border-subtle);
+}
 .markdown-mermaid-diagram { overflow: auto; padding: var(--space-4); }
 .markdown-mermaid-svg { margin: 0 auto; }
 /* Mermaid writes a responsive max-width into the generated SVG. The wrapper's
@@ -3775,15 +3831,27 @@ pre {
    of shrinking a wide diagram back to the message width. */
 .markdown-mermaid-svg svg { display: block; height: auto; max-width: none !important; width: 100% !important; }
 .markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: var(--space-2) var(--space-4) 0; }
-.markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--space-6) 0; padding: 1px 0 1px var(--space-4); }
+.markdown-body blockquote { border-left: 2px solid var(--markdown-quote-bar); color: var(--markdown-ink-quiet); margin: var(--space-6) 0; padding: 1px 0 1px var(--space-4); }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
-.markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--space-6) 0; }
-.markdown-table-scroll { --tw-fade-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb); --tw-fade-scrollbar-width: 9px; margin: var(--space-4) -2px; overflow-x: auto; }
+.markdown-body hr { background: var(--markdown-rule); border: 0; height: 1px; margin: var(--space-6) 0; }
+/* A wide table is the one markdown element that brings its own scrollbar, and
+   the shared `::-webkit-scrollbar-thumb` paints it from the window's ramp: in
+   the dark appearance that is `#2f2f2f` on a `#070707` bubble, a bar a reader
+   cannot see on the surface that most often needs one. The thumb joins the
+   paint group so it follows its surface like everything else.
+
+   The `--tw-fade-scrollbar-thumb`/`-width` pair that used to sit here went with
+   it. No Tailwind plugin is configured in this repository and nothing reads
+   either name, so they painted nothing — while reading exactly like the
+   declaration that did, which is how a review of this change came to look for
+   the thumb's colour in them. */
+.markdown-table-scroll { margin: var(--space-4) -2px; overflow-x: auto; }
+.markdown-table-scroll::-webkit-scrollbar-thumb { background: var(--markdown-scrollbar-thumb); }
 .markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
 .markdown-body th,
-.markdown-body td { background: var(--av-sys-color-surface-raised); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
-.markdown-body th { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-13); font-weight: var(--av-cmp-markdown-strong-weight); }
-.markdown-body del { color: var(--av-ref-color-neutral-10); text-decoration-color: var(--av-ref-color-neutral-9); }
+.markdown-body td { background: var(--markdown-surface); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
+.markdown-body th { background: var(--markdown-wash); color: var(--markdown-ink); font-weight: var(--av-cmp-markdown-strong-weight); }
+.markdown-body del { color: var(--markdown-ink-muted); text-decoration-color: var(--markdown-ink-faint); }
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
 .agent-message-actions { align-items: center; display: flex; gap: var(--space-2); opacity: 0; transition: opacity 120ms; }
 .agent-message:hover .agent-message-actions,
@@ -5258,7 +5326,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .agent-message .markdown-body {
-  color: var(--av-ref-color-neutral-13);
   font-size: 14.5px;
   line-height: 1.62;
 }
@@ -5293,6 +5360,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   background: var(--av-cmp-bubble-background);
   border: 1px solid var(--av-cmp-bubble-border);
   border-radius: var(--turn-bubble-radius);
+  /* Stated rather than inherited, because the markdown inside takes its whole
+     paint group from this ink. The work stream replaces both the fill and the
+     ink below; this pair is what a bubble drawn on any other surface gets. */
+  color: var(--av-sys-color-text-default);
   max-width: 100%;
   padding: var(--space-2) var(--space-3);
   width: fit-content;
@@ -5484,8 +5555,40 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 5px;
 }
 
+/* A person's turn is the one markdown surface with a fill of its own, so it
+   re-points the whole group onto that surface's ink — one block of
+   substitutions, no element rules, in place of the two `:is(p, strong, em,
+   code, a)` overrides this replaced.
+
+   Percentages of `currentColor`, like the mention chip and the in-flight sweep
+   on the same bubble: ink is light on a dark or coloured fill and dark on a
+   light one, so one set of mixes contrasts on every fill a member can pick.
+   They compound where a parent is already a tint — a chip inside a blockquote
+   is 14% of 82% — which is a quote receding as a whole and is intended. */
 .human-message-bubble .markdown-body {
-  color: var(--av-ref-color-neutral-14);
+  --markdown-ink: currentColor;
+  --markdown-ink-strong: currentColor;
+  --markdown-ink-quiet: color-mix(in srgb, currentColor 82%, transparent);
+  --markdown-ink-muted: color-mix(in srgb, currentColor 70%, transparent);
+  --markdown-ink-faint: color-mix(in srgb, currentColor 58%, transparent);
+  --markdown-wash: color-mix(in srgb, currentColor 14%, transparent);
+  --markdown-surface: color-mix(in srgb, currentColor 10%, transparent);
+  --markdown-rule: color-mix(in srgb, currentColor 22%, transparent);
+  --markdown-quote-bar: color-mix(in srgb, currentColor 34%, transparent);
+  --markdown-border: color-mix(in srgb, currentColor 16%, transparent);
+  --markdown-link: currentColor;
+  --markdown-link-hover: currentColor;
+  /* GFM's own two painted affordances, and the pair most easily missed because
+     neither is text. A ticked task box carries `accent-color`, which is the
+     *reader's* personal accent — a colour chosen against the window, with no
+     relationship to the fill the sender picked, so the two can be the same one
+     and the box disappears into it. The thumb under a wide table is worse than
+     arbitrary: in the dark appearance it is `#2f2f2f` against a `#070707`
+     bubble, which is a scroll affordance a reader cannot see on the one surface
+     whose width most often needs it. Both become the bubble's ink, and the
+     tick's own glyph is the user agent's to contrast. */
+  --markdown-mark: currentColor;
+  --markdown-scrollbar-thumb: color-mix(in srgb, currentColor 38%, transparent);
   font-size: calc(var(--av-sys-font-size-prose) - 0.5px);
   line-height: calc(var(--av-sys-font-leading-prose) - 0.14);
 }
@@ -5923,9 +6026,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
   box-shadow: none;
   color: var(--av-cmp-bubble-human-foreground);
 }
-
-.workstream-screen .human-message-bubble .markdown-body,
-.workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
 
 /* GrokBot uses four text roles throughout its conversation surfaces rather
    than per-theme typography. The identity line's two — the name and the time —
@@ -7262,12 +7362,6 @@ button.grokbot-conversation-title:hover { background-image: var(--hover-layer); 
 .settings-account-profile .personal-colors { justify-content: flex-end; gap: 10px; padding: 5px; }
 .settings-account-profile .personal-colors button { width: 22px; height: 22px; display: grid; place-items: center; }
 .settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
-
-/* Feed colors follow the sender's live profile, including older loaded turns. */
-.human-message[data-profile-color] .human-message-bubble .markdown-body,
-.human-message[data-profile-color] .human-message-bubble .markdown-body :is(p, strong, em, code, a) {
-  color: var(--av-cmp-bubble-human-foreground);
-}
 
 .attachment-media-close { position: absolute; right: 22px; top: 23px; z-index: 3; }
 .attachment-gallery-footer { align-items: center; bottom: 24px; display: flex; flex-direction: column; gap: 14px; left: 24px; position: absolute; right: 24px; }
