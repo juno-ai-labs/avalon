@@ -156,6 +156,19 @@ revision: there is no newer application for them to race. The walk also re-reads
 the Space between Channels and abandons when the revision moves, because the
 change that overtook it walks every member itself.
 
+**The walk is paged, and the page is recorded on the intent.** An audience
+change, an archive and a restore all walk every member Channel, and every
+Channel on that walk costs several cross-object awaits — so a Space large
+enough puts the walk past one invocation's subrequest budget. `SpaceService`
+therefore reads `SPACE_BOOTSTRAP_PAGE_SIZE` members at a time and writes the
+cursor the page ended at onto the `space_intents` row before it asks for the
+next one. A Space under that ceiling still settles inside the request exactly as
+it did; past it the invocation fails, the intent stays unsettled carrying its
+cursor, and the alarm's resume continues from that page rather than starting
+over. One walk function serves the request and the resume, because a request and
+its resume that walked differently would be two implementations of the same
+convergence and the resume is the one nobody watches.
+
 ### Defaults
 
 A resource and a Sidekick recommendation are one mechanism with two consumers,
@@ -329,7 +342,8 @@ touches another object. A request that dies between the two leaves that intent
 never asked. The WorkspaceDO alarm claims unsettled intents, advancing their
 retry gate before the send, and republishes them as `space_intent_resume`
 messages; the consumer re-runs the same steps as the requester, against the
-fences the intent recorded. A redelivery is safe because those steps are
+fences the intent recorded and from the cursor its member walk reached — the
+same paged walk, continued rather than restarted. A redelivery is safe because those steps are
 idempotent deltas and the settlement refuses a generation or revision that has
 moved.
 
@@ -576,7 +590,7 @@ transaction, and that is what the intents are for: an interruption leaves a
 | --- | --- | --- | --- |
 | `SPACE_CHANNEL_PAGE_SIZE` | 250 | Rows in one `GET /spaces/:id/channels` answer, and therefore one RPC result and one HTTP body. | Round trips against bytes per answer, weighed against the Organization sizes nobody here has. |
 | `SPACE_INTENT_RESUME_DELAY_MS` | 30 seconds | How long a staged cross-object operation may sit half-applied before the alarm republishes it. | How long the slowest healthy operation takes end to end against how long a half-applied audience may persist. |
-| `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels the cutover claims in one Queue message, and therefore the Channels one consumer invocation places. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
+| `SPACE_BOOTSTRAP_PAGE_SIZE` | 50 | Channels in one page of a cross-object walk: the cutover's Queue message, and one page of an audience change, archive or restore fan-out. | Fewer alarm wakes against a longer invocation, given per-Channel timings and Organization sizes nobody here has. |
 
 Each is a lower bound rather than a budget, and each is a transcription rather
 than a measurement — the sections below say what each was transcribed from.
@@ -611,6 +625,13 @@ of cross-object writes; what a different number buys is fewer alarm wakes
 against a longer invocation, and nobody here has the Organization sizes or the
 per-Channel timings to weigh them.
 
+**It bounds the Space fan-outs too**, for the same arithmetic rather than for
+tidiness: an audience change retracts and re-applies this Space's source on
+every member Channel, and each of those is a plan-apply-confirm conversation
+with the Channel's own authority. That is the same several-hops-per-Channel
+shape the cutover has, so it takes the same page — one number to move rather
+than two that have to be kept in step.
+
 There is no product ceiling on the number of Spaces in an Organization, the
 number of Spaces a Channel may belong to, or the number of defaults a Space may
 hand down. Those are product decisions and are not invented here.
@@ -630,6 +651,7 @@ migrated to grant authority requires the acting person to hold a grant on it.
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
+| `apps/api/test-workers/space-member-walk.test.ts` | A fan-out over more member Channels than one page holds: that the walk crosses the page bound, that the intent's cursor names the page it reached, and that a resume continues from it — read off each Channel's own access-operation receipts rather than off the cursor under test. |
 | `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones; a fenced personal Channel found by the preflight with *no* Channel widened or placed, and the Organization closing once that Channel has a home the fence admits; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership, a recorded source and the audience that implies; one General across creations; a Channel born in a named Space; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
@@ -647,6 +669,7 @@ pnpm --filter @rally/api exec vitest run test/space-default-publication.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-authority.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-object.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-access-sources.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-member-walk.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-bootstrap.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-creation.test.ts
 pnpm --filter @rally/api exec vitest run test/workspace-space-retirement-migration.test.ts
@@ -717,7 +740,12 @@ per-person half of the same projection and is where a Space's participants live.
 uniqueness on the Channel, because a Channel belongs to as many Spaces as it was
 added to. `space_intents` is one row per staged cross-object operation, keyed by
 the caller's operation id, carrying its kind, its three nullable fences, its
-receipts, and the retry gate the alarm claims on.
+receipts, the `cursor` its member walk reached, and the retry gate the alarm
+claims on. The cursor is the same shape `space_bootstrap` carries for the
+cutover's walk — the Channel id the last finished page stopped at — and it is
+what a resume reads; the receipts are one per page rather than one per Channel,
+because `receipts_json` is rewritten whole by `json_insert` and a receipt per
+member cost O(N²) bytes in one row for something no resume read.
 
 `space_defaults`, `space_default_targets` and `space_default_publications`
 carry a `kind` column and the same generation fences; the target and publication
