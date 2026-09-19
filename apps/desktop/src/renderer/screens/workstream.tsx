@@ -171,16 +171,17 @@ export function WorkstreamScreen(): React.JSX.Element {
    * cannot see a Channel's children, so it stores what it is given and this is
    * where an id that names nothing stops.
    */
-  const storedBreakoutIds: string[] = namedChildren === undefined ? [] : orderByStoredIds(
+  const storedBreakouts = namedChildren === undefined ? undefined : orderByStoredIds(
     namedChildren,
     storedOrderFor(ordering, { kind: 'channel', id }),
     (child) => child.substreamId,
-  ).map((child) => child.substreamId);
-  const railChildren = namedChildren === undefined ? undefined : orderByStoredIds(
-    namedChildren,
-    breakoutOrder ?? storedBreakoutIds,
-    (child) => child.substreamId,
   );
+  const storedBreakoutIds: string[] = storedBreakouts?.map((child) => child.substreamId) ?? [];
+  // The rule is applied once. Running it again over its own output is
+  // idempotent and reads as a second rule.
+  const railChildren = namedChildren === undefined || breakoutOrder === null
+    ? storedBreakouts
+    : orderByStoredIds(namedChildren, breakoutOrder, (child) => child.substreamId);
   const railChildIds: string[] = railChildren?.map((child) => child.substreamId) ?? [];
   /**
    * Send the arrangement whole, and drop it if the server refuses.
